@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
-from policynim.errors import NotImplementedYetError
-from policynim.interfaces.mcp import SUPPORTED_TRANSPORTS, run_server
+from policynim.interfaces.mcp import run_server
 from policynim.settings import DEFAULT_TOP_K
 
 NOT_IMPLEMENTED = (
@@ -39,8 +38,8 @@ def preflight(
 ) -> None:
     """Return policy guidance for a coding task."""
     _ = (task, domain, top_k)
-    typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW)
-    raise NotImplementedYetError(NOT_IMPLEMENTED)
+    typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW, err=True)
+    raise typer.Exit(code=1)
 
 
 @app.command()
@@ -60,14 +59,14 @@ def search(
 ) -> None:
     """Search the policy corpus."""
     _ = (query, domain, top_k)
-    typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW)
-    raise NotImplementedYetError(NOT_IMPLEMENTED)
+    typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW, err=True)
+    raise typer.Exit(code=1)
 
 
 @app.command()
 def mcp(
     transport: Annotated[
-        str,
+        Literal["stdio", "streamable-http"],
         typer.Option(
             "--transport",
             help="MCP transport. Supported values: stdio, streamable-http.",
@@ -75,19 +74,12 @@ def mcp(
     ] = "stdio",
 ) -> None:
     """Run the MCP server."""
-    if transport not in SUPPORTED_TRANSPORTS:
-        allowed = ", ".join(SUPPORTED_TRANSPORTS)
-        raise typer.BadParameter(f"Transport must be one of: {allowed}.")
     run_server(transport=transport)
 
 
 def main() -> None:
     """Run the PolicyNIM CLI."""
-    try:
-        app()
-    except NotImplementedYetError as exc:
-        typer.secho(str(exc), fg=typer.colors.YELLOW)
-        raise typer.Exit(code=1) from exc
+    app()
 
 
 if __name__ == "__main__":
