@@ -8,7 +8,12 @@ from textwrap import dedent
 import pytest
 
 from policynim.errors import InvalidPolicyDocumentError
-from policynim.ingest import chunk_policy_document, chunk_policy_documents, load_policy_documents
+from policynim.ingest import (
+    MarkdownParser,
+    chunk_policy_document,
+    chunk_policy_documents,
+    load_policy_documents,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POLICIES_DIR = REPO_ROOT / "policies"
@@ -171,6 +176,55 @@ def test_heading_paths_and_line_spans_follow_markdown_structure(tmp_path: Path) 
     assert chunks[1].lines == "5-12"
     assert "# not-a-heading" in chunks[1].text
     assert "not-a-heading" not in chunks[1].section
+
+
+def test_preamble_content_is_preserved_before_first_heading(tmp_path: Path) -> None:
+    write_policy(
+        tmp_path / "policies" / "backend" / "preamble.md",
+        """
+        Intro text before headings.
+
+        More setup context.
+
+        # Root
+
+        ## Intent
+
+        Keep the preamble.
+        """,
+    )
+
+    document = load_policy_documents(tmp_path / "policies")[0]
+    chunks = chunk_policy_document(document)
+    parser_chunks = chunk_policy_document(document, parser=MarkdownParser())
+
+    assert chunks[0].section == "Root > Preamble"
+    assert chunks[0].lines == "1-4"
+    assert "Intro text before headings." in chunks[0].text
+    assert chunks[1].section == "Root"
+    assert [chunk.section for chunk in parser_chunks[:2]] == ["Root > Preamble", "Root"]
+
+
+def test_inline_lists_allow_escaped_quotes(tmp_path: Path) -> None:
+    write_policy(
+        tmp_path / "policies" / "backend" / "escaped-list.md",
+        """
+        ---
+        title: Escaped Quotes
+        tags: ["say \\\"hello\\\"", plain]
+        grounded_in: ["https://example.com/a"]
+        ---
+        # Escaped Quotes
+
+        ## Intent
+
+        Keep quoted list items readable.
+        """,
+    )
+
+    document = load_policy_documents(tmp_path / "policies")[0]
+
+    assert document.metadata.tags == ['say "hello"', "plain"]
 
 
 def test_shipped_policy_docs_yield_non_empty_chunks() -> None:

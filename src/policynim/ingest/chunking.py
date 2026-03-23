@@ -127,6 +127,14 @@ def _extract_sections(
 
     sections: list[DocumentSection] = []
     stack: list[str] = []
+    preamble = _build_preamble_section(
+        lines=lines,
+        title=document.metadata.title,
+        body_start_line=document.body_start_line,
+        first_heading_line=heading_events[0].line,
+    )
+    if preamble is not None:
+        sections.append(preamble)
 
     for index, heading in enumerate(heading_events):
         level = heading.level
@@ -164,6 +172,30 @@ def _extract_sections(
         )
 
     return sections
+
+
+def _build_preamble_section(
+    *,
+    lines: Sequence[str],
+    title: str,
+    body_start_line: int,
+    first_heading_line: int,
+) -> DocumentSection | None:
+    """Return a synthetic preamble section when content appears before the first heading."""
+    if first_heading_line <= body_start_line:
+        return None
+
+    relative_end = _relative_line_index(body_start_line, first_heading_line - 1)
+    content = "\n".join(lines[: relative_end + 1]).strip()
+    if not content:
+        return None
+
+    return DocumentSection(
+        heading_path=[title, "Preamble"],
+        content=content,
+        start_line=body_start_line,
+        end_line=first_heading_line - 1,
+    )
 
 
 def _find_heading_events(

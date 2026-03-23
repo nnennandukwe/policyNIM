@@ -71,6 +71,14 @@ class MarkdownParser:
         sections: list[DocumentSection] = []
         stack: list[str] = []
         body_line_count = len(lines)
+        preamble = _build_preamble_section(
+            lines=lines,
+            title=document.metadata.title,
+            body_start_line=document.body_start_line,
+            first_heading_line=heading_tokens[0]["start_line"],
+        )
+        if preamble is not None:
+            sections.append(preamble)
 
         for index, heading in enumerate(heading_tokens):
             level = heading["level"]
@@ -211,6 +219,29 @@ def _collect_heading_tokens(tokens: Sequence[Token]) -> list[dict[str, int | str
     return headings
 
 
+def _build_preamble_section(
+    *,
+    lines: Sequence[str],
+    title: str,
+    body_start_line: int,
+    first_heading_line: int,
+) -> DocumentSection | None:
+    """Return a synthetic preamble section when content appears before the first heading."""
+    if first_heading_line <= 1:
+        return None
+
+    content = "\n".join(lines[: first_heading_line - 1]).strip()
+    if not content:
+        return None
+
+    return DocumentSection(
+        heading_path=[title, "Preamble"],
+        content=content,
+        start_line=body_start_line,
+        end_line=body_start_line + first_heading_line - 2,
+    )
+
+
 def _parse_frontmatter_mapping(raw_frontmatter: str, source_path: str) -> dict[str, object]:
     """Parse a narrow YAML frontmatter subset used by the corpus."""
     if not raw_frontmatter.strip():
@@ -320,11 +351,16 @@ def _split_inline_list(value: str) -> list[str]:
     items: list[str] = []
     current: list[str] = []
     quote: str | None = None
+    escaped = False
 
     for char in value:
         if quote is not None:
             current.append(char)
+            if escaped:
+                escaped = False
+                continue
             if char == "\\":
+                escaped = True
                 continue
             if char == quote:
                 quote = None
