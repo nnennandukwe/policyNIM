@@ -9,6 +9,10 @@ class ConfigurationError(PolicyNIMError):
     """Raised when required configuration is missing or invalid."""
 
 
+class ProviderError(PolicyNIMError):
+    """Raised when an external provider call fails."""
+
+
 class InvalidPolicyDocumentError(PolicyNIMError):
     """Raised when a policy document cannot be parsed or validated."""
 
@@ -23,4 +27,3 @@ class WeakEvidenceError(PolicyNIMError):
 
 class NotImplementedYetError(PolicyNIMError):
     """Raised for Day 1 command surfaces that are intentionally scaffold-only."""
-
