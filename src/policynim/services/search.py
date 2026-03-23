@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from policynim.contracts import Embedder, IndexStore
 from policynim.errors import MissingIndexError
 from policynim.providers import NVIDIAEmbedder
+from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
 from policynim.types import SearchRequest, SearchResult
@@ -42,19 +41,10 @@ class SearchService:
 def create_search_service(settings: Settings | None = None) -> SearchService:
     """Build the default search service from application settings."""
     active_settings = settings or get_settings()
-    repo_root = _repo_root()
     return SearchService(
         embedder=NVIDIAEmbedder.from_settings(active_settings),
         index_store=LanceDBIndexStore(
-            uri=_resolve_repo_path(active_settings.lancedb_uri, repo_root),
+            uri=resolve_runtime_path(active_settings.lancedb_uri),
             table_name=active_settings.lancedb_table,
         ),
     )
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _resolve_repo_path(path: Path, repo_root: Path) -> Path:
-    return path if path.is_absolute() else repo_root / path

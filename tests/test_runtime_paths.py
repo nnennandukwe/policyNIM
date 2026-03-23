@@ -1,0 +1,57 @@
+"""Tests for runtime path resolution across dev and packaged installs."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from policynim.errors import InvalidPolicyDocumentError
+from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
+
+
+def test_resolve_runtime_path_uses_current_working_directory(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+
+    assert resolve_runtime_path(Path("data/lancedb")) == workspace / "data/lancedb"
+
+
+def test_resolve_corpus_root_prefers_configured_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    corpus_root = tmp_path / "custom-corpus"
+    corpus_root.mkdir()
+    monkeypatch.chdir(workspace)
+
+    assert resolve_corpus_root(Path("../custom-corpus")) == corpus_root
+
+
+def test_resolve_corpus_root_finds_bundled_package_policies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "site-packages" / "policynim"
+    bundled_corpus = package_root / "policies"
+    bundled_corpus.mkdir(parents=True)
+    monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
+
+    assert resolve_corpus_root() == bundled_corpus
+
+
+def test_resolve_corpus_root_raises_with_override_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    isolated_package = tmp_path / "isolated" / "policynim"
+    isolated_package.mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "policynim.runtime_paths.__file__", str(isolated_package / "runtime_paths.py")
+    )
+
+    with pytest.raises(InvalidPolicyDocumentError, match="POLICYNIM_CORPUS_DIR"):
+        resolve_corpus_root()

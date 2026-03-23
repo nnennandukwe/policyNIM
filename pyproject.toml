@@ -24,6 +24,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/policynim"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"policies" = "policynim/policies"
+
 [dependency-groups]
 test = [
   "pytest==8.3.4",

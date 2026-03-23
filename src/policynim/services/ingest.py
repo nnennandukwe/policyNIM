@@ -8,6 +8,7 @@ from pathlib import Path
 from policynim.contracts import Embedder
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.providers import NVIDIAEmbedder
+from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
 from policynim.types import EmbeddedChunk, IngestResult, PolicyChunk
@@ -51,14 +52,13 @@ class IngestService:
 def create_ingest_service(settings: Settings | None = None) -> IngestService:
     """Build the default ingest service from application settings."""
     active_settings = settings or get_settings()
-    repo_root = _repo_root()
     return IngestService(
         embedder=NVIDIAEmbedder.from_settings(active_settings),
         index_store=LanceDBIndexStore(
-            uri=_resolve_repo_path(active_settings.lancedb_uri, repo_root),
+            uri=resolve_runtime_path(active_settings.lancedb_uri),
             table_name=active_settings.lancedb_table,
         ),
-        corpus_root=repo_root / "policies",
+        corpus_root=resolve_corpus_root(active_settings.corpus_dir),
         embedding_model=active_settings.nvidia_embed_model,
     )
 
@@ -79,11 +79,3 @@ def _attach_embeddings(
             )
         )
     return embedded_chunks
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _resolve_repo_path(path: Path, repo_root: Path) -> Path:
-    return path if path.is_absolute() else repo_root / path

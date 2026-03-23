@@ -80,6 +80,9 @@ and the code generator.
    cp .env.example .env
    ```
 
+   `POLICYNIM_CORPUS_DIR` is optional. Leave it unset to use the bundled sample
+   corpus, or point it at another directory of policy Markdown files.
+
 3. Build the local index:
 
    ```bash
@@ -133,7 +136,8 @@ and the code generator.
 ## Retrieval Workflow
 
 - `policynim ingest` loads the shipped `policies/` corpus, chunks the documents,
-  sends chunk text to NVIDIA embeddings, and rebuilds the local LanceDB table.
+  or the directory configured by `POLICYNIM_CORPUS_DIR`, sends chunk text to
+  NVIDIA embeddings, and rebuilds the local LanceDB table.
 - `policynim dump-index` prints every stored chunk from the local LanceDB table in a
   terminal-friendly format so you can inspect the indexed corpus directly.
 - `policynim search` embeds the query with the same NVIDIA model, searches the
