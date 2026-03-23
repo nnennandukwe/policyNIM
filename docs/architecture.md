@@ -5,8 +5,9 @@
 PolicyNIM is a policy-aware preflight layer for AI coding agents. The Day 1 goal is
 to lock the repo boundaries and public surfaces before retrieval logic exists. Day 2
 adds a format-aware ingest foundation for tolerant Markdown parsing and deterministic
-chunk generation. Day 3 adds hosted embeddings plus a local vector index while
-keeping reranking and synthesis deferred.
+chunk generation. Day 3 adds hosted embeddings plus a local vector index. Day 4 adds
+reranking and grounded synthesis internally while keeping public `preflight`
+surfaces deferred.
 
 ## Design Principles
 
@@ -48,13 +49,16 @@ keeping reranking and synthesis deferred.
 - Application-layer orchestration lives here.
 - Services may depend on `types`, `contracts`, and `settings`.
 - `IngestService` owns policy loading, chunking, embedding, and index rebuild.
-- `SearchService` owns query embedding plus local vector retrieval.
+- `SearchService` owns query embedding, dense candidate retrieval, and reranking.
+- `PreflightService` owns dense retrieval, reranking, grounded synthesis, citation
+  validation, and insufficient-context fallback.
 - Services must not import CLI or MCP modules.
 
 ### `src/policynim/providers/`
 
 - Provider-specific API adapters live here.
 - `nvidia.py` owns NVIDIA auth, retries, timeouts, and embedding response validation.
+- Day 4 extends `nvidia.py` to own reranking and grounded chat-generation adapters.
 - Providers must not import CLI or MCP modules.
 
 ### `src/policynim/storage/`
@@ -106,7 +110,7 @@ keeping reranking and synthesis deferred.
 - Off-template documents with missing metadata.
 - Empty or missing local index.
 - Weak retrieval evidence once retrieval exists.
-- Unimplemented workflow surfaces during Day 1 through Day 3.
+- Unimplemented workflow surfaces during Day 1 through Day 4.
 
 ## Day 2 Ingest Rules
 
@@ -119,23 +123,25 @@ keeping reranking and synthesis deferred.
 - Future non-Markdown formats should plug into the parser seam without forcing a
   rewrite of metadata normalization or chunk assembly.
 
-## Day 3 Retrieval Rules
+## Day 4 Retrieval Rules
 
 - `ingest` rebuilds the local LanceDB table on every run instead of incrementally
   merging rows.
 - The NVIDIA API key is required for both document embedding and query embedding.
 - The same embedding model must be used for documents and queries so vector
   dimensions always match.
-- `search` is dense retrieval only on Day 3. No reranking or LLM synthesis is part
-  of this slice.
-- `search` returns JSON-first `SearchResult` payloads so the CLI stays aligned with
-  typed contracts and later MCP usage.
+- `search` retrieves dense candidates, reranks them with NVIDIA, and returns
+  JSON-first `SearchResult` payloads.
+- The internal preflight flow must validate citation IDs against retained chunks
+  before surfacing grounded guidance.
+- If grounding is weak or invalid, the service should fall back to
+  `insufficient_context=true` instead of fabricating guidance.
+- The public `preflight` CLI and MCP tools remain deferred to Day 5.
 
 ## Current Deferrals
 
-- No reranking.
-- No answer synthesis.
 - No evaluation harness.
+- No public `preflight` CLI or MCP wiring on Day 4.
 
 Those land later so the repo foundation stays small, reviewable, and easy to
 teach from.
