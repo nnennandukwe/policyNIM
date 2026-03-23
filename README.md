@@ -14,18 +14,18 @@ PolicyNIM is being built as a thin, NVIDIA-aligned developer tool:
 - local OSS vector storage for a simple, public, no-GPU-required MVP
 - CLI and MCP surfaces for agent workflows
 
-## Day 3 Status
+## Day 4 Status
 
-The repo now includes the first working retrieval slice:
+The repo now includes the retrieval stack through grounded internal synthesis:
 
 - deterministic Markdown ingest and chunking
 - NVIDIA-hosted embeddings for document and query vectors
 - local LanceDB storage for the chunk index
 - `policynim ingest` to build the local index
-- JSON-first `policynim search` over the indexed corpus
+- reranked JSON-first `policynim search` over the indexed corpus
+- an internal grounded preflight pipeline that validates citations before surfacing results
 
-This branch still does **not** implement reranking, grounded synthesis, or
-`preflight`.
+`policynim preflight` and the MCP tools are still deferred publicly to Day 5.
 
 ## Why This Repo Exists
 
@@ -42,8 +42,8 @@ and the code generator.
 
 - `policynim ingest`
 - `policynim dump-index`
-- `policynim preflight --task "..."`
-- `policynim search --query "..."`
+- `policynim preflight --task "..."` remains stubbed on Day 4
+- `policynim search --query "..."` now returns reranked results
 - `policynim mcp --transport stdio|streamable-http`
 
 ### MCP Tools
@@ -140,10 +140,13 @@ and the code generator.
   NVIDIA embeddings, and rebuilds the local LanceDB table.
 - `policynim dump-index` prints every stored chunk from the local LanceDB table in a
   terminal-friendly format so you can inspect the indexed corpus directly.
-- `policynim search` embeds the query with the same NVIDIA model, searches the
-  local LanceDB table, and prints a JSON `SearchResult`.
-- Both commands require `NVIDIA_API_KEY` because Day 3 uses hosted embeddings for
-  document and query vectors.
+- `policynim search` embeds the query with the same NVIDIA model, retrieves dense
+  candidates, reranks them with NVIDIA, and prints a JSON `SearchResult`.
+- The internal preflight service uses the same retrieval flow, validates citation
+  IDs against retained chunks, and falls back to insufficient context when grounding
+  is weak or invalid.
+- Both commands require `NVIDIA_API_KEY` because hosted embeddings are still part
+  of the retrieval path.
 
 ## Sample Corpus
 
@@ -161,7 +164,7 @@ package layout.
 
 - Day 2: frontmatter parsing and chunking
 - Day 3: embeddings and local vector indexing
-- Day 4: reranking and grounded synthesis
-- Day 5: full MCP workflow and example clients
+- Day 4: reranking, grounded synthesis, and citation validation
+- Day 5: public preflight CLI/MCP wiring and example clients
 - Day 6: evals and tests
 - Day 7: README polish, demo flow, and CI

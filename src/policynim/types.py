@@ -117,12 +117,33 @@ class PolicyGuidance(StrictModel):
     citation_ids: list[str] = Field(default_factory=list)
 
 
+class GeneratedPolicyGuidance(StrictModel):
+    """Internal guidance payload returned by the generator before citation mapping."""
+
+    policy_id: str
+    title: str
+    rationale: str
+    citation_ids: list[str] = Field(default_factory=list)
+
+
 class PreflightRequest(StrictModel):
     """Preflight request shared by CLI and MCP."""
 
     task: str
     domain: str | None = None
     top_k: int = Field(default=5, ge=MIN_TOP_K, le=MAX_TOP_K)
+
+
+class GeneratedPreflightDraft(StrictModel):
+    """Internal generated payload before citations are materialized."""
+
+    summary: str
+    applicable_policies: list[GeneratedPolicyGuidance] = Field(default_factory=list)
+    implementation_guidance: list[str] = Field(default_factory=list)
+    review_flags: list[str] = Field(default_factory=list)
+    tests_required: list[str] = Field(default_factory=list)
+    citation_ids: list[str] = Field(default_factory=list)
+    insufficient_context: bool = False
 
 
 class PreflightResult(StrictModel):

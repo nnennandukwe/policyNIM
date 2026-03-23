@@ -7,9 +7,9 @@ from typing import Protocol
 
 from policynim.types import (
     EmbeddedChunk,
+    GeneratedPreflightDraft,
     PolicyChunk,
     PreflightRequest,
-    PreflightResult,
     ScoredChunk,
 )
 
@@ -44,8 +44,8 @@ class Generator(Protocol):
         self,
         request: PreflightRequest,
         context: Sequence[ScoredChunk],
-    ) -> PreflightResult:
-        """Generate a grounded preflight result."""
+    ) -> GeneratedPreflightDraft:
+        """Generate a grounded preflight draft."""
 
 
 class IndexStore(Protocol):
