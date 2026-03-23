@@ -15,7 +15,7 @@ class StrictModel(BaseModel):
 
 
 class PolicyMetadata(StrictModel):
-    """Describes a policy document."""
+    """Describes a normalized policy document."""
 
     policy_id: str
     title: str
@@ -34,6 +34,25 @@ class PolicyChunk(StrictModel):
     lines: str
     text: str
     policy: PolicyMetadata
+
+
+class ParsedDocument(StrictModel):
+    """Normalized source document returned by an ingest parser."""
+
+    source_path: str
+    format: str = "markdown"
+    metadata: PolicyMetadata
+    body: str
+    body_start_line: int = Field(default=1, ge=1)
+
+
+class DocumentSection(StrictModel):
+    """One extracted document section with source line metadata."""
+
+    heading_path: list[str] = Field(default_factory=list)
+    content: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
 
 
 class ScoredChunk(PolicyChunk):

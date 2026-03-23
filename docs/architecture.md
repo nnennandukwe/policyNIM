@@ -3,7 +3,9 @@
 ## Purpose
 
 PolicyNIM is a policy-aware preflight layer for AI coding agents. The Day 1 goal is
-to lock the repo boundaries and public surfaces before retrieval logic exists.
+to lock the repo boundaries and public surfaces before retrieval logic exists. Day 2
+adds a format-aware ingest foundation for tolerant Markdown parsing and deterministic
+chunk generation.
 
 ## Design Principles
 
@@ -33,6 +35,13 @@ to lock the repo boundaries and public surfaces before retrieval logic exists.
   - index storage
 - Keeps service orchestration independent from provider-specific details.
 
+### `src/policynim/ingest/`
+
+- Owns document discovery, parsing, metadata normalization, and chunk assembly.
+- Defines the parser seam used to support Markdown now and other source formats
+  later.
+- Must not import CLI or MCP modules.
+
 ### `src/policynim/services/`
 
 - Application-layer orchestration lives here.
@@ -52,6 +61,8 @@ to lock the repo boundaries and public surfaces before retrieval logic exists.
 - `types.py` imports standard library and `pydantic`.
 - `contracts.py` imports `types.py` and the standard library only.
 - `services/` may import `settings.py`, `types.py`, and `contracts.py`.
+- `ingest/` may import `types.py` and `errors.py`, plus format-specific parsing
+  dependencies.
 - `interfaces/` may import `services/`, `settings.py`, and `types.py`.
 - Future provider and storage adapters must not import `interfaces/`.
 
@@ -72,11 +83,24 @@ to lock the repo boundaries and public surfaces before retrieval logic exists.
 
 - Missing NVIDIA API key.
 - Invalid policy frontmatter.
+- Duplicate effective policy IDs in the corpus.
+- Off-template documents with missing metadata.
 - Empty or missing local index.
 - Weak retrieval evidence once retrieval exists.
 - Unimplemented workflow surfaces during Day 1 and Day 2.
 
-## Day 1 Deferrals
+## Day 2 Ingest Rules
+
+- Frontmatter is preferred, not required.
+- The Markdown parser must tolerate imperfect but readable Markdown instead of
+  assuming strict template compliance.
+- Citation spans must remain stable and map to original source line numbers.
+- Section extraction should preserve heading ancestry so chunk labels are useful to
+  humans and downstream retrieval.
+- Future non-Markdown formats should plug into the parser seam without forcing a
+  rewrite of metadata normalization or chunk assembly.
+
+## Current Deferrals
 
 - No retrieval pipeline.
 - No vector store integration.
