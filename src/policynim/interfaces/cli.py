@@ -6,9 +6,10 @@ from typing import Annotated
 
 import typer
 
-from policynim.interfaces.mcp import run_server
+from policynim.errors import NotImplementedYetError
+from policynim.interfaces.mcp import SUPPORTED_TRANSPORTS, run_server
+from policynim.settings import DEFAULT_TOP_K
 
-DEFAULT_TOP_K = 5
 NOT_IMPLEMENTED = (
     "PolicyNIM Day 1 only locks the public surface. Retrieval and answer generation "
     "arrive in later commits."
@@ -39,7 +40,7 @@ def preflight(
     """Return policy guidance for a coding task."""
     _ = (task, domain, top_k)
     typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW)
-    raise typer.Exit(code=1)
+    raise NotImplementedYetError(NOT_IMPLEMENTED)
 
 
 @app.command()
@@ -60,7 +61,7 @@ def search(
     """Search the policy corpus."""
     _ = (query, domain, top_k)
     typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW)
-    raise typer.Exit(code=1)
+    raise NotImplementedYetError(NOT_IMPLEMENTED)
 
 
 @app.command()
@@ -74,14 +75,20 @@ def mcp(
     ] = "stdio",
 ) -> None:
     """Run the MCP server."""
+    if transport not in SUPPORTED_TRANSPORTS:
+        allowed = ", ".join(SUPPORTED_TRANSPORTS)
+        raise typer.BadParameter(f"Transport must be one of: {allowed}.")
     run_server(transport=transport)
 
 
 def main() -> None:
     """Run the PolicyNIM CLI."""
-    app()
+    try:
+        app()
+    except NotImplementedYetError as exc:
+        typer.secho(str(exc), fg=typer.colors.YELLOW)
+        raise typer.Exit(code=1) from exc
 
 
 if __name__ == "__main__":
     main()
-

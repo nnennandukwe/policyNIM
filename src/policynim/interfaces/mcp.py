@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-DEFAULT_TOP_K = 5
+from policynim.errors import NotImplementedYetError
+from policynim.settings import DEFAULT_TOP_K
+
 NOT_IMPLEMENTED = (
     "PolicyNIM Day 1 only locks the public surface. Retrieval and answer generation "
     "arrive in later commits."
 )
+SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 
 mcp = FastMCP("PolicyNIM", json_response=True)
 
@@ -21,7 +24,7 @@ def policy_preflight(
 ) -> dict[str, object]:
     """Return policy guidance for a coding task."""
     _ = (task, domain, top_k)
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    raise NotImplementedYetError(NOT_IMPLEMENTED)
 
 
 @mcp.tool(name="policy_search")
@@ -32,14 +35,16 @@ def policy_search(
 ) -> dict[str, object]:
     """Search the policy corpus."""
     _ = (query, domain, top_k)
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    raise NotImplementedYetError(NOT_IMPLEMENTED)
 
 
 def run_server(transport: str = "stdio") -> None:
     """Run the PolicyNIM MCP server."""
+    if transport not in SUPPORTED_TRANSPORTS:
+        allowed = ", ".join(SUPPORTED_TRANSPORTS)
+        raise ValueError(f"Transport must be one of: {allowed}.")
     mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
     run_server()
-
