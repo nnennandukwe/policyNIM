@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.errors import MissingIndexError
-from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
@@ -62,13 +61,23 @@ class SearchService:
 def create_search_service(settings: Settings | None = None) -> SearchService:
     """Build the default search service from application settings."""
     active_settings = settings or get_settings()
+    embedder, reranker = _create_default_search_components(active_settings)
     return SearchService(
-        embedder=NVIDIAEmbedder.from_settings(active_settings),
+        embedder=embedder,
         index_store=LanceDBIndexStore(
             uri=resolve_runtime_path(active_settings.lancedb_uri),
             table_name=active_settings.lancedb_table,
         ),
-        reranker=NVIDIAReranker.from_settings(active_settings),
+        reranker=reranker,
+    )
+
+
+def _create_default_search_components(settings: Settings) -> tuple[Embedder, Reranker]:
+    from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
+
+    return (
+        NVIDIAEmbedder.from_settings(settings),
+        NVIDIAReranker.from_settings(settings),
     )
 
 

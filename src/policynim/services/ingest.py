@@ -7,7 +7,6 @@ from pathlib import Path
 
 from policynim.contracts import Embedder
 from policynim.ingest import chunk_policy_documents, load_policy_documents
-from policynim.providers import NVIDIAEmbedder
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
@@ -53,7 +52,7 @@ def create_ingest_service(settings: Settings | None = None) -> IngestService:
     """Build the default ingest service from application settings."""
     active_settings = settings or get_settings()
     return IngestService(
-        embedder=NVIDIAEmbedder.from_settings(active_settings),
+        embedder=_create_default_embedder(active_settings),
         index_store=LanceDBIndexStore(
             uri=resolve_runtime_path(active_settings.lancedb_uri),
             table_name=active_settings.lancedb_table,
@@ -61,6 +60,12 @@ def create_ingest_service(settings: Settings | None = None) -> IngestService:
         corpus_root=resolve_corpus_root(active_settings.corpus_dir),
         embedding_model=active_settings.nvidia_embed_model,
     )
+
+
+def _create_default_embedder(settings: Settings) -> Embedder:
+    from policynim.providers import NVIDIAEmbedder
+
+    return NVIDIAEmbedder.from_settings(settings)
 
 
 def _attach_embeddings(

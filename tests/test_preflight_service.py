@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("policynim.services.preflight")
-
 from policynim.errors import MissingIndexError
 from policynim.services.preflight import (
     DraftPolicyGuidance,

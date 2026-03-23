@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("policynim.providers.nvidia")
-
 from policynim.errors import MissingIndexError
 from policynim.services.search import SearchService
 from policynim.types import PolicyMetadata, ScoredChunk, SearchRequest

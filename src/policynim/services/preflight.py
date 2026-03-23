@@ -8,7 +8,6 @@ from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, Reranker
 from policynim.errors import MissingIndexError
-from policynim.providers import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
@@ -83,14 +82,27 @@ class PreflightService:
 def create_preflight_service(settings: Settings | None = None) -> PreflightService:
     """Build the default preflight service from application settings."""
     active_settings = settings or get_settings()
+    embedder, reranker, generator = _create_default_preflight_components(active_settings)
     return PreflightService(
-        embedder=NVIDIAEmbedder.from_settings(active_settings),
+        embedder=embedder,
         index_store=LanceDBIndexStore(
             uri=resolve_runtime_path(active_settings.lancedb_uri),
             table_name=active_settings.lancedb_table,
         ),
-        reranker=NVIDIAReranker.from_settings(active_settings),
-        generator=NVIDIAGenerator.from_settings(active_settings),
+        reranker=reranker,
+        generator=generator,
+    )
+
+
+def _create_default_preflight_components(
+    settings: Settings,
+) -> tuple[Embedder, Reranker, Generator]:
+    from policynim.providers import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
+
+    return (
+        NVIDIAEmbedder.from_settings(settings),
+        NVIDIAReranker.from_settings(settings),
+        NVIDIAGenerator.from_settings(settings),
     )
 
 

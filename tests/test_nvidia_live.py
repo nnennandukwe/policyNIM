@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from policynim.errors import ProviderError
+import policynim.providers.nvidia as nvidia_module
 from policynim.settings import get_settings
 from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
-
-pytest.importorskip("policynim.providers.nvidia")
-
-import policynim.providers.nvidia as nvidia_module
 
 
 @pytest.mark.skipif(
@@ -31,11 +27,7 @@ def test_nvidia_embed_query_live() -> None:
     reason="NVIDIA_API_KEY is not configured.",
 )
 def test_nvidia_rerank_live() -> None:
-    reranker_cls = getattr(nvidia_module, "NVIDIAReranker", None)
-    if reranker_cls is None:
-        pytest.skip("NVIDIAReranker is not implemented yet.")
-
-    reranker = reranker_cls.from_settings(get_settings())
+    reranker = nvidia_module.NVIDIAReranker.from_settings(get_settings())
     candidates = [
         ScoredChunk(
             chunk_id="A",
@@ -67,10 +59,7 @@ def test_nvidia_rerank_live() -> None:
         ),
     ]
 
-    try:
-        reranked = reranker.rerank("request ids in logs", candidates, top_k=2)
-    except ProviderError as exc:
-        pytest.skip(f"NVIDIAReranker live smoke could not complete: {exc}")
+    reranked = reranker.rerank("request ids in logs", candidates, top_k=2)
 
     assert reranked
     assert reranked[0].chunk_id == "A"
@@ -82,11 +71,7 @@ def test_nvidia_rerank_live() -> None:
     reason="NVIDIA_API_KEY is not configured.",
 )
 def test_nvidia_generate_preflight_live() -> None:
-    generator_cls = getattr(nvidia_module, "NVIDIAGenerator", None)
-    if generator_cls is None:
-        pytest.skip("NVIDIAGenerator is not implemented yet.")
-
-    generator = generator_cls.from_settings(get_settings())
+    generator = nvidia_module.NVIDIAGenerator.from_settings(get_settings())
     context = [
         ScoredChunk(
             chunk_id="BACKEND-1",
