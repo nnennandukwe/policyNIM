@@ -18,6 +18,9 @@ policynim = "policynim.interfaces.cli:main"
 requires = ["hatchling==1.29.0"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/policynim"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
