@@ -14,17 +14,18 @@ PolicyNIM is being built as a thin, NVIDIA-aligned developer tool:
 - local OSS vector storage for a simple, public, no-GPU-required MVP
 - CLI and MCP surfaces for agent workflows
 
-## Day 1 Status
+## Day 3 Status
 
-This branch establishes the foundation only:
+The repo now includes the first working retrieval slice:
 
-- repo scaffold
-- canonical CLI and MCP command surfaces
-- typed contracts and core models
-- initial synthetic policy corpus grounded in public standards
+- deterministic Markdown ingest and chunking
+- NVIDIA-hosted embeddings for document and query vectors
+- local LanceDB storage for the chunk index
+- `policynim ingest` to build the local index
+- JSON-first `policynim search` over the indexed corpus
 
-This branch does **not** yet implement retrieval, indexing, reranking, or grounded
-generation.
+This branch still does **not** implement reranking, grounded synthesis, or
+`preflight`.
 
 ## Why This Repo Exists
 
@@ -39,6 +40,8 @@ and the code generator.
 
 ### CLI
 
+- `policynim ingest`
+- `policynim dump-index`
 - `policynim preflight --task "..."`
 - `policynim search --query "..."`
 - `policynim mcp --transport stdio|streamable-http`
@@ -64,13 +67,33 @@ and the code generator.
    uv sync
    ```
 
-2. Copy the environment file and add your NVIDIA API key later:
+2. Copy the environment file and add your NVIDIA API key:
 
    ```bash
    cp .env.example .env
    ```
 
-3. Inspect the scaffolded CLI:
+3. Build the local index:
+
+   ```bash
+   uv run policynim ingest
+   ```
+
+4. Query the indexed corpus:
+
+   ```bash
+   uv run policynim search --query "refresh token cleanup background job" --top-k 5
+   ```
+
+5. Dump all indexed chunks in the terminal:
+
+   ```bash
+   uv run policynim dump-index
+   ```
+
+   add ` | less` to command for paging large output.
+
+6. Inspect the CLI and MCP surfaces:
 
    ```bash
    uv run policynim --help
@@ -78,11 +101,22 @@ and the code generator.
    uv run policynim search --help
    ```
 
-4. Run the MCP server surface:
+7. Run the MCP server surface:
 
    ```bash
    uv run policynim mcp --transport stdio
    ```
+
+## Retrieval Workflow
+
+- `policynim ingest` loads the shipped `policies/` corpus, chunks the documents,
+  sends chunk text to NVIDIA embeddings, and rebuilds the local LanceDB table.
+- `policynim dump-index` prints every stored chunk from the local LanceDB table in a
+  terminal-friendly format so you can inspect the indexed corpus directly.
+- `policynim search` embeds the query with the same NVIDIA model, searches the
+  local LanceDB table, and prints a JSON `SearchResult`.
+- Both commands require `NVIDIA_API_KEY` because Day 3 uses hosted embeddings for
+  document and query vectors.
 
 ## Sample Corpus
 
@@ -104,4 +138,3 @@ package layout.
 - Day 5: full MCP workflow and example clients
 - Day 6: evals and tests
 - Day 7: README polish, demo flow, and CI
-
