@@ -198,7 +198,7 @@ class NVIDIAReranker(Reranker):
         return ranked[:top_k]
 
     def _request_ranking(self, payload: dict[str, object]) -> Any:
-        endpoint = f"/{self._model}/reranking"
+        endpoint = f"{self._model}/reranking"
         for attempt in range(self._max_retries + 1):
             try:
                 response = self._client.post(endpoint, json=payload)
