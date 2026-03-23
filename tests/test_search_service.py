@@ -48,9 +48,7 @@ def test_search_service_returns_hits_and_honors_domain_filter(tmp_path: Path) ->
     service = SearchService(embedder=FakeEmbedder(), index_store=store)
 
     result = service.search(SearchRequest(query="backend logs", top_k=2))
-    security_only = service.search(
-        SearchRequest(query="security only", top_k=2, domain="security")
-    )
+    security_only = service.search(SearchRequest(query="security only", top_k=2, domain="security"))
 
     assert result.hits
     assert result.hits[0].chunk_id == "BACKEND-1"

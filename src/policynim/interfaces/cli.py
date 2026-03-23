@@ -8,12 +8,12 @@ import typer
 
 from policynim.errors import PolicyNIMError
 from policynim.interfaces.mcp import run_server
-from policynim.settings import get_settings
 from policynim.services import (
     create_index_dump_service,
     create_ingest_service,
     create_search_service,
 )
+from policynim.settings import get_settings
 from policynim.types import MAX_TOP_K, SearchRequest
 
 NOT_IMPLEMENTED = (
@@ -119,9 +119,7 @@ def search(
     resolved_top_k = top_k if top_k is not None else settings.default_top_k
     try:
         service = create_search_service(settings)
-        result = service.search(
-            SearchRequest(query=query, domain=domain, top_k=resolved_top_k)
-        )
+        result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     except ValueError as exc:

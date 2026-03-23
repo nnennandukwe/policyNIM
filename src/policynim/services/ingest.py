@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from policynim.contracts import Embedder, IndexStore
+from policynim.contracts import Embedder
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.providers import NVIDIAEmbedder
 from policynim.settings import Settings, get_settings

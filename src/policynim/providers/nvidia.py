@@ -145,9 +145,7 @@ def _validate_embeddings_response(
     expected_count: int,
 ) -> list[list[float]]:
     if len(data) != expected_count:
-        raise ProviderError(
-            "NVIDIA embeddings response count did not match the number of inputs."
-        )
+        raise ProviderError("NVIDIA embeddings response count did not match the number of inputs.")
 
     embeddings: list[list[float]] = []
     dimension: int | None = None

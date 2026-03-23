@@ -67,6 +67,13 @@ and the code generator.
    uv sync
    ```
 
+   For contributor hooks and local linting tools:
+
+   ```bash
+   uv sync --group dev
+   uv run --group dev pre-commit install
+   ```
+
 2. Copy the environment file and add your NVIDIA API key:
 
    ```bash
@@ -106,6 +113,22 @@ and the code generator.
    ```bash
    uv run policynim mcp --transport stdio
    ```
+
+## Commit Hooks
+
+- This repo uses `pre-commit` with Ruff for commit-time linting and formatting.
+- Install the hooks once per clone:
+
+  ```bash
+  uv sync --group dev
+  uv run --group dev pre-commit install
+  ```
+
+- Run the hooks manually across the repo:
+
+  ```bash
+  uv run --group dev pre-commit run --all-files
+  ```
 
 ## Retrieval Workflow
 

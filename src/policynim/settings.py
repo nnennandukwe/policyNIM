@@ -18,7 +18,6 @@ class Settings(BaseSettings):
 
     nvidia_api_key: str | None = Field(default=None, alias="NVIDIA_API_KEY")
     policynim_env: str = Field(default="development", alias="POLICYNIM_ENV")
-    data_dir: Path = Field(default=Path("data"), alias="POLICYNIM_DATA_DIR")
     lancedb_uri: Path = Field(default=Path("data/lancedb"), alias="POLICYNIM_LANCEDB_URI")
     lancedb_table: str = Field(default="policy_chunks", alias="POLICYNIM_LANCEDB_TABLE")
     default_top_k: int = Field(

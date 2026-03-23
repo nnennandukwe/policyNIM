@@ -163,8 +163,11 @@ def _normalize_metadata(
     first_h1 = next((title for level, title in headings if level == 1 and title), None)
     first_heading = next((title for _, title in headings if title), None)
 
-    title = _string_value(frontmatter.get("title")) or first_h1 or first_heading or _humanize_stem(
-        source_path
+    title = (
+        _string_value(frontmatter.get("title"))
+        or first_h1
+        or first_heading
+        or _humanize_stem(source_path)
     )
     policy_id = _string_value(frontmatter.get("policy_id")) or _derive_policy_id(source_path)
     domain = _string_value(frontmatter.get("domain")) or _derive_domain(source_path)
@@ -398,7 +401,7 @@ def _unquote_frontmatter_string(value: str, source_path: str) -> str:
         )
 
     body = value[1:-1]
-    return body.replace(r"\'", "'").replace(r'\"', '"')
+    return body.replace(r"\'", "'").replace(r"\"", '"')
 
 
 def _next_nonblank_line_is_indented(lines: Sequence[str], start_index: int) -> bool:

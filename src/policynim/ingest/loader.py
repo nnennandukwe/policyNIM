@@ -64,9 +64,7 @@ def load_policy_document(
     try:
         text = file_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidPolicyDocumentError(
-            f"Could not read policy document {file_path}."
-        ) from exc
+        raise InvalidPolicyDocumentError(f"Could not read policy document {file_path}.") from exc
 
     source_path = _default_repo_relative_path(file_path)
     return active_parser.parse(source_path, text)
@@ -83,9 +81,7 @@ def load_policy_sections(
     try:
         text = file_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidPolicyDocumentError(
-            f"Could not read policy document {file_path}."
-        ) from exc
+        raise InvalidPolicyDocumentError(f"Could not read policy document {file_path}.") from exc
 
     source_path = _default_repo_relative_path(file_path)
     document = active_parser.parse(source_path, text)

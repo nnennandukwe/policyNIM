@@ -28,6 +28,10 @@ packages = ["src/policynim"]
 test = [
   "pytest==8.3.4",
 ]
+dev = [
+  "pre-commit==4.3.0",
+  "ruff==0.15.7",
+]
 
 [tool.ruff]
 line-length = 100
