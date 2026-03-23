@@ -89,6 +89,18 @@ def test_ingest_command_prints_summary(monkeypatch) -> None:
     assert "fake-model" in result.stdout
 
 
+def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_ingest_service",
+        lambda settings: (_ for _ in ()).throw(ValueError("chunk/vector mismatch")),
+    )
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "chunk/vector mismatch" in result.stderr
+
+
 def test_search_command_prints_json(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_search_service",

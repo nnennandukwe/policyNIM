@@ -36,6 +36,8 @@ def ingest() -> None:
         result = service.run()
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
 
     typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
     typer.echo(f"Model: {result.embedding_model}")
