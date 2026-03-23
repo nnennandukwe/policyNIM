@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -145,6 +146,7 @@ class NVIDIAReranker(Reranker):
 
         self._model = model
         self._max_retries = max_retries
+        self._owns_client = client is None
         self._client = client or httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout_seconds,
@@ -165,6 +167,22 @@ class NVIDIAReranker(Reranker):
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
         )
+
+    def __enter__(self) -> NVIDIAReranker:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release the owned HTTP client when this reranker created it."""
+        if self._owns_client:
+            self._client.close()
 
     def rerank(
         self,

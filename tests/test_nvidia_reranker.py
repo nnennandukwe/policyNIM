@@ -27,10 +27,25 @@ class SpyRerankClient:
     def __init__(self, payload: object) -> None:
         self._payload = payload
         self.calls: list[dict[str, object]] = []
+        self.closed = False
 
     def post(self, endpoint: str, json: dict[str, object]) -> SpyResponse:
         self.calls.append({"endpoint": endpoint, "json": json})
         return SpyResponse(self._payload)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class OwnedClientSpy:
+    """Tracks lifecycle of internally created clients."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_reranker_posts_to_relative_endpoint() -> None:
@@ -89,6 +104,70 @@ def test_reranker_preserves_retrieval_base_url_path() -> None:
         client.close()
 
     assert seen_urls == ["https://example.invalid/v1/retrieval/fake-model/reranking"]
+
+
+def test_reranker_close_does_not_close_injected_client() -> None:
+    client = SpyRerankClient({"scores": [0.5]})
+    reranker = NVIDIAReranker(
+        api_key="test-key",
+        model="fake-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,  # type: ignore[arg-type]
+    )
+
+    reranker.close()
+
+    assert not client.closed
+
+
+def test_reranker_close_closes_owned_client(monkeypatch) -> None:
+    created_clients: list[OwnedClientSpy] = []
+
+    def build_client(**kwargs: object) -> OwnedClientSpy:
+        client = OwnedClientSpy(**kwargs)
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr("policynim.providers.nvidia.httpx.Client", build_client)
+
+    reranker = NVIDIAReranker(
+        api_key="test-key",
+        model="fake-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+
+    reranker.close()
+
+    assert len(created_clients) == 1
+    assert created_clients[0].closed
+    assert created_clients[0].kwargs["base_url"] == "https://example.invalid/v1/retrieval"
+
+
+def test_reranker_context_manager_closes_owned_client(monkeypatch) -> None:
+    created_clients: list[OwnedClientSpy] = []
+
+    def build_client(**kwargs: object) -> OwnedClientSpy:
+        client = OwnedClientSpy(**kwargs)
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr("policynim.providers.nvidia.httpx.Client", build_client)
+
+    with NVIDIAReranker(
+        api_key="test-key",
+        model="fake-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+    ) as reranker:
+        assert reranker is not None
+
+    assert len(created_clients) == 1
+    assert created_clients[0].closed
 
 
 def make_chunk(chunk_id: str) -> ScoredChunk:
