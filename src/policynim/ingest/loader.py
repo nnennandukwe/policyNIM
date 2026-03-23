@@ -13,9 +13,15 @@ def discover_policy_paths(root: Path | str) -> list[Path]:
     """Return all Markdown policy files under the provided corpus root."""
     root = Path(root)
     if not root.exists():
-        raise InvalidPolicyDocumentError(f"Policy root {root} does not exist.")
+        raise InvalidPolicyDocumentError(
+            f"Policy root {root} does not exist. Set `POLICYNIM_CORPUS_DIR` to override "
+            "the default corpus location."
+        )
     if not root.is_dir():
-        raise InvalidPolicyDocumentError(f"Policy root {root} is not a directory.")
+        raise InvalidPolicyDocumentError(
+            f"Policy root {root} is not a directory. Set `POLICYNIM_CORPUS_DIR` to a "
+            "directory containing policy Markdown files."
+        )
 
     return sorted(path for path in root.rglob("*.md") if path.name != "TEMPLATE.md")
 
@@ -64,9 +70,7 @@ def load_policy_document(
     try:
         text = file_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidPolicyDocumentError(
-            f"Could not read policy document {file_path}."
-        ) from exc
+        raise InvalidPolicyDocumentError(f"Could not read policy document {file_path}.") from exc
 
     source_path = _default_repo_relative_path(file_path)
     return active_parser.parse(source_path, text)
@@ -83,9 +87,7 @@ def load_policy_sections(
     try:
         text = file_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidPolicyDocumentError(
-            f"Could not read policy document {file_path}."
-        ) from exc
+        raise InvalidPolicyDocumentError(f"Could not read policy document {file_path}.") from exc
 
     source_path = _default_repo_relative_path(file_path)
     document = active_parser.parse(source_path, text)
@@ -103,8 +105,8 @@ def _repo_relative_path(path: Path, root: Path) -> str:
 
 def _default_repo_relative_path(path: Path) -> str:
     """Best-effort repo-relative path for a single source file."""
-    repo_root = Path(__file__).resolve().parents[3]
-    try:
-        return path.resolve(strict=False).relative_to(repo_root).as_posix()
-    except ValueError:
-        return path.resolve(strict=False).as_posix()
+    resolved = path.resolve(strict=False)
+    if "policies" in resolved.parts:
+        policies_index = resolved.parts.index("policies")
+        return Path(*resolved.parts[policies_index:]).as_posix()
+    return resolved.as_posix()

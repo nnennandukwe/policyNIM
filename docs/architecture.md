@@ -5,7 +5,8 @@
 PolicyNIM is a policy-aware preflight layer for AI coding agents. The Day 1 goal is
 to lock the repo boundaries and public surfaces before retrieval logic exists. Day 2
 adds a format-aware ingest foundation for tolerant Markdown parsing and deterministic
-chunk generation.
+chunk generation. Day 3 adds hosted embeddings plus a local vector index while
+keeping reranking and synthesis deferred.
 
 ## Design Principles
 
@@ -46,7 +47,21 @@ chunk generation.
 
 - Application-layer orchestration lives here.
 - Services may depend on `types`, `contracts`, and `settings`.
+- `IngestService` owns policy loading, chunking, embedding, and index rebuild.
+- `SearchService` owns query embedding plus local vector retrieval.
 - Services must not import CLI or MCP modules.
+
+### `src/policynim/providers/`
+
+- Provider-specific API adapters live here.
+- `nvidia.py` owns NVIDIA auth, retries, timeouts, and embedding response validation.
+- Providers must not import CLI or MCP modules.
+
+### `src/policynim/storage/`
+
+- Local persistence adapters live here.
+- `lancedb.py` owns table replacement, row mapping, and vector search behavior.
+- Storage adapters must not read environment variables directly.
 
 ### `src/policynim/interfaces/`
 
@@ -61,6 +76,8 @@ chunk generation.
 - `types.py` imports standard library and `pydantic`.
 - `contracts.py` imports `types.py` and the standard library only.
 - `services/` may import `settings.py`, `types.py`, and `contracts.py`.
+- `providers/` may import `settings.py`, `contracts.py`, `errors.py`, and SDK clients.
+- `storage/` may import `contracts.py`, `types.py`, and `errors.py`.
 - `ingest/` may import `types.py` and `errors.py`, plus format-specific parsing
   dependencies.
 - `interfaces/` may import `services/`, `settings.py`, and `types.py`.
@@ -70,6 +87,7 @@ chunk generation.
 
 ### CLI
 
+- `policynim ingest`
 - `policynim preflight --task ...`
 - `policynim search --query ...`
 - `policynim mcp --transport stdio|streamable-http`
@@ -82,12 +100,13 @@ chunk generation.
 ## Failure States To Design For Early
 
 - Missing NVIDIA API key.
+- Invalid NVIDIA API key.
 - Invalid policy frontmatter.
 - Duplicate effective policy IDs in the corpus.
 - Off-template documents with missing metadata.
 - Empty or missing local index.
 - Weak retrieval evidence once retrieval exists.
-- Unimplemented workflow surfaces during Day 1 and Day 2.
+- Unimplemented workflow surfaces during Day 1 through Day 3.
 
 ## Day 2 Ingest Rules
 
@@ -100,10 +119,21 @@ chunk generation.
 - Future non-Markdown formats should plug into the parser seam without forcing a
   rewrite of metadata normalization or chunk assembly.
 
+## Day 3 Retrieval Rules
+
+- `ingest` rebuilds the local LanceDB table on every run instead of incrementally
+  merging rows.
+- The NVIDIA API key is required for both document embedding and query embedding.
+- The same embedding model must be used for documents and queries so vector
+  dimensions always match.
+- `search` is dense retrieval only on Day 3. No reranking or LLM synthesis is part
+  of this slice.
+- `search` returns JSON-first `SearchResult` payloads so the CLI stays aligned with
+  typed contracts and later MCP usage.
+
 ## Current Deferrals
 
-- No retrieval pipeline.
-- No vector store integration.
+- No reranking.
 - No answer synthesis.
 - No evaluation harness.
 

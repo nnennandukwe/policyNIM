@@ -36,6 +36,12 @@ class PolicyChunk(StrictModel):
     policy: PolicyMetadata
 
 
+class EmbeddedChunk(PolicyChunk):
+    """One policy chunk paired with its embedding vector."""
+
+    vector: list[float] = Field(default_factory=list)
+
+
 class ParsedDocument(StrictModel):
     """Normalized source document returned by an ingest parser."""
 
@@ -88,6 +94,18 @@ class SearchResult(StrictModel):
     top_k: int
     hits: list[ScoredChunk] = Field(default_factory=list)
     insufficient_context: bool = False
+
+
+class IngestResult(StrictModel):
+    """Summary of one completed ingest run."""
+
+    corpus_path: str
+    index_uri: str
+    table_name: str
+    embedding_model: str
+    document_count: int = Field(ge=0)
+    chunk_count: int = Field(ge=0)
+    embedding_dimension: int = Field(ge=1)
 
 
 class PolicyGuidance(StrictModel):

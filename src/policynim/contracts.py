@@ -5,7 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from policynim.types import PolicyChunk, PreflightRequest, PreflightResult, ScoredChunk
+from policynim.types import (
+    EmbeddedChunk,
+    PolicyChunk,
+    PreflightRequest,
+    PreflightResult,
+    ScoredChunk,
+)
 
 
 class Embedder(Protocol):
@@ -45,8 +51,17 @@ class Generator(Protocol):
 class IndexStore(Protocol):
     """Stores and searches policy chunks."""
 
-    def upsert(self, chunks: Sequence[PolicyChunk]) -> None:
-        """Persist policy chunks into the local index."""
+    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+        """Replace the local index contents with embedded chunks."""
+
+    def exists(self) -> bool:
+        """Return whether the local index exists."""
+
+    def count(self) -> int:
+        """Return the number of rows in the local index."""
+
+    def list_chunks(self) -> list[PolicyChunk]:
+        """Return all indexed chunks without embeddings."""
 
     def search(
         self,
@@ -56,4 +71,3 @@ class IndexStore(Protocol):
         domain: str | None = None,
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
-

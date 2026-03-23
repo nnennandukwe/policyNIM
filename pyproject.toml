@@ -5,8 +5,10 @@ description = "A policy-aware NVIDIA NIM engineering preflight layer for AI codi
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "lancedb==0.27.1",
   "markdown-it-py==4.0.0",
   "mcp[cli]==1.26.0",
+  "openai==2.29.0",
   "pydantic==2.12.5",
   "pydantic-settings==2.13.1",
   "typer==0.24.1",
@@ -22,9 +24,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/policynim"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"policies" = "policynim/policies"
+
 [dependency-groups]
 test = [
   "pytest==8.3.4",
+]
+dev = [
+  "pre-commit==4.3.0",
+  "ruff==0.15.7",
 ]
 
 [tool.ruff]

@@ -1,10 +1,9 @@
-# Test Plan Placeholder
+# Test Plan
 
-Day 1 intentionally focuses on repo structure and public surface design.
+Current automated coverage includes:
 
-Planned test coverage:
-
-- CLI help and contract parity
-- policy document parsing and validation
-- retrieval result and citation validation
-- failure paths such as missing configuration and missing index state
+- Markdown policy parsing, metadata normalization, and deterministic chunking
+- Day 3 ingest orchestration with local LanceDB rebuild behavior
+- Day 3 search orchestration with domain filters and missing-index handling
+- CLI output for `ingest` and JSON-first `search`
+- Opt-in live NVIDIA embedding smoke coverage behind `NVIDIA_API_KEY`
