@@ -1,4 +1,4 @@
-"""CLI surface for the Day 1 PolicyNIM scaffold."""
+"""CLI surface for the PolicyNIM retrieval workflow."""
 
 from __future__ import annotations
 
@@ -6,9 +6,15 @@ from typing import Annotated, Literal
 
 import typer
 
+from policynim.errors import PolicyNIMError
 from policynim.interfaces.mcp import run_server
 from policynim.settings import get_settings
-from policynim.types import MAX_TOP_K
+from policynim.services import (
+    create_index_dump_service,
+    create_ingest_service,
+    create_search_service,
+)
+from policynim.types import MAX_TOP_K, SearchRequest
 
 NOT_IMPLEMENTED = (
     "PolicyNIM Day 1 only locks the public surface. Retrieval and answer generation "
@@ -23,6 +29,44 @@ app = typer.Typer(
 
 
 @app.command()
+def ingest() -> None:
+    """Build the local policy index from the shipped corpus."""
+    try:
+        service = create_ingest_service(get_settings())
+        result = service.run()
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+
+    typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
+    typer.echo(f"Model: {result.embedding_model}")
+    typer.echo(f"Index: {result.index_uri} (table: {result.table_name})")
+
+
+@app.command(
+    name="dump-index",
+    help=(
+        "Print all indexed chunks in a terminal-friendly format; "
+        "add ` | less` to command for paging large output."
+    ),
+)
+def dump_index() -> None:
+    """Print all indexed chunks in a terminal-friendly format."""
+    try:
+        service = create_index_dump_service(get_settings())
+        chunks = service.list_chunks()
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+
+    typer.echo(f"Indexed chunks: {len(chunks)}")
+    for chunk in chunks:
+        typer.echo("=" * 100)
+        typer.echo(chunk.chunk_id)
+        typer.echo(f"{chunk.path} | {chunk.section} | {chunk.lines}")
+        typer.echo("")
+        typer.echo(chunk.text)
+
+
+@app.command()
 def preflight(
     task: Annotated[
         str,
@@ -33,17 +77,19 @@ def preflight(
         typer.Option("--domain", help="Optional policy domain such as backend or security."),
     ] = None,
     top_k: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
             help="Reserved retrieval depth for later implementation. Allowed range: 1-20.",
         ),
-    ] = get_settings().default_top_k,
+    ] = None,
 ) -> None:
     """Return policy guidance for a coding task."""
-    _ = (task, domain, top_k)
+    settings = get_settings()
+    resolved_top_k = top_k if top_k is not None else settings.default_top_k
+    _ = (task, domain, resolved_top_k)
     typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW, err=True)
     raise typer.Exit(code=1)
 
@@ -59,19 +105,29 @@ def search(
         typer.Option("--domain", help="Optional policy domain such as backend or security."),
     ] = None,
     top_k: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Reserved retrieval depth for later implementation. Allowed range: 1-20.",
+            help="Retrieval depth. Allowed range: 1-20.",
         ),
-    ] = get_settings().default_top_k,
+    ] = None,
 ) -> None:
     """Search the policy corpus."""
-    _ = (query, domain, top_k)
-    typer.secho(NOT_IMPLEMENTED, fg=typer.colors.YELLOW, err=True)
-    raise typer.Exit(code=1)
+    settings = get_settings()
+    resolved_top_k = top_k if top_k is not None else settings.default_top_k
+    try:
+        service = create_search_service(settings)
+        result = service.search(
+            SearchRequest(query=query, domain=domain, top_k=resolved_top_k)
+        )
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
+
+    typer.echo(result.model_dump_json(indent=2))
 
 
 @app.command()
@@ -91,6 +147,11 @@ def mcp(
 def main() -> None:
     """Run the PolicyNIM CLI."""
     app()
+
+
+def _exit_with_error(message: str) -> None:
+    typer.secho(message, fg=typer.colors.RED, err=True)
+    raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
