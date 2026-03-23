@@ -57,8 +57,11 @@ surfaces deferred.
 ### `src/policynim/providers/`
 
 - Provider-specific API adapters live here.
-- `nvidia.py` owns NVIDIA auth, retries, timeouts, and embedding response validation.
+- `nvidia.py` owns NVIDIA auth, retries, timeouts, endpoint construction, response
+  validation, and lifecycle of internally created SDK/HTTP clients.
 - Day 4 extends `nvidia.py` to own reranking and grounded chat-generation adapters.
+- Provider adapters may accept injected SDK/HTTP clients for tests or advanced
+  callers, but they only close clients they create themselves.
 - Providers must not import CLI or MCP modules.
 
 ### `src/policynim/storage/`
