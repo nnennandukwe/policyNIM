@@ -142,11 +142,16 @@ and the code generator.
   terminal-friendly format so you can inspect the indexed corpus directly.
 - `policynim search` embeds the query with the same NVIDIA model, retrieves dense
   candidates, reranks them with NVIDIA, and prints a JSON `SearchResult`.
+- Reranking uses `POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL` as the retrieval API root
+  and joins the model-specific `reranking` path under that base.
 - The internal preflight service uses the same retrieval flow, validates citation
   IDs against retained chunks, and falls back to insufficient context when grounding
   is weak or invalid.
 - Both commands require `NVIDIA_API_KEY` because hosted embeddings are still part
   of the retrieval path.
+- Provider adapters may accept injected SDK/HTTP clients for tests or advanced
+  callers, but internally created clients remain adapter-owned and are closed by
+  the adapter.
 
 ## Sample Corpus
 
