@@ -5,6 +5,7 @@ description = "A policy-aware NVIDIA NIM engineering preflight layer for AI codi
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "httpx==0.28.1",
   "lancedb==0.27.1",
   "markdown-it-py==4.0.0",
   "mcp[cli]==1.26.0",
