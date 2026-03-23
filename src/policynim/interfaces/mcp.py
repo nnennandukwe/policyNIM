@@ -1,20 +1,23 @@
-"""MCP surface for the Day 1 PolicyNIM scaffold."""
+"""MCP surface for the public PolicyNIM workflow."""
 
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from policynim.errors import NotImplementedYetError
+from policynim.services import create_preflight_service, create_search_service
 from policynim.settings import get_settings
-from policynim.types import MAX_TOP_K, MIN_TOP_K
+from policynim.types import MAX_TOP_K, MIN_TOP_K, PreflightRequest, SearchRequest
 
-NOT_IMPLEMENTED = (
-    "PolicyNIM Day 1 only locks the public surface. Retrieval and answer generation "
-    "arrive in later commits."
-)
 SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 
 mcp = FastMCP("PolicyNIM", json_response=True)
+
+
+def _resolve_top_k(top_k: int | None) -> int:
+    """Resolve and validate top_k across MCP tools."""
+    resolved = top_k if top_k is not None else get_settings().default_top_k
+    _validate_top_k(resolved)
+    return resolved
 
 
 def _validate_top_k(top_k: int) -> None:
@@ -27,24 +30,26 @@ def _validate_top_k(top_k: int) -> None:
 def policy_preflight(
     task: str,
     domain: str | None = None,
-    top_k: int = get_settings().default_top_k,
+    top_k: int | None = None,
 ) -> dict[str, object]:
     """Return policy guidance for a coding task."""
-    _validate_top_k(top_k)
-    _ = (task, domain, top_k)
-    raise NotImplementedYetError(NOT_IMPLEMENTED)
+    resolved_top_k = _resolve_top_k(top_k)
+    service = create_preflight_service(get_settings())
+    result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
+    return result.model_dump(mode="json")
 
 
 @mcp.tool(name="policy_search")
 def policy_search(
     query: str,
     domain: str | None = None,
-    top_k: int = get_settings().default_top_k,
+    top_k: int | None = None,
 ) -> dict[str, object]:
     """Search the policy corpus."""
-    _validate_top_k(top_k)
-    _ = (query, domain, top_k)
-    raise NotImplementedYetError(NOT_IMPLEMENTED)
+    resolved_top_k = _resolve_top_k(top_k)
+    service = create_search_service(get_settings())
+    result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
+    return result.model_dump(mode="json")
 
 
 def run_server(transport: str = "stdio") -> None:
@@ -52,6 +57,9 @@ def run_server(transport: str = "stdio") -> None:
     if transport not in SUPPORTED_TRANSPORTS:
         allowed = ", ".join(SUPPORTED_TRANSPORTS)
         raise ValueError(f"Transport must be one of: {allowed}.")
+    settings = get_settings()
+    mcp.settings.host = settings.mcp_host
+    mcp.settings.port = settings.mcp_port
     mcp.run(transport=transport)
 
 

@@ -7,7 +7,8 @@ to lock the repo boundaries and public surfaces before retrieval logic exists. D
 adds a format-aware ingest foundation for tolerant Markdown parsing and deterministic
 chunk generation. Day 3 adds hosted embeddings plus a local vector index. Day 4 adds
 reranking and grounded synthesis internally while keeping public `preflight`
-surfaces deferred.
+surfaces deferred. Day 5 wires those public CLI and MCP surfaces to the grounded
+service layer without changing the underlying retrieval architecture.
 
 ## Design Principles
 
@@ -113,7 +114,7 @@ surfaces deferred.
 - Off-template documents with missing metadata.
 - Empty or missing local index.
 - Weak retrieval evidence once retrieval exists.
-- Unimplemented workflow surfaces during Day 1 through Day 4.
+- Public-surface drift between CLI JSON, MCP payloads, and docs.
 
 ## Day 2 Ingest Rules
 
@@ -141,10 +142,22 @@ surfaces deferred.
   `insufficient_context=true` instead of fabricating guidance.
 - The public `preflight` CLI and MCP tools remain deferred to Day 5.
 
+## Day 5 Public Interface Rules
+
+- `cli.py` and `mcp.py` stay thin transport adapters over the service layer.
+- Public CLI preflight output is JSON-first and uses the exact `PreflightResult`
+  shape produced by the shared typed models.
+- `policy_preflight` returns the same `PreflightResult` shape as the CLI JSON.
+- `policy_search` returns the same `SearchResult` shape as the CLI JSON.
+- MCP tool handlers construct services per call from current settings instead of
+  holding long-lived provider or service state in the interface layer.
+- Missing index and configuration failures remain explicit public errors; only
+  weak grounded evidence becomes `insufficient_context=true`.
+
 ## Current Deferrals
 
 - No evaluation harness.
-- No public `preflight` CLI or MCP wiring on Day 4.
+- No CI-level live end-to-end MCP verification yet.
 
 Those land later so the repo foundation stays small, reviewable, and easy to
 teach from.

@@ -16,7 +16,7 @@ PolicyNIM is being built as a thin, NVIDIA-aligned developer tool:
 
 ## Current Status
 
-The repo currently includes the retrieval stack through grounded internal synthesis:
+The repo currently includes the retrieval stack through public grounded preflight:
 
 - deterministic Markdown ingest and chunking
 - NVIDIA-hosted embeddings for document and query vectors
@@ -25,10 +25,9 @@ The repo currently includes the retrieval stack through grounded internal synthe
 - `policynim ingest` to build the local index
 - `policynim dump-index` to inspect indexed chunks directly
 - reranked JSON-first `policynim search` over the indexed corpus
-- an internal grounded preflight pipeline that validates citations before surfacing results
-
-The public `preflight` CLI command and MCP tools are present, but they still return
-`NotImplementedYet` until the internal preflight service is wired to those entrypoints.
+- grounded JSON-first `policynim preflight` with citation validation and
+  insufficient-context fallback
+- live MCP tools for `policy_preflight` and `policy_search`
 
 ## Why This Repo Exists
 
@@ -46,13 +45,13 @@ and the code generator.
 - `policynim ingest`
 - `policynim dump-index`
 - `policynim search --query "..."`
-- `policynim preflight --task "..."` is exposed but currently returns not implemented
+- `policynim preflight --task "..."`
 - `policynim mcp --transport stdio|streamable-http`
 
 ### MCP Tools
 
-- `policy_preflight(task, domain?, top_k?)` is registered but currently returns not implemented
-- `policy_search(query, domain?, top_k?)` is registered but currently returns not implemented
+- `policy_preflight(task, domain?, top_k?)`
+- `policy_search(query, domain?, top_k?)`
 
 ## Repo Layout
 
@@ -98,7 +97,13 @@ and the code generator.
    uv run policynim search --query "refresh token cleanup background job" --top-k 5
    ```
 
-5. Dump all indexed chunks in the terminal:
+5. Run grounded preflight:
+
+   ```bash
+   uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5
+   ```
+
+6. Dump all indexed chunks in the terminal:
 
    ```bash
    uv run policynim dump-index
@@ -106,7 +111,7 @@ and the code generator.
 
    add ` | less` to command for paging large output.
 
-6. Inspect the CLI and MCP surfaces:
+7. Inspect the CLI and MCP surfaces:
 
    ```bash
    uv run policynim --help
@@ -114,13 +119,20 @@ and the code generator.
    uv run policynim search --help
    ```
 
-7. Run the MCP server surface:
+8. Run the MCP server surface:
 
    ```bash
    uv run policynim mcp --transport stdio
    ```
 
-8. Run tests and lint:
+   For streamable HTTP, set `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you
+   do not want the default `127.0.0.1:8000`, then run:
+
+   ```bash
+   uv run policynim mcp --transport streamable-http
+   ```
+
+9. Run tests and lint:
 
    ```bash
    uv run pytest -q
@@ -154,14 +166,44 @@ and the code generator.
   candidates, reranks them with NVIDIA, and prints a JSON `SearchResult`.
 - Reranking uses `POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL` as the retrieval API root
   and joins the model-specific `reranking` path under that base.
-- The internal preflight service uses the same retrieval flow, validates citation
-  IDs against retained chunks, and falls back to insufficient context when grounding
-  is weak or invalid.
+- `policynim preflight` and `policy_preflight` use the same retrieval flow,
+  validate citation IDs against retained chunks, and fall back to
+  `insufficient_context=true` when grounding is weak or invalid.
+- `policy_search` returns the same JSON-first `SearchResult` shape used by the CLI.
 - Both commands require `NVIDIA_API_KEY` because hosted embeddings are still part
   of the retrieval path.
 - Provider adapters may accept injected SDK/HTTP clients for tests or advanced
   callers, but internally created clients remain adapter-owned and are closed by
   the adapter.
+
+## Troubleshooting Retrieval
+
+- Negative `score` values in `policynim search` are expected once reranking is on.
+  LanceDB dense-search scores are non-negative, but final search results expose
+  the raw NVIDIA rerank score. Treat the score as a per-query ordering signal:
+  higher is better, even if all returned values are negative.
+- `policynim search` can return useful hits while `policynim preflight` still
+  returns `insufficient_context=true`. That means retrieval worked, but the
+  grounded generation result did not survive citation validation against the
+  retained chunks, so PolicyNIM intentionally suppressed the answer instead of
+  fabricating guidance.
+- If a broad task falls back to `insufficient_context=true`, retry with a focused
+  task description or an explicit `--domain` such as `security` or `backend`.
+  Example:
+
+  ```bash
+  uv run policynim preflight --task "Implement a refresh-token cleanup background job" --domain security --top-k 5
+  ```
+
+- A quick debugging sequence is:
+
+  ```bash
+  uv run policynim search --query "Implement a refresh-token cleanup background job" --top-k 5 | jq
+  uv run policynim preflight --task "Implement a refresh-token cleanup background job" --domain security --top-k 5 | jq
+  ```
+
+  If `search` returns hits but `preflight` falls back, the issue is in grounded
+  answer validation rather than indexing.
 
 ## Sample Corpus
 
@@ -177,6 +219,6 @@ rules, provider ownership notes, and layout.
 
 ## Planned Next Steps
 
-- Wire the internal grounded preflight service into the public CLI and MCP surfaces.
+- Add an evaluation harness and gold-query set for retrieval quality tracking.
 - Expand end-to-end verification for live NVIDIA-backed flows in CI.
-- Continue polishing examples, demo flow, and deployment guidance for agent integrations.
+- Continue polishing the demo flow and deployment guidance for agent integrations.
