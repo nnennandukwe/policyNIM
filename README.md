@@ -14,18 +14,21 @@ PolicyNIM is being built as a thin, NVIDIA-aligned developer tool:
 - local OSS vector storage for a simple, public, no-GPU-required MVP
 - CLI and MCP surfaces for agent workflows
 
-## Day 4 Status
+## Current Status
 
-The repo now includes the retrieval stack through grounded internal synthesis:
+The repo currently includes the retrieval stack through grounded internal synthesis:
 
 - deterministic Markdown ingest and chunking
 - NVIDIA-hosted embeddings for document and query vectors
+- NVIDIA-hosted reranking and grounded generation adapters
 - local LanceDB storage for the chunk index
 - `policynim ingest` to build the local index
+- `policynim dump-index` to inspect indexed chunks directly
 - reranked JSON-first `policynim search` over the indexed corpus
 - an internal grounded preflight pipeline that validates citations before surfacing results
 
-`policynim preflight` and the MCP tools are still deferred publicly to Day 5.
+The public `preflight` CLI command and MCP tools are present, but they still return
+`NotImplementedYet` until the internal preflight service is wired to those entrypoints.
 
 ## Why This Repo Exists
 
@@ -42,22 +45,22 @@ and the code generator.
 
 - `policynim ingest`
 - `policynim dump-index`
-- `policynim preflight --task "..."` remains stubbed on Day 4
-- `policynim search --query "..."` now returns reranked results
+- `policynim search --query "..."`
+- `policynim preflight --task "..."` is exposed but currently returns not implemented
 - `policynim mcp --transport stdio|streamable-http`
 
 ### MCP Tools
 
-- `policy_preflight(task, domain?, top_k?)`
-- `policy_search(query, domain?, top_k?)`
+- `policy_preflight(task, domain?, top_k?)` is registered but currently returns not implemented
+- `policy_search(query, domain?, top_k?)` is registered but currently returns not implemented
 
 ## Repo Layout
 
 - `src/policynim/` contains the core package
 - `policies/` contains the seed policy corpus
 - `docs/architecture.md` explains import rules and package boundaries
-- `examples/` will contain Codex and Claude Code MCP setup examples
-- `tests/` will contain unit and integration coverage as implementation lands
+- `examples/` contains Codex and Claude Code MCP setup examples
+- `tests/` contains unit and integration coverage for ingest, search, providers, CLI, and runtime paths
 
 ## Local Workflow
 
@@ -117,6 +120,13 @@ and the code generator.
    uv run policynim mcp --transport stdio
    ```
 
+8. Run tests and lint:
+
+   ```bash
+   uv run pytest -q
+   uv run ruff check
+   ```
+
 ## Commit Hooks
 
 - This repo uses `pre-commit` with Ruff for commit-time linting and formatting.
@@ -162,14 +172,11 @@ engineering handbook.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the Day 1 boundary rules and
-package layout.
+See [docs/architecture.md](docs/architecture.md) for the current package boundary
+rules, provider ownership notes, and layout.
 
 ## Planned Next Steps
 
-- Day 2: frontmatter parsing and chunking
-- Day 3: embeddings and local vector indexing
-- Day 4: reranking, grounded synthesis, and citation validation
-- Day 5: public preflight CLI/MCP wiring and example clients
-- Day 6: evals and tests
-- Day 7: README polish, demo flow, and CI
+- Wire the internal grounded preflight service into the public CLI and MCP surfaces.
+- Expand end-to-end verification for live NVIDIA-backed flows in CI.
+- Continue polishing examples, demo flow, and deployment guidance for agent integrations.
