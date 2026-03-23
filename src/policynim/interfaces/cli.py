@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 import typer
 
 from policynim.interfaces.mcp import run_server
-from policynim.settings import DEFAULT_TOP_K
+from policynim.settings import get_settings
 from policynim.types import MAX_TOP_K
 
 NOT_IMPLEMENTED = (
@@ -40,7 +40,7 @@ def preflight(
             max=MAX_TOP_K,
             help="Reserved retrieval depth for later implementation. Allowed range: 1-20.",
         ),
-    ] = DEFAULT_TOP_K,
+    ] = get_settings().default_top_k,
 ) -> None:
     """Return policy guidance for a coding task."""
     _ = (task, domain, top_k)
@@ -66,7 +66,7 @@ def search(
             max=MAX_TOP_K,
             help="Reserved retrieval depth for later implementation. Allowed range: 1-20.",
         ),
-    ] = DEFAULT_TOP_K,
+    ] = get_settings().default_top_k,
 ) -> None:
     """Search the policy corpus."""
     _ = (query, domain, top_k)

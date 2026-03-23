@@ -7,6 +7,8 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from policynim.types import MAX_TOP_K, MIN_TOP_K
+
 DEFAULT_TOP_K = 5
 
 
@@ -15,7 +17,12 @@ class Settings(BaseSettings):
 
     nvidia_api_key: str | None = Field(default=None, alias="NVIDIA_API_KEY")
     policynim_env: str = Field(default="development", alias="POLICYNIM_ENV")
-    default_top_k: int = Field(default=DEFAULT_TOP_K, alias="POLICYNIM_DEFAULT_TOP_K")
+    default_top_k: int = Field(
+        default=DEFAULT_TOP_K,
+        alias="POLICYNIM_DEFAULT_TOP_K",
+        ge=MIN_TOP_K,
+        le=MAX_TOP_K,
+    )
     nvidia_chat_model: str = Field(
         default="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         alias="POLICYNIM_NVIDIA_CHAT_MODEL",

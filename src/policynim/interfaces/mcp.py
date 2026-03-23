@@ -5,7 +5,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from policynim.errors import NotImplementedYetError
-from policynim.settings import DEFAULT_TOP_K
+from policynim.settings import get_settings
 from policynim.types import MAX_TOP_K, MIN_TOP_K
 
 NOT_IMPLEMENTED = (
@@ -27,7 +27,7 @@ def _validate_top_k(top_k: int) -> None:
 def policy_preflight(
     task: str,
     domain: str | None = None,
-    top_k: int = DEFAULT_TOP_K,
+    top_k: int = get_settings().default_top_k,
 ) -> dict[str, object]:
     """Return policy guidance for a coding task."""
     _validate_top_k(top_k)
@@ -39,7 +39,7 @@ def policy_preflight(
 def policy_search(
     query: str,
     domain: str | None = None,
-    top_k: int = DEFAULT_TOP_K,
+    top_k: int = get_settings().default_top_k,
 ) -> dict[str, object]:
     """Search the policy corpus."""
     _validate_top_k(top_k)
