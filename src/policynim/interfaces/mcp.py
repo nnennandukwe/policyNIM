@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from policynim.errors import NotImplementedYetError
 from policynim.settings import DEFAULT_TOP_K
+from policynim.types import MAX_TOP_K, MIN_TOP_K
 
 NOT_IMPLEMENTED = (
     "PolicyNIM Day 1 only locks the public surface. Retrieval and answer generation "
@@ -16,6 +17,12 @@ SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 mcp = FastMCP("PolicyNIM", json_response=True)
 
 
+def _validate_top_k(top_k: int) -> None:
+    """Validate top_k across MCP tools."""
+    if not MIN_TOP_K <= top_k <= MAX_TOP_K:
+        raise ValueError(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
+
+
 @mcp.tool(name="policy_preflight")
 def policy_preflight(
     task: str,
@@ -23,6 +30,7 @@ def policy_preflight(
     top_k: int = DEFAULT_TOP_K,
 ) -> dict[str, object]:
     """Return policy guidance for a coding task."""
+    _validate_top_k(top_k)
     _ = (task, domain, top_k)
     raise NotImplementedYetError(NOT_IMPLEMENTED)
 
@@ -34,6 +42,7 @@ def policy_search(
     top_k: int = DEFAULT_TOP_K,
 ) -> dict[str, object]:
     """Search the policy corpus."""
+    _validate_top_k(top_k)
     _ = (query, domain, top_k)
     raise NotImplementedYetError(NOT_IMPLEMENTED)
 

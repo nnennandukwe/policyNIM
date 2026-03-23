@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+MIN_TOP_K = 1
+MAX_TOP_K = 20
+
 
 class StrictModel(BaseModel):
     """Base model for explicit API contracts."""
@@ -55,7 +58,7 @@ class SearchRequest(StrictModel):
 
     query: str
     domain: str | None = None
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(default=5, ge=MIN_TOP_K, le=MAX_TOP_K)
 
 
 class SearchResult(StrictModel):
@@ -82,7 +85,7 @@ class PreflightRequest(StrictModel):
 
     task: str
     domain: str | None = None
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(default=5, ge=MIN_TOP_K, le=MAX_TOP_K)
 
 
 class PreflightResult(StrictModel):
@@ -97,4 +100,3 @@ class PreflightResult(StrictModel):
     tests_required: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     insufficient_context: bool = False
-

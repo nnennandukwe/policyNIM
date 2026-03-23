@@ -8,6 +8,7 @@ import typer
 
 from policynim.interfaces.mcp import run_server
 from policynim.settings import DEFAULT_TOP_K
+from policynim.types import MAX_TOP_K
 
 NOT_IMPLEMENTED = (
     "PolicyNIM Day 1 only locks the public surface. Retrieval and answer generation "
@@ -33,7 +34,12 @@ def preflight(
     ] = None,
     top_k: Annotated[
         int,
-        typer.Option("--top-k", min=1, help="Reserved retrieval depth for later implementation."),
+        typer.Option(
+            "--top-k",
+            min=1,
+            max=MAX_TOP_K,
+            help="Reserved retrieval depth for later implementation. Allowed range: 1-20.",
+        ),
     ] = DEFAULT_TOP_K,
 ) -> None:
     """Return policy guidance for a coding task."""
@@ -54,7 +60,12 @@ def search(
     ] = None,
     top_k: Annotated[
         int,
-        typer.Option("--top-k", min=1, help="Reserved retrieval depth for later implementation."),
+        typer.Option(
+            "--top-k",
+            min=1,
+            max=MAX_TOP_K,
+            help="Reserved retrieval depth for later implementation. Allowed range: 1-20.",
+        ),
     ] = DEFAULT_TOP_K,
 ) -> None:
     """Search the policy corpus."""
