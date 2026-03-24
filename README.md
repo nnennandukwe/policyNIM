@@ -28,6 +28,8 @@ The repo currently includes the retrieval stack through public grounded prefligh
 - grounded JSON-first `policynim preflight` with citation validation and
   insufficient-context fallback
 - live MCP tools for `policy_preflight` and `policy_search`
+- offline-first `policynim eval` with rerank on/off comparison
+- local Evidently-backed results viewing on `localhost` from `policynim eval`
 
 ## Why This Repo Exists
 
@@ -46,6 +48,7 @@ and the code generator.
 - `policynim dump-index`
 - `policynim search --query "..."`
 - `policynim preflight --task "..."`
+- `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 
 ### MCP Tools
@@ -57,6 +60,7 @@ and the code generator.
 
 - `src/policynim/` contains the core package
 - `policies/` contains the seed policy corpus
+- `evals/` contains the bundled gold eval suite
 - `docs/architecture.md` explains import rules and package boundaries
 - `examples/` contains Codex and Claude Code MCP setup examples
 - `tests/` contains unit and integration coverage for ingest, search, providers, CLI, and runtime paths
@@ -119,7 +123,29 @@ and the code generator.
    uv run policynim search --help
    ```
 
-8. Run the MCP server surface:
+8. Run the eval suite and start the local UI:
+
+   ```bash
+   uv run policynim eval
+   ```
+
+   To skip the default rerank comparison:
+
+   ```bash
+   uv run policynim eval --no-compare-rerank
+   ```
+
+   To run evals without starting the UI:
+
+   ```bash
+   uv run policynim eval --headless
+   ```
+
+9. Open `http://localhost:8001` in your browser after `policynim eval` starts the
+   local Evidently UI. If you do not want the UI to start automatically, use
+   `--headless`.
+
+10. Run the MCP server surface:
 
    ```bash
    uv run policynim mcp --transport stdio
@@ -132,7 +158,7 @@ and the code generator.
    uv run policynim mcp --transport streamable-http
    ```
 
-9. Run tests and lint:
+11. Run tests and lint:
 
    ```bash
    uv run pytest -q
@@ -175,6 +201,24 @@ and the code generator.
 - Provider adapters may accept injected SDK/HTTP clients for tests or advanced
   callers, but internally created clients remain adapter-owned and are closed by
   the adapter.
+
+## Evaluation Workflow
+
+- `policynim eval` runs the bundled `evals/default_cases.json` suite by default.
+- Offline mode is the default and uses deterministic service doubles, so it does
+  not require `NVIDIA_API_KEY`.
+- Live mode uses the real ingest, search, and grounded preflight stack and writes
+  to an isolated temporary LanceDB path so your normal runtime index is not
+  mutated.
+- Each eval run records two result sets by default:
+  - rerank enabled
+  - rerank disabled
+- `--no-compare-rerank` keeps only the default rerank-enabled run.
+- The CLI prints JSON `EvalRunResult` output and also saves:
+  - one JSON artifact per rerank mode under the eval workspace
+  - one HTML report per rerank mode under the eval workspace
+- `policynim eval` starts the local Evidently UI by default unless you pass
+  `--headless`.
 
 ## Troubleshooting Retrieval
 
@@ -219,6 +263,6 @@ rules, provider ownership notes, and layout.
 
 ## Planned Next Steps
 
-- Add an evaluation harness and gold-query set for retrieval quality tracking.
 - Expand end-to-end verification for live NVIDIA-backed flows in CI.
 - Continue polishing the demo flow and deployment guidance for agent integrations.
+- Grow the bundled eval suite beyond the initial Day 6 gold cases.
