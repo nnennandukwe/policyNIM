@@ -20,6 +20,8 @@ This example connects Codex to a local PolicyNIM MCP server over `stdio`.
 
 ## Add PolicyNIM To Codex
 
+### Codex CLI
+
 Run this from anywhere on your machine, replacing `/ABS/PATH/TO/policyNIM` with
 the absolute path to this repo:
 
@@ -34,6 +36,41 @@ Inspect the saved server entry:
 ```bash
 codex mcp get policynim
 ```
+
+### Codex App
+
+In the Codex app, open the custom MCP server form and enter these values:
+
+- `Name`: `policynim`
+- `Transport`: `STDIO`
+- `Command to launch`: `uv`
+- `Arguments`:
+  - `run`
+  - `--directory`
+  - `/ABS/PATH/TO/policyNIM`
+  - `policynim`
+  - `mcp`
+  - `--transport`
+  - `stdio`
+- `Working directory`: `/ABS/PATH/TO/policyNIM`
+
+For credentials, use one of these approaches:
+
+- `Environment variables`: key `NVIDIA_API_KEY`, value your actual NVIDIA API key
+- `Environment variable passthrough`: `NVIDIA_API_KEY` if the Codex app already
+  inherits that variable from your shell or launcher environment
+
+Do not set `env=$NVIDIA_API_KEY`. The variable name must be `NVIDIA_API_KEY`.
+
+Why the repo path appears twice:
+
+- `--directory /ABS/PATH/TO/policyNIM` tells `uv` which project to run
+- `Working directory: /ABS/PATH/TO/policyNIM` makes relative paths such as `.env`
+  and `data/lancedb` resolve from the repo root
+
+Using the same repo path in both places is the least error-prone setup for this
+project. If you keep `--directory`, the app working directory is mostly
+redundant, but keeping both aligned avoids confusion.
 
 ## Use It In Codex
 
