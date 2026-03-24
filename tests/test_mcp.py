@@ -22,7 +22,7 @@ from policynim.types import (
 )
 
 
-class FakePreflightService:
+class MockPreflightService:
     """Static preflight service for MCP tests."""
 
     def __init__(self) -> None:
@@ -61,7 +61,7 @@ class FakePreflightService:
         self.closed = True
 
 
-class FakeSearchService:
+class MockSearchService:
     """Static search service for MCP tests."""
 
     def __init__(self) -> None:
@@ -115,7 +115,7 @@ def test_policy_preflight_returns_exact_typed_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         mcp_module,
         "create_preflight_service",
-        lambda settings: FakePreflightService(),
+        lambda settings: MockPreflightService(),
     )
 
     payload = mcp_module.policy_preflight(
@@ -124,13 +124,13 @@ def test_policy_preflight_returns_exact_typed_payload(monkeypatch) -> None:
         top_k=3,
     )
 
-    assert _preflight_payload(payload) == FakePreflightService().preflight(
+    assert _preflight_payload(payload) == MockPreflightService().preflight(
         PreflightRequest(task="refresh token cleanup", domain="security", top_k=3)
     )
 
 
 def test_policy_search_returns_exact_typed_payload(monkeypatch) -> None:
-    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: FakeSearchService())
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: MockSearchService())
 
     payload = mcp_module.policy_search(
         query="background cleanup",
@@ -138,7 +138,7 @@ def test_policy_search_returns_exact_typed_payload(monkeypatch) -> None:
         top_k=2,
     )
 
-    assert _search_payload(payload) == FakeSearchService().search(
+    assert _search_payload(payload) == MockSearchService().search(
         SearchRequest(query="background cleanup", domain="backend", top_k=2)
     )
 
@@ -149,7 +149,7 @@ def test_policy_preflight_uses_runtime_default_top_k(monkeypatch) -> None:
     class CapturingPreflightService:
         def preflight(self, request) -> PreflightResult:
             captured["top_k"] = request.top_k
-            return FakePreflightService().preflight(request)
+            return MockPreflightService().preflight(request)
 
     monkeypatch.setattr(
         mcp_module,
@@ -195,7 +195,7 @@ def test_policy_search_surfaces_configuration_errors(monkeypatch) -> None:
 def test_run_server_uses_stdio_transport_and_runtime_host_port(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run(*, transport: str) -> None:
+    def mock_run(*, transport: str) -> None:
         captured["transport"] = transport
 
     monkeypatch.setattr(
@@ -203,7 +203,7 @@ def test_run_server_uses_stdio_transport_and_runtime_host_port(monkeypatch) -> N
         "get_settings",
         lambda: Settings(mcp_host="0.0.0.0", mcp_port=9001),
     )
-    monkeypatch.setattr(mcp_module.mcp, "run", fake_run)
+    monkeypatch.setattr(mcp_module.mcp, "run", mock_run)
 
     mcp_module.run_server("stdio")
 
@@ -215,7 +215,7 @@ def test_run_server_uses_stdio_transport_and_runtime_host_port(monkeypatch) -> N
 def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run(*, transport: str) -> None:
+    def mock_run(*, transport: str) -> None:
         captured["transport"] = transport
 
     monkeypatch.setattr(
@@ -223,7 +223,7 @@ def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
         "get_settings",
         lambda: Settings(mcp_host="127.0.0.1", mcp_port=8010),
     )
-    monkeypatch.setattr(mcp_module.mcp, "run", fake_run)
+    monkeypatch.setattr(mcp_module.mcp, "run", mock_run)
 
     mcp_module.run_server("streamable-http")
 
@@ -238,7 +238,7 @@ def test_mcp_registers_both_public_tools() -> None:
 
 
 def test_call_tool_runs_minimal_stdio_path(monkeypatch) -> None:
-    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: FakeSearchService())
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: MockSearchService())
 
     payload = _call_tool("policy_search", {"query": "background cleanup", "top_k": 1})
     result = _search_payload(payload)
@@ -248,7 +248,7 @@ def test_call_tool_runs_minimal_stdio_path(monkeypatch) -> None:
 
 
 def test_policy_search_closes_service_after_tool_call(monkeypatch) -> None:
-    service = FakeSearchService()
+    service = MockSearchService()
     monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
 
     payload = mcp_module.policy_search(query="background cleanup", top_k=1)
@@ -259,7 +259,7 @@ def test_policy_search_closes_service_after_tool_call(monkeypatch) -> None:
 
 
 def test_policy_preflight_closes_service_when_tool_raises(monkeypatch) -> None:
-    class FailingPreflightService(FakePreflightService):
+    class FailingPreflightService(MockPreflightService):
         def preflight(self, request: PreflightRequest) -> PreflightResult:
             raise MissingIndexError("Run `policynim ingest` first.")
 

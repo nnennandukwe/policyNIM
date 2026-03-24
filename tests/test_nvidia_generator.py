@@ -11,7 +11,7 @@ from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
 
 
-class FakeChatCompletions:
+class MockChatCompletions:
     """Deterministic chat client stub."""
 
     def __init__(self, content: str) -> None:
@@ -29,15 +29,15 @@ class FakeChatCompletions:
         )
 
 
-class FakeOpenAIClient:
+class MockOpenAIClient:
     """OpenAI client stub with the minimum chat surface."""
 
     def __init__(self, content: str) -> None:
-        self.chat = SimpleNamespace(completions=FakeChatCompletions(content))
+        self.chat = SimpleNamespace(completions=MockChatCompletions(content))
 
 
 def test_generator_parses_json_and_keeps_chunk_ids_only() -> None:
-    client = FakeOpenAIClient(
+    client = MockOpenAIClient(
         """
         {
           "summary": "Use explicit request ids in logs.",
@@ -59,7 +59,7 @@ def test_generator_parses_json_and_keeps_chunk_ids_only() -> None:
     )
     generator = NVIDIAGenerator(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1",
         timeout_seconds=1,
         max_retries=0,
@@ -80,11 +80,11 @@ def test_generator_parses_json_and_keeps_chunk_ids_only() -> None:
 def test_generator_rejects_invalid_json() -> None:
     generator = NVIDIAGenerator(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1",
         timeout_seconds=1,
         max_retries=0,
-        client=FakeOpenAIClient("not json"),  # type: ignore[arg-type]
+        client=MockOpenAIClient("not json"),  # type: ignore[arg-type]
     )
 
     with pytest.raises(ProviderError, match="invalid JSON"):
@@ -94,11 +94,11 @@ def test_generator_rejects_invalid_json() -> None:
 def test_generator_extracts_json_from_reasoning_wrappers() -> None:
     generator = NVIDIAGenerator(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1",
         timeout_seconds=1,
         max_retries=0,
-        client=FakeOpenAIClient(
+        client=MockOpenAIClient(
             '<think>reasoning</think>{"summary":"ok","citation_ids":["BACKEND-1"]}'
         ),  # type: ignore[arg-type]
     )
@@ -113,7 +113,7 @@ def test_generator_requires_api_key() -> None:
     with pytest.raises(ConfigurationError, match="NVIDIA_API_KEY"):
         NVIDIAGenerator(
             api_key="   ",
-            model="fake-model",
+            model="mock-model",
             base_url="https://example.invalid/v1",
             timeout_seconds=1,
             max_retries=0,

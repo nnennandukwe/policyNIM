@@ -14,7 +14,7 @@ from policynim.settings import Settings
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-class FakeIndexStore:
+class MockIndexStore:
     """Lightweight store used to validate factory wiring."""
 
     def __init__(self, *, uri: Path, table_name: str) -> None:
@@ -53,9 +53,9 @@ import policynim.services.preflight
 
 
 def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
-    fake_embedder = object()
-    monkeypatch.setattr(ingest_module, "_create_default_embedder", lambda settings: fake_embedder)
-    monkeypatch.setattr(ingest_module, "LanceDBIndexStore", FakeIndexStore)
+    mock_embedder = object()
+    monkeypatch.setattr(ingest_module, "_create_default_embedder", lambda settings: mock_embedder)
+    monkeypatch.setattr(ingest_module, "LanceDBIndexStore", MockIndexStore)
 
     settings = Settings(
         corpus_dir=tmp_path / "policies",
@@ -65,8 +65,8 @@ def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: 
 
     service = ingest_module.create_ingest_service(settings)
 
-    assert service._embedder is fake_embedder
-    assert isinstance(service._index_store, FakeIndexStore)
+    assert service._embedder is mock_embedder
+    assert isinstance(service._index_store, MockIndexStore)
     assert service._index_store.uri == (tmp_path / "ingest-index").resolve(strict=False)
     assert service._index_store.table_name == settings.lancedb_table
     assert service._corpus_root == (tmp_path / "policies").resolve(strict=False)
@@ -74,22 +74,22 @@ def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: 
 
 
 def test_create_search_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
-    fake_embedder = object()
-    fake_reranker = object()
+    mock_embedder = object()
+    mock_reranker = object()
     monkeypatch.setattr(
         search_module,
         "_create_default_search_components",
-        lambda settings: (fake_embedder, fake_reranker),
+        lambda settings: (mock_embedder, mock_reranker),
     )
-    monkeypatch.setattr(search_module, "LanceDBIndexStore", FakeIndexStore)
+    monkeypatch.setattr(search_module, "LanceDBIndexStore", MockIndexStore)
 
     settings = Settings(lancedb_uri=tmp_path / "search-index")
 
     service = search_module.create_search_service(settings)
 
-    assert service._embedder is fake_embedder
-    assert service._reranker is fake_reranker
-    assert isinstance(service._index_store, FakeIndexStore)
+    assert service._embedder is mock_embedder
+    assert service._reranker is mock_reranker
+    assert isinstance(service._index_store, MockIndexStore)
     assert service._index_store.uri == (tmp_path / "search-index").resolve(strict=False)
     assert service._index_store.table_name == settings.lancedb_table
 
@@ -98,23 +98,23 @@ def test_create_preflight_service_builds_default_components(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    fake_embedder = object()
-    fake_reranker = object()
-    fake_generator = object()
+    mock_embedder = object()
+    mock_reranker = object()
+    mock_generator = object()
     monkeypatch.setattr(
         preflight_module,
         "_create_default_preflight_components",
-        lambda settings: (fake_embedder, fake_reranker, fake_generator),
+        lambda settings: (mock_embedder, mock_reranker, mock_generator),
     )
-    monkeypatch.setattr(preflight_module, "LanceDBIndexStore", FakeIndexStore)
+    monkeypatch.setattr(preflight_module, "LanceDBIndexStore", MockIndexStore)
 
     settings = Settings(lancedb_uri=tmp_path / "preflight-index")
 
     service = preflight_module.create_preflight_service(settings)
 
-    assert service._embedder is fake_embedder
-    assert service._reranker is fake_reranker
-    assert service._generator is fake_generator
-    assert isinstance(service._index_store, FakeIndexStore)
+    assert service._embedder is mock_embedder
+    assert service._reranker is mock_reranker
+    assert service._generator is mock_generator
+    assert isinstance(service._index_store, MockIndexStore)
     assert service._index_store.uri == (tmp_path / "preflight-index").resolve(strict=False)
     assert service._index_store.table_name == settings.lancedb_table

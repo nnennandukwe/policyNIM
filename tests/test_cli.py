@@ -24,7 +24,7 @@ from policynim.types import (
 runner = CliRunner()
 
 
-class FakeIngestService:
+class MockIngestService:
     """Static ingest service for CLI tests."""
 
     def run(self) -> IngestResult:
@@ -32,14 +32,14 @@ class FakeIngestService:
             corpus_path="policies",
             index_uri="data/lancedb",
             table_name="policy_chunks",
-            embedding_model="fake-model",
+            embedding_model="mock-model",
             document_count=8,
             chunk_count=24,
             embedding_dimension=2,
         )
 
 
-class FakeSearchService:
+class MockSearchService:
     """Static search service for CLI tests."""
 
     def search(self, request: SearchRequest) -> SearchResult:
@@ -66,7 +66,7 @@ class FakeSearchService:
         )
 
 
-class FakePreflightService:
+class MockPreflightService:
     """Static preflight service for CLI tests."""
 
     def __init__(self) -> None:
@@ -109,7 +109,7 @@ class FakePreflightService:
         self.closed = True
 
 
-class FakeIndexDumpService:
+class MockIndexDumpService:
     """Static dump service for CLI tests."""
 
     def list_chunks(self) -> list[PolicyChunk]:
@@ -133,14 +133,14 @@ class FakeIndexDumpService:
 def test_ingest_command_prints_summary(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_ingest_service",
-        lambda settings: FakeIngestService(),
+        lambda settings: MockIngestService(),
     )
 
     result = runner.invoke(app, ["ingest"])
 
     assert result.exit_code == 0
     assert "Indexed 24 chunks from 8 documents." in result.stdout
-    assert "fake-model" in result.stdout
+    assert "mock-model" in result.stdout
 
 
 def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
@@ -158,7 +158,7 @@ def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
 def test_search_command_prints_json(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_search_service",
-        lambda settings: FakeSearchService(),
+        lambda settings: MockSearchService(),
     )
 
     result = runner.invoke(app, ["search", "--query", "backend logs", "--top-k", "3"])
@@ -171,7 +171,7 @@ def test_search_command_prints_json(monkeypatch) -> None:
 
 
 def test_preflight_command_prints_json(monkeypatch) -> None:
-    service = FakePreflightService()
+    service = MockPreflightService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_preflight_service",
         lambda settings: service,
@@ -193,7 +193,7 @@ def test_preflight_command_prints_json(monkeypatch) -> None:
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
-        lambda settings: FakeIndexDumpService(),
+        lambda settings: MockIndexDumpService(),
     )
 
     result = runner.invoke(app, ["dump-index"])
@@ -265,7 +265,7 @@ def test_preflight_command_surfaces_configuration_errors(monkeypatch) -> None:
 
 
 def test_preflight_command_closes_service_when_it_errors(monkeypatch) -> None:
-    class FailingPreflightService(FakePreflightService):
+    class FailingPreflightService(MockPreflightService):
         def preflight(self, request) -> PreflightResult:
             raise MissingIndexError("Run `policynim ingest` first.")
 

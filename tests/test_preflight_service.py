@@ -23,7 +23,7 @@ from policynim.types import (
 )
 
 
-class FakeEmbedder:
+class MockEmbedder:
     """Returns deterministic task embeddings."""
 
     def embed_query(self, text: str) -> list[float]:
@@ -38,7 +38,7 @@ class FakeEmbedder:
         return [[1.0, 0.0] for _ in texts]
 
 
-class FakeIndexStore:
+class MockIndexStore:
     """Returns deterministic dense candidates and records query parameters."""
 
     def __init__(self, chunks: list[ScoredChunk], *, exists: bool = True) -> None:
@@ -76,7 +76,7 @@ class FakeIndexStore:
         return [PolicyChunk(**chunk.model_dump(exclude={"score"})) for chunk in self._chunks]
 
 
-class FakeReranker:
+class MockReranker:
     """Preserves candidate order unless a custom ranking is provided."""
 
     def __init__(
@@ -113,7 +113,7 @@ class FakeReranker:
         self.closed = True
 
 
-class FakeGenerator:
+class MockGenerator:
     """Returns a deterministic grounded draft and records its context."""
 
     def __init__(self, draft: GeneratedPreflightDraft) -> None:
@@ -150,8 +150,8 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
         filename="tokens.md",
         text="Never log token values.",
     )
-    store = FakeIndexStore([backend, security])
-    reranker = FakeReranker(order=["BACKEND-1", "SECURITY-1"])
+    store = MockIndexStore([backend, security])
+    reranker = MockReranker(order=["BACKEND-1", "SECURITY-1"])
     draft = GeneratedPreflightDraft(
         summary="Use request ids and avoid token leakage.",
         applicable_policies=[
@@ -173,9 +173,9 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
         tests_required=["Add unit tests for token redaction."],
         citation_ids=["BACKEND-1", "SECURITY-1"],
     )
-    generator = FakeGenerator(draft)
+    generator = MockGenerator(draft)
     service = PreflightService(
-        embedder=FakeEmbedder(),
+        embedder=MockEmbedder(),
         index_store=store,
         reranker=reranker,
         generator=generator,
@@ -224,7 +224,7 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
 
 
 def test_preflight_service_caps_retained_chunks_per_policy() -> None:
-    store = FakeIndexStore(
+    store = MockIndexStore(
         [
             make_chunk(
                 chunk_id="BACKEND-1",
@@ -252,7 +252,7 @@ def test_preflight_service_caps_retained_chunks_per_policy() -> None:
             ),
         ]
     )
-    reranker = FakeReranker(order=["BACKEND-1", "BACKEND-2", "BACKEND-3", "SECURITY-1"])
+    reranker = MockReranker(order=["BACKEND-1", "BACKEND-2", "BACKEND-3", "SECURITY-1"])
     draft = GeneratedPreflightDraft(
         summary="Keep the top ranked policy evidence.",
         applicable_policies=[
@@ -271,9 +271,9 @@ def test_preflight_service_caps_retained_chunks_per_policy() -> None:
         ],
         citation_ids=["BACKEND-1", "BACKEND-2", "SECURITY-1"],
     )
-    generator = FakeGenerator(draft)
+    generator = MockGenerator(draft)
     service = PreflightService(
-        embedder=FakeEmbedder(),
+        embedder=MockEmbedder(),
         index_store=store,
         reranker=reranker,
         generator=generator,
@@ -295,7 +295,7 @@ def test_preflight_service_caps_retained_chunks_per_policy() -> None:
 
 
 def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids() -> None:
-    store = FakeIndexStore(
+    store = MockIndexStore(
         [
             make_chunk(
                 chunk_id="BACKEND-1",
@@ -305,16 +305,16 @@ def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids() ->
             )
         ]
     )
-    generator = FakeGenerator(
+    generator = MockGenerator(
         GeneratedPreflightDraft(
             summary="Unknown citations should fail closed.",
             citation_ids=["UNKNOWN"],
         )
     )
     service = PreflightService(
-        embedder=FakeEmbedder(),
+        embedder=MockEmbedder(),
         index_store=store,
-        reranker=FakeReranker(),
+        reranker=MockReranker(),
         generator=generator,
     )
 
@@ -326,7 +326,7 @@ def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids() ->
 
 
 def test_preflight_service_marks_insufficient_context_when_generator_cites_nothing() -> None:
-    store = FakeIndexStore(
+    store = MockIndexStore(
         [
             make_chunk(
                 chunk_id="BACKEND-1",
@@ -336,7 +336,7 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
             )
         ]
     )
-    generator = FakeGenerator(
+    generator = MockGenerator(
         GeneratedPreflightDraft(
             summary="No surviving citations should fail closed.",
             applicable_policies=[
@@ -352,9 +352,9 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
         )
     )
     service = PreflightService(
-        embedder=FakeEmbedder(),
+        embedder=MockEmbedder(),
         index_store=store,
-        reranker=FakeReranker(),
+        reranker=MockReranker(),
         generator=generator,
     )
 
@@ -366,12 +366,12 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
 
 
 def test_preflight_service_requires_existing_index() -> None:
-    store = FakeIndexStore([], exists=False)
+    store = MockIndexStore([], exists=False)
     service = PreflightService(
-        embedder=FakeEmbedder(),
+        embedder=MockEmbedder(),
         index_store=store,
-        reranker=FakeReranker(),
-        generator=FakeGenerator(GeneratedPreflightDraft(summary="unused")),
+        reranker=MockReranker(),
+        generator=MockGenerator(GeneratedPreflightDraft(summary="unused")),
     )
 
     with pytest.raises(MissingIndexError):
@@ -379,11 +379,11 @@ def test_preflight_service_requires_existing_index() -> None:
 
 
 def test_preflight_service_close_closes_owned_components() -> None:
-    reranker = FakeReranker()
-    generator = FakeGenerator(GeneratedPreflightDraft(summary="unused"))
+    reranker = MockReranker()
+    generator = MockGenerator(GeneratedPreflightDraft(summary="unused"))
     service = PreflightService(
-        embedder=FakeEmbedder(),
-        index_store=FakeIndexStore(
+        embedder=MockEmbedder(),
+        index_store=MockIndexStore(
             [make_chunk(chunk_id="BACKEND-1", policy_id="BACKEND-1", domain="backend", score=0.9)]
         ),
         reranker=reranker,
