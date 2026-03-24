@@ -11,6 +11,7 @@ import re
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol, cast
 
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.types import DocumentSection, ParsedDocument, PolicyChunk
@@ -36,6 +37,10 @@ class _HeadingEvent:
 class _FenceState:
     marker: str
     length: int
+
+
+class _SectionExtractor(Protocol):
+    def extract_sections(self, document: ParsedDocument) -> list[DocumentSection]: ...
 
 
 def chunk_policy_documents(
@@ -100,7 +105,7 @@ def _extract_sections(
     if parser is not None:
         extract_sections = getattr(parser, "extract_sections", None)
         if callable(extract_sections):
-            sections = extract_sections(document)
+            sections = cast(_SectionExtractor, parser).extract_sections(document)
             if sections:
                 return sections
 

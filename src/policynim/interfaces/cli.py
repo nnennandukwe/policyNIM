@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 
 import typer
 
@@ -157,7 +157,7 @@ def main() -> None:
     app()
 
 
-def _exit_with_error(message: str) -> None:
+def _exit_with_error(message: str) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
 

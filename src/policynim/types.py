@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MIN_TOP_K = 1
 MAX_TOP_K = 20
+DEFAULT_TOP_K = 5
+TopK = Annotated[int, Field(ge=MIN_TOP_K, le=MAX_TOP_K)]
 
 
 class StrictModel(BaseModel):
@@ -60,6 +64,13 @@ class DocumentSection(StrictModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
 
+    @model_validator(mode="after")
+    def validate_line_range(self) -> Self:
+        """Prevent impossible source line spans."""
+        if self.end_line < self.start_line:
+            raise ValueError("end_line must be greater than or equal to start_line.")
+        return self
+
 
 class ScoredChunk(PolicyChunk):
     """Represents a retrieved chunk with an attached score."""
@@ -83,7 +94,7 @@ class SearchRequest(StrictModel):
 
     query: str
     domain: str | None = None
-    top_k: int = Field(default=5, ge=MIN_TOP_K, le=MAX_TOP_K)
+    top_k: TopK = DEFAULT_TOP_K
 
 
 class SearchResult(StrictModel):
@@ -131,7 +142,7 @@ class PreflightRequest(StrictModel):
 
     task: str
     domain: str | None = None
-    top_k: int = Field(default=5, ge=MIN_TOP_K, le=MAX_TOP_K)
+    top_k: TopK = DEFAULT_TOP_K
 
 
 class GeneratedPreflightDraft(StrictModel):

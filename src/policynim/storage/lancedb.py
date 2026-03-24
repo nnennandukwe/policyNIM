@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import lancedb
 
@@ -19,7 +20,8 @@ class LanceDBIndexStore(IndexStore):
         self._uri = uri
         self._table_name = table_name
         self._uri.mkdir(parents=True, exist_ok=True)
-        self._db = lancedb.connect(self._uri.as_posix())
+        connect = cast(Any, getattr(lancedb, "connect"))
+        self._db = connect(self._uri.as_posix())
 
     @property
     def uri(self) -> Path:
@@ -61,7 +63,7 @@ class LanceDBIndexStore(IndexStore):
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without vectors."""
         table = self._require_table()
-        rows = table.to_arrow().to_pylist()
+        rows = cast(list[dict[str, object]], table.to_arrow().to_pylist())
         return [self._policy_chunk_from_row(row) for row in rows]
 
     def search(
@@ -77,10 +79,10 @@ class LanceDBIndexStore(IndexStore):
         if domain:
             query = query.where(f"domain = {_quote_sql_string(domain)}")
 
-        rows = query.limit(top_k).to_list()
+        rows = cast(list[dict[str, object]], query.limit(top_k).to_list())
         return [self._chunk_from_row(row) for row in rows]
 
-    def _require_table(self):
+    def _require_table(self) -> Any:
         if not self.exists():
             raise MissingIndexError(
                 f"Local index table {self._table_name!r} does not exist at {self._uri}."
@@ -111,7 +113,7 @@ class LanceDBIndexStore(IndexStore):
 
     def _chunk_from_row(self, row: dict[str, object]) -> ScoredChunk:
         metadata = self._policy_metadata_from_row(row)
-        distance = float(row.get("_distance", 0.0))
+        distance = _float_value(row.get("_distance"), default=0.0)
         score = max(0.0, 1.0 - distance)
 
         return ScoredChunk(
@@ -140,8 +142,8 @@ class LanceDBIndexStore(IndexStore):
             title=str(row["title"]),
             doc_type=str(row["doc_type"]),
             domain=str(row["domain"]),
-            tags=[str(tag) for tag in row.get("tags", [])],
-            grounded_in=[str(item) for item in row.get("grounded_in", [])],
+            tags=_string_list(row.get("tags")),
+            grounded_in=_string_list(row.get("grounded_in")),
         )
 
 
@@ -158,3 +160,29 @@ def _validate_vector_dimensions(chunks: Sequence[EmbeddedChunk]) -> None:
 
 def _quote_sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        values: list[str] = []
+        for item in value:
+            cleaned = str(item).strip()
+            if cleaned:
+                values.append(cleaned)
+        return values
+    cleaned = str(value).strip()
+    return [cleaned] if cleaned else []
+
+
+def _float_value(value: object, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return default

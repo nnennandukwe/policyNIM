@@ -33,11 +33,12 @@ def load_policy_documents(
 ) -> list[ParsedDocument]:
     """Load and normalize every policy document under the corpus root."""
     active_parser = parser or MarkdownParser()
+    root_path = Path(root)
     documents: list[ParsedDocument] = []
     seen_policy_ids: dict[str, str] = {}
 
-    for path in discover_policy_paths(root):
-        source_path = _repo_relative_path(path, root)
+    for path in discover_policy_paths(root_path):
+        source_path = _repo_relative_path(path, root_path)
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:

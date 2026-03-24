@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from pathlib import PurePosixPath
-from typing import Protocol
+from typing import Protocol, TypedDict
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
@@ -19,9 +19,17 @@ class DocumentParser(Protocol):
 
     def parse(self, source_path: str, text: str) -> ParsedDocument:
         """Normalize one source file into a parsed document."""
+        ...
 
     def extract_sections(self, document: ParsedDocument) -> list[DocumentSection]:
         """Extract heading-aware sections from a parsed document."""
+        ...
+
+
+class _HeadingToken(TypedDict):
+    level: int
+    title: str
+    start_line: int
 
 
 class MarkdownParser:
@@ -192,9 +200,9 @@ def _collect_heading_titles(tokens: Sequence[Token]) -> list[tuple[int, str]]:
     ]
 
 
-def _collect_heading_tokens(tokens: Sequence[Token]) -> list[dict[str, int | str]]:
+def _collect_heading_tokens(tokens: Sequence[Token]) -> list[_HeadingToken]:
     """Collect heading token metadata in document order."""
-    headings: list[dict[str, int | str]] = []
+    headings: list[_HeadingToken] = []
 
     for index, token in enumerate(tokens):
         if token.type != "heading_open" or token.map is None:
