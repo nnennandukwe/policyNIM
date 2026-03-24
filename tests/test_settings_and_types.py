@@ -11,11 +11,13 @@ from policynim.types import DocumentSection
 
 def test_settings_reads_prefixed_env_and_nvidia_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICYNIM_DEFAULT_TOP_K", "7")
+    monkeypatch.setenv("POLICYNIM_ENV", "staging")
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
 
     settings = Settings()
 
     assert settings.default_top_k == 7
+    assert settings.policynim_env == "staging"
     assert settings.nvidia_api_key == "test-key"
 
 

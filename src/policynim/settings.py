@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """Validated environment-backed settings."""
 
     nvidia_api_key: str | None = Field(default=None, validation_alias="NVIDIA_API_KEY")
-    policynim_env: str = "development"
+    policynim_env: str = Field(default="development", validation_alias="POLICYNIM_ENV")
     corpus_dir: Path | None = None
     lancedb_uri: Path = Path("data/lancedb")
     lancedb_table: str = "policy_chunks"
