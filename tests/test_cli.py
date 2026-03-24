@@ -462,3 +462,17 @@ def test_preflight_command_closes_service_when_it_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert service.closed is True
+
+
+def test_mcp_command_surfaces_streamable_http_port_conflicts(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.run_server",
+        lambda transport: (_ for _ in ()).throw(
+            ConfigurationError("Could not start streamable-http MCP server on 127.0.0.1:8000.")
+        ),
+    )
+
+    result = runner.invoke(app, ["mcp", "--transport", "streamable-http"])
+
+    assert result.exit_code == 1
+    assert "streamable-http MCP server" in result.stderr

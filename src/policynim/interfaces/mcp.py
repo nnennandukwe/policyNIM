@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import socket
+
 from mcp.server.fastmcp import FastMCP
 
+from policynim.errors import ConfigurationError
 from policynim.services import create_preflight_service, create_search_service
 from policynim.settings import get_settings
 from policynim.types import MAX_TOP_K, MIN_TOP_K, PreflightRequest, SearchRequest
@@ -30,6 +34,30 @@ def _close_service(service: object | None) -> None:
     close = getattr(service, "close", None)
     if callable(close):
         close()
+
+
+def _streamable_http_port_in_use_message(host: str, port: int) -> str:
+    """Return a concrete recovery message for MCP port collisions."""
+    return (
+        f"Could not start streamable-http MCP server on {host}:{port} "
+        "because the port is already in use. "
+        "Stop the conflicting process or set `POLICYNIM_MCP_PORT` to another open port. "
+        "If the eval UI is also running, check `POLICYNIM_EVAL_UI_PORT` as well."
+    )
+
+
+def _ensure_streamable_http_port_available(host: str, port: int) -> None:
+    """Fail early with a clear error when the HTTP MCP port is already occupied."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise ConfigurationError(_streamable_http_port_in_use_message(host, port)) from exc
+        raise ConfigurationError(
+            f"Could not reserve streamable-http MCP server port {host}:{port}: {exc}."
+        ) from exc
 
 
 @mcp.tool(name="policy_preflight")
@@ -72,7 +100,16 @@ def run_server(transport: str = "stdio") -> None:
     settings = get_settings()
     mcp.settings.host = settings.mcp_host
     mcp.settings.port = settings.mcp_port
-    mcp.run(transport=transport)
+    if transport == "streamable-http":
+        _ensure_streamable_http_port_available(settings.mcp_host, settings.mcp_port)
+    try:
+        mcp.run(transport=transport)
+    except OSError as exc:
+        if transport == "streamable-http" and exc.errno == errno.EADDRINUSE:
+            raise ConfigurationError(
+                _streamable_http_port_in_use_message(settings.mcp_host, settings.mcp_port)
+            ) from exc
+        raise
 
 
 if __name__ == "__main__":
