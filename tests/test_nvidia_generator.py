@@ -109,6 +109,36 @@ def test_generator_extracts_json_from_reasoning_wrappers() -> None:
     assert result.citation_ids == ["BACKEND-1"]
 
 
+def test_generator_rejects_json_missing_required_summary() -> None:
+    generator = NVIDIAGenerator(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=MockOpenAIClient('{"citation_ids":["BACKEND-1"]}'),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderError, match="malformed JSON"):
+        generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+
+def test_generator_rejects_json_with_invalid_citation_shape() -> None:
+    generator = NVIDIAGenerator(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=MockOpenAIClient(
+            '{"summary":"ok","citation_ids":"BACKEND-1","applicable_policies":[]}'
+        ),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderError, match="malformed JSON"):
+        generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+
 def test_generator_requires_api_key() -> None:
     with pytest.raises(ConfigurationError, match="NVIDIA_API_KEY"):
         NVIDIAGenerator(

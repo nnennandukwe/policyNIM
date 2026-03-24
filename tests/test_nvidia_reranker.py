@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
+from policynim.errors import ProviderError
 from policynim.providers.nvidia import NVIDIAReranker
 from policynim.types import PolicyMetadata, ScoredChunk
 
@@ -168,6 +170,34 @@ def test_reranker_context_manager_closes_owned_client(monkeypatch) -> None:
 
     assert len(created_clients) == 1
     assert created_clients[0].closed
+
+
+def test_reranker_rejects_score_count_mismatch() -> None:
+    reranker = NVIDIAReranker(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+        client=SpyRerankClient({"scores": [0.5]}),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderError, match="response count did not match"):
+        reranker.rerank("request ids", [make_chunk("A"), make_chunk("B")], top_k=2)
+
+
+def test_reranker_rejects_rows_without_numeric_scores() -> None:
+    reranker = NVIDIAReranker(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+        client=SpyRerankClient({"results": [{"index": 0, "label": "bad"}]}),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderError, match="numeric score"):
+        reranker.rerank("request ids", [make_chunk("A")], top_k=1)
 
 
 def make_chunk(chunk_id: str) -> ScoredChunk:

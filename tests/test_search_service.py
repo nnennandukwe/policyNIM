@@ -173,6 +173,31 @@ def test_search_service_marks_insufficient_context_after_reranking() -> None:
     assert result.insufficient_context
 
 
+def test_search_service_returns_dense_hits_when_reranking_is_disabled() -> None:
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-2",
+                domain="backend",
+                score=0.71,
+                text="Use request ids in backend logs.",
+            ),
+            make_chunk(
+                chunk_id="BACKEND-1",
+                domain="backend",
+                score=0.95,
+                text="Log request ids before writing events.",
+            ),
+        ]
+    )
+    service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=None)
+
+    result = service.search(SearchRequest(query="backend logs", top_k=2))
+
+    assert [hit.chunk_id for hit in result.hits] == ["BACKEND-2", "BACKEND-1"]
+    assert not result.insufficient_context
+
+
 def test_search_service_sets_insufficient_context_when_index_has_no_matches() -> None:
     store = MockIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")])
     service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=MockReranker())

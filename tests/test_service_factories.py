@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import policynim.services.eval as eval_module
 import policynim.services.ingest as ingest_module
 import policynim.services.preflight as preflight_module
 import policynim.services.search as search_module
@@ -39,6 +40,7 @@ sys.meta_path.insert(0, BlockProviders())
 
 import policynim.services
 import policynim.services.ingest
+import policynim.services.eval
 import policynim.services.search
 import policynim.services.preflight
 """
@@ -118,3 +120,11 @@ def test_create_preflight_service_builds_default_components(
     assert isinstance(service._index_store, MockIndexStore)
     assert service._index_store.uri == (tmp_path / "preflight-index").resolve(strict=False)
     assert service._index_store.table_name == settings.lancedb_table
+
+
+def test_create_eval_service_uses_runtime_workspace_path(tmp_path: Path) -> None:
+    settings = Settings(eval_workspace_dir=tmp_path / "eval-workspace")
+
+    service = eval_module.create_eval_service(settings)
+
+    assert service.workspace_path == (tmp_path / "eval-workspace").resolve(strict=False)

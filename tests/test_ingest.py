@@ -227,6 +227,63 @@ def test_inline_lists_allow_escaped_quotes(tmp_path: Path) -> None:
     assert document.metadata.tags == ['say "hello"', "plain"]
 
 
+def test_blank_sections_keep_stable_line_spans_until_next_heading(tmp_path: Path) -> None:
+    write_policy(
+        tmp_path / "policies" / "backend" / "blank-section.md",
+        """
+        # Root
+
+        ## Empty Rules
+
+        ### Filled Rules
+
+        Keep the last section anchored to the end of the document.
+        """,
+    )
+
+    document = load_policy_documents(tmp_path / "policies")[0]
+    chunks = chunk_policy_document(document)
+
+    assert [chunk.section for chunk in chunks] == [
+        "Root",
+        "Root > Empty Rules",
+        "Root > Empty Rules > Filled Rules",
+    ]
+    assert [chunk.lines for chunk in chunks] == ["1-2", "3-4", "5-7"]
+
+
+def test_duplicate_nested_heading_paths_get_numeric_chunk_suffixes(tmp_path: Path) -> None:
+    write_policy(
+        tmp_path / "policies" / "backend" / "nested-duplicates.md",
+        """
+        # Root
+
+        ## API
+
+        ### Rules
+
+        Keep request ids.
+
+        ## API
+
+        ### Rules
+
+        Preserve idempotency.
+        """,
+    )
+
+    document = load_policy_documents(tmp_path / "policies")[0]
+    chunks = chunk_policy_document(document)
+
+    assert [chunk.chunk_id for chunk in chunks] == [
+        "BACKEND-NESTED-DUPLICATES:root",
+        "BACKEND-NESTED-DUPLICATES:root__api",
+        "BACKEND-NESTED-DUPLICATES:root__api__rules",
+        "BACKEND-NESTED-DUPLICATES:root__api-2",
+        "BACKEND-NESTED-DUPLICATES:root__api__rules-2",
+    ]
+
+
 def test_shipped_policy_docs_yield_non_empty_chunks() -> None:
     documents = load_policy_documents(POLICIES_DIR)
     chunks = chunk_policy_documents(documents)
