@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -169,3 +169,109 @@ class PreflightResult(StrictModel):
     tests_required: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     insufficient_context: bool = False
+
+
+EvalKind = Literal["search", "preflight"]
+EvalExecutionMode = Literal["offline", "live"]
+
+
+class EvalCase(StrictModel):
+    """One gold eval case for search or grounded preflight."""
+
+    case_id: str
+    kind: EvalKind
+    input: str
+    domain: str | None = None
+    top_k: TopK = DEFAULT_TOP_K
+    expected_insufficient_context: bool = False
+    expected_chunk_ids: list[str] = Field(default_factory=list)
+    expected_policy_ids: list[str] = Field(default_factory=list)
+
+
+class EvalSuite(StrictModel):
+    """Named bundle of eval cases."""
+
+    name: str
+    cases: list[EvalCase] = Field(default_factory=list)
+
+
+class EvalCaseMetrics(StrictModel):
+    """Per-case scoring metrics."""
+
+    expected_chunk_recall: float = Field(default=0.0, ge=0.0, le=1.0)
+    expected_policy_recall: float = Field(default=0.0, ge=0.0, le=1.0)
+    insufficient_context_correct: bool = False
+
+
+class EvalCaseResult(StrictModel):
+    """Scored result for one eval case under a specific rerank mode."""
+
+    case_id: str
+    kind: EvalKind
+    input: str
+    domain: str | None = None
+    top_k: int
+    rerank_enabled: bool
+    passed: bool
+    failure_reasons: list[str] = Field(default_factory=list)
+    expected_insufficient_context: bool
+    actual_insufficient_context: bool
+    expected_chunk_ids: list[str] = Field(default_factory=list)
+    actual_chunk_ids: list[str] = Field(default_factory=list)
+    matched_chunk_ids: list[str] = Field(default_factory=list)
+    expected_policy_ids: list[str] = Field(default_factory=list)
+    actual_policy_ids: list[str] = Field(default_factory=list)
+    matched_policy_ids: list[str] = Field(default_factory=list)
+    actual_summary: str | None = None
+    metrics: EvalCaseMetrics
+
+
+class EvalAggregateMetrics(StrictModel):
+    """Aggregate metrics for one rerank mode run."""
+
+    case_count: int = Field(ge=0)
+    passed_count: int = Field(ge=0)
+    search_case_count: int = Field(ge=0)
+    search_passed_count: int = Field(ge=0)
+    preflight_case_count: int = Field(ge=0)
+    preflight_passed_count: int = Field(ge=0)
+    overall_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    search_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    preflight_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    expected_chunk_recall: float = Field(default=0.0, ge=0.0, le=1.0)
+    expected_policy_recall: float = Field(default=0.0, ge=0.0, le=1.0)
+    insufficient_context_accuracy: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class EvalModeRunResult(StrictModel):
+    """All eval results for one rerank mode."""
+
+    rerank_enabled: bool
+    metrics: EvalAggregateMetrics
+    result_json_path: str
+    report_html_path: str
+    case_results: list[EvalCaseResult] = Field(default_factory=list)
+
+
+class EvalComparisonDelta(StrictModel):
+    """Comparison summary between rerank on and off runs."""
+
+    overall_pass_rate_delta: float = 0.0
+    expected_chunk_recall_delta: float = 0.0
+    expected_policy_recall_delta: float = 0.0
+    insufficient_context_accuracy_delta: float = 0.0
+    improved_case_ids: list[str] = Field(default_factory=list)
+    regressed_case_ids: list[str] = Field(default_factory=list)
+    unchanged_case_ids: list[str] = Field(default_factory=list)
+
+
+class EvalRunResult(StrictModel):
+    """Top-level eval command result."""
+
+    mode: EvalExecutionMode
+    suite_name: str
+    suite_path: str
+    workspace_path: str
+    compare_rerank: bool = True
+    runs: list[EvalModeRunResult] = Field(default_factory=list)
+    comparison: EvalComparisonDelta | None = None

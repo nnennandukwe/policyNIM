@@ -1,0 +1,61 @@
+{
+  "name": "day-6-default",
+  "cases": [
+    {
+      "case_id": "search-backend-logging",
+      "kind": "search",
+      "input": "request ids in backend logs",
+      "domain": "backend",
+      "top_k": 1,
+      "expected_insufficient_context": false,
+      "expected_chunk_ids": ["BACKEND-LOG-1"],
+      "expected_policy_ids": []
+    },
+    {
+      "case_id": "search-refresh-token-cleanup",
+      "kind": "search",
+      "input": "refresh token cleanup background job",
+      "top_k": 2,
+      "expected_insufficient_context": false,
+      "expected_chunk_ids": ["BACKGROUND-JOB-1", "SECURITY-TOKEN-1"],
+      "expected_policy_ids": []
+    },
+    {
+      "case_id": "search-no-answer",
+      "kind": "search",
+      "input": "graphql federation schema ownership",
+      "top_k": 2,
+      "expected_insufficient_context": true,
+      "expected_chunk_ids": [],
+      "expected_policy_ids": []
+    },
+    {
+      "case_id": "preflight-refresh-token-cleanup",
+      "kind": "preflight",
+      "input": "Implement a refresh-token cleanup background job",
+      "top_k": 2,
+      "expected_insufficient_context": false,
+      "expected_chunk_ids": ["BACKGROUND-JOB-1", "SECURITY-TOKEN-1"],
+      "expected_policy_ids": ["BACKGROUND-JOB-001", "SECURITY-TOKEN-001"]
+    },
+    {
+      "case_id": "preflight-backend-logging",
+      "kind": "preflight",
+      "input": "Add request ids to backend logs",
+      "domain": "backend",
+      "top_k": 1,
+      "expected_insufficient_context": false,
+      "expected_chunk_ids": ["BACKEND-LOG-1"],
+      "expected_policy_ids": ["BACKEND-LOG-001"]
+    },
+    {
+      "case_id": "preflight-no-answer",
+      "kind": "preflight",
+      "input": "Implement video transcoding billing exporter",
+      "top_k": 2,
+      "expected_insufficient_context": true,
+      "expected_chunk_ids": [],
+      "expected_policy_ids": []
+    }
+  ]
+}
