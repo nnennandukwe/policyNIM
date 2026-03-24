@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from policynim.errors import PolicyNIMError
 from policynim.services.eval import EvalService
 from policynim.settings import Settings
 from policynim.types import (
@@ -89,9 +92,25 @@ class FakePreflightService:
         return None
 
 
+class FakeProcess:
+    """Subprocess stub with controllable lifecycle."""
+
+    def __init__(self, returncodes: list[int | None] | None = None) -> None:
+        self._returncodes = returncodes or [None]
+        self.terminate_called = False
+
+    def poll(self) -> int | None:
+        if len(self._returncodes) > 1:
+            return self._returncodes.pop(0)
+        return self._returncodes[0]
+
+    def terminate(self) -> None:
+        self.terminate_called = True
+
+
 def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(eval_workspace_dir=tmp_path / "workspace")
-    report_calls: list[dict[str, object]] = []
+    run_names: list[str] = []
 
     monkeypatch.setattr(
         "policynim.services.eval._build_evidently_report",
@@ -99,9 +118,7 @@ def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(
         "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: report_calls.append(
-            {"workspace_path": workspace_path, "run_name": run_name}
-        ),
+        lambda workspace_path, report, run_name: run_names.append(run_name),
     )
 
     result = EvalService(settings=settings).run(mode="offline")
@@ -113,15 +130,17 @@ def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_pat
     assert "search-refresh-token-cleanup" in result.comparison.improved_case_ids
     assert all(Path(run.result_json_path).is_file() for run in result.runs)
     assert all(Path(run.report_html_path).is_file() for run in result.runs)
-    assert len(report_calls) == 2
+    assert len(run_names) == 2
 
 
-def test_eval_service_loads_alternate_suite_path(monkeypatch, tmp_path: Path) -> None:
-    suite_path = tmp_path / "alt-suite.json"
+def test_eval_service_uses_original_suite_name_and_safe_artifact_slug(
+    monkeypatch, tmp_path: Path
+) -> None:
+    suite_path = tmp_path / "default_cases.json"
     suite_path.write_text(
         json.dumps(
             {
-                "name": "alt-suite",
+                "name": "../alt suite\\2026?",
                 "cases": [
                     {
                         "case_id": "search-no-answer",
@@ -137,24 +156,29 @@ def test_eval_service_loads_alternate_suite_path(monkeypatch, tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
+    monkeypatch.setattr("policynim.services.eval.resolve_eval_suite_path", lambda: suite_path)
+    run_names: list[str] = []
     monkeypatch.setattr(
         "policynim.services.eval._build_evidently_report",
         lambda **kwargs: FakeReport(),
     )
     monkeypatch.setattr(
         "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: None,
+        lambda workspace_path, report, run_name: run_names.append(run_name),
     )
 
     result = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace")).run(
         mode="offline",
-        cases_path=suite_path,
         compare_rerank=False,
     )
 
-    assert result.suite_name == "alt-suite"
+    assert result.suite_name == "../alt suite\\2026?"
     assert len(result.runs) == 1
     assert result.runs[0].metrics.case_count == 1
+    assert "../alt suite\\2026?" in run_names[0]
+    assert ".." not in Path(result.runs[0].result_json_path).name
+    assert "/" not in Path(result.runs[0].result_json_path).name
+    assert "\\" not in Path(result.runs[0].result_json_path).name
 
 
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
@@ -187,7 +211,6 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
 
     result = EvalService(settings=settings).run(
         mode="live",
-        cases_path=Path("evals/default_cases.json"),
         compare_rerank=False,
     )
 
@@ -195,3 +218,58 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
     assert seen_paths
     assert seen_paths[0] != settings.lancedb_uri
     assert settings.lancedb_uri == tmp_path / "caller-index"
+
+
+def test_eval_service_start_ui_fails_when_process_exits_early(monkeypatch, tmp_path: Path) -> None:
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
+    process = FakeProcess(returncodes=[1])
+    monkeypatch.setattr(
+        "policynim.services.eval.subprocess.Popen",
+        lambda *args, **kwargs: process,
+    )
+
+    with pytest.raises(PolicyNIMError, match="exited before startup completed"):
+        service.start_ui(port=8015)
+
+    assert (tmp_path / "workspace" / "ui" / "evidently.log").is_file()
+
+
+def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
+    process = FakeProcess(returncodes=[None, None])
+    port_checks = iter([False, True])
+    monkeypatch.setattr(
+        "policynim.services.eval.subprocess.Popen",
+        lambda *args, **kwargs: process,
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._is_local_port_reachable",
+        lambda port: next(port_checks),
+    )
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda seconds: None)
+
+    service.start_ui(port=8016)
+
+    assert process.terminate_called is False
+
+
+def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
+    process = FakeProcess(returncodes=[None, None, None])
+    monotonic_values = iter([0.0, 1.0, 2.0, 6.0])
+    monkeypatch.setattr(
+        "policynim.services.eval.subprocess.Popen",
+        lambda *args, **kwargs: process,
+    )
+    monkeypatch.setattr("policynim.services.eval._is_local_port_reachable", lambda port: False)
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("policynim.services.eval.time.monotonic", lambda: next(monotonic_values))
+
+    with pytest.raises(PolicyNIMError, match="did not become reachable in time"):
+        service.start_ui(port=8017)
+
+    assert process.terminate_called is True

@@ -6,7 +6,7 @@ import json
 
 from typer.testing import CliRunner
 
-from policynim.errors import ConfigurationError, MissingIndexError
+from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.cli import app
 from policynim.types import (
     Citation,
@@ -144,12 +144,12 @@ class MockEvalService:
         self.launch_port: int | None = None
         self.started_ui = False
 
-    def run(self, *, mode, cases_path=None, compare_rerank) -> EvalRunResult:
+    def run(self, *, mode, compare_rerank) -> EvalRunResult:
         passed_count = 2 if self.passed else 1
         return EvalRunResult(
             mode=mode,
             suite_name="day-6-default",
-            suite_path=(cases_path or "evals/default_cases.json").__str__(),
+            suite_path="evals/default_cases.json",
             workspace_path="data/evals/workspace",
             compare_rerank=compare_rerank,
             runs=[
@@ -234,9 +234,6 @@ class MockEvalService:
             ),
         )
 
-    def launch_ui(self, *, port: int | None = None) -> None:
-        self.launch_port = port
-
     def start_ui(self, *, port: int | None = None) -> None:
         self.launch_port = port
         self.started_ui = True
@@ -295,6 +292,7 @@ def test_eval_command_prints_json(monkeypatch) -> None:
     payload = EvalRunResult.model_validate(json.loads(result.stdout))
     assert payload.mode == "offline"
     assert payload.runs[0].metrics.case_count == 2
+    assert "--cases" not in runner.invoke(app, ["eval", "--help"]).stdout
 
 
 def test_eval_command_starts_ui_by_default(monkeypatch) -> None:
@@ -308,6 +306,24 @@ def test_eval_command_starts_ui_by_default(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert service.started_ui is True
+
+
+def test_eval_command_surfaces_ui_startup_failures(monkeypatch) -> None:
+    error_cls = PolicyNIMError
+
+    class FailingEvalService(MockEvalService):
+        def start_ui(self, *, port: int | None = None) -> None:
+            raise error_cls("Evidently UI exited before startup completed.")
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_eval_service",
+        lambda settings: FailingEvalService(),
+    )
+
+    result = runner.invoke(app, ["eval"])
+
+    assert result.exit_code == 1
+    assert "Evidently UI exited before startup completed." in result.stderr
 
 
 def test_eval_command_returns_non_zero_when_cases_fail(monkeypatch) -> None:

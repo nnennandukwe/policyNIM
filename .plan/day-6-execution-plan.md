@@ -105,7 +105,7 @@
 
 ## Eval And Reporting Design
 - `EvalService`
-  - Load eval cases from bundled fixtures or `--cases`.
+  - Load eval cases from the bundled default fixture set.
   - Run search and preflight cases through the existing service layer.
   - Score results with deterministic code-based checks.
   - Aggregate metrics for:
@@ -196,7 +196,6 @@
 
 ## Test Plan
 - `policynim eval` runs the bundled suite in offline mode and returns valid JSON.
-- `policynim eval --cases ...` loads an alternate suite.
 - Failed eval cases return a non-zero exit code.
 - `policynim eval` persists both rerank-enabled and rerank-disabled runs for
   comparison.

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
+import socket
 import subprocess
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from policynim.contracts import Generator, IndexStore, Reranker
+from policynim.errors import PolicyNIMError
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import PreflightService
@@ -43,6 +47,9 @@ from policynim.types import (
 
 _PROJECT_NAME = "PolicyNIM Eval"
 _PROJECT_ID_FILENAME = ".policynim-eval-project-id"
+_SAFE_SUITE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_DEFAULT_UI_START_TIMEOUT_SECONDS = 5.0
+_UI_START_POLL_INTERVAL_SECONDS = 0.1
 
 
 class EvalService:
@@ -72,11 +79,10 @@ class EvalService:
         self,
         *,
         mode: EvalExecutionMode = "offline",
-        cases_path: Path | None = None,
         compare_rerank: bool = True,
     ) -> EvalRunResult:
         """Run the requested eval suite and persist the resulting reports."""
-        suite_path = resolve_eval_suite_path(cases_path)
+        suite_path = resolve_eval_suite_path()
         suite = _load_eval_suite(suite_path)
         rerank_modes = [True, False] if compare_rerank else [True]
 
@@ -113,13 +119,16 @@ class EvalService:
         )
 
     def start_ui(self, *, port: int | None = None) -> None:
-        """Start the Evidently local UI in the background."""
-        self._run_ui(port=port, detach=True)
+        """Start the Evidently local UI in the background and verify startup."""
+        self._run_ui(port=port)
 
-    def _run_ui(self, *, port: int | None, detach: bool) -> None:
-        """Run or start the Evidently local UI against the PolicyNIM workspace."""
+    def _run_ui(self, *, port: int | None) -> None:
+        """Start the Evidently local UI against the PolicyNIM workspace."""
         resolved_port = port if port is not None else self._settings.eval_ui_port
         self._workspace_path.mkdir(parents=True, exist_ok=True)
+        ui_dir = self._workspace_path / "ui"
+        ui_dir.mkdir(parents=True, exist_ok=True)
+        log_path = ui_dir / "evidently.log"
         command = [
             "evidently",
             "ui",
@@ -128,14 +137,29 @@ class EvalService:
             "--port",
             str(resolved_port),
         ]
-        if detach:
-            subprocess.Popen(
-                command,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+        try:
+            with log_path.open("ab") as log_file:
+                process = subprocess.Popen(
+                    command,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+        except OSError as exc:
+            raise PolicyNIMError(
+                f"Could not start Evidently UI. See {log_path.as_posix()} for details."
+            ) from exc
+
+        try:
+            _wait_for_ui_start(
+                process,
+                port=resolved_port,
+                log_path=log_path,
+                timeout_seconds=_DEFAULT_UI_START_TIMEOUT_SECONDS,
             )
-            return None
-        subprocess.run(command, check=True)
+        except Exception:
+            if process.poll() is None:
+                process.terminate()
+            raise
 
     def _run_suite_cases(
         self,
@@ -222,6 +246,7 @@ class EvalService:
         metrics = _aggregate_metrics(case_results)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         mode_slug = "rerank-on" if rerank_enabled else "rerank-off"
+        suite_slug = _suite_name_slug(suite.name)
 
         results_dir = self._workspace_path / "results"
         reports_dir = self._workspace_path / "reports"
@@ -235,8 +260,8 @@ class EvalService:
             report_html_path="",
             case_results=case_results,
         )
-        result_json_path = results_dir / f"{timestamp}-{suite.name}-{mode_slug}.json"
-        report_html_path = reports_dir / f"{timestamp}-{suite.name}-{mode_slug}.html"
+        result_json_path = results_dir / f"{timestamp}-{suite_slug}-{mode_slug}.json"
+        report_html_path = reports_dir / f"{timestamp}-{suite_slug}-{mode_slug}.html"
         result_json_path.write_text(
             result_payload.model_copy(
                 update={
@@ -511,6 +536,45 @@ def _load_eval_suite(path: Path) -> EvalSuite:
     if isinstance(payload, list):
         return EvalSuite(name=path.stem, cases=[EvalCase.model_validate(item) for item in payload])
     return EvalSuite.model_validate(payload)
+
+
+def _suite_name_slug(name: str) -> str:
+    slug = _SAFE_SUITE_NAME_RE.sub("_", name.replace("/", "_").replace("\\", "_"))
+    slug = slug.strip("._-")
+    return slug or "eval-suite"
+
+
+def _wait_for_ui_start(
+    process: subprocess.Popen[bytes],
+    *,
+    port: int,
+    log_path: Path,
+    timeout_seconds: float,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise PolicyNIMError(
+                "Evidently UI exited before startup completed. "
+                f"See {log_path.as_posix()} for details."
+            )
+        if _is_local_port_reachable(port):
+            return None
+        time.sleep(_UI_START_POLL_INTERVAL_SECONDS)
+
+    if process.poll() is None:
+        raise PolicyNIMError(
+            f"Evidently UI did not become reachable in time. See {log_path.as_posix()} for details."
+        )
+    raise PolicyNIMError(
+        f"Evidently UI exited before startup completed. See {log_path.as_posix()} for details."
+    )
+
+
+def _is_local_port_reachable(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(_UI_START_POLL_INTERVAL_SECONDS)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
 def _build_evidently_report(

@@ -61,18 +61,6 @@ def test_resolve_corpus_root_raises_with_override_guidance(
         resolve_corpus_root()
 
 
-def test_resolve_eval_suite_path_prefers_configured_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    suite = tmp_path / "custom-suite.json"
-    suite.write_text("[]", encoding="utf-8")
-    monkeypatch.chdir(workspace)
-
-    assert resolve_eval_suite_path(Path("../custom-suite.json")) == suite
-
-
 def test_resolve_eval_suite_path_finds_bundled_package_suite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,3 +87,21 @@ def test_resolve_eval_suite_path_raises_with_override_guidance(
 
     with pytest.raises(InvalidPolicyDocumentError, match="default eval suite"):
         resolve_eval_suite_path()
+
+
+def test_resolve_eval_suite_path_error_no_longer_references_cases_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    isolated_package = tmp_path / "isolated" / "policynim"
+    isolated_package.mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "policynim.runtime_paths.__file__", str(isolated_package / "runtime_paths.py")
+    )
+
+    with pytest.raises(InvalidPolicyDocumentError) as exc:
+        resolve_eval_suite_path()
+
+    assert "--cases" not in str(exc.value)

@@ -177,8 +177,8 @@ def eval(
         try:
             service = create_eval_service(get_settings())
             service.start_ui()
-        except OSError as exc:
-            _exit_with_error(f"Could not start Evidently UI: {exc}")
+        except PolicyNIMError as exc:
+            _exit_with_error(str(exc))
         finally:
             _close_service(service)
     if any(run.metrics.passed_count != run.metrics.case_count for run in result.runs):
