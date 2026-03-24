@@ -6,9 +6,18 @@ import json
 
 from typer.testing import CliRunner
 
-from policynim.errors import ConfigurationError
+from policynim.errors import ConfigurationError, MissingIndexError
 from policynim.interfaces.cli import app
-from policynim.types import IngestResult, PolicyChunk, PolicyMetadata, ScoredChunk, SearchResult
+from policynim.types import (
+    Citation,
+    IngestResult,
+    PolicyChunk,
+    PolicyGuidance,
+    PolicyMetadata,
+    PreflightResult,
+    ScoredChunk,
+    SearchResult,
+)
 
 runner = CliRunner()
 
@@ -53,6 +62,49 @@ class FakeSearchService:
                 )
             ],
         )
+
+
+class FakePreflightService:
+    """Static preflight service for CLI tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def preflight(self, request) -> PreflightResult:
+        return PreflightResult(
+            task=request.task,
+            domain=request.domain,
+            summary="Follow background-job and auth cleanup policies.",
+            applicable_policies=[
+                PolicyGuidance(
+                    policy_id="AUTH-001",
+                    title="Auth Reviews",
+                    rationale="Cleanup logic must preserve revocation and auditing behavior.",
+                    citation_ids=["AUTH-1"],
+                )
+            ],
+            implementation_guidance=[
+                "Retain revocation checks before deleting stale refresh tokens."
+            ],
+            review_flags=["Ensure cleanup jobs redact token values from logs."],
+            tests_required=[
+                "Add a test that expired tokens are deleted without removing active ones."
+            ],
+            citations=[
+                Citation(
+                    policy_id="AUTH-001",
+                    title="Auth Reviews",
+                    path="policies/security/auth-review.md",
+                    section="Cleanup",
+                    lines="10-16",
+                    chunk_id="AUTH-1",
+                )
+            ],
+            insufficient_context=False,
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeIndexDumpService:
@@ -116,6 +168,26 @@ def test_search_command_prints_json(monkeypatch) -> None:
     assert payload["hits"][0]["chunk_id"] == "BACKEND-1"
 
 
+def test_preflight_command_prints_json(monkeypatch) -> None:
+    service = FakePreflightService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        ["preflight", "--task", "refresh token cleanup", "--domain", "security", "--top-k", "3"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["task"] == "refresh token cleanup"
+    assert payload["domain"] == "security"
+    assert payload["citations"][0]["chunk_id"] == "AUTH-1"
+    assert service.closed is True
+
+
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
@@ -145,6 +217,15 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
     assert "paging large output" in result.stdout
 
 
+def test_preflight_help_mentions_current_top_k_behavior() -> None:
+    result = runner.invoke(app, ["preflight", "--help"])
+
+    assert result.exit_code == 0
+    assert "Retrieval depth." in result.stdout
+    assert "1-20." in result.stdout
+    assert "Reserved retrieval depth" not in result.stdout
+
+
 def test_search_command_surfaces_configuration_errors(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_search_service",
@@ -155,3 +236,44 @@ def test_search_command_surfaces_configuration_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "missing NVIDIA key" in result.stderr
+
+
+def test_preflight_command_surfaces_missing_index_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: (_ for _ in ()).throw(MissingIndexError("Run `policynim ingest` first.")),
+    )
+
+    result = runner.invoke(app, ["preflight", "--task", "refresh token cleanup"])
+
+    assert result.exit_code == 1
+    assert "Run `policynim ingest` first." in result.stderr
+
+
+def test_preflight_command_surfaces_configuration_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: (_ for _ in ()).throw(ConfigurationError("missing NVIDIA key")),
+    )
+
+    result = runner.invoke(app, ["preflight", "--task", "refresh token cleanup"])
+
+    assert result.exit_code == 1
+    assert "missing NVIDIA key" in result.stderr
+
+
+def test_preflight_command_closes_service_when_it_errors(monkeypatch) -> None:
+    class FailingPreflightService(FakePreflightService):
+        def preflight(self, request) -> PreflightResult:
+            raise MissingIndexError("Run `policynim ingest` first.")
+
+    service = FailingPreflightService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["preflight", "--task", "refresh token cleanup"])
+
+    assert result.exit_code == 1
+    assert service.closed is True

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from types import TracebackType
 from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, Reranker
@@ -45,6 +46,23 @@ class PreflightService:
         self._index_store = index_store
         self._reranker = reranker
         self._generator = generator
+
+    def __enter__(self) -> PreflightService:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release owned provider resources held by this service."""
+        _close_component(self._embedder)
+        _close_component(self._reranker)
+        _close_component(self._generator)
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
         """Run the grounded preflight pipeline."""
@@ -255,6 +273,12 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
+
+
+def _close_component(component: object | None) -> None:
+    close = getattr(component, "close", None)
+    if callable(close):
+        close()
 
 
 __all__ = [
