@@ -33,3 +33,20 @@ def resolve_corpus_root(configured_root: Path | None = None) -> Path:
         "Could not locate the policy corpus. Set `POLICYNIM_CORPUS_DIR` to the directory "
         "containing your policy Markdown files."
     )
+
+
+def resolve_eval_suite_path() -> Path:
+    """Resolve the bundled default eval suite."""
+    package_root = Path(__file__).resolve().parent
+    bundled_suite = package_root / "evals" / "default_cases.json"
+    if bundled_suite.is_file():
+        return bundled_suite
+
+    for parent in package_root.parents:
+        checkout_suite = parent / "evals" / "default_cases.json"
+        if checkout_suite.is_file():
+            return checkout_suite
+
+    raise InvalidPolicyDocumentError(
+        "Could not locate the default eval suite. Add `evals/default_cases.json` to the project."
+    )

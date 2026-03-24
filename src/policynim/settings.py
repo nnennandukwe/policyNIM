@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     corpus_dir: Path | None = None
     lancedb_uri: Path = Path("data/lancedb")
     lancedb_table: str = "policy_chunks"
+    eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
     nvidia_chat_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
     nvidia_max_retries: Annotated[int, Field(ge=0)] = 2
     mcp_host: str = "127.0.0.1"
     mcp_port: Annotated[int, Field(ge=1, le=65535)] = 8000
+    eval_ui_port: Annotated[int, Field(ge=1, le=65535)] = 8001
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -9,13 +9,14 @@ import typer
 from policynim.errors import PolicyNIMError
 from policynim.interfaces.mcp import run_server
 from policynim.services import (
+    create_eval_service,
     create_index_dump_service,
     create_ingest_service,
     create_preflight_service,
     create_search_service,
 )
 from policynim.settings import get_settings
-from policynim.types import MAX_TOP_K, PreflightRequest, SearchRequest
+from policynim.types import MAX_TOP_K, EvalExecutionMode, PreflightRequest, SearchRequest
 
 app = typer.Typer(
     add_completion=False,
@@ -136,6 +137,52 @@ def search(
         _close_service(service)
 
     typer.echo(result.model_dump_json(indent=2))
+
+
+@app.command()
+def eval(
+    mode: Annotated[
+        EvalExecutionMode,
+        typer.Option("--mode", help="Eval execution mode. Supported values: offline, live."),
+    ] = "offline",
+    no_compare_rerank: Annotated[
+        bool,
+        typer.Option(
+            "--no-compare-rerank",
+            help="Skip the default rerank on/off comparison and run only rerank-enabled evals.",
+        ),
+    ] = False,
+    headless: Annotated[
+        bool,
+        typer.Option(
+            "--headless",
+            help="Run evals without starting the local Evidently UI automatically.",
+        ),
+    ] = False,
+) -> None:
+    """Run the PolicyNIM eval suite and persist local reports."""
+    service = None
+    try:
+        service = create_eval_service(get_settings())
+        result = service.run(mode=mode, compare_rerank=not no_compare_rerank)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(result.model_dump_json(indent=2))
+    if not headless:
+        try:
+            service = create_eval_service(get_settings())
+            service.start_ui()
+        except PolicyNIMError as exc:
+            _exit_with_error(str(exc))
+        finally:
+            _close_service(service)
+    if any(run.metrics.passed_count != run.metrics.case_count for run in result.runs):
+        raise typer.Exit(code=1)
 
 
 @app.command()

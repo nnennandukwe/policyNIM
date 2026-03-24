@@ -365,6 +365,135 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
     assert result.applicable_policies == []
 
 
+def test_preflight_service_deduplicates_citation_ids_and_preserves_first_seen_order() -> None:
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-1",
+                policy_id="BACKEND-LOG-001",
+                domain="backend",
+                score=0.99,
+            ),
+            make_chunk(
+                chunk_id="SECURITY-1",
+                policy_id="SECURITY-TOKEN-001",
+                domain="security",
+                score=0.97,
+            ),
+        ]
+    )
+    generator = MockGenerator(
+        GeneratedPreflightDraft(
+            summary="Keep citations unique and ordered.",
+            applicable_policies=[
+                DraftPolicyGuidance(
+                    policy_id="BACKEND-LOG-001",
+                    title="Logging",
+                    rationale="Request ids matter.",
+                    citation_ids=["BACKEND-1", "BACKEND-1"],
+                ),
+                DraftPolicyGuidance(
+                    policy_id="SECURITY-TOKEN-001",
+                    title="Token handling",
+                    rationale="Tokens must stay redacted.",
+                    citation_ids=["SECURITY-1"],
+                ),
+            ],
+            citation_ids=["SECURITY-1", "BACKEND-1", "BACKEND-1"],
+        )
+    )
+    service = PreflightService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        reranker=MockReranker(order=["BACKEND-1", "SECURITY-1"]),
+        generator=generator,
+    )
+
+    result = service.preflight(PreflightRequest(task="refresh token cleanup", top_k=2))
+
+    assert [citation.chunk_id for citation in result.citations] == ["SECURITY-1", "BACKEND-1"]
+    assert result.applicable_policies[0].citation_ids == ["BACKEND-1"]
+
+
+def test_preflight_service_invalidates_response_when_policy_citations_disagree_with_context() -> (
+    None
+):
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-1",
+                policy_id="BACKEND-LOG-001",
+                domain="backend",
+                score=0.99,
+            )
+        ]
+    )
+    generator = MockGenerator(
+        GeneratedPreflightDraft(
+            summary="One bad policy citation should fail the response.",
+            applicable_policies=[
+                DraftPolicyGuidance(
+                    policy_id="BACKEND-LOG-001",
+                    title="Logging",
+                    rationale="Looks grounded but cites the wrong chunk.",
+                    citation_ids=["UNKNOWN"],
+                )
+            ],
+            citation_ids=["BACKEND-1"],
+        )
+    )
+    service = PreflightService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        reranker=MockReranker(),
+        generator=generator,
+    )
+
+    result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
+
+    assert result.insufficient_context
+    assert result.citations == []
+    assert result.applicable_policies == []
+
+
+def test_preflight_service_uses_policy_citation_ids_when_draft_level_list_is_empty() -> None:
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-1",
+                policy_id="BACKEND-LOG-001",
+                domain="backend",
+                score=0.99,
+            )
+        ]
+    )
+    generator = MockGenerator(
+        GeneratedPreflightDraft(
+            summary="Fallback to policy-level citation ids.",
+            applicable_policies=[
+                DraftPolicyGuidance(
+                    policy_id="BACKEND-LOG-001",
+                    title="Logging",
+                    rationale="Use the policy citation list when the draft-level list is empty.",
+                    citation_ids=["BACKEND-1"],
+                )
+            ],
+            citation_ids=[],
+        )
+    )
+    service = PreflightService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        reranker=MockReranker(),
+        generator=generator,
+    )
+
+    result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
+
+    assert not result.insufficient_context
+    assert [citation.chunk_id for citation in result.citations] == ["BACKEND-1"]
+
+
 def test_preflight_service_requires_existing_index() -> None:
     store = MockIndexStore([], exists=False)
     service = PreflightService(

@@ -8,7 +8,9 @@ adds a format-aware ingest foundation for tolerant Markdown parsing and determin
 chunk generation. Day 3 adds hosted embeddings plus a local vector index. Day 4 adds
 reranking and grounded synthesis internally while keeping public `preflight`
 surfaces deferred. Day 5 wires those public CLI and MCP surfaces to the grounded
-service layer without changing the underlying retrieval architecture.
+service layer without changing the underlying retrieval architecture. Day 6 adds
+an offline-first eval harness, rerank on/off comparison, and local results
+inspection through Evidently OSS.
 
 ## Design Principles
 
@@ -53,6 +55,8 @@ service layer without changing the underlying retrieval architecture.
 - `SearchService` owns query embedding, dense candidate retrieval, and reranking.
 - `PreflightService` owns dense retrieval, reranking, grounded synthesis, citation
   validation, and insufficient-context fallback.
+- `EvalService` owns gold-case loading, search/preflight scoring, rerank
+  comparison, and report persistence.
 - Services must not import CLI or MCP modules.
 
 ### `src/policynim/providers/`
@@ -77,6 +81,7 @@ service layer without changing the underlying retrieval architecture.
 - `cli.py` owns terminal-facing command definitions and help text.
 - `mcp.py` owns MCP server and tool registration.
 - Interface modules may call services, but not providers directly.
+- `eval-ui` remains a CLI-only transport helper; there is no MCP eval surface.
 
 ## Import Rules
 
@@ -154,10 +159,26 @@ service layer without changing the underlying retrieval architecture.
 - Missing index and configuration failures remain explicit public errors; only
   weak grounded evidence becomes `insufficient_context=true`.
 
+## Day 6 Evaluation Rules
+
+- `policynim eval` is the public evaluation entrypoint.
+- Offline mode is the default contributor workflow and must not require
+  `NVIDIA_API_KEY`.
+- Live mode must use an isolated temporary LanceDB path instead of mutating the
+  caller's normal runtime index.
+- Eval scoring stays deterministic and code-based:
+  - `search` cases score expected `chunk_id` recall
+  - `preflight` cases score expected `policy_id` recall
+  - `insufficient_context` mismatches fail the case
+- Rerank comparison runs the same suite with reranking enabled and disabled, then
+  persists both results for side-by-side comparison.
+- Evidently integration belongs in the eval service and CLI workflow, not in
+  provider or storage adapters.
+
 ## Current Deferrals
 
-- No evaluation harness.
 - No CI-level live end-to-end MCP verification yet.
+- No custom eval dashboard beyond Evidently OSS.
 
 Those land later so the repo foundation stays small, reviewable, and easy to
 teach from.
