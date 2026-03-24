@@ -67,6 +67,9 @@ class FakeSearchService:
 class FakePreflightService:
     """Static preflight service for CLI tests."""
 
+    def __init__(self) -> None:
+        self.closed = False
+
     def preflight(self, request) -> PreflightResult:
         return PreflightResult(
             task=request.task,
@@ -99,6 +102,9 @@ class FakePreflightService:
             ],
             insufficient_context=False,
         )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeIndexDumpService:
@@ -163,9 +169,10 @@ def test_search_command_prints_json(monkeypatch) -> None:
 
 
 def test_preflight_command_prints_json(monkeypatch) -> None:
+    service = FakePreflightService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_preflight_service",
-        lambda settings: FakePreflightService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(
@@ -178,6 +185,7 @@ def test_preflight_command_prints_json(monkeypatch) -> None:
     assert payload["task"] == "refresh token cleanup"
     assert payload["domain"] == "security"
     assert payload["citations"][0]["chunk_id"] == "AUTH-1"
+    assert service.closed is True
 
 
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
@@ -252,3 +260,20 @@ def test_preflight_command_surfaces_configuration_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "missing NVIDIA key" in result.stderr
+
+
+def test_preflight_command_closes_service_when_it_errors(monkeypatch) -> None:
+    class FailingPreflightService(FakePreflightService):
+        def preflight(self, request) -> PreflightResult:
+            raise MissingIndexError("Run `policynim ingest` first.")
+
+    service = FailingPreflightService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["preflight", "--task", "refresh token cleanup"])
+
+    assert result.exit_code == 1
+    assert service.closed is True

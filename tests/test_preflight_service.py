@@ -77,6 +77,7 @@ class FakeReranker:
         self.last_query: str | None = None
         self.last_candidates: list[ScoredChunk] = []
         self.last_top_k: int | None = None
+        self.closed = False
 
     def rerank(
         self,
@@ -98,6 +99,9 @@ class FakeReranker:
         )
         return ranked[:top_k]
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class FakeGenerator:
     """Returns a deterministic grounded draft and records its context."""
@@ -106,6 +110,7 @@ class FakeGenerator:
         self._draft = draft
         self.last_request: PreflightRequest | None = None
         self.last_context: list[ScoredChunk] = []
+        self.closed = False
 
     def generate_preflight(
         self, request: PreflightRequest, context: list[ScoredChunk]
@@ -113,6 +118,9 @@ class FakeGenerator:
         self.last_request = request
         self.last_context = list(context)
         return self._draft
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
@@ -358,6 +366,24 @@ def test_preflight_service_requires_existing_index() -> None:
 
     with pytest.raises(MissingIndexError):
         service.preflight(PreflightRequest(task="backend guidance", top_k=1))
+
+
+def test_preflight_service_close_closes_owned_components() -> None:
+    reranker = FakeReranker()
+    generator = FakeGenerator(GeneratedPreflightDraft(summary="unused"))
+    service = PreflightService(
+        embedder=FakeEmbedder(),
+        index_store=FakeIndexStore(
+            [make_chunk(chunk_id="BACKEND-1", policy_id="BACKEND-1", domain="backend", score=0.9)]
+        ),
+        reranker=reranker,
+        generator=generator,
+    )
+
+    service.close()
+
+    assert reranker.closed is True
+    assert generator.closed is True
 
 
 def make_chunk(

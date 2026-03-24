@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import TracebackType
+
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.errors import MissingIndexError
 from policynim.runtime_paths import resolve_runtime_path
@@ -25,6 +27,21 @@ class SearchService:
         self._embedder = embedder
         self._index_store = index_store
         self._reranker = reranker
+
+    def __enter__(self) -> SearchService:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release owned provider resources held by this service."""
+        _close_component(self._reranker)
 
     def search(self, request: SearchRequest) -> SearchResult:
         """Run dense retrieval followed by reranking against the local index."""
@@ -84,3 +101,9 @@ def _create_default_search_components(settings: Settings) -> tuple[Embedder, Rer
 def _ensure_index_ready(index_store: IndexStore) -> None:
     if not index_store.exists() or index_store.count() == 0:
         raise MissingIndexError("Run `policynim ingest` before searching the policy corpus.")
+
+
+def _close_component(component: object | None) -> None:
+    close = getattr(component, "close", None)
+    if callable(close):
+        close()

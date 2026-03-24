@@ -25,6 +25,9 @@ from policynim.types import (
 class FakePreflightService:
     """Static preflight service for MCP tests."""
 
+    def __init__(self) -> None:
+        self.closed = False
+
     def preflight(self, request) -> PreflightResult:
         return PreflightResult(
             task=request.task,
@@ -54,9 +57,15 @@ class FakePreflightService:
             insufficient_context=False,
         )
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class FakeSearchService:
     """Static search service for MCP tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
 
     def search(self, request) -> SearchResult:
         return SearchResult(
@@ -81,6 +90,9 @@ class FakeSearchService:
             ],
             insufficient_context=False,
         )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _call_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -229,3 +241,27 @@ def test_call_tool_runs_minimal_stdio_path(monkeypatch) -> None:
 
     assert payload["query"] == "background cleanup"
     assert payload["hits"][0]["chunk_id"] == "BACKEND-1"
+
+
+def test_policy_search_closes_service_after_tool_call(monkeypatch) -> None:
+    service = FakeSearchService()
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
+
+    payload = mcp_module.policy_search(query="background cleanup", top_k=1)
+
+    assert payload["query"] == "background cleanup"
+    assert service.closed is True
+
+
+def test_policy_preflight_closes_service_when_tool_raises(monkeypatch) -> None:
+    class FailingPreflightService(FakePreflightService):
+        def preflight(self, request) -> PreflightResult:
+            raise MissingIndexError("Run `policynim ingest` first.")
+
+    service = FailingPreflightService()
+    monkeypatch.setattr(mcp_module, "create_preflight_service", lambda settings: service)
+
+    with pytest.raises(MissingIndexError, match="Run `policynim ingest` first"):
+        mcp_module.policy_preflight(task="refresh token cleanup")
+
+    assert service.closed is True

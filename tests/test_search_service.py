@@ -67,6 +67,7 @@ class FakeReranker:
         self.last_query: str | None = None
         self.last_candidates: list[ScoredChunk] = []
         self.last_top_k: int | None = None
+        self.closed = False
 
     def rerank(
         self,
@@ -87,6 +88,9 @@ class FakeReranker:
             key=lambda chunk: ordering.get(chunk.chunk_id, len(ordering)),
         )
         return ranked[:top_k]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_search_service_reranks_dense_candidates_before_returning() -> None:
@@ -177,6 +181,19 @@ def test_search_service_requires_existing_index() -> None:
 
     with pytest.raises(MissingIndexError):
         service.search(SearchRequest(query="backend logs", top_k=1))
+
+
+def test_search_service_close_closes_reranker() -> None:
+    reranker = FakeReranker()
+    service = SearchService(
+        embedder=FakeEmbedder(),
+        index_store=FakeIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")]),
+        reranker=reranker,
+    )
+
+    service.close()
+
+    assert reranker.closed is True
 
 
 def make_chunk(

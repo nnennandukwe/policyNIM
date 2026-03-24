@@ -87,6 +87,7 @@ def preflight(
     """Return policy guidance for a coding task."""
     settings = get_settings()
     resolved_top_k = top_k if top_k is not None else settings.default_top_k
+    service = None
     try:
         service = create_preflight_service(settings)
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
@@ -94,6 +95,8 @@ def preflight(
         _exit_with_error(str(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
 
     typer.echo(result.model_dump_json(indent=2))
 
@@ -121,6 +124,7 @@ def search(
     """Search the policy corpus."""
     settings = get_settings()
     resolved_top_k = top_k if top_k is not None else settings.default_top_k
+    service = None
     try:
         service = create_search_service(settings)
         result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
@@ -128,6 +132,8 @@ def search(
         _exit_with_error(str(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
 
     typer.echo(result.model_dump_json(indent=2))
 
@@ -154,6 +160,12 @@ def main() -> None:
 def _exit_with_error(message: str) -> None:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
+
+
+def _close_service(service: object | None) -> None:
+    close = getattr(service, "close", None)
+    if callable(close):
+        close()
 
 
 if __name__ == "__main__":

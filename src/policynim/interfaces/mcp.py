@@ -26,6 +26,12 @@ def _validate_top_k(top_k: int) -> None:
         raise ValueError(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
 
 
+def _close_service(service: object | None) -> None:
+    close = getattr(service, "close", None)
+    if callable(close):
+        close()
+
+
 @mcp.tool(name="policy_preflight")
 def policy_preflight(
     task: str,
@@ -35,8 +41,11 @@ def policy_preflight(
     """Return policy guidance for a coding task."""
     resolved_top_k = _resolve_top_k(top_k)
     service = create_preflight_service(get_settings())
-    result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
-    return result.model_dump(mode="json")
+    try:
+        result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
+        return result.model_dump(mode="json")
+    finally:
+        _close_service(service)
 
 
 @mcp.tool(name="policy_search")
@@ -48,8 +57,11 @@ def policy_search(
     """Search the policy corpus."""
     resolved_top_k = _resolve_top_k(top_k)
     service = create_search_service(get_settings())
-    result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
-    return result.model_dump(mode="json")
+    try:
+        result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
+        return result.model_dump(mode="json")
+    finally:
+        _close_service(service)
 
 
 def run_server(transport: str = "stdio") -> None:
