@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -230,6 +231,39 @@ def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
     assert captured == {"transport": "streamable-http"}
     assert mcp_module.mcp.settings.host == "127.0.0.1"
     assert mcp_module.mcp.settings.port == 8010
+
+
+def test_streamable_http_port_probe_rejects_in_use_port() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        host, port = listener.getsockname()
+
+        with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_PORT"):
+            mcp_module._ensure_streamable_http_port_available(host, port)
+
+
+def test_run_server_surfaces_streamable_http_port_conflicts(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "get_settings",
+        lambda: Settings(mcp_host="127.0.0.1", mcp_port=8000),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_ensure_streamable_http_port_available",
+        lambda host, port: (_ for _ in ()).throw(
+            ConfigurationError("Could not start streamable-http MCP server on 127.0.0.1:8000.")
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_module.mcp,
+        "run",
+        lambda **kwargs: pytest.fail("mcp.run should not be called when the port probe fails"),
+    )
+
+    with pytest.raises(ConfigurationError, match="streamable-http MCP server"):
+        mcp_module.run_server("streamable-http")
 
 
 def test_mcp_registers_both_public_tools() -> None:

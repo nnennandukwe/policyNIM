@@ -196,7 +196,12 @@ def mcp(
     ] = "stdio",
 ) -> None:
     """Run the MCP server."""
-    run_server(transport=transport)
+    try:
+        run_server(transport=transport)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
 
 
 def main() -> None:

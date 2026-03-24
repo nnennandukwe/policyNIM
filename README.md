@@ -2,45 +2,49 @@
 
 PolicyNIM is a policy-aware engineering preflight layer for AI coding agents.
 
-Before an agent writes code, it should be able to ask:
+The intended workflow is simple:
 
-- What standards apply here?
-- What review rules matter for this change?
-- What architecture guidance should shape the implementation?
+1. Index a small, grounded policy corpus.
+2. Retrieve relevant policy chunks for a task.
+3. Synthesize implementation guidance that keeps citations attached and fails
+   closed when grounding is weak.
 
-PolicyNIM is being built as a thin, NVIDIA-aligned developer tool:
+PolicyNIM ships as a small Python-first repo with two public surfaces:
 
-- NVIDIA-hosted NIM APIs for embeddings, reranking, and grounded answer synthesis
-- local OSS vector storage for a simple, public, no-GPU-required MVP
-- CLI and MCP surfaces for agent workflows
+- a JSON-first CLI for local developer workflows
+- an MCP server for agent integrations such as Codex and Claude Code
 
-## Current Status
+## What Works Today
 
-The repo currently includes the retrieval stack through public grounded preflight:
+- Deterministic Markdown ingest with heading-aware chunking and source line spans.
+- NVIDIA-hosted embeddings for document and query vectors. See NVIDIA's
+  [API Catalog Quickstart Guide](https://docs.api.nvidia.com/nim/docs/api-quickstart)
+  and the current
+  [`nvidia/llama-nemotron-embed-1b-v2` model reference](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-embed-1b-v2).
+- Local LanceDB storage for the retrievable policy index. If you want more detail
+  on what LanceDB is doing here, start with the
+  [LanceDB quickstart](https://docs.lancedb.com/quickstart).
+- NVIDIA-hosted reranking for better retrieval ordering.
+- Grounded preflight synthesis with citation validation and fail-closed fallback.
+- JSON-first CLI commands for `ingest`, `dump-index`, `search`, `preflight`,
+  `eval`, and `mcp`.
+- MCP tools for `policy_preflight` and `policy_search`.
+- Offline-first evaluation with rerank on/off comparison and local Evidently UI.
 
-- deterministic Markdown ingest and chunking
-- NVIDIA-hosted embeddings for document and query vectors
-- NVIDIA-hosted reranking and grounded generation adapters
-- local LanceDB storage for the chunk index
-- `policynim ingest` to build the local index
-- `policynim dump-index` to inspect indexed chunks directly
-- reranked JSON-first `policynim search` over the indexed corpus
-- grounded JSON-first `policynim preflight` with citation validation and
-  insufficient-context fallback
-- live MCP tools for `policy_preflight` and `policy_search`
-- offline-first `policynim eval` with rerank on/off comparison
-- local Evidently-backed results viewing on `localhost` from `policynim eval`
+## Repo Guide
 
-## Why This Repo Exists
+- [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,
+  and interface rules
+- [docs/demo-script.md](docs/demo-script.md): step-by-step demo for the hero use case
+- [docs/limitations.md](docs/limitations.md): current product limits and non-goals
+- [docs/public-source-grounding.md](docs/public-source-grounding.md): provenance
+  notes for the shipped sample corpus
+- [tests/README.md](tests/README.md): current automated coverage
+- [examples/codex/README.md](examples/codex/README.md): Codex MCP setup example
+- [examples/claude-code/README.md](examples/claude-code/README.md): Claude Code
+  MCP setup example
 
-AI coding agents are good at generating code that looks plausible. They are much
-worse at remembering team-specific policy, review expectations, architecture
-constraints, and prior engineering lessons.
-
-PolicyNIM aims to solve that by acting as a preflight layer between the coding task
-and the code generator.
-
-## Current Public Surface
+## Public Surface
 
 ### CLI
 
@@ -56,213 +60,297 @@ and the code generator.
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
 
-## Repo Layout
+## What To Run First
 
-- `src/policynim/` contains the core package
-- `policies/` contains the seed policy corpus
-- `evals/` contains the bundled gold eval suite
-- `docs/architecture.md` explains import rules and package boundaries
-- `examples/` contains Codex and Claude Code MCP setup examples
-- `tests/` contains unit and integration coverage for ingest, search, providers, CLI, and runtime paths
+If you want the shortest path from clone to a real preflight run:
 
-## Local Workflow
+```bash
+uv sync
+cp .env.example .env
+uv run policynim ingest
+uv run policynim search --query "refresh token cleanup background job"
+uv run policynim preflight --task "Implement a refresh-token cleanup background job"
+uv run policynim eval --headless
+uv run policynim mcp --transport stdio
+```
 
-1. Install dependencies:
+Notes:
 
-   ```bash
-   uv sync
-   ```
+- `NVIDIA_API_KEY` must be set before `ingest`, `search`, or `preflight`. NVIDIA's
+  official
+  [API Catalog Quickstart Guide](https://docs.api.nvidia.com/nim/docs/api-quickstart)
+  shows the API-key flow, and the
+  [Build catalog](https://build.nvidia.com/) is where developers can browse models
+  and use the "Get API Key" flow.
+- Copying `.env.example` intentionally leaves `POLICYNIM_CORPUS_DIR` unset, so the
+  bundled sample corpus is used by default. Add `POLICYNIM_CORPUS_DIR=/abs/path`
+  yourself only if you want to index a different corpus.
+- `eval` defaults to offline mode, so it can run without NVIDIA credentials.
+- `policynim mcp` works without `--transport`; it defaults to `stdio`.
+- Add `--transport streamable-http` only if you want the HTTP transport instead of
+  the default `stdio` server.
+- `mcp` starts the PolicyNIM server only; an agent client such as Codex or Claude
+  Code connects to that server separately.
 
-   For contributor hooks and local linting tools:
+## Setup
 
-   ```bash
-   uv sync --group dev
-   uv run --group dev pre-commit install
-   ```
+### Runtime Workflow
 
-2. Copy the environment file and add your NVIDIA API key:
+Install the runtime dependencies:
 
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+uv sync
+```
 
-   `POLICYNIM_CORPUS_DIR` is optional. Leave it unset to use the bundled sample
-   corpus, or point it at another directory of policy Markdown files.
+Copy the example environment file:
 
-3. Build the local index:
+```bash
+cp .env.example .env
+```
 
-   ```bash
-   uv run policynim ingest
-   ```
+Then set `NVIDIA_API_KEY` in `.env` or your shell. For the official key-creation
+flow, use NVIDIA's
+[API Catalog Quickstart Guide](https://docs.api.nvidia.com/nim/docs/api-quickstart)
+and [Build catalog](https://build.nvidia.com/).
 
-4. Query the indexed corpus:
+If you want to index a custom policy directory instead of the bundled sample
+corpus, add `POLICYNIM_CORPUS_DIR=/abs/path/to/policies` manually to `.env`.
 
-   ```bash
-   uv run policynim search --query "refresh token cleanup background job" --top-k 5
-   ```
+Important runtime settings:
 
-5. Run grounded preflight:
+- `NVIDIA_API_KEY`
+- `POLICYNIM_CORPUS_DIR`
+- `POLICYNIM_LANCEDB_URI`
+- `POLICYNIM_LANCEDB_TABLE`
+- `POLICYNIM_DEFAULT_TOP_K`
+- `POLICYNIM_MCP_HOST`
+- `POLICYNIM_MCP_PORT`
+- `POLICYNIM_EVAL_UI_PORT`
 
-   ```bash
-   uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5
-   ```
+Model references used by the default config in `.env.example`:
 
-6. Dump all indexed chunks in the terminal:
+- embeddings:
+  [`nvidia/llama-nemotron-embed-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-embed-1b-v2)
+- reranking:
+  [`nvidia/llama-nemotron-rerank-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-1b-v2-infer)
+- grounded generation:
+  [NVIDIA LLM API reference](https://docs.api.nvidia.com/nim/reference/llm-apis)
 
-   ```bash
-   uv run policynim dump-index
-   ```
+Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
 
-   add ` | less` to command for paging large output.
+### Contributor Workflow
 
-7. Inspect the CLI and MCP surfaces:
+Install the lint and test groups in addition to the runtime dependencies:
 
-   ```bash
-   uv run policynim --help
-   uv run policynim preflight --help
-   uv run policynim search --help
-   ```
+```bash
+uv sync --group test --group dev
+uv run --group dev pre-commit install
+```
 
-8. Run the eval suite and start the local UI:
+Run the local quality gates:
 
-   ```bash
-   uv run policynim eval
-   ```
+```bash
+uv run ruff check
+uv run pytest -q
+```
 
-   To skip the default rerank comparison:
+## Core Workflows
 
-   ```bash
-   uv run policynim eval --no-compare-rerank
-   ```
+### 1. Build The Local Index
 
-   To run evals without starting the UI:
+```bash
+uv run policynim ingest
+```
 
-   ```bash
-   uv run policynim eval --headless
-   ```
+What this does:
 
-9. Open `http://localhost:8001` in your browser after `policynim eval` starts the
-   local Evidently UI. If you do not want the UI to start automatically, use
-   `--headless`.
+- loads the bundled policy corpus, or the directory from `POLICYNIM_CORPUS_DIR`
+- chunks the documents into stable, citeable sections
+- embeds those chunks with NVIDIA-hosted embeddings
+- rebuilds the local LanceDB table
 
-10. Run the MCP server surface:
+Typical output includes the chunk count, document count, embedding model, and
+index location.
 
-   ```bash
-   uv run policynim mcp --transport stdio
-   ```
+### 2. Inspect The Indexed Corpus
 
-   For streamable HTTP, set `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you
-   do not want the default `127.0.0.1:8000`, then run:
+```bash
+uv run policynim dump-index
+```
 
-   ```bash
-   uv run policynim mcp --transport streamable-http
-   ```
+This is the fastest way to inspect the stored chunk IDs, section labels, line
+spans, and raw chunk text. Add `| less` if the output is long.
 
-11. Run tests and lint:
+### 3. Search The Corpus
 
-   ```bash
-   uv run pytest -q
-   uv run ruff check
-   ```
+```bash
+uv run policynim search --query "refresh token cleanup background job" --top-k 5
+```
 
-## Commit Hooks
+`search` is the debug and discovery path. It returns a JSON `SearchResult` with
+retrieved chunks, scores, and citation metadata.
 
-- This repo uses `pre-commit` with Ruff for commit-time linting and formatting.
-- Install the hooks once per clone:
+Example with an explicit domain filter:
 
-  ```bash
-  uv sync --group dev
-  uv run --group dev pre-commit install
-  ```
+```bash
+uv run policynim search \
+  --query "refresh token cleanup background job" \
+  --domain security \
+  --top-k 5
+```
 
-- Run the hooks manually across the repo:
+### 4. Run Grounded Preflight
 
-  ```bash
-  uv run --group dev pre-commit run --all-files
-  ```
+```bash
+uv run policynim preflight \
+  --task "Implement a refresh-token cleanup background job" \
+  --top-k 5
+```
 
-## Retrieval Workflow
+`preflight` is the main workflow. It returns a JSON `PreflightResult` with:
 
-- `policynim ingest` loads the shipped `policies/` corpus, chunks the documents,
-  or the directory configured by `POLICYNIM_CORPUS_DIR`, sends chunk text to
-  NVIDIA embeddings, and rebuilds the local LanceDB table.
-- `policynim dump-index` prints every stored chunk from the local LanceDB table in a
-  terminal-friendly format so you can inspect the indexed corpus directly.
-- `policynim search` embeds the query with the same NVIDIA model, retrieves dense
-  candidates, reranks them with NVIDIA, and prints a JSON `SearchResult`.
-- Reranking uses `POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL` as the retrieval API root
-  and joins the model-specific `reranking` path under that base.
-- `policynim preflight` and `policy_preflight` use the same retrieval flow,
-  validate citation IDs against retained chunks, and fall back to
-  `insufficient_context=true` when grounding is weak or invalid.
-- `policy_search` returns the same JSON-first `SearchResult` shape used by the CLI.
-- Both commands require `NVIDIA_API_KEY` because hosted embeddings are still part
-  of the retrieval path.
-- Provider adapters may accept injected SDK/HTTP clients for tests or advanced
-  callers, but internally created clients remain adapter-owned and are closed by
-  the adapter.
+- a grounded summary
+- applicable policies
+- implementation guidance
+- review flags
+- tests required
+- citations
+- `insufficient_context`
 
-## Evaluation Workflow
+If citation validation fails or the grounded answer is too weak, PolicyNIM returns
+`insufficient_context=true` instead of bluffing.
 
-- `policynim eval` runs the bundled `evals/default_cases.json` suite by default.
-- Offline mode is the default and uses deterministic service doubles, so it does
-  not require `NVIDIA_API_KEY`.
-- Live mode uses the real ingest, search, and grounded preflight stack and writes
-  to an isolated temporary LanceDB path so your normal runtime index is not
-  mutated.
-- Each eval run records two result sets by default:
-  - rerank enabled
-  - rerank disabled
-- `--no-compare-rerank` keeps only the default rerank-enabled run.
-- The CLI prints JSON `EvalRunResult` output and also saves:
-  - one JSON artifact per rerank mode under the eval workspace
-  - one HTML report per rerank mode under the eval workspace
-- `policynim eval` starts the local Evidently UI by default unless you pass
-  `--headless`.
+### 5. Run Evaluations
 
-## Troubleshooting Retrieval
+```bash
+uv run policynim eval
+```
 
-- Negative `score` values in `policynim search` are expected once reranking is on.
-  LanceDB dense-search scores are non-negative, but final search results expose
-  the raw NVIDIA rerank score. Treat the score as a per-query ordering signal:
-  higher is better, even if all returned values are negative.
-- `policynim search` can return useful hits while `policynim preflight` still
-  returns `insufficient_context=true`. That means retrieval worked, but the
-  grounded generation result did not survive citation validation against the
-  retained chunks, so PolicyNIM intentionally suppressed the answer instead of
-  fabricating guidance.
-- If a broad task falls back to `insufficient_context=true`, retry with a focused
-  task description or an explicit `--domain` such as `security` or `backend`.
-  Example:
+Default behavior:
 
-  ```bash
-  uv run policynim preflight --task "Implement a refresh-token cleanup background job" --domain security --top-k 5
-  ```
+- runs the bundled eval suite in `offline` mode
+- executes rerank-enabled and rerank-disabled runs
+- writes JSON artifacts and HTML reports under `data/evals/workspace`
+- starts the local Evidently UI on `http://localhost:8001`
 
-- A quick debugging sequence is:
+Useful variants:
 
-  ```bash
-  uv run policynim search --query "Implement a refresh-token cleanup background job" --top-k 5 | jq
-  uv run policynim preflight --task "Implement a refresh-token cleanup background job" --domain security --top-k 5 | jq
-  ```
+```bash
+uv run policynim eval --headless
+uv run policynim eval --no-compare-rerank
+uv run policynim eval --mode live
+```
 
-  If `search` returns hits but `preflight` falls back, the issue is in grounded
-  answer validation rather than indexing.
+`--mode live` requires `NVIDIA_API_KEY` and uses an isolated temporary index so it
+does not overwrite the normal runtime index.
+
+### 6. Run The MCP Server
+
+```bash
+uv run policynim mcp --transport stdio
+```
+
+`policynim mcp` without any flags starts the same server with the default `stdio`
+transport:
+
+```bash
+uv run policynim mcp
+```
+
+For HTTP transport:
+
+```bash
+uv run policynim mcp --transport streamable-http
+```
+
+Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other than
+the default `127.0.0.1:8000`.
+
+For client setup examples, see:
+
+- [examples/codex/README.md](examples/codex/README.md)
+- [examples/claude-code/README.md](examples/claude-code/README.md)
+
+## Retrieval And Grounding Model
+
+PolicyNIM keeps the retrieval stack explicit:
+
+1. chunk Markdown policies with stable IDs and line spans
+2. embed query and document text with NVIDIA-hosted embeddings
+3. retrieve dense candidates from LanceDB
+4. rerank candidates with NVIDIA
+5. generate grounded guidance from retained evidence only
+6. validate every citation against retrieved chunks before returning results
+
+The system is designed to fail closed:
+
+- missing or invalid runtime configuration is surfaced as an explicit error
+- missing index state is surfaced as an explicit error
+- weak or invalid grounding becomes `insufficient_context=true`
+
+## Troubleshooting
+
+### Search Works But Preflight Falls Back
+
+This usually means retrieval succeeded but grounded answer validation did not.
+Inspect the raw search hits first:
+
+```bash
+uv run policynim search \
+  --query "Implement a refresh-token cleanup background job" \
+  --top-k 5 | jq
+```
+
+Then compare that with:
+
+```bash
+uv run policynim preflight \
+  --task "Implement a refresh-token cleanup background job" \
+  --domain security \
+  --top-k 5 | jq
+```
+
+If `search` returns strong hits while `preflight` returns
+`insufficient_context=true`, the failure is in grounded answer validation, not
+indexing.
+
+### Negative Search Scores
+
+Negative final scores are expected once reranking is enabled. Search results
+surface the raw reranker score; treat the score as an ordering signal where
+higher is better for that query.
+
+### Missing Index
+
+If `search`, `preflight`, or MCP tool calls fail because the index is missing,
+run:
+
+```bash
+uv run policynim ingest
+```
+
+### Missing NVIDIA Credentials
+
+`ingest`, `search`, `preflight`, and live eval mode require `NVIDIA_API_KEY`.
+Offline eval mode does not.
 
 ## Sample Corpus
 
-The initial policy corpus is synthetic team guidance, but each document is grounded
-in public references such as OWASP cheat sheets, SRE guidance, and public API
-guidelines. This keeps the repo public-safe while still feeling like a real internal
-engineering handbook.
+The shipped policy corpus is synthetic internal-style guidance grounded in public
+sources such as OWASP cheat sheets, SRE guidance, OpenTelemetry concepts, the
+Twelve-Factor App methodology, and public API versioning guidance.
 
-## Architecture
+The provenance notes for each shipped policy live in
+[docs/public-source-grounding.md](docs/public-source-grounding.md).
 
-See [docs/architecture.md](docs/architecture.md) for the current package boundary
-rules, provider ownership notes, and layout.
+## Limitations
 
-## Planned Next Steps
+Current limitations are intentional and documented:
 
-- Expand end-to-end verification for live NVIDIA-backed flows in CI.
-- Continue polishing the demo flow and deployment guidance for agent integrations.
-- Grow the bundled eval suite beyond the initial Day 6 gold cases.
+- the system is local-first and aimed at a single developer workflow
+- CI is offline-only and does not run live NVIDIA end-to-end checks
+- the sample corpus is narrow and synthetic, not a broad enterprise handbook
+- grounded answers may fail closed even when raw retrieval finds useful chunks
+- evaluation is deterministic and gold-case driven, not a broad benchmark suite
+
+See [docs/limitations.md](docs/limitations.md) for the full list.

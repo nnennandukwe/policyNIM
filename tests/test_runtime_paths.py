@@ -45,6 +45,17 @@ def test_resolve_corpus_root_finds_bundled_package_policies(
     assert resolve_corpus_root() == bundled_corpus
 
 
+def test_resolve_corpus_root_ignores_empty_string_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "site-packages" / "policynim"
+    bundled_corpus = package_root / "policies"
+    bundled_corpus.mkdir(parents=True)
+    monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
+
+    assert resolve_corpus_root("") == bundled_corpus
+
+
 def test_resolve_corpus_root_raises_with_override_guidance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

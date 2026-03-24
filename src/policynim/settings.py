@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from policynim.types import DEFAULT_TOP_K, TopK
@@ -41,6 +41,19 @@ class Settings(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
+
+    @field_validator("corpus_dir", mode="before")
+    @classmethod
+    def normalize_empty_corpus_dir(cls, value: Any) -> Any:
+        """Treat empty configured corpus values as unset."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            return stripped
+        return value
 
 
 @lru_cache(maxsize=1)

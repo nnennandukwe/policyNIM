@@ -8,11 +8,15 @@ import policynim.providers.nvidia as nvidia_module
 from policynim.settings import get_settings
 from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
 
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        not (get_settings().nvidia_api_key or "").strip(),
+        reason="NVIDIA_API_KEY is not configured.",
+    ),
+]
 
-@pytest.mark.skipif(
-    not (get_settings().nvidia_api_key or "").strip(),
-    reason="NVIDIA_API_KEY is not configured.",
-)
+
 def test_nvidia_embed_query_live() -> None:
     embedder = nvidia_module.NVIDIAEmbedder.from_settings(get_settings())
 
@@ -22,10 +26,6 @@ def test_nvidia_embed_query_live() -> None:
     assert all(isinstance(value, float) for value in vector)
 
 
-@pytest.mark.skipif(
-    not (get_settings().nvidia_api_key or "").strip(),
-    reason="NVIDIA_API_KEY is not configured.",
-)
 def test_nvidia_rerank_live() -> None:
     reranker = nvidia_module.NVIDIAReranker.from_settings(get_settings())
     candidates = [
@@ -66,10 +66,6 @@ def test_nvidia_rerank_live() -> None:
     assert all(hit.score is not None for hit in reranked)
 
 
-@pytest.mark.skipif(
-    not (get_settings().nvidia_api_key or "").strip(),
-    reason="NVIDIA_API_KEY is not configured.",
-)
 def test_nvidia_generate_preflight_live() -> None:
     generator = nvidia_module.NVIDIAGenerator.from_settings(get_settings())
     context = [
