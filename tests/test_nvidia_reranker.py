@@ -52,7 +52,7 @@ def test_reranker_posts_to_relative_endpoint() -> None:
     client = SpyRerankClient({"scores": [0.2, 0.9]})
     reranker = NVIDIAReranker(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1/retrieval",
         timeout_seconds=1,
         max_retries=0,
@@ -63,9 +63,9 @@ def test_reranker_posts_to_relative_endpoint() -> None:
 
     assert client.calls == [
         {
-            "endpoint": "fake-model/reranking",
+            "endpoint": "mock-model/reranking",
             "json": {
-                "model": "fake-model",
+                "model": "mock-model",
                 "query": {"text": "request ids"},
                 "passages": [
                     {"text": "Use explicit request ids in logs."},
@@ -91,7 +91,7 @@ def test_reranker_preserves_retrieval_base_url_path() -> None:
     )
     reranker = NVIDIAReranker(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://unused.invalid",
         timeout_seconds=1,
         max_retries=0,
@@ -103,14 +103,14 @@ def test_reranker_preserves_retrieval_base_url_path() -> None:
     finally:
         client.close()
 
-    assert seen_urls == ["https://example.invalid/v1/retrieval/fake-model/reranking"]
+    assert seen_urls == ["https://example.invalid/v1/retrieval/mock-model/reranking"]
 
 
 def test_reranker_close_does_not_close_injected_client() -> None:
     client = SpyRerankClient({"scores": [0.5]})
     reranker = NVIDIAReranker(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1/retrieval",
         timeout_seconds=1,
         max_retries=0,
@@ -134,7 +134,7 @@ def test_reranker_close_closes_owned_client(monkeypatch) -> None:
 
     reranker = NVIDIAReranker(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1/retrieval",
         timeout_seconds=1,
         max_retries=0,
@@ -159,7 +159,7 @@ def test_reranker_context_manager_closes_owned_client(monkeypatch) -> None:
 
     with NVIDIAReranker(
         api_key="test-key",
-        model="fake-model",
+        model="mock-model",
         base_url="https://example.invalid/v1/retrieval",
         timeout_seconds=1,
         max_retries=0,

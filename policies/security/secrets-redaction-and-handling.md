@@ -25,7 +25,7 @@ escape into logs, traces, screenshots, or test artifacts.
   screenshots, or example payloads.
 - Redact secrets and tokens before they enter logs, traces, analytics payloads, or
   exception text.
-- Example code and fixtures must use obvious fake values. Do not include
+- Example code and fixtures must use obvious mock values. Do not include
   “real-looking” secrets in public or shared repositories.
 - Secrets rotation steps must be documented for any new external credential the
   service depends on.

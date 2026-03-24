@@ -11,7 +11,7 @@ from policynim.services.search import SearchService
 from policynim.types import EmbeddedChunk, PolicyChunk, PolicyMetadata, ScoredChunk, SearchRequest
 
 
-class FakeEmbedder:
+class MockEmbedder:
     """Returns deterministic query embeddings."""
 
     def embed_query(self, text: str) -> list[float]:
@@ -26,7 +26,7 @@ class FakeEmbedder:
         return [[1.0, 0.0] for _ in texts]
 
 
-class FakeIndexStore:
+class MockIndexStore:
     """Returns deterministic dense candidates and records query parameters."""
 
     def __init__(self, chunks: list[ScoredChunk], *, exists: bool = True) -> None:
@@ -64,7 +64,7 @@ class FakeIndexStore:
         return [PolicyChunk(**chunk.model_dump(exclude={"score"})) for chunk in self._chunks]
 
 
-class FakeReranker:
+class MockReranker:
     """Reorders dense candidates deterministically for assertions."""
 
     def __init__(
@@ -102,7 +102,7 @@ class FakeReranker:
 
 
 def test_search_service_reranks_dense_candidates_before_returning() -> None:
-    store = FakeIndexStore(
+    store = MockIndexStore(
         [
             make_chunk(
                 chunk_id="BACKEND-2",
@@ -118,8 +118,8 @@ def test_search_service_reranks_dense_candidates_before_returning() -> None:
             ),
         ]
     )
-    reranker = FakeReranker(order=["BACKEND-1", "BACKEND-2"])
-    service = SearchService(embedder=FakeEmbedder(), index_store=store, reranker=reranker)
+    reranker = MockReranker(order=["BACKEND-1", "BACKEND-2"])
+    service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=reranker)
 
     result = service.search(SearchRequest(query="backend logs", top_k=2))
 
@@ -130,7 +130,7 @@ def test_search_service_reranks_dense_candidates_before_returning() -> None:
 
 
 def test_search_service_filters_by_domain_before_reranking() -> None:
-    store = FakeIndexStore(
+    store = MockIndexStore(
         [
             make_chunk(
                 chunk_id="BACKEND-1",
@@ -144,8 +144,8 @@ def test_search_service_filters_by_domain_before_reranking() -> None:
             ),
         ]
     )
-    reranker = FakeReranker(order=["SECURITY-1", "BACKEND-1"])
-    service = SearchService(embedder=FakeEmbedder(), index_store=store, reranker=reranker)
+    reranker = MockReranker(order=["SECURITY-1", "BACKEND-1"])
+    service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=reranker)
 
     result = service.search(SearchRequest(query="security only", top_k=1, domain="security"))
 
@@ -155,7 +155,7 @@ def test_search_service_filters_by_domain_before_reranking() -> None:
 
 
 def test_search_service_marks_insufficient_context_after_reranking() -> None:
-    store = FakeIndexStore(
+    store = MockIndexStore(
         [
             make_chunk(
                 chunk_id="BACKEND-1",
@@ -164,8 +164,8 @@ def test_search_service_marks_insufficient_context_after_reranking() -> None:
             )
         ]
     )
-    reranker = FakeReranker(empty_queries={"no match"})
-    service = SearchService(embedder=FakeEmbedder(), index_store=store, reranker=reranker)
+    reranker = MockReranker(empty_queries={"no match"})
+    service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=reranker)
 
     result = service.search(SearchRequest(query="no match", top_k=1))
 
@@ -174,8 +174,8 @@ def test_search_service_marks_insufficient_context_after_reranking() -> None:
 
 
 def test_search_service_sets_insufficient_context_when_index_has_no_matches() -> None:
-    store = FakeIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")])
-    service = SearchService(embedder=FakeEmbedder(), index_store=store, reranker=FakeReranker())
+    store = MockIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")])
+    service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=MockReranker())
 
     result = service.search(SearchRequest(query="no match", top_k=1, domain="security"))
 
@@ -184,18 +184,18 @@ def test_search_service_sets_insufficient_context_when_index_has_no_matches() ->
 
 
 def test_search_service_requires_existing_index() -> None:
-    store = FakeIndexStore([], exists=False)
-    service = SearchService(embedder=FakeEmbedder(), index_store=store, reranker=FakeReranker())
+    store = MockIndexStore([], exists=False)
+    service = SearchService(embedder=MockEmbedder(), index_store=store, reranker=MockReranker())
 
     with pytest.raises(MissingIndexError):
         service.search(SearchRequest(query="backend logs", top_k=1))
 
 
 def test_search_service_close_closes_reranker() -> None:
-    reranker = FakeReranker()
+    reranker = MockReranker()
     service = SearchService(
-        embedder=FakeEmbedder(),
-        index_store=FakeIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")]),
+        embedder=MockEmbedder(),
+        index_store=MockIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")]),
         reranker=reranker,
     )
 

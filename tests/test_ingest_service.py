@@ -10,7 +10,7 @@ from policynim.services.ingest import IngestService
 from policynim.storage import LanceDBIndexStore
 
 
-class FakeEmbedder:
+class MockEmbedder:
     """Deterministic offline embedder for service tests."""
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
@@ -61,10 +61,10 @@ def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
 
     store = LanceDBIndexStore(uri=tmp_path / "index", table_name="policy_chunks")
     service = IngestService(
-        embedder=FakeEmbedder(),
+        embedder=MockEmbedder(),
         index_store=store,
         corpus_root=policies_dir,
-        embedding_model="fake-embedder",
+        embedding_model="mock-embedder",
     )
 
     first_result = service.run()
