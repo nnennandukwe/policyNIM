@@ -18,6 +18,7 @@ from openai import (
     OpenAI,
     RateLimitError,
 )
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
@@ -290,7 +291,7 @@ class NVIDIAGenerator(Generator):
         content = self._request_generation(messages)
         return _parse_generation_draft(content)
 
-    def _request_generation(self, messages: list[dict[str, str]]) -> str:
+    def _request_generation(self, messages: list[ChatCompletionMessageParam]) -> str:
         for attempt in range(self._max_retries + 1):
             try:
                 response = self._client.chat.completions.create(
@@ -435,7 +436,7 @@ def _extract_row_score(row: dict[str, Any]) -> float:
 def _build_generation_messages(
     request: PreflightRequest,
     context: Sequence[ScoredChunk],
-) -> list[dict[str, str]]:
+) -> list[ChatCompletionMessageParam]:
     system_prompt = (
         "You are PolicyNIM's grounded policy synthesis engine.\n"
         "Return ONLY valid JSON. Do not use markdown fences or commentary.\n"

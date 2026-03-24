@@ -19,9 +19,11 @@ class Embedder(Protocol):
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed policy document chunks."""
+        ...
 
     def embed_query(self, text: str) -> list[float]:
         """Embed a query for retrieval."""
+        ...
 
 
 class Reranker(Protocol):
@@ -35,6 +37,7 @@ class Reranker(Protocol):
         top_k: int,
     ) -> list[ScoredChunk]:
         """Return reranked candidates."""
+        ...
 
 
 class Generator(Protocol):
@@ -46,6 +49,7 @@ class Generator(Protocol):
         context: Sequence[ScoredChunk],
     ) -> GeneratedPreflightDraft:
         """Generate a grounded preflight draft."""
+        ...
 
 
 class IndexStore(Protocol):
@@ -53,15 +57,19 @@ class IndexStore(Protocol):
 
     def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
         """Replace the local index contents with embedded chunks."""
+        ...
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
+        ...
 
     def count(self) -> int:
         """Return the number of rows in the local index."""
+        ...
 
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
+        ...
 
     def search(
         self,
@@ -71,3 +79,4 @@ class IndexStore(Protocol):
         domain: str | None = None,
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
+        ...

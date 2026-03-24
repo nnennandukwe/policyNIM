@@ -14,8 +14,10 @@ from policynim.types import (
     PolicyChunk,
     PolicyGuidance,
     PolicyMetadata,
+    PreflightRequest,
     PreflightResult,
     ScoredChunk,
+    SearchRequest,
     SearchResult,
 )
 
@@ -40,7 +42,7 @@ class FakeIngestService:
 class FakeSearchService:
     """Static search service for CLI tests."""
 
-    def search(self, request) -> SearchResult:
+    def search(self, request: SearchRequest) -> SearchResult:
         return SearchResult(
             query=request.query,
             domain=request.domain,
@@ -70,7 +72,7 @@ class FakePreflightService:
     def __init__(self) -> None:
         self.closed = False
 
-    def preflight(self, request) -> PreflightResult:
+    def preflight(self, request: PreflightRequest) -> PreflightResult:
         return PreflightResult(
             task=request.task,
             domain=request.domain,
@@ -162,10 +164,10 @@ def test_search_command_prints_json(monkeypatch) -> None:
     result = runner.invoke(app, ["search", "--query", "backend logs", "--top-k", "3"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["query"] == "backend logs"
-    assert payload["top_k"] == 3
-    assert payload["hits"][0]["chunk_id"] == "BACKEND-1"
+    payload = SearchResult.model_validate(json.loads(result.stdout))
+    assert payload.query == "backend logs"
+    assert payload.top_k == 3
+    assert payload.hits[0].chunk_id == "BACKEND-1"
 
 
 def test_preflight_command_prints_json(monkeypatch) -> None:
@@ -181,10 +183,10 @@ def test_preflight_command_prints_json(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["task"] == "refresh token cleanup"
-    assert payload["domain"] == "security"
-    assert payload["citations"][0]["chunk_id"] == "AUTH-1"
+    payload = PreflightResult.model_validate(json.loads(result.stdout))
+    assert payload.task == "refresh token cleanup"
+    assert payload.domain == "security"
+    assert payload.citations[0].chunk_id == "AUTH-1"
     assert service.closed is True
 
 

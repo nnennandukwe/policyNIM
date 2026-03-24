@@ -28,7 +28,7 @@ class FakePreflightService:
     def __init__(self) -> None:
         self.closed = False
 
-    def preflight(self, request) -> PreflightResult:
+    def preflight(self, request: PreflightRequest) -> PreflightResult:
         return PreflightResult(
             task=request.task,
             domain=request.domain,
@@ -67,7 +67,7 @@ class FakeSearchService:
     def __init__(self) -> None:
         self.closed = False
 
-    def search(self, request) -> SearchResult:
+    def search(self, request: SearchRequest) -> SearchResult:
         return SearchResult(
             query=request.query,
             domain=request.domain,
@@ -103,6 +103,14 @@ def _call_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def _search_payload(payload: dict[str, object]) -> SearchResult:
+    return SearchResult.model_validate(payload)
+
+
+def _preflight_payload(payload: dict[str, object]) -> PreflightResult:
+    return PreflightResult.model_validate(payload)
+
+
 def test_policy_preflight_returns_exact_typed_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         mcp_module,
@@ -116,12 +124,9 @@ def test_policy_preflight_returns_exact_typed_payload(monkeypatch) -> None:
         top_k=3,
     )
 
-    expected = (
-        FakePreflightService()
-        .preflight(PreflightRequest(task="refresh token cleanup", domain="security", top_k=3))
-        .model_dump(mode="json")
+    assert _preflight_payload(payload) == FakePreflightService().preflight(
+        PreflightRequest(task="refresh token cleanup", domain="security", top_k=3)
     )
-    assert payload == expected
 
 
 def test_policy_search_returns_exact_typed_payload(monkeypatch) -> None:
@@ -133,12 +138,9 @@ def test_policy_search_returns_exact_typed_payload(monkeypatch) -> None:
         top_k=2,
     )
 
-    expected = (
-        FakeSearchService()
-        .search(SearchRequest(query="background cleanup", domain="backend", top_k=2))
-        .model_dump(mode="json")
+    assert _search_payload(payload) == FakeSearchService().search(
+        SearchRequest(query="background cleanup", domain="backend", top_k=2)
     )
-    assert payload == expected
 
 
 def test_policy_preflight_uses_runtime_default_top_k(monkeypatch) -> None:
@@ -157,9 +159,10 @@ def test_policy_preflight_uses_runtime_default_top_k(monkeypatch) -> None:
     monkeypatch.setattr(mcp_module, "get_settings", lambda: Settings(default_top_k=7))
 
     payload = mcp_module.policy_preflight(task="refresh token cleanup")
+    result = _preflight_payload(payload)
 
     assert captured["top_k"] == 7
-    assert payload["task"] == "refresh token cleanup"
+    assert result.task == "refresh token cleanup"
 
 
 def test_policy_search_rejects_out_of_range_top_k() -> None:
@@ -238,9 +241,10 @@ def test_call_tool_runs_minimal_stdio_path(monkeypatch) -> None:
     monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: FakeSearchService())
 
     payload = _call_tool("policy_search", {"query": "background cleanup", "top_k": 1})
+    result = _search_payload(payload)
 
-    assert payload["query"] == "background cleanup"
-    assert payload["hits"][0]["chunk_id"] == "BACKEND-1"
+    assert result.query == "background cleanup"
+    assert result.hits[0].chunk_id == "BACKEND-1"
 
 
 def test_policy_search_closes_service_after_tool_call(monkeypatch) -> None:
@@ -248,14 +252,15 @@ def test_policy_search_closes_service_after_tool_call(monkeypatch) -> None:
     monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
 
     payload = mcp_module.policy_search(query="background cleanup", top_k=1)
+    result = _search_payload(payload)
 
-    assert payload["query"] == "background cleanup"
+    assert result.query == "background cleanup"
     assert service.closed is True
 
 
 def test_policy_preflight_closes_service_when_tool_raises(monkeypatch) -> None:
     class FailingPreflightService(FakePreflightService):
-        def preflight(self, request) -> PreflightResult:
+        def preflight(self, request: PreflightRequest) -> PreflightResult:
             raise MissingIndexError("Run `policynim ingest` first.")
 
     service = FailingPreflightService()

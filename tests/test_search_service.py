@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 
 from policynim.errors import MissingIndexError
 from policynim.services.search import SearchService
-from policynim.types import PolicyMetadata, ScoredChunk, SearchRequest
+from policynim.types import EmbeddedChunk, PolicyChunk, PolicyMetadata, ScoredChunk, SearchRequest
 
 
 class FakeEmbedder:
@@ -20,7 +22,7 @@ class FakeEmbedder:
         }
         return mapping[text]
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         return [[1.0, 0.0] for _ in texts]
 
 
@@ -42,7 +44,7 @@ class FakeIndexStore:
 
     def search(
         self,
-        query_embedding: list[float],
+        query_embedding: Sequence[float],
         *,
         top_k: int,
         domain: str | None = None,
@@ -54,6 +56,12 @@ class FakeIndexStore:
             chunk for chunk in self._chunks if domain is None or chunk.policy.domain == domain
         ]
         return candidates[:top_k]
+
+    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+        self._chunks = [ScoredChunk(**chunk.model_dump(exclude={"vector"})) for chunk in chunks]
+
+    def list_chunks(self) -> list[PolicyChunk]:
+        return [PolicyChunk(**chunk.model_dump(exclude={"score"})) for chunk in self._chunks]
 
 
 class FakeReranker:
@@ -72,7 +80,7 @@ class FakeReranker:
     def rerank(
         self,
         query: str,
-        candidates: list[ScoredChunk],
+        candidates: Sequence[ScoredChunk],
         *,
         top_k: int,
     ) -> list[ScoredChunk]:
@@ -84,7 +92,7 @@ class FakeReranker:
 
         ordering = {chunk_id: index for index, chunk_id in enumerate(self._order)}
         ranked = sorted(
-            candidates,
+            list(candidates),
             key=lambda chunk: ordering.get(chunk.chunk_id, len(ordering)),
         )
         return ranked[:top_k]
