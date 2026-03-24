@@ -82,6 +82,9 @@ Notes:
   shows the API-key flow, and the
   [Build catalog](https://build.nvidia.com/) is where developers can browse models
   and use the "Get API Key" flow.
+- Copying `.env.example` intentionally leaves `POLICYNIM_CORPUS_DIR` unset, so the
+  bundled sample corpus is used by default. Add `POLICYNIM_CORPUS_DIR=/abs/path`
+  yourself only if you want to index a different corpus.
 - `eval` defaults to offline mode, so it can run without NVIDIA credentials.
 - `policynim mcp` works without `--transport`; it defaults to `stdio`.
 - Add `--transport streamable-http` only if you want the HTTP transport instead of
@@ -109,6 +112,9 @@ Then set `NVIDIA_API_KEY` in `.env` or your shell. For the official key-creation
 flow, use NVIDIA's
 [API Catalog Quickstart Guide](https://docs.api.nvidia.com/nim/docs/api-quickstart)
 and [Build catalog](https://build.nvidia.com/).
+
+If you want to index a custom policy directory instead of the bundled sample
+corpus, add `POLICYNIM_CORPUS_DIR=/abs/path/to/policies` manually to `.env`.
 
 Important runtime settings:
 

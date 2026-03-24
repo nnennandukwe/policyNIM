@@ -28,6 +28,14 @@ def test_settings_still_allows_constructor_field_names() -> None:
     assert settings.mcp_port == 9001
 
 
+def test_settings_treats_empty_corpus_env_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICYNIM_CORPUS_DIR", "")
+
+    settings = Settings()
+
+    assert settings.corpus_dir is None
+
+
 def test_document_section_rejects_inverted_line_ranges() -> None:
     with pytest.raises(
         ValidationError,

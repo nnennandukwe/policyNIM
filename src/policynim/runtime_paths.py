@@ -14,10 +14,23 @@ def resolve_runtime_path(path: Path) -> Path:
     return (Path.cwd() / path).resolve(strict=False)
 
 
-def resolve_corpus_root(configured_root: Path | None = None) -> Path:
+def _normalize_optional_path(value: Path | str | None) -> Path | None:
+    """Normalize optional path-like input and discard empty-string overrides."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        return Path(stripped)
+    return value
+
+
+def resolve_corpus_root(configured_root: Path | str | None = None) -> Path:
     """Resolve the policy corpus from config, bundled package data, or a source checkout."""
-    if configured_root is not None:
-        return resolve_runtime_path(configured_root)
+    normalized_root = _normalize_optional_path(configured_root)
+    if normalized_root is not None:
+        return resolve_runtime_path(normalized_root)
 
     package_root = Path(__file__).resolve().parent
     bundled_corpus = package_root / "policies"
