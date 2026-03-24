@@ -1,108 +1,191 @@
-# PolicyNIM Architecture Notes
+# PolicyNIM Architecture
 
 ## Purpose
 
-PolicyNIM is a policy-aware preflight layer for AI coding agents. The Day 1 goal is
-to lock the repo boundaries and public surfaces before retrieval logic exists. Day 2
-adds a format-aware ingest foundation for tolerant Markdown parsing and deterministic
-chunk generation. Day 3 adds hosted embeddings plus a local vector index. Day 4 adds
-reranking and grounded synthesis internally while keeping public `preflight`
-surfaces deferred. Day 5 wires those public CLI and MCP surfaces to the grounded
-service layer without changing the underlying retrieval architecture. Day 6 adds
-an offline-first eval harness, rerank on/off comparison, and local results
-inspection through Evidently OSS.
+PolicyNIM is a policy-aware preflight layer for AI coding agents. It turns a small
+Markdown policy corpus into grounded implementation guidance with citations, while
+keeping the public system easy to inspect from the terminal.
+
+The architecture stays intentionally small:
+
+- typed contracts shared by CLI and MCP
+- explicit provider and storage adapters
+- application services for ingest, retrieval, preflight, and evaluation
+- fail-closed grounding rules instead of best-effort freeform answers
 
 ## Design Principles
 
-- Keep the code path explicit and readable.
-- Make NVIDIA usage visible in the architecture and docs.
-- Prefer a few real seams over speculative abstraction layers.
-- Use shared typed contracts so the CLI and MCP surfaces do not drift.
+- Keep the runtime path explicit and reviewable.
+- Make NVIDIA usage visible instead of hiding it behind generic wrappers.
+- Keep CLI and MCP payloads aligned through shared typed models.
+- Preserve source line spans and stable chunk IDs so citations are inspectable.
+- Fail closed when setup is invalid or evidence is too weak.
+
+## System Shape
+
+### Corpus And Ingest Flow
+
+The shipped corpus lives under `policies/` as Markdown documents with optional YAML
+frontmatter. Frontmatter is preferred, not required.
+
+Ingest flow:
+
+1. discover policy files from the bundled corpus or `POLICYNIM_CORPUS_DIR`
+2. parse Markdown into normalized documents
+3. infer missing metadata when possible
+4. extract heading-aware sections with stable line spans
+5. build deterministic chunk IDs
+6. embed chunk text through NVIDIA-hosted embeddings
+7. replace the local LanceDB table with the new embedded rows
+
+Important ingest rules:
+
+- source line spans are preserved as inclusive 1-based ranges
+- chunk IDs are deterministic
+- malformed frontmatter and duplicate effective policy IDs are rejected
+- off-template but readable Markdown is still accepted when meaningful content
+  can be recovered
+
+### Indexing And Retrieval Flow
+
+Indexing and retrieval are local-first except for the NVIDIA-hosted model calls.
+
+Retrieval flow:
+
+1. validate runtime settings
+2. embed the user query through NVIDIA-hosted embeddings
+3. retrieve dense candidates from the local LanceDB table
+4. optionally filter by policy domain
+5. rerank candidates through NVIDIA-hosted reranking
+6. return a JSON-first `SearchResult`
+
+Current retrieval design choices:
+
+- one local LanceDB table stores all indexed chunks
+- ingest replaces the whole table instead of incrementally merging rows
+- the same embedding model is used for document and query vectors
+- reranking is part of the normal search path, not a separate experimental mode
+
+### Grounded Preflight Flow
+
+`PreflightService` is the main orchestration layer for grounded policy guidance.
+
+Preflight flow:
+
+1. retrieve and rerank relevant evidence
+2. send retained evidence to the grounded generator
+3. receive a structured draft that cites retrieved chunk IDs
+4. validate every cited chunk ID against the retained result set
+5. materialize public citations and policy guidance
+6. return a JSON-first `PreflightResult`
+
+Fail-closed rules are central here:
+
+- missing configuration remains an explicit error
+- missing index remains an explicit error
+- malformed generation output is rejected
+- invalid citation references invalidate the answer
+- weak or invalid grounding becomes `insufficient_context=true`
+
+PolicyNIM intentionally prefers no answer over fabricated guidance.
+
+### Evaluation Flow
+
+`EvalService` provides the local quality workflow.
+
+Evaluation flow:
+
+1. load the bundled eval suite
+2. run cases against `search` and `preflight`
+3. score results with deterministic checks
+4. compare rerank-enabled and rerank-disabled runs
+5. persist JSON artifacts and HTML reports
+6. optionally start the local Evidently UI
+
+Important evaluation rules:
+
+- offline mode is the default contributor path
+- live mode is opt-in and requires `NVIDIA_API_KEY`
+- live mode uses an isolated temporary LanceDB path
+- scoring is code-based, not LLM-as-judge
+- expected chunk recall, policy recall, and insufficient-context accuracy are the
+  core tracked metrics
 
 ## Package Boundaries
 
 ### `src/policynim/settings.py`
 
-- The only module allowed to read environment variables.
+- The only module that reads environment variables directly.
 - Exposes validated application settings to the rest of the package.
 
 ### `src/policynim/types.py`
 
-- Shared typed models for requests, results, citations, and policy metadata.
-- Contains no file I/O, environment access, or transport-specific code.
+- Shared typed models for requests, results, citations, metadata, and eval output.
+- Contains no file I/O, environment access, or transport-specific behavior.
 
 ### `src/policynim/contracts.py`
 
-- Defines the real external seams for later implementation:
-  - embeddings
-  - reranking
-  - generation
-  - index storage
-- Keeps service orchestration independent from provider-specific details.
+- Defines the provider and storage seams used by services.
+- Keeps application orchestration independent from concrete adapters.
 
 ### `src/policynim/ingest/`
 
-- Owns document discovery, parsing, metadata normalization, and chunk assembly.
-- Defines the parser seam used to support Markdown now and other source formats
-  later.
+- Owns document discovery, parsing, metadata normalization, section extraction,
+  and chunk assembly.
 - Must not import CLI or MCP modules.
-
-### `src/policynim/services/`
-
-- Application-layer orchestration lives here.
-- Services may depend on `types`, `contracts`, and `settings`.
-- `IngestService` owns policy loading, chunking, embedding, and index rebuild.
-- `SearchService` owns query embedding, dense candidate retrieval, and reranking.
-- `PreflightService` owns dense retrieval, reranking, grounded synthesis, citation
-  validation, and insufficient-context fallback.
-- `EvalService` owns gold-case loading, search/preflight scoring, rerank
-  comparison, and report persistence.
-- Services must not import CLI or MCP modules.
 
 ### `src/policynim/providers/`
 
-- Provider-specific API adapters live here.
-- `nvidia.py` owns NVIDIA auth, retries, timeouts, endpoint construction, response
-  validation, and lifecycle of internally created SDK/HTTP clients.
-- Day 4 extends `nvidia.py` to own reranking and grounded chat-generation adapters.
-- Provider adapters may accept injected SDK/HTTP clients for tests or advanced
-  callers, but they only close clients they create themselves.
-- Providers must not import CLI or MCP modules.
+- Owns NVIDIA-specific endpoint construction, auth, retries, timeouts, response
+  validation, and lifecycle of internally created clients.
+- Must not import CLI or MCP modules.
 
 ### `src/policynim/storage/`
 
-- Local persistence adapters live here.
-- `lancedb.py` owns table replacement, row mapping, and vector search behavior.
-- Storage adapters must not read environment variables directly.
+- Owns LanceDB persistence, row mapping, replacement, and search behavior.
+- Must not read environment variables directly.
+
+### `src/policynim/services/`
+
+- Owns application orchestration.
+- `IngestService` handles parse, chunk, embed, and rebuild.
+- `SearchService` handles query embedding, retrieval, and reranking.
+- `PreflightService` handles retrieval, grounded synthesis, and citation
+  validation.
+- `EvalService` handles gold-case execution, scoring, comparison, and report
+  persistence.
+- Services may depend on `settings`, `types`, `contracts`, providers, and storage,
+  but they must not import CLI or MCP modules.
 
 ### `src/policynim/interfaces/`
 
-- Transport-specific entry points live here.
-- `cli.py` owns terminal-facing command definitions and help text.
-- `mcp.py` owns MCP server and tool registration.
-- Interface modules may call services, but not providers directly.
-- `eval-ui` remains a CLI-only transport helper; there is no MCP eval surface.
+- Owns transport-specific entry points only.
+- `cli.py` defines terminal-facing commands and help text.
+- `mcp.py` defines the MCP tool surface and server startup.
+- Interface modules call services, not providers directly.
 
 ## Import Rules
 
 - `settings.py` imports standard library plus `pydantic-settings`.
 - `types.py` imports standard library and `pydantic`.
-- `contracts.py` imports `types.py` and the standard library only.
-- `services/` may import `settings.py`, `types.py`, and `contracts.py`.
-- `providers/` may import `settings.py`, `contracts.py`, `errors.py`, and SDK clients.
+- `contracts.py` imports only shared types and standard library helpers.
+- `ingest/` may import `types.py`, `errors.py`, and parsing dependencies.
+- `providers/` may import `settings.py`, `contracts.py`, `errors.py`, and SDK or
+  HTTP dependencies.
 - `storage/` may import `contracts.py`, `types.py`, and `errors.py`.
-- `ingest/` may import `types.py` and `errors.py`, plus format-specific parsing
-  dependencies.
+- `services/` may import `settings.py`, `types.py`, `contracts.py`, providers,
+  storage, and ingest modules.
 - `interfaces/` may import `services/`, `settings.py`, and `types.py`.
-- Future provider and storage adapters must not import `interfaces/`.
 
-## Public Surface Locked On Day 1
+## Public Interfaces
 
 ### CLI
 
 - `policynim ingest`
-- `policynim preflight --task ...`
+- `policynim dump-index`
 - `policynim search --query ...`
+- `policynim preflight --task ...`
+- `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 
 ### MCP Tools
@@ -110,75 +193,55 @@ inspection through Evidently OSS.
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
 
-## Failure States To Design For Early
+Shared interface guarantees:
 
-- Missing NVIDIA API key.
-- Invalid NVIDIA API key.
-- Invalid policy frontmatter.
-- Duplicate effective policy IDs in the corpus.
-- Off-template documents with missing metadata.
-- Empty or missing local index.
-- Weak retrieval evidence once retrieval exists.
-- Public-surface drift between CLI JSON, MCP payloads, and docs.
+- CLI `search` and MCP `policy_search` use the same `SearchResult` shape.
+- CLI `preflight` and MCP `policy_preflight` use the same `PreflightResult`
+  shape.
+- top-k validation is shared and explicit.
+- runtime setup failures are not masked as insufficient context.
 
-## Day 2 Ingest Rules
+## Runtime Boundaries
 
-- Frontmatter is preferred, not required.
-- The Markdown parser must tolerate imperfect but readable Markdown instead of
-  assuming strict template compliance.
-- Citation spans must remain stable and map to original source line numbers.
-- Section extraction should preserve heading ancestry so chunk labels are useful to
-  humans and downstream retrieval.
-- Future non-Markdown formats should plug into the parser seam without forcing a
-  rewrite of metadata normalization or chunk assembly.
+### NVIDIA-Owned Steps
 
-## Day 4 Retrieval Rules
+NVIDIA-hosted APIs are used for:
 
-- `ingest` rebuilds the local LanceDB table on every run instead of incrementally
-  merging rows.
-- The NVIDIA API key is required for both document embedding and query embedding.
-- The same embedding model must be used for documents and queries so vector
-  dimensions always match.
-- `search` retrieves dense candidates, reranks them with NVIDIA, and returns
-  JSON-first `SearchResult` payloads.
-- The internal preflight flow must validate citation IDs against retained chunks
-  before surfacing grounded guidance.
-- If grounding is weak or invalid, the service should fall back to
-  `insufficient_context=true` instead of fabricating guidance.
-- The public `preflight` CLI and MCP tools remain deferred to Day 5.
+- document embeddings during ingest
+- query embeddings during search and preflight
+- reranking retrieved candidates
+- grounded generation for preflight
 
-## Day 5 Public Interface Rules
+These steps require `NVIDIA_API_KEY`.
 
-- `cli.py` and `mcp.py` stay thin transport adapters over the service layer.
-- Public CLI preflight output is JSON-first and uses the exact `PreflightResult`
-  shape produced by the shared typed models.
-- `policy_preflight` returns the same `PreflightResult` shape as the CLI JSON.
-- `policy_search` returns the same `SearchResult` shape as the CLI JSON.
-- MCP tool handlers construct services per call from current settings instead of
-  holding long-lived provider or service state in the interface layer.
-- Missing index and configuration failures remain explicit public errors; only
-  weak grounded evidence becomes `insufficient_context=true`.
+### Local-Only Steps
 
-## Day 6 Evaluation Rules
+Local runtime components own:
 
-- `policynim eval` is the public evaluation entrypoint.
-- Offline mode is the default contributor workflow and must not require
-  `NVIDIA_API_KEY`.
-- Live mode must use an isolated temporary LanceDB path instead of mutating the
-  caller's normal runtime index.
-- Eval scoring stays deterministic and code-based:
-  - `search` cases score expected `chunk_id` recall
-  - `preflight` cases score expected `policy_id` recall
-  - `insufficient_context` mismatches fail the case
-- Rerank comparison runs the same suite with reranking enabled and disabled, then
-  persists both results for side-by-side comparison.
-- Evidently integration belongs in the eval service and CLI workflow, not in
-  provider or storage adapters.
+- policy discovery and parsing
+- chunk assembly and citation spans
+- LanceDB persistence and dense candidate lookup
+- offline eval execution
+- local artifact persistence under `data/`
+
+## Failure States That Must Stay Explicit
+
+- missing or invalid `NVIDIA_API_KEY`
+- malformed policy frontmatter
+- duplicate effective policy IDs
+- missing or empty local index
+- malformed provider responses
+- invalid grounded citation references
+- CLI and MCP payload drift
+
+Only weak or invalid grounded evidence should become `insufficient_context=true`.
+Setup and runtime failures should remain actionable errors.
 
 ## Current Deferrals
 
-- No CI-level live end-to-end MCP verification yet.
-- No custom eval dashboard beyond Evidently OSS.
+- No default CI path for live NVIDIA end-to-end verification.
+- No multi-user or shared remote index model.
+- No hybrid lexical plus vector retrieval layer.
+- No custom evaluation dashboard beyond Evidently OSS.
 
-Those land later so the repo foundation stays small, reviewable, and easy to
-teach from.
+Those are deferred to keep the repo tutorial-friendly, explicit, and easy to audit.
