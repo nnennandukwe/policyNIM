@@ -20,7 +20,7 @@ class LanceDBIndexStore(IndexStore):
         self._uri = uri
         self._table_name = table_name
         self._uri.mkdir(parents=True, exist_ok=True)
-        connect = cast("Any", getattr(lancedb, "connect"))
+        connect = cast(Any, getattr(lancedb, "connect"))
         self._db = connect(self._uri.as_posix())
 
     @property
@@ -163,14 +163,26 @@ def _quote_sql_string(value: str) -> str:
 
 
 def _string_list(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    return []
+    if value is None:
+        return []
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        values: list[str] = []
+        for item in value:
+            cleaned = str(item).strip()
+            if cleaned:
+                values.append(cleaned)
+        return values
+    cleaned = str(value).strip()
+    return [cleaned] if cleaned else []
 
 
 def _float_value(value: object, *, default: float) -> float:
     if value is None:
         return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    return default
+    try:
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return default
