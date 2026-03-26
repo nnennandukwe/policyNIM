@@ -21,6 +21,11 @@ The architecture stays intentionally small:
 - Preserve source line spans and stable chunk IDs so citations are inspectable.
 - Fail closed when setup is invalid or evidence is too weak.
 
+## Visual Diagram
+
+See [architecture-diagram.md](architecture-diagram.md) for Mermaid views of the
+current package boundaries and runtime flow.
+
 ## System Shape
 
 ### Corpus And Ingest Flow

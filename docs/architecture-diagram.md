@@ -1,0 +1,185 @@
+# PolicyNIM Architecture Diagram
+
+This page gives a visual map of the current PolicyNIM architecture. For the
+detailed design notes, package rules, and runtime constraints, see
+[architecture.md](architecture.md).
+
+## Module Boundary Map
+
+```mermaid
+flowchart LR
+    classDef iface fill:#E8F1FF,stroke:#2457A6,color:#102A43,stroke-width:1.5px;
+    classDef service fill:#FFF4E5,stroke:#C05621,color:#4A2B0F,stroke-width:1.5px;
+    classDef adapter fill:#EEF8F3,stroke:#2F855A,color:#153E2D,stroke-width:1.5px;
+    classDef shared fill:#F3F8EC,stroke:#5A7F2B,color:#24330E,stroke-width:1.3px;
+    classDef local fill:#F5F7FA,stroke:#52606D,color:#1F2933,stroke-width:1.2px;
+    classDef nvidia fill:#F5FAD8,stroke:#76B900,color:#243400,stroke-width:1.8px;
+    classDef artifact fill:#F7F2FF,stroke:#6B46C1,color:#35215A,stroke-width:1.5px;
+
+    subgraph Public["Public Interfaces"]
+        direction TB
+        CLI["CLI<br/>interfaces/cli.py"]
+        MCP["MCP server<br/>interfaces/mcp.py"]
+    end
+
+    subgraph App["Application Services"]
+        direction TB
+        IngestSvc["IngestService"]
+        SearchSvc["SearchService"]
+        PreflightSvc["PreflightService"]
+        EvalSvc["EvalService"]
+        DumpSvc["IndexDumpService"]
+    end
+
+    subgraph Adapters["Concrete Adapters"]
+        direction TB
+        IngestPkg["ingest/<br/>loader, parser, chunking"]
+        NvidiaAdapter["providers/nvidia.py"]
+        LanceStore["storage/lancedb.py"]
+    end
+
+    subgraph Shared["Shared Core"]
+        direction TB
+        Settings["settings.py"]
+        Types["types.py"]
+        Contracts["contracts.py"]
+    end
+
+    subgraph Local["Local Inputs and Outputs"]
+        direction TB
+        Policies["policies/ corpus"]
+        EvalSuite["evals/ suite"]
+        Artifacts["data/ artifacts"]
+        UI["Evidently UI"]
+    end
+
+    subgraph External["NVIDIA-hosted APIs"]
+        direction TB
+        Embed["Embeddings"]
+        Rerank["Reranking"]
+        Ground["Grounded generation"]
+    end
+
+    CLI --> IngestSvc
+    CLI --> SearchSvc
+    CLI --> PreflightSvc
+    CLI --> EvalSvc
+    CLI --> DumpSvc
+    MCP --> SearchSvc
+    MCP --> PreflightSvc
+
+    Policies --> IngestPkg --> IngestSvc
+    EvalSuite --> EvalSvc
+
+    IngestSvc --> NvidiaAdapter
+    SearchSvc --> NvidiaAdapter
+    PreflightSvc --> NvidiaAdapter
+    IngestSvc --> LanceStore
+    SearchSvc --> LanceStore
+    PreflightSvc --> LanceStore
+    DumpSvc --> LanceStore
+
+    EvalSvc --> IngestSvc
+    EvalSvc --> SearchSvc
+    EvalSvc --> PreflightSvc
+    EvalSvc --> Artifacts
+    EvalSvc --> UI
+
+    NvidiaAdapter --> Embed
+    NvidiaAdapter --> Rerank
+    NvidiaAdapter --> Ground
+
+    IngestSvc -. typed requests and results .-> Types
+    SearchSvc -. typed requests and results .-> Types
+    PreflightSvc -. typed requests and results .-> Types
+    EvalSvc -. typed requests and results .-> Types
+    IngestSvc -. validated settings .-> Settings
+    SearchSvc -. validated settings .-> Settings
+    PreflightSvc -. validated settings .-> Settings
+    EvalSvc -. validated settings .-> Settings
+    IngestSvc -. contracts .-> Contracts
+    SearchSvc -. contracts .-> Contracts
+    PreflightSvc -. contracts .-> Contracts
+
+    class CLI,MCP iface
+    class IngestSvc,SearchSvc,PreflightSvc,EvalSvc,DumpSvc service
+    class IngestPkg,NvidiaAdapter,LanceStore adapter
+    class Settings,Types,Contracts shared
+    class Policies,EvalSuite local
+    class Embed,Rerank,Ground nvidia
+    class Artifacts,UI artifact
+```
+
+## Runtime Flow
+
+```mermaid
+flowchart TB
+    classDef input fill:#E8F1FF,stroke:#2457A6,color:#102A43,stroke-width:1.5px;
+    classDef step fill:#FFF4E5,stroke:#C05621,color:#4A2B0F,stroke-width:1.5px;
+    classDef store fill:#F5F7FA,stroke:#52606D,color:#1F2933,stroke-width:1.2px;
+    classDef nvidia fill:#F5FAD8,stroke:#76B900,color:#243400,stroke-width:1.8px;
+    classDef decision fill:#FFF6D9,stroke:#B7791F,color:#4A3600,stroke-width:1.5px;
+    classDef result fill:#F7F2FF,stroke:#6B46C1,color:#35215A,stroke-width:1.5px;
+
+    subgraph Ingest["Corpus to Index"]
+        direction LR
+        Policies["Policy Markdown corpus"] --> Parse["Parse and normalize"]
+        Parse --> Chunk["Chunk by section and line span"]
+        Chunk --> EmbedDocs["Embed documents"]
+        EmbedDocs --> Index["Local LanceDB index"]
+    end
+
+    subgraph Search["Search Request"]
+        direction LR
+        Query["Search query"] --> EmbedQuery["Embed query"]
+        EmbedQuery --> DenseSearch["Dense retrieve from index"]
+        DenseSearch --> DomainFilter["Optional domain filter"]
+        DomainFilter --> SearchRerank["Rerank top candidates"]
+        SearchRerank --> SearchJSON["SearchResult JSON"]
+    end
+
+    subgraph Preflight["Grounded Preflight"]
+        direction LR
+        Task["Coding task"] --> EmbedTask["Embed task"]
+        EmbedTask --> DensePreflight["Dense retrieve from index"]
+        DensePreflight --> PreflightRerank["Rerank candidates"]
+        PreflightRerank --> Retain["Retain diverse context"]
+        Retain --> Generate["Generate grounded draft"]
+        Generate --> Validate["Validate cited chunk IDs"]
+        Validate --> Enough{"Grounded enough?"}
+        Enough -- yes --> PreflightJSON["PreflightResult JSON"]
+        Enough -- no --> Insufficient["insufficient_context=true"]
+    end
+
+    subgraph Eval["Evaluation"]
+        direction LR
+        EvalSuite["Bundled eval suite"] --> EvalRun["Run offline or live evals"]
+        EvalRun --> Compare["Compare rerank on and off"]
+        Compare --> Reports["JSON artifacts and HTML reports"]
+        Reports --> UI["Optional Evidently UI"]
+    end
+
+    Index -. vector lookup .-> DenseSearch
+    Index -. vector lookup .-> DensePreflight
+
+    EmbedDocs --> Embeddings["NVIDIA embeddings"]
+    EmbedQuery --> Embeddings
+    EmbedTask --> Embeddings
+    SearchRerank --> RerankAPI["NVIDIA reranking"]
+    PreflightRerank --> RerankAPI
+    Generate --> GroundAPI["NVIDIA grounded generation"]
+
+    class Policies,Query,Task,EvalSuite input
+    class Parse,Chunk,EmbedDocs,EmbedQuery,DenseSearch,DomainFilter,SearchRerank,EmbedTask,DensePreflight,PreflightRerank,Retain,Generate,Validate,EvalRun,Compare,Reports step
+    class Index store
+    class Embeddings,RerankAPI,GroundAPI nvidia
+    class Enough decision
+    class SearchJSON,PreflightJSON,Insufficient,UI result
+```
+
+## Reading Notes
+
+- Blue nodes are public entry points or user-supplied inputs.
+- Orange nodes are local application steps owned by PolicyNIM.
+- Green-yellow nodes are NVIDIA-hosted model calls.
+- Purple nodes are returned outputs or local viewing surfaces.

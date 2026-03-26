@@ -37,6 +37,8 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,
   and interface rules
+- [docs/architecture-diagram.md](docs/architecture-diagram.md): Mermaid diagram
+  of the current package layout and runtime flow
 - [docs/demo-script.md](docs/demo-script.md): step-by-step demo for the hero use case
 - [docs/limitations.md](docs/limitations.md): current product limits and non-goals
 - [docs/public-source-grounding.md](docs/public-source-grounding.md): provenance
