@@ -1,5 +1,7 @@
 # PolicyNIM
 
+[![Built with NVIDIA NIM](https://img.shields.io/badge/Built%20with-NVIDIA%20NIM-76B900?logo=nvidia&logoColor=white)](https://docs.nvidia.com/nim/)
+
 PolicyNIM is a policy-aware engineering preflight layer for AI coding agents.
 
 The intended workflow is simple:
