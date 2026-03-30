@@ -12,6 +12,8 @@ constraints, not setup mistakes.
   state under `data/`.
 - There is no built-in shared index service, remote storage layer, or multi-user
   coordination model.
+- The hosted beta still uses a baked local index inside the container image; it
+  does not use a shared volume or remote index service.
 
 ### Hosted Auth Is Still Beta-Simple
 
@@ -22,6 +24,8 @@ constraints, not setup mistakes.
   probing.
 - `/healthz` reports local index readiness only; it does not prove upstream NVIDIA
   availability.
+- Hosted startup now fails fast when `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but
+  the configured local index is missing or empty.
 
 ### NVIDIA Dependency For Live Retrieval
 
