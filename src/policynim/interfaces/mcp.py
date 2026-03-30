@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
+import logging
 import socket
 
 from mcp.server.fastmcp import FastMCP
@@ -18,11 +20,18 @@ from policynim.services import (
     create_search_service,
 )
 from policynim.settings import Settings, get_settings
-from policynim.types import MAX_TOP_K, MIN_TOP_K, PreflightRequest, SearchRequest
+from policynim.types import (
+    MAX_TOP_K,
+    MIN_TOP_K,
+    HealthCheckResult,
+    PreflightRequest,
+    SearchRequest,
+)
 
 SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 _STREAMABLE_HTTP_PATH = "/mcp"
 _HEALTH_PATH = "/healthz"
+LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_top_k(top_k: int | None) -> int:
@@ -121,12 +130,43 @@ def _create_mcp_server(settings: Settings) -> FastMCP:
 
 def _register_health_route(server: FastMCP, settings: Settings) -> None:
     """Register a public readiness endpoint for hosted HTTP runtimes."""
+    try:
+        health_service = create_runtime_health_service(settings)
+    except Exception:
+        LOGGER.exception("Could not construct runtime health service.")
+        health_service = None
+    fallback_reason = "Local index readiness could not be inspected."
+
+    def _fallback_result() -> JSONResponse:
+        result = HealthCheckResult(
+            status="error",
+            ready=False,
+            table_name=settings.lancedb_table,
+            row_count=0,
+            mcp_url=_derive_mcp_url(settings),
+            reason=fallback_reason,
+        )
+        return JSONResponse(result.model_dump(mode="json"), status_code=503)
 
     @server.custom_route(_HEALTH_PATH, methods=["GET"], include_in_schema=False)
     async def healthz(_: Request) -> Response:
-        result = create_runtime_health_service(settings).check()
+        if health_service is None:
+            return _fallback_result()
+
+        try:
+            result = await asyncio.to_thread(health_service.check)
+        except Exception:
+            LOGGER.exception("Runtime health probe failed.")
+            return _fallback_result()
+
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)
+
+
+def _derive_mcp_url(settings: Settings) -> str | None:
+    if settings.mcp_public_base_url is None:
+        return None
+    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
 
 
 class _BearerProtectedASGIApp:

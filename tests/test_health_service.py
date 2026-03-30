@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from policynim.services.health import RuntimeHealthService
 
 
@@ -46,7 +44,6 @@ class StubIndexStore:
 def test_runtime_health_service_reports_ready_index() -> None:
     service = RuntimeHealthService(
         index_store=StubIndexStore(exists=True, row_count=4),
-        index_uri=Path("/tmp/lancedb"),
         table_name="policy_chunks",
         mcp_url="https://beta.example.com/mcp",
     )
@@ -63,7 +60,6 @@ def test_runtime_health_service_reports_ready_index() -> None:
 def test_runtime_health_service_reports_missing_index() -> None:
     service = RuntimeHealthService(
         index_store=StubIndexStore(exists=False),
-        index_uri=Path("/tmp/lancedb"),
         table_name="policy_chunks",
         mcp_url=None,
     )
@@ -80,7 +76,6 @@ def test_runtime_health_service_reports_missing_index() -> None:
 def test_runtime_health_service_reports_empty_index() -> None:
     service = RuntimeHealthService(
         index_store=StubIndexStore(exists=True, row_count=0),
-        index_uri=Path("/tmp/lancedb"),
         table_name="policy_chunks",
         mcp_url=None,
     )
@@ -97,7 +92,6 @@ def test_runtime_health_service_reports_empty_index() -> None:
 def test_runtime_health_service_reports_unreadable_index() -> None:
     service = RuntimeHealthService(
         index_store=StubIndexStore(count_error=OSError("permission denied")),
-        index_uri=Path("/tmp/lancedb"),
         table_name="policy_chunks",
         mcp_url=None,
     )
@@ -108,4 +102,4 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
     assert result.ready is False
     assert result.row_count == 0
     assert result.reason is not None
-    assert "Could not inspect local index readiness" in result.reason
+    assert result.reason == "Local index readiness could not be inspected."

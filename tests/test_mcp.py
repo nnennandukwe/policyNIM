@@ -372,7 +372,6 @@ def test_healthz_returns_ready_payload(monkeypatch) -> None:
             HealthCheckResult(
                 status="ok",
                 ready=True,
-                index_uri="/tmp/lancedb",
                 table_name="policy_chunks",
                 row_count=4,
                 mcp_url="https://beta.example.com/mcp",
@@ -391,6 +390,7 @@ def test_healthz_returns_ready_payload(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["ready"] is True
     assert response.json()["mcp_url"] == "https://beta.example.com/mcp"
+    assert "index_uri" not in response.json()
 
 
 def test_healthz_returns_not_ready_payload(monkeypatch) -> None:
@@ -401,7 +401,6 @@ def test_healthz_returns_not_ready_payload(monkeypatch) -> None:
             HealthCheckResult(
                 status="error",
                 ready=False,
-                index_uri="/tmp/lancedb",
                 table_name="policy_chunks",
                 row_count=0,
                 mcp_url=None,
@@ -418,6 +417,7 @@ def test_healthz_returns_not_ready_payload(monkeypatch) -> None:
     assert response.status_code == 503
     assert response.json()["ready"] is False
     assert "contains no rows" in response.json()["reason"]
+    assert "index_uri" not in response.json()
 
 
 def test_healthz_stays_public_when_auth_is_enabled(monkeypatch) -> None:
@@ -428,7 +428,6 @@ def test_healthz_stays_public_when_auth_is_enabled(monkeypatch) -> None:
             HealthCheckResult(
                 status="ok",
                 ready=True,
-                index_uri="/tmp/lancedb",
                 table_name="policy_chunks",
                 row_count=1,
                 mcp_url="https://beta.example.com/mcp",
@@ -444,6 +443,69 @@ def test_healthz_stays_public_when_auth_is_enabled(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["ready"] is True
+    assert "index_uri" not in response.json()
+
+
+def test_healthz_returns_fallback_payload_when_service_construction_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "create_runtime_health_service",
+        lambda settings: (_ for _ in ()).throw(OSError("permission denied")),
+    )
+
+    app = mcp_module._build_streamable_http_app(
+        Settings.model_validate({"mcp_public_base_url": "https://beta.example.com"})
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["ready"] is False
+    assert payload["reason"] == "Local index readiness could not be inspected."
+    assert payload["mcp_url"] == "https://beta.example.com/mcp"
+    assert "index_uri" not in payload
+
+
+def test_healthz_constructs_service_once_and_runs_check_off_thread(monkeypatch) -> None:
+    factory_calls = 0
+    check_calls = 0
+
+    class CountingHealthService:
+        def check(self) -> HealthCheckResult:
+            nonlocal check_calls
+            check_calls += 1
+            return HealthCheckResult(
+                status="ok",
+                ready=True,
+                table_name="policy_chunks",
+                row_count=1,
+                mcp_url=None,
+                reason=None,
+            )
+
+    def build_service(settings) -> CountingHealthService:
+        nonlocal factory_calls
+        factory_calls += 1
+        return CountingHealthService()
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_module, "create_runtime_health_service", build_service)
+    monkeypatch.setattr(mcp_module.asyncio, "to_thread", fake_to_thread)
+
+    app = mcp_module._build_streamable_http_app(Settings())
+
+    with TestClient(app) as client:
+        first = client.get("/healthz")
+        second = client.get("/healthz")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert factory_calls == 1
+    assert check_calls == 2
 
 
 def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> None:

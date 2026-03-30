@@ -124,7 +124,6 @@ class HealthCheckResult(StrictModel):
 
     status: Literal["ok", "error"]
     ready: bool
-    index_uri: str
     table_name: str
     row_count: int = Field(ge=0)
     mcp_url: str | None = None
