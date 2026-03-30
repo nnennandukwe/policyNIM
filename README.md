@@ -71,6 +71,9 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 - `GET /healthz` reports local index readiness when using `streamable-http`.
 - `POLICYNIM_MCP_REQUIRE_AUTH` and `POLICYNIM_MCP_BEARER_TOKENS` protect only
   the HTTP `/mcp` route.
+- Hosted `streamable-http` startup fails fast when
+  `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
+  missing or empty.
 
 ## What To Run First
 
@@ -152,6 +155,35 @@ Model references used by the default config in `.env.example`:
   [NVIDIA LLM API reference](https://docs.api.nvidia.com/nim/reference/llm-apis)
 
 Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
+
+### Container Build For Hosted HTTP
+
+Build the production image with a build-time NVIDIA key so the index is baked
+into the image:
+
+```bash
+docker build --build-arg NVIDIA_API_KEY=$NVIDIA_API_KEY -t policynim-hosted .
+```
+
+Important container defaults:
+
+- the image bakes the LanceDB index at `/app/data/lancedb-baked`
+- the image sets `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+- the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the container
+- the final image does not store the build-time `NVIDIA_API_KEY`
+- runtime `NVIDIA_API_KEY` is still required because live `search` and
+  `preflight` call NVIDIA-hosted APIs
+
+Example hosted run:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
+  -e POLICYNIM_MCP_REQUIRE_AUTH=true \
+  -e POLICYNIM_MCP_BEARER_TOKENS=token-a \
+  -e POLICYNIM_MCP_PUBLIC_BASE_URL=http://127.0.0.1:8000 \
+  policynim-hosted
+```
 
 ### Contributor Workflow
 
@@ -285,6 +317,9 @@ Hosted HTTP notes:
 
 - `GET /healthz` is a public readiness endpoint. It returns `200` only when the
   configured local index exists and contains rows; otherwise it returns `503`.
+- If `POLICYNIM_MCP_PUBLIC_BASE_URL` is set, hosted `streamable-http` startup
+  now fails before serving traffic when the configured local index is missing or
+  empty.
 - To protect only the HTTP MCP route, set:
   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
   - `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b`
@@ -292,6 +327,8 @@ Hosted HTTP notes:
 - `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
   URL.
 - `stdio` ignores the hosted auth settings completely.
+- The baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+  and does not run `policynim ingest` at container startup.
 
 Example readiness check:
 

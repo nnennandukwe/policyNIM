@@ -476,3 +476,17 @@ def test_mcp_command_surfaces_streamable_http_port_conflicts(monkeypatch) -> Non
 
     assert result.exit_code == 1
     assert "streamable-http MCP server" in result.stderr
+
+
+def test_mcp_command_surfaces_hosted_startup_index_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.run_server",
+        lambda transport: (_ for _ in ()).throw(
+            ConfigurationError("Hosted streamable-http startup requires a populated local index.")
+        ),
+    )
+
+    result = runner.invoke(app, ["mcp", "--transport", "streamable-http"])
+
+    assert result.exit_code == 1
+    assert "populated local index" in result.stderr

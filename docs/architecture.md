@@ -205,6 +205,9 @@ Important evaluation rules:
 
 - `GET /healthz` returns a JSON readiness payload for the hosted HTTP runtime.
 - `/healthz` is public even when hosted bearer auth is enabled for `/mcp`.
+- Hosted `streamable-http` startup fails fast when
+  `POLICYNIM_MCP_PUBLIC_BASE_URL` is set and the configured local index is
+  missing or empty.
 
 Shared interface guarantees:
 
@@ -235,6 +238,7 @@ Local runtime components own:
 - policy discovery and parsing
 - chunk assembly and citation spans
 - LanceDB persistence and dense candidate lookup
+- baked-index startup validation for hosted HTTP images
 - offline eval execution
 - local artifact persistence under `data/`
 

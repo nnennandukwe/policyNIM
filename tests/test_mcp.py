@@ -276,6 +276,11 @@ def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
         "_ensure_streamable_http_port_available",
         lambda host, port: captured.setdefault("probe", (host, port)),
     )
+    monkeypatch.setattr(
+        mcp_module,
+        "ensure_hosted_runtime_ready",
+        lambda settings: captured.setdefault("ready", False),
+    )
     monkeypatch.setattr(mcp_module, "_build_streamable_http_app", lambda settings: object())
     monkeypatch.setattr(
         mcp_module,
@@ -288,7 +293,82 @@ def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
     mcp_module.run_server("streamable-http")
 
     assert captured["probe"] == ("127.0.0.1", 8010)
+    assert "ready" not in captured
     assert captured["run"] == {"host": "127.0.0.1", "port": 8010, "log_level": "info"}
+
+
+def test_run_server_requires_ready_index_for_hosted_http(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        mcp_module,
+        "get_settings",
+        lambda: Settings.model_validate(
+            {
+                "mcp_host": "127.0.0.1",
+                "mcp_port": 8010,
+                "mcp_public_base_url": "https://beta.example.com",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_ensure_streamable_http_port_available",
+        lambda host, port: captured.setdefault("probe", (host, port)),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "ensure_hosted_runtime_ready",
+        lambda settings: captured.setdefault("ready", True),
+    )
+    monkeypatch.setattr(mcp_module, "_build_streamable_http_app", lambda settings: object())
+    monkeypatch.setattr(
+        mcp_module,
+        "_run_streamable_http_app",
+        lambda app, *, host, port, log_level="info": captured.setdefault(
+            "run", {"host": host, "port": port, "log_level": log_level}
+        ),
+    )
+
+    mcp_module.run_server("streamable-http")
+
+    assert captured["probe"] == ("127.0.0.1", 8010)
+    assert captured["ready"] is True
+    assert captured["run"] == {"host": "127.0.0.1", "port": 8010, "log_level": "info"}
+
+
+def test_run_server_surfaces_hosted_startup_readiness_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "get_settings",
+        lambda: Settings.model_validate(
+            {
+                "mcp_host": "127.0.0.1",
+                "mcp_port": 8010,
+                "mcp_public_base_url": "https://beta.example.com",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_ensure_streamable_http_port_available",
+        lambda host, port: None,
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "ensure_hosted_runtime_ready",
+        lambda settings: (_ for _ in ()).throw(
+            ConfigurationError("Hosted streamable-http startup requires a populated local index.")
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_build_streamable_http_app",
+        lambda settings: pytest.fail("HTTP app should not be built when hosted startup fails"),
+    )
+
+    with pytest.raises(ConfigurationError, match="populated local index"):
+        mcp_module.run_server("streamable-http")
 
 
 def test_streamable_http_port_probe_rejects_in_use_port() -> None:

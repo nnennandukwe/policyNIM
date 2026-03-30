@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from policynim.contracts import IndexStore
+from policynim.errors import ConfigurationError
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
@@ -76,7 +77,46 @@ def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHe
     )
 
 
+def ensure_hosted_runtime_ready(settings: Settings | None = None) -> None:
+    """Fail fast when hosted HTTP startup points at a missing or empty local index."""
+    active_settings = settings or get_settings()
+    index_uri = resolve_runtime_path(active_settings.lancedb_uri)
+
+    try:
+        result = create_runtime_health_service(active_settings).check()
+    except Exception as exc:
+        reason = f"Local index readiness could not be inspected: {type(exc).__name__}: {exc}."
+        raise ConfigurationError(
+            _format_hosted_runtime_error(
+                index_uri=index_uri,
+                table_name=active_settings.lancedb_table,
+                reason=reason,
+            )
+        ) from exc
+
+    if result.ready:
+        return
+
+    reason = result.reason or "Local index readiness could not be inspected."
+    raise ConfigurationError(
+        _format_hosted_runtime_error(
+            index_uri=index_uri,
+            table_name=active_settings.lancedb_table,
+            reason=reason,
+        )
+    )
+
+
 def _derive_mcp_url(settings: Settings) -> str | None:
     if settings.mcp_public_base_url is None:
         return None
     return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+
+
+def _format_hosted_runtime_error(*, index_uri: str, table_name: str, reason: str) -> str:
+    return (
+        "Hosted streamable-http startup requires a populated local index at "
+        f"{index_uri} (table: {table_name}). "
+        f"{reason} Rebuild the image so `policynim ingest` runs during Docker build "
+        "or set `POLICYNIM_LANCEDB_URI` to a populated directory."
+    )
