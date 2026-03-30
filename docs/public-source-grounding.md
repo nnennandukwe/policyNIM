@@ -98,9 +98,10 @@ how the repo uses that source material.
 - Provenance note:
   - The repo policy uses public session and token guidance to define bounded
     lifetime, revocation, and error-handling rules for token-based systems.
-  - This document currently records its grounding in the body text rather than the
-    `grounded_in` frontmatter field. The provenance is still public and explicit,
-    but the metadata format is less normalized than the other shipped policies.
+  - This document keeps its grounding in the body text rather than the
+    `grounded_in` frontmatter field. The provenance is still public and
+    explicit, but the metadata format is less normalized than the other shipped
+    policies.
 
 ## Template Note
 

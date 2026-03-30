@@ -31,6 +31,8 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `preflight`,
   `eval`, and `mcp`.
 - MCP tools for `policy_preflight` and `policy_search`.
+- Hosted HTTP `streamable-http` with a public `/healthz` readiness route and
+  optional bearer auth on `/mcp`.
 - Offline-first evaluation with rerank on/off comparison and local Evidently UI.
 
 ## Repo Guide
@@ -63,6 +65,12 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
+
+### Hosted HTTP
+
+- `GET /healthz` reports local index readiness when using `streamable-http`.
+- `POLICYNIM_MCP_REQUIRE_AUTH` and `POLICYNIM_MCP_BEARER_TOKENS` protect only
+  the HTTP `/mcp` route.
 
 ## What To Run First
 
@@ -129,6 +137,9 @@ Important runtime settings:
 - `POLICYNIM_DEFAULT_TOP_K`
 - `POLICYNIM_MCP_HOST`
 - `POLICYNIM_MCP_PORT`
+- `POLICYNIM_MCP_REQUIRE_AUTH`
+- `POLICYNIM_MCP_BEARER_TOKENS`
+- `POLICYNIM_MCP_PUBLIC_BASE_URL`
 - `POLICYNIM_EVAL_UI_PORT`
 
 Model references used by the default config in `.env.example`:
@@ -269,6 +280,24 @@ uv run policynim mcp --transport streamable-http
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other than
 the default `127.0.0.1:8000`.
+
+Hosted HTTP notes:
+
+- `GET /healthz` is a public readiness endpoint. It returns `200` only when the
+  configured local index exists and contains rows; otherwise it returns `503`.
+- To protect only the HTTP MCP route, set:
+  - `POLICYNIM_MCP_REQUIRE_AUTH=true`
+  - `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b`
+  - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://your-host`
+- `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
+  URL.
+- `stdio` ignores the hosted auth settings completely.
+
+Example readiness check:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+```
 
 For client setup examples, see:
 

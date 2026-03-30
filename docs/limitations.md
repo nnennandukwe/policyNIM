@@ -13,6 +13,16 @@ constraints, not setup mistakes.
 - There is no built-in shared index service, remote storage layer, or multi-user
   coordination model.
 
+### Hosted Auth Is Still Beta-Simple
+
+- The hosted HTTP path uses manually issued bearer tokens from configuration.
+- There is no built-in token store, self-serve token issuance, or per-user audit
+  layer yet.
+- The auth wrapper protects only `/mcp`; `/healthz` stays public for readiness
+  probing.
+- `/healthz` reports local index readiness only; it does not prove upstream NVIDIA
+  availability.
+
 ### NVIDIA Dependency For Live Retrieval
 
 - `ingest`, `search`, `preflight`, and live eval mode depend on NVIDIA-hosted APIs.
@@ -71,6 +81,7 @@ The following are prerequisites or workflow choices, not product limitations:
 - setting `NVIDIA_API_KEY` before live retrieval workflows
 - using `--headless` to skip the local eval UI
 - choosing `stdio` or `streamable-http` for MCP transport
+- setting hosted MCP auth env vars only when you actually want HTTP auth enabled
 
 ## Likely Future Expansion Areas
 

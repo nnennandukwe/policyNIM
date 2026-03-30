@@ -29,6 +29,7 @@ flowchart LR
         PreflightSvc["PreflightService"]
         EvalSvc["EvalService"]
         DumpSvc["IndexDumpService"]
+        HealthSvc["RuntimeHealthService"]
     end
 
     subgraph Adapters["Concrete Adapters"]
@@ -67,6 +68,7 @@ flowchart LR
     CLI --> DumpSvc
     MCP --> SearchSvc
     MCP --> PreflightSvc
+    MCP --> HealthSvc
 
     Policies --> IngestPkg --> IngestSvc
     EvalSuite --> EvalSvc
@@ -78,6 +80,7 @@ flowchart LR
     SearchSvc --> LanceStore
     PreflightSvc --> LanceStore
     DumpSvc --> LanceStore
+    HealthSvc --> LanceStore
 
     EvalSvc --> IngestSvc
     EvalSvc --> SearchSvc
@@ -93,16 +96,18 @@ flowchart LR
     SearchSvc -. typed requests and results .-> Types
     PreflightSvc -. typed requests and results .-> Types
     EvalSvc -. typed requests and results .-> Types
+    HealthSvc -. typed requests and results .-> Types
     IngestSvc -. validated settings .-> Settings
     SearchSvc -. validated settings .-> Settings
     PreflightSvc -. validated settings .-> Settings
     EvalSvc -. validated settings .-> Settings
+    HealthSvc -. validated settings .-> Settings
     IngestSvc -. contracts .-> Contracts
     SearchSvc -. contracts .-> Contracts
     PreflightSvc -. contracts .-> Contracts
 
     class CLI,MCP iface
-    class IngestSvc,SearchSvc,PreflightSvc,EvalSvc,DumpSvc service
+    class IngestSvc,SearchSvc,PreflightSvc,EvalSvc,DumpSvc,HealthSvc service
     class IngestPkg,NvidiaAdapter,LanceStore adapter
     class Settings,Types,Contracts shared
     class Policies,EvalSuite local
@@ -151,6 +156,12 @@ flowchart TB
         Enough -- no --> Insufficient["insufficient_context=true"]
     end
 
+    subgraph Hosted["Hosted HTTP Readiness"]
+        direction LR
+        HealthRoute["GET /healthz"] --> HealthRuntime["RuntimeHealthService"]
+        HealthRuntime --> HealthJSON["HealthCheckResult JSON"]
+    end
+
     subgraph Eval["Evaluation"]
         direction LR
         EvalSuite["Bundled eval suite"] --> EvalRun["Run offline or live evals"]
@@ -174,6 +185,9 @@ flowchart TB
     class Index store
     class Embeddings,RerankAPI,GroundAPI nvidia
     class Enough decision
+    class HealthRoute input
+    class HealthRuntime step
+    class HealthJSON result
     class SearchJSON,PreflightJSON,Insufficient,UI result
 ```
 
