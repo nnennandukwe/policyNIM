@@ -6,9 +6,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from policynim.errors import ConfigurationError
 from policynim.types import DEFAULT_TOP_K, TopK
 
 
@@ -32,6 +33,9 @@ class Settings(BaseSettings):
     nvidia_max_retries: Annotated[int, Field(ge=0)] = 2
     mcp_host: str = "127.0.0.1"
     mcp_port: Annotated[int, Field(ge=1, le=65535)] = 8000
+    mcp_require_auth: bool = False
+    mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    mcp_public_base_url: AnyHttpUrl | None = None
     eval_ui_port: Annotated[int, Field(ge=1, le=65535)] = 8001
 
     model_config = SettingsConfigDict(
@@ -46,17 +50,82 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:
         """Treat empty configured corpus values as unset."""
+        return _normalize_optional_setting(value)
+
+    @field_validator("mcp_bearer_tokens", mode="before")
+    @classmethod
+    def normalize_bearer_tokens(cls, value: Any) -> Any:
+        """Accept comma-separated bearer tokens from env or direct list input."""
         if value is None:
-            return None
+            return []
         if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return None
-            return stripped
+            return _dedupe_tokens(value.split(","))
+        if isinstance(value, list):
+            return _dedupe_tokens(value)
+        if isinstance(value, tuple):
+            return _dedupe_tokens(value)
         return value
+
+    @field_validator("mcp_public_base_url", mode="before")
+    @classmethod
+    def normalize_empty_public_base_url(cls, value: Any) -> Any:
+        """Treat empty configured hosted MCP base URLs as unset."""
+        return _normalize_optional_setting(value)
+
+    @model_validator(mode="after")
+    def validate_hosted_mcp_settings(self) -> Settings:
+        """Validate hosted-only MCP settings without affecting stdio defaults."""
+        if self.mcp_public_base_url is not None:
+            if self.mcp_public_base_url.path not in ("", "/"):
+                raise ValueError(
+                    "POLICYNIM_MCP_PUBLIC_BASE_URL must be a service origin like "
+                    "`https://host`, not a full `/mcp` URL."
+                )
+            if self.mcp_public_base_url.query or self.mcp_public_base_url.fragment:
+                raise ValueError(
+                    "POLICYNIM_MCP_PUBLIC_BASE_URL must not include a query string or fragment."
+                )
+
+        if self.mcp_require_auth and not self.mcp_bearer_tokens:
+            raise ValueError(
+                "POLICYNIM_MCP_BEARER_TOKENS must be set when POLICYNIM_MCP_REQUIRE_AUTH is true."
+            )
+        if self.mcp_require_auth and self.mcp_public_base_url is None:
+            raise ValueError(
+                "POLICYNIM_MCP_PUBLIC_BASE_URL must be set when POLICYNIM_MCP_REQUIRE_AUTH is true."
+            )
+        return self
+
+
+def _normalize_optional_setting(value: Any) -> Any:
+    """Treat empty string settings as unset without rewriting non-string inputs."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        return stripped
+    return value
+
+
+def _dedupe_tokens(values: list[str] | tuple[str, ...]) -> list[str]:
+    """Trim, drop empties, and preserve token order while deduplicating."""
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = str(value).strip()
+        if not token or token in seen:
+            continue
+        deduped.append(token)
+        seen.add(token)
+    return deduped
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return cached application settings."""
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigurationError(str(exc)) from exc

@@ -36,6 +36,43 @@ def test_settings_treats_empty_corpus_env_as_unset(monkeypatch: pytest.MonkeyPat
     assert settings.corpus_dir is None
 
 
+def test_settings_parses_csv_bearer_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICYNIM_MCP_BEARER_TOKENS", " token-a , token-b,token-a,, ")
+
+    settings = Settings()
+
+    assert settings.mcp_bearer_tokens == ["token-a", "token-b"]
+
+
+def test_settings_requires_bearer_tokens_when_auth_is_enabled() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="POLICYNIM_MCP_BEARER_TOKENS must be set",
+    ):
+        Settings.model_validate(
+            {
+                "mcp_require_auth": True,
+                "mcp_public_base_url": "https://beta.example.com",
+            }
+        )
+
+
+def test_settings_requires_public_base_url_when_auth_is_enabled() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="POLICYNIM_MCP_PUBLIC_BASE_URL must be set",
+    ):
+        Settings(mcp_require_auth=True, mcp_bearer_tokens=["secret-token"])
+
+
+def test_settings_rejects_full_mcp_public_url() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="service origin",
+    ):
+        Settings.model_validate({"mcp_public_base_url": "https://beta.example.com/mcp"})
+
+
 def test_document_section_rejects_inverted_line_ranges() -> None:
     with pytest.raises(
         ValidationError,

@@ -119,6 +119,18 @@ class IngestResult(StrictModel):
     embedding_dimension: int = Field(ge=1)
 
 
+class HealthCheckResult(StrictModel):
+    """Hosted runtime health payload for HTTP readiness checks."""
+
+    status: Literal["ok", "error"]
+    ready: bool
+    index_uri: str
+    table_name: str
+    row_count: int = Field(ge=0)
+    mcp_url: str | None = None
+    reason: str | None = None
+
+
 class PolicyGuidance(StrictModel):
     """One applied policy with rationale and citations."""
 
