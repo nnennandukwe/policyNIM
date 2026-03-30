@@ -171,6 +171,33 @@ What to say during the demo:
 - `policy_search` is the raw retrieval and debugging workflow
 - both surfaces return the same typed payloads used by the CLI
 
+## Optional Step 7: Show Hosted HTTP Readiness
+
+If you want to demonstrate the hosted HTTP transport instead of `stdio`, start
+the server with:
+
+```bash
+uv run policynim mcp --transport streamable-http
+```
+
+Then check readiness from another terminal:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+```
+
+What to look for:
+
+- `ready: true` when the local index exists and has rows
+- `ready: false` plus a reason when the index is missing or empty
+- `mcp_url` when `POLICYNIM_MCP_PUBLIC_BASE_URL` is configured
+
+If you enable hosted auth, set:
+
+- `POLICYNIM_MCP_REQUIRE_AUTH=true`
+- `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b`
+- `POLICYNIM_MCP_PUBLIC_BASE_URL=https://your-host`
+
 ## Failure Recovery Notes
 
 ### Missing Index

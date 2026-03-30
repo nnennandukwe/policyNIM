@@ -14,4 +14,5 @@ Current automated coverage includes:
 - CLI output for `eval`
 - MCP tool parity for `policy_preflight` and `policy_search`
 - MCP startup wiring for `stdio` and `streamable-http`
+- Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper
 - Opt-in live NVIDIA embedding smoke coverage behind `NVIDIA_API_KEY`

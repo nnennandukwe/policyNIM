@@ -159,6 +159,8 @@ Important evaluation rules:
   validation.
 - `EvalService` handles gold-case execution, scoring, comparison, and report
   persistence.
+- `IndexDumpService` handles terminal-friendly inspection of stored chunks.
+- `RuntimeHealthService` handles hosted HTTP readiness checks for the local index.
 - Services may depend on `settings`, `types`, `contracts`, providers, and storage,
   but they must not import CLI or MCP modules.
 
@@ -166,7 +168,8 @@ Important evaluation rules:
 
 - Owns transport-specific entry points only.
 - `cli.py` defines terminal-facing commands and help text.
-- `mcp.py` defines the MCP tool surface and server startup.
+- `mcp.py` defines the MCP tool surface, hosted HTTP auth gate, readiness route,
+  and server startup.
 - Interface modules call services, not providers directly.
 
 ## Import Rules
@@ -198,6 +201,11 @@ Important evaluation rules:
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
 
+### Hosted HTTP Endpoint
+
+- `GET /healthz` returns a JSON readiness payload for the hosted HTTP runtime.
+- `/healthz` is public even when hosted bearer auth is enabled for `/mcp`.
+
 Shared interface guarantees:
 
 - CLI `search` and MCP `policy_search` use the same `SearchResult` shape.
@@ -205,6 +213,7 @@ Shared interface guarantees:
   shape.
 - top-k validation is shared and explicit.
 - runtime setup failures are not masked as insufficient context.
+- hosted HTTP auth applies only to `/mcp`, never to `stdio`.
 
 ## Runtime Boundaries
 
