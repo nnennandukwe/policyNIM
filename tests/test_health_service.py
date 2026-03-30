@@ -182,3 +182,23 @@ def test_ensure_hosted_runtime_ready_raises_for_empty_index(
 
     with pytest.raises(ConfigurationError, match="contains no rows"):
         health_module.ensure_hosted_runtime_ready(Settings())
+
+
+def test_ensure_hosted_runtime_ready_wraps_constructor_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = PermissionError("permission denied")
+
+    def raise_constructor_error(settings: Settings) -> RuntimeHealthService:
+        raise failure
+
+    monkeypatch.setattr(
+        health_module,
+        "create_runtime_health_service",
+        raise_constructor_error,
+    )
+
+    with pytest.raises(ConfigurationError, match="PermissionError: permission denied") as exc_info:
+        health_module.ensure_hosted_runtime_ready(Settings())
+
+    assert exc_info.value.__cause__ is failure
