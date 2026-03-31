@@ -14,7 +14,7 @@ def test_settings_reads_prefixed_env_and_nvidia_alias(monkeypatch: pytest.Monkey
     monkeypatch.setenv("POLICYNIM_ENV", "staging")
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.default_top_k == 7
     assert settings.policynim_env == "staging"
@@ -31,7 +31,7 @@ def test_settings_still_allows_constructor_field_names() -> None:
 def test_settings_treats_empty_corpus_env_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICYNIM_CORPUS_DIR", "")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.corpus_dir is None
 
@@ -39,9 +39,31 @@ def test_settings_treats_empty_corpus_env_as_unset(monkeypatch: pytest.MonkeyPat
 def test_settings_parses_csv_bearer_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICYNIM_MCP_BEARER_TOKENS", " token-a , token-b,token-a,, ")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.mcp_bearer_tokens == ["token-a", "token-b"]
+
+
+def test_settings_reads_railway_port_when_prefixed_port_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POLICYNIM_MCP_PORT", raising=False)
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.mcp_port == 8123
+
+
+def test_settings_prefers_prefixed_mcp_port_over_railway_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POLICYNIM_MCP_PORT", "9001")
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.mcp_port == 9001
 
 
 def test_settings_requires_bearer_tokens_when_auth_is_enabled() -> None:

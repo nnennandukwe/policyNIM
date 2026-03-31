@@ -26,6 +26,9 @@ constraints, not setup mistakes.
   availability.
 - Hosted startup now fails fast when `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but
   the configured local index is missing or empty.
+- Hosted observability is still request-log level only. Day 3 adds structured
+  JSON logs for auth rejects and MCP tool calls, but there is no tracing or
+  metrics pipeline yet.
 
 ### NVIDIA Dependency For Live Retrieval
 
@@ -39,7 +42,7 @@ constraints, not setup mistakes.
 - Default CI runs lint and offline-safe tests only.
 - CI does not exercise live NVIDIA embeddings, reranking, grounded generation, or
   end-to-end MCP flows against hosted services.
-- Live-provider verification remains a manual or opt-in local workflow.
+- Live-provider and Railway-hosted verification remain manual or opt-in local workflows.
 
 ### Retrieval Is Still Narrow
 

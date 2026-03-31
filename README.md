@@ -214,6 +214,42 @@ What to expect:
   example `-p 8002:8000`, and update `POLICYNIM_MCP_PUBLIC_BASE_URL` to
   `http://localhost:8002`.
 
+### Railway Beta Deploy
+
+Day 3 adds a repo-owned [`railway.toml`](./railway.toml) so Railway uses the
+root `Dockerfile` and probes `GET /healthz`.
+
+Recommended beta setup:
+
+1. Create one Railway service from this GitHub repo.
+2. Set the Railway service variable `NVIDIA_API_KEY`.
+3. Deploy once so the service becomes healthy on `/healthz`.
+4. Generate a Railway public domain for that service.
+5. Set these runtime variables and redeploy:
+   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
+   - `POLICYNIM_MCP_BEARER_TOKENS=<beta-token>`
+   - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
+
+Important Day 3 hosted behavior:
+
+- Railway injects `PORT`; PolicyNIM now uses that automatically unless
+  `POLICYNIM_MCP_PORT` is explicitly set.
+- The public beta MCP URL is always `https://<generated-domain>/mcp`.
+- `/healthz` stays public for Railway health checks.
+- `/mcp` returns `401 {"error":"Unauthorized."}` for missing or invalid bearer
+  tokens.
+- Hosted MCP logs now emit one JSON object per line for auth rejects and tool
+  calls, including `auth_result`, `tool_name`, `latency_ms`, and
+  `upstream_failure_class`.
+
+Opt-in Railway smoke test:
+
+```bash
+export POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp
+export POLICYNIM_BETA_MCP_TOKEN=<beta-token>
+uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
+```
+
 ### Contributor Workflow
 
 Install the lint and test groups in addition to the runtime dependencies:

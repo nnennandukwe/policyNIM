@@ -109,23 +109,57 @@ class NVIDIAEmbedder(Embedder):
             except AuthenticationError as exc:
                 raise _auth_error("embeddings") from exc
             except BadRequestError as exc:
-                raise ProviderError(f"NVIDIA embeddings request was rejected: {exc}") from exc
+                raise ProviderError(
+                    f"NVIDIA embeddings request was rejected: {exc}",
+                    failure_class="bad_request",
+                ) from exc
+            except RateLimitError as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA embeddings request failed after retries.",
+                    failure_class="rate_limit",
+                ) from exc
             except APIStatusError as exc:
                 if exc.status_code in {401, 403}:
                     raise _auth_error("embeddings") from exc
+                if exc.status_code == 429:
+                    if attempt < self._max_retries:
+                        continue
+                    raise ProviderError(
+                        "NVIDIA embeddings request failed after retries.",
+                        failure_class="rate_limit",
+                    ) from exc
                 if _should_retry_status(exc.status_code) and attempt < self._max_retries:
                     continue
                 raise ProviderError(
-                    f"NVIDIA embeddings request failed with status {exc.status_code}."
+                    f"NVIDIA embeddings request failed with status {exc.status_code}.",
+                    failure_class="http_status",
                 ) from exc
-            except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+            except APIConnectionError as exc:
                 if attempt < self._max_retries:
                     continue
-                raise ProviderError("NVIDIA embeddings request failed after retries.") from exc
+                raise ProviderError(
+                    "NVIDIA embeddings request failed after retries.",
+                    failure_class="connection",
+                ) from exc
+            except APITimeoutError as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA embeddings request failed after retries.",
+                    failure_class="timeout",
+                ) from exc
             except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError("Unexpected NVIDIA embeddings failure.") from exc
+                raise ProviderError(
+                    "Unexpected NVIDIA embeddings failure.",
+                    failure_class="unexpected",
+                ) from exc
 
-        raise ProviderError("NVIDIA embeddings request failed after retries.")
+        raise ProviderError(
+            "NVIDIA embeddings request failed after retries.",
+            failure_class="unexpected",
+        )
 
 
 class NVIDIAReranker(Reranker):
@@ -227,21 +261,48 @@ class NVIDIAReranker(Reranker):
                 status_code = exc.response.status_code
                 if status_code in {401, 403}:
                     raise _auth_error("reranking") from exc
+                if status_code == 429:
+                    if attempt < self._max_retries:
+                        continue
+                    raise ProviderError(
+                        "NVIDIA reranking request failed after retries.",
+                        failure_class="rate_limit",
+                    ) from exc
                 if _should_retry_status(status_code) and attempt < self._max_retries:
                     continue
                 raise ProviderError(
-                    f"NVIDIA reranking request failed with status {status_code}."
+                    f"NVIDIA reranking request failed with status {status_code}.",
+                    failure_class="http_status",
                 ) from exc
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.TimeoutException) as exc:
+            except httpx.ConnectError as exc:
                 if attempt < self._max_retries:
                     continue
-                raise ProviderError("NVIDIA reranking request failed after retries.") from exc
+                raise ProviderError(
+                    "NVIDIA reranking request failed after retries.",
+                    failure_class="connection",
+                ) from exc
+            except (httpx.ReadTimeout, httpx.TimeoutException) as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA reranking request failed after retries.",
+                    failure_class="timeout",
+                ) from exc
             except json.JSONDecodeError as exc:
-                raise ProviderError("NVIDIA reranking response was not valid JSON.") from exc
+                raise ProviderError(
+                    "NVIDIA reranking response was not valid JSON.",
+                    failure_class="invalid_response",
+                ) from exc
             except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError("Unexpected NVIDIA reranking failure.") from exc
+                raise ProviderError(
+                    "Unexpected NVIDIA reranking failure.",
+                    failure_class="unexpected",
+                ) from exc
 
-        raise ProviderError("NVIDIA reranking request failed after retries.")
+        raise ProviderError(
+            "NVIDIA reranking request failed after retries.",
+            failure_class="unexpected",
+        )
 
 
 class NVIDIAGenerator(Generator):
@@ -305,31 +366,62 @@ class NVIDIAGenerator(Generator):
                 raise _auth_error("grounded generation") from exc
             except BadRequestError as exc:
                 raise ProviderError(
-                    f"NVIDIA grounded generation request was rejected: {exc}"
+                    f"NVIDIA grounded generation request was rejected: {exc}",
+                    failure_class="bad_request",
+                ) from exc
+            except RateLimitError as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA grounded generation request failed after retries.",
+                    failure_class="rate_limit",
                 ) from exc
             except APIStatusError as exc:
                 if exc.status_code in {401, 403}:
                     raise _auth_error("grounded generation") from exc
+                if exc.status_code == 429:
+                    if attempt < self._max_retries:
+                        continue
+                    raise ProviderError(
+                        "NVIDIA grounded generation request failed after retries.",
+                        failure_class="rate_limit",
+                    ) from exc
                 if _should_retry_status(exc.status_code) and attempt < self._max_retries:
                     continue
                 raise ProviderError(
-                    f"NVIDIA grounded generation request failed with status {exc.status_code}."
+                    f"NVIDIA grounded generation request failed with status {exc.status_code}.",
+                    failure_class="http_status",
                 ) from exc
-            except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+            except APIConnectionError as exc:
                 if attempt < self._max_retries:
                     continue
                 raise ProviderError(
-                    "NVIDIA grounded generation request failed after retries."
+                    "NVIDIA grounded generation request failed after retries.",
+                    failure_class="connection",
+                ) from exc
+            except APITimeoutError as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA grounded generation request failed after retries.",
+                    failure_class="timeout",
                 ) from exc
             except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError("Unexpected NVIDIA grounded generation failure.") from exc
+                raise ProviderError(
+                    "Unexpected NVIDIA grounded generation failure.",
+                    failure_class="unexpected",
+                ) from exc
 
-        raise ProviderError("NVIDIA grounded generation request failed after retries.")
+        raise ProviderError(
+            "NVIDIA grounded generation request failed after retries.",
+            failure_class="unexpected",
+        )
 
 
 def _auth_error(operation: str) -> ConfigurationError:
     return ConfigurationError(
-        f"NVIDIA authentication failed during {operation}. Verify NVIDIA_API_KEY is valid."
+        f"NVIDIA authentication failed during {operation}. Verify NVIDIA_API_KEY is valid.",
+        failure_class="auth",
     )
 
 
@@ -350,18 +442,27 @@ def _validate_embeddings_response(
     expected_count: int,
 ) -> list[list[float]]:
     if len(data) != expected_count:
-        raise ProviderError("NVIDIA embeddings response count did not match the number of inputs.")
+        raise ProviderError(
+            "NVIDIA embeddings response count did not match the number of inputs.",
+            failure_class="invalid_response",
+        )
 
     embeddings: list[list[float]] = []
     dimension: int | None = None
     for item in data:
         embedding = list(getattr(item, "embedding", []))
         if not embedding:
-            raise ProviderError("NVIDIA embeddings response returned an empty vector.")
+            raise ProviderError(
+                "NVIDIA embeddings response returned an empty vector.",
+                failure_class="invalid_response",
+            )
         if dimension is None:
             dimension = len(embedding)
         elif len(embedding) != dimension:
-            raise ProviderError("NVIDIA embeddings response returned mixed vector dimensions.")
+            raise ProviderError(
+                "NVIDIA embeddings response returned mixed vector dimensions.",
+                failure_class="invalid_response",
+            )
         embeddings.append([float(value) for value in embedding])
 
     return embeddings
@@ -377,7 +478,10 @@ def _extract_rerank_scores(payload: Any, *, expected_count: int) -> list[float]:
             if isinstance(value, list):
                 return _extract_scores_from_list(value, expected_count=expected_count)
 
-    raise ProviderError("NVIDIA reranking response format was not recognized.")
+    raise ProviderError(
+        "NVIDIA reranking response format was not recognized.",
+        failure_class="invalid_response",
+    )
 
 
 def _extract_scores_from_list(values: Sequence[Any], *, expected_count: int) -> list[float]:
@@ -387,7 +491,10 @@ def _extract_scores_from_list(values: Sequence[Any], *, expected_count: int) -> 
         return scores
 
     if not all(isinstance(item, dict) for item in values):
-        raise ProviderError("NVIDIA reranking response contained invalid items.")
+        raise ProviderError(
+            "NVIDIA reranking response contained invalid items.",
+            failure_class="invalid_response",
+        )
 
     score_rows = list(values)
     indexed_scores: dict[int, float] = {}
@@ -404,7 +511,8 @@ def _extract_scores_from_list(values: Sequence[Any], *, expected_count: int) -> 
     if indexed_scores:
         if len(indexed_scores) != expected_count:
             raise ProviderError(
-                "NVIDIA reranking response count did not match the number of inputs."
+                "NVIDIA reranking response count did not match the number of inputs.",
+                failure_class="invalid_response",
             )
         return [indexed_scores[index] for index in range(expected_count)]
 
@@ -414,7 +522,10 @@ def _extract_scores_from_list(values: Sequence[Any], *, expected_count: int) -> 
 
 def _validate_score_count(scores: Sequence[float], *, expected_count: int) -> None:
     if len(scores) != expected_count:
-        raise ProviderError("NVIDIA reranking response count did not match the number of inputs.")
+        raise ProviderError(
+            "NVIDIA reranking response count did not match the number of inputs.",
+            failure_class="invalid_response",
+        )
 
 
 def _extract_row_index(row: dict[str, Any]) -> int | None:
@@ -430,7 +541,10 @@ def _extract_row_score(row: dict[str, Any]) -> float:
         value = row.get(key)
         if isinstance(value, (int, float)):
             return float(value)
-    raise ProviderError("NVIDIA reranking response row did not include a numeric score.")
+    raise ProviderError(
+        "NVIDIA reranking response row did not include a numeric score.",
+        failure_class="invalid_response",
+    )
 
 
 def _build_generation_messages(
@@ -503,12 +617,18 @@ def _format_generation_context(context: Sequence[ScoredChunk]) -> str:
 def _extract_chat_content(response: Any) -> str:
     choices = getattr(response, "choices", [])
     if not choices:
-        raise ProviderError("NVIDIA grounded generation returned no choices.")
+        raise ProviderError(
+            "NVIDIA grounded generation returned no choices.",
+            failure_class="invalid_response",
+        )
 
     message = getattr(choices[0], "message", None)
     content = getattr(message, "content", None)
     if not isinstance(content, str) or not content.strip():
-        raise ProviderError("NVIDIA grounded generation returned an empty response.")
+        raise ProviderError(
+            "NVIDIA grounded generation returned an empty response.",
+            failure_class="invalid_response",
+        )
     return content
 
 
@@ -518,12 +638,18 @@ def _parse_generation_draft(content: str) -> GeneratedPreflightDraft:
     except json.JSONDecodeError as exc:
         payload = _extract_embedded_json_object(content)
         if payload is None:
-            raise ProviderError("NVIDIA grounded generation returned invalid JSON.") from exc
+            raise ProviderError(
+                "NVIDIA grounded generation returned invalid JSON.",
+                failure_class="invalid_response",
+            ) from exc
 
     try:
         return GeneratedPreflightDraft.model_validate(payload)
     except ValidationError as exc:
-        raise ProviderError("NVIDIA grounded generation returned malformed JSON.") from exc
+        raise ProviderError(
+            "NVIDIA grounded generation returned malformed JSON.",
+            failure_class="invalid_response",
+        ) from exc
 
 
 def _extract_embedded_json_object(content: str) -> dict[str, Any] | None:

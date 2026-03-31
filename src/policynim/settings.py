@@ -6,7 +6,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    AnyHttpUrl,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from policynim.errors import ConfigurationError
@@ -32,7 +39,14 @@ class Settings(BaseSettings):
     nvidia_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
     nvidia_max_retries: Annotated[int, Field(ge=0)] = 2
     mcp_host: str = "127.0.0.1"
-    mcp_port: Annotated[int, Field(ge=1, le=65535)] = 8000
+    mcp_port: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=65535,
+            validation_alias=AliasChoices("POLICYNIM_MCP_PORT", "PORT"),
+        ),
+    ] = 8000
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None

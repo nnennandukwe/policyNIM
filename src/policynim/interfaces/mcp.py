@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import json
 import logging
 import socket
+import sys
+import time
+from collections.abc import Callable
+from contextvars import ContextVar
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from starlette.datastructures import Headers
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -33,6 +38,11 @@ SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 _STREAMABLE_HTTP_PATH = "/mcp"
 _HEALTH_PATH = "/healthz"
 LOGGER = logging.getLogger(__name__)
+_HOSTED_LOGGER_NAME = "policynim.hosted"
+_HOSTED_AUTH_RESULT: ContextVar[str] = ContextVar(
+    "policynim_hosted_auth_result",
+    default="not_required",
+)
 
 
 def _resolve_top_k(top_k: int | None) -> int:
@@ -52,6 +62,62 @@ def _close_service(service: object | None) -> None:
     close = getattr(service, "close", None)
     if callable(close):
         close()
+
+
+def _configure_hosted_logger() -> None:
+    """Emit hosted MCP telemetry as one JSON object per line."""
+    logger = logging.getLogger(_HOSTED_LOGGER_NAME)
+    if getattr(logger, "_policynim_configured", False):
+        return
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    setattr(logger, "_policynim_configured", True)
+
+
+def _emit_hosted_event(
+    event: str,
+    *,
+    auth_result: str,
+    tool_name: str | None,
+    latency_ms: float | None,
+    upstream_failure_class: str | None,
+    request_id: str | None,
+) -> None:
+    payload = {
+        "event": event,
+        "auth_result": auth_result,
+        "tool_name": tool_name,
+        "latency_ms": latency_ms,
+        "upstream_failure_class": upstream_failure_class,
+        "request_id": request_id,
+    }
+    logging.getLogger(_HOSTED_LOGGER_NAME).info(json.dumps(payload, sort_keys=True))
+
+
+def _elapsed_ms(start_time: float) -> float:
+    return round((time.perf_counter() - start_time) * 1000, 2)
+
+
+def _failure_class_from_error(exc: BaseException) -> str | None:
+    current: BaseException | None = exc
+    while current is not None:
+        failure_class = getattr(current, "failure_class", None)
+        if isinstance(failure_class, str) and failure_class:
+            return failure_class
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _request_id_from_context(ctx: Context) -> str | None:
+    try:
+        return ctx.request_id
+    except ValueError:
+        return None
 
 
 def _streamable_http_port_in_use_message(host: str, port: int) -> str:
@@ -78,7 +144,7 @@ def _ensure_streamable_http_port_available(host: str, port: int) -> None:
         ) from exc
 
 
-def policy_preflight(
+def _run_policy_preflight(
     task: str,
     domain: str | None = None,
     top_k: int | None = None,
@@ -93,7 +159,16 @@ def policy_preflight(
         _close_service(service)
 
 
-def policy_search(
+def policy_preflight(
+    task: str,
+    domain: str | None = None,
+    top_k: int | None = None,
+) -> dict[str, object]:
+    """Return policy guidance for a coding task."""
+    return _run_policy_preflight(task=task, domain=domain, top_k=top_k)
+
+
+def _run_policy_search(
     query: str,
     domain: str | None = None,
     top_k: int | None = None,
@@ -108,10 +183,80 @@ def policy_search(
         _close_service(service)
 
 
+def policy_search(
+    query: str,
+    domain: str | None = None,
+    top_k: int | None = None,
+) -> dict[str, object]:
+    """Search the policy corpus."""
+    return _run_policy_search(query=query, domain=domain, top_k=top_k)
+
+
+def _run_logged_tool(
+    tool_name: str,
+    operation: Callable[[], dict[str, object]],
+    *,
+    ctx: Context,
+) -> dict[str, object]:
+    start_time = time.perf_counter()
+    auth_result = _HOSTED_AUTH_RESULT.get()
+    request_id = _request_id_from_context(ctx)
+    try:
+        result = operation()
+    except Exception as exc:
+        _emit_hosted_event(
+            "mcp.tool",
+            auth_result=auth_result,
+            tool_name=tool_name,
+            latency_ms=_elapsed_ms(start_time),
+            upstream_failure_class=_failure_class_from_error(exc),
+            request_id=request_id,
+        )
+        raise
+
+    _emit_hosted_event(
+        "mcp.tool",
+        auth_result=auth_result,
+        tool_name=tool_name,
+        latency_ms=_elapsed_ms(start_time),
+        upstream_failure_class=None,
+        request_id=request_id,
+    )
+    return result
+
+
+def _policy_preflight_tool(
+    task: str,
+    domain: str | None = None,
+    top_k: int | None = None,
+    *,
+    ctx: Context,
+) -> dict[str, object]:
+    return _run_logged_tool(
+        "policy_preflight",
+        lambda: _run_policy_preflight(task=task, domain=domain, top_k=top_k),
+        ctx=ctx,
+    )
+
+
+def _policy_search_tool(
+    query: str,
+    domain: str | None = None,
+    top_k: int | None = None,
+    *,
+    ctx: Context,
+) -> dict[str, object]:
+    return _run_logged_tool(
+        "policy_search",
+        lambda: _run_policy_search(query=query, domain=domain, top_k=top_k),
+        ctx=ctx,
+    )
+
+
 def _register_tools(server: FastMCP) -> FastMCP:
     """Register the public MCP tools on the supplied server instance."""
-    server.tool(name="policy_preflight")(policy_preflight)
-    server.tool(name="policy_search")(policy_search)
+    server.tool(name="policy_preflight")(_policy_preflight_tool)
+    server.tool(name="policy_search")(_policy_search_tool)
     return server
 
 
@@ -185,11 +330,23 @@ class _BearerProtectedASGIApp:
 
         token = _extract_bearer_token(scope)
         if token is None or token not in self._valid_tokens:
+            _emit_hosted_event(
+                "mcp.auth",
+                auth_result="unauthorized",
+                tool_name=None,
+                latency_ms=None,
+                upstream_failure_class=None,
+                request_id=None,
+            )
             response = JSONResponse({"error": "Unauthorized."}, status_code=401)
             await response(scope, receive, send)
             return
 
-        await self._app(scope, receive, send)
+        token_state = _HOSTED_AUTH_RESULT.set("authorized")
+        try:
+            await self._app(scope, receive, send)
+        finally:
+            _HOSTED_AUTH_RESULT.reset(token_state)
 
 
 def _extract_bearer_token(scope: Scope) -> str | None:
@@ -249,6 +406,7 @@ def run_server(transport: str = "stdio") -> None:
 
     settings = get_settings()
     if transport == "streamable-http":
+        _configure_hosted_logger()
         _ensure_streamable_http_port_available(settings.mcp_host, settings.mcp_port)
         if _should_fail_fast_for_hosted_http(settings):
             ensure_hosted_runtime_ready(settings)
