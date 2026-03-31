@@ -419,6 +419,34 @@ def test_call_tool_runs_minimal_stdio_path(monkeypatch) -> None:
     assert result.hits[0].chunk_id == "BACKEND-1"
 
 
+def test_call_tool_logs_structured_event_on_success(monkeypatch) -> None:
+    events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: MockSearchService())
+    monkeypatch.setattr(
+        mcp_module,
+        "_emit_hosted_event",
+        lambda event, **fields: events.append({"event": event, **fields}),
+    )
+
+    payload = _call_tool("policy_search", {"query": "background cleanup", "top_k": 1})
+    result = _search_payload(payload)
+
+    assert result.query == "background cleanup"
+    assert events == [
+        {
+            "event": "mcp.tool",
+            "auth_result": "not_required",
+            "tool_name": "policy_search",
+            "latency_ms": events[0]["latency_ms"],
+            "upstream_failure_class": None,
+            "request_id": None,
+        }
+    ]
+    assert isinstance(events[0]["latency_ms"], float)
+    assert events[0]["latency_ms"] >= 0
+
+
 def test_policy_search_closes_service_after_tool_call(monkeypatch) -> None:
     service = MockSearchService()
     monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
@@ -442,6 +470,41 @@ def test_policy_preflight_closes_service_when_tool_raises(monkeypatch) -> None:
         mcp_module.policy_preflight(task="refresh token cleanup")
 
     assert service.closed is True
+
+
+def test_call_tool_logs_failure_class_when_tool_raises(monkeypatch) -> None:
+    events: list[dict[str, object]] = []
+
+    class FailingSearchService:
+        def search(self, request: SearchRequest) -> SearchResult:
+            raise ConfigurationError("upstream timeout", failure_class="timeout")
+
+    monkeypatch.setattr(
+        mcp_module,
+        "create_search_service",
+        lambda settings: FailingSearchService(),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_emit_hosted_event",
+        lambda event, **fields: events.append({"event": event, **fields}),
+    )
+
+    with pytest.raises(ToolError, match="upstream timeout"):
+        _call_tool("policy_search", {"query": "background cleanup", "top_k": 1})
+
+    assert events == [
+        {
+            "event": "mcp.tool",
+            "auth_result": "not_required",
+            "tool_name": "policy_search",
+            "latency_ms": events[0]["latency_ms"],
+            "upstream_failure_class": "timeout",
+            "request_id": None,
+        }
+    ]
+    assert isinstance(events[0]["latency_ms"], float)
+    assert events[0]["latency_ms"] >= 0
 
 
 def test_healthz_returns_ready_payload(monkeypatch) -> None:
@@ -618,6 +681,38 @@ def test_streamable_http_app_rejects_missing_bearer_token(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert response.json() == {"error": "Unauthorized."}
+
+
+def test_streamable_http_app_logs_auth_rejection(monkeypatch) -> None:
+    events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        mcp_module,
+        "_create_mcp_server",
+        lambda settings: StreamableHTTPStubServer(),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_emit_hosted_event",
+        lambda event, **fields: events.append({"event": event, **fields}),
+    )
+
+    app = mcp_module._build_streamable_http_app(_hosted_settings())
+
+    with TestClient(app) as client:
+        response = client.get("/mcp")
+
+    assert response.status_code == 401
+    assert events == [
+        {
+            "event": "mcp.auth",
+            "auth_result": "unauthorized",
+            "tool_name": None,
+            "latency_ms": None,
+            "upstream_failure_class": None,
+            "request_id": None,
+        }
+    ]
 
 
 def test_streamable_http_app_rejects_malformed_bearer_header(monkeypatch) -> None:

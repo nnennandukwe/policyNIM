@@ -181,8 +181,73 @@ docker run --rm -p 8000:8000 \
   -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
   -e POLICYNIM_MCP_REQUIRE_AUTH=true \
   -e POLICYNIM_MCP_BEARER_TOKENS=token-a \
-  -e POLICYNIM_MCP_PUBLIC_BASE_URL=http://127.0.0.1:8000 \
+  -e POLICYNIM_MCP_PUBLIC_BASE_URL=http://localhost:8000 \
   policynim-hosted
+```
+
+Quick hosted-image test loop:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
+  -e POLICYNIM_MCP_PUBLIC_BASE_URL=http://localhost:8000 \
+  policynim-hosted
+```
+
+Then verify the hosted HTTP surface from another terminal:
+
+```bash
+curl http://localhost:8000/healthz
+curl -i http://localhost:8000/mcp
+curl -i -X POST http://localhost:8000/mcp
+```
+
+What to expect:
+
+- `GET /healthz` returns `200` with a JSON payload that includes `ready: true`
+  when the baked index is present and non-empty.
+- A plain `GET /mcp` returns `406 Not Acceptable` because the client must accept
+  `text/event-stream`.
+- A plain `POST /mcp` returns `400 Invalid Content-Type header` because the route
+  expects a valid MCP HTTP request, not an empty form post.
+- If host port `8000` is already in use, publish another host port instead, for
+  example `-p 8002:8000`, and update `POLICYNIM_MCP_PUBLIC_BASE_URL` to
+  `http://localhost:8002`.
+
+### Railway Beta Deploy
+
+Day 3 adds a repo-owned [`railway.toml`](./railway.toml) so Railway uses the
+root `Dockerfile` and probes `GET /healthz`.
+
+Recommended beta setup:
+
+1. Create one Railway service from this GitHub repo.
+2. Set the Railway service variable `NVIDIA_API_KEY`.
+3. Deploy once so the service becomes healthy on `/healthz`.
+4. Generate a Railway public domain for that service.
+5. Set these runtime variables and redeploy:
+   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
+   - `POLICYNIM_MCP_BEARER_TOKENS=<beta-token>`
+   - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
+
+Important Day 3 hosted behavior:
+
+- Railway injects `PORT`; PolicyNIM now uses that automatically unless
+  `POLICYNIM_MCP_PORT` is explicitly set.
+- The public beta MCP URL is always `https://<generated-domain>/mcp`.
+- `/healthz` stays public for Railway health checks.
+- `/mcp` returns `401 {"error":"Unauthorized."}` for missing or invalid bearer
+  tokens.
+- Hosted MCP logs now emit one JSON object per line for auth rejects and tool
+  calls, including `auth_result`, `tool_name`, `latency_ms`, and
+  `upstream_failure_class`.
+
+Opt-in Railway smoke test:
+
+```bash
+export POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp
+export POLICYNIM_BETA_MCP_TOKEN=<beta-token>
+uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
 ```
 
 ### Contributor Workflow
@@ -333,7 +398,7 @@ Hosted HTTP notes:
 Example readiness check:
 
 ```bash
-curl http://127.0.0.1:8000/healthz
+curl http://localhost:8000/healthz
 ```
 
 For client setup examples, see:

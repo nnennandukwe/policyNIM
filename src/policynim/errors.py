@@ -1,8 +1,14 @@
 """PolicyNIM exception types."""
 
+from __future__ import annotations
+
 
 class PolicyNIMError(Exception):
     """Base error for PolicyNIM."""
+
+    def __init__(self, message: str = "", *, failure_class: str | None = None) -> None:
+        super().__init__(message)
+        self.failure_class = failure_class
 
 
 class ConfigurationError(PolicyNIMError):

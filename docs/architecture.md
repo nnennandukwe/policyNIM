@@ -118,10 +118,17 @@ Important evaluation rules:
 
 ## Package Boundaries
 
+### Repo Root
+
+- `Dockerfile` builds the hosted image and bakes the LanceDB index into it.
+- `railway.toml` pins the Day 3 Railway deploy contract to Dockerfile build plus
+  `/healthz` health checks.
+
 ### `src/policynim/settings.py`
 
 - The only module that reads environment variables directly.
-- Exposes validated application settings to the rest of the package.
+- Exposes validated application settings to the rest of the package, including
+  hosted MCP port resolution from explicit app config or Railway `PORT`.
 
 ### `src/policynim/types.py`
 
@@ -169,7 +176,7 @@ Important evaluation rules:
 - Owns transport-specific entry points only.
 - `cli.py` defines terminal-facing commands and help text.
 - `mcp.py` defines the MCP tool surface, hosted HTTP auth gate, readiness route,
-  and server startup.
+  structured hosted logging, and server startup.
 - Interface modules call services, not providers directly.
 
 ## Import Rules
@@ -205,6 +212,8 @@ Important evaluation rules:
 
 - `GET /healthz` returns a JSON readiness payload for the hosted HTTP runtime.
 - `/healthz` is public even when hosted bearer auth is enabled for `/mcp`.
+- Hosted beta deployments on Railway use a generated public domain, and the MCP
+  URL is always `<POLICYNIM_MCP_PUBLIC_BASE_URL>/mcp`.
 - Hosted `streamable-http` startup fails fast when
   `POLICYNIM_MCP_PUBLIC_BASE_URL` is set and the configured local index is
   missing or empty.
@@ -217,6 +226,8 @@ Shared interface guarantees:
 - top-k validation is shared and explicit.
 - runtime setup failures are not masked as insufficient context.
 - hosted HTTP auth applies only to `/mcp`, never to `stdio`.
+- hosted tool logs emit JSON lines with auth result, tool name, latency, and
+  classified upstream NVIDIA failure cause.
 
 ## Runtime Boundaries
 

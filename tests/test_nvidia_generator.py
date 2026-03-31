@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from openai import RateLimitError
 
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.providers.nvidia import NVIDIAGenerator
@@ -34,6 +35,31 @@ class MockOpenAIClient:
 
     def __init__(self, content: str) -> None:
         self.chat = SimpleNamespace(completions=MockChatCompletions(content))
+
+
+class FakeRateLimitError(RateLimitError):
+    """Minimal rate-limit error subclass for provider classification tests."""
+
+    def __init__(self) -> None:
+        Exception.__init__(self, "too many requests")
+        self.status_code = 429
+
+
+class RaisingChatCompletions:
+    """Chat completions stub that always raises the supplied exception."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def create(self, **kwargs):  # noqa: ANN003
+        raise self._exc
+
+
+class RaisingOpenAIClient:
+    """OpenAI client stub that always fails during chat completion."""
+
+    def __init__(self, exc: Exception) -> None:
+        self.chat = SimpleNamespace(completions=RaisingChatCompletions(exc))
 
 
 def test_generator_parses_json_and_keeps_chunk_ids_only() -> None:
@@ -87,8 +113,10 @@ def test_generator_rejects_invalid_json() -> None:
         client=MockOpenAIClient("not json"),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderError, match="invalid JSON"):
+    with pytest.raises(ProviderError, match="invalid JSON") as excinfo:
         generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+    assert excinfo.value.failure_class == "invalid_response"
 
 
 def test_generator_extracts_json_from_reasoning_wrappers() -> None:
@@ -119,8 +147,10 @@ def test_generator_rejects_json_missing_required_summary() -> None:
         client=MockOpenAIClient('{"citation_ids":["BACKEND-1"]}'),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderError, match="malformed JSON"):
+    with pytest.raises(ProviderError, match="malformed JSON") as excinfo:
         generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+    assert excinfo.value.failure_class == "invalid_response"
 
 
 def test_generator_rejects_json_with_invalid_citation_shape() -> None:
@@ -137,6 +167,22 @@ def test_generator_rejects_json_with_invalid_citation_shape() -> None:
 
     with pytest.raises(ProviderError, match="malformed JSON"):
         generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+
+def test_generator_classifies_upstream_rate_limits() -> None:
+    generator = NVIDIAGenerator(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=RaisingOpenAIClient(FakeRateLimitError()),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderError, match="failed after retries") as excinfo:
+        generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+    assert excinfo.value.failure_class == "rate_limit"
 
 
 def test_generator_requires_api_key() -> None:

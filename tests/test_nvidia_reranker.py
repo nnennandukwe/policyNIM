@@ -50,6 +50,18 @@ class OwnedClientSpy:
         self.closed = True
 
 
+class RateLimitedRerankClient:
+    """Client stub that always raises HTTP 429 for reranking."""
+
+    def post(self, endpoint: str, json: dict[str, object]) -> SpyResponse:
+        request = httpx.Request("POST", f"https://example.invalid/{endpoint}")
+        response = httpx.Response(429, request=request)
+        raise httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    def close(self) -> None:
+        return None
+
+
 def test_reranker_posts_to_relative_endpoint() -> None:
     client = SpyRerankClient({"scores": [0.2, 0.9]})
     reranker = NVIDIAReranker(
@@ -182,8 +194,10 @@ def test_reranker_rejects_score_count_mismatch() -> None:
         client=SpyRerankClient({"scores": [0.5]}),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderError, match="response count did not match"):
+    with pytest.raises(ProviderError, match="response count did not match") as excinfo:
         reranker.rerank("request ids", [make_chunk("A"), make_chunk("B")], top_k=2)
+
+    assert excinfo.value.failure_class == "invalid_response"
 
 
 def test_reranker_rejects_rows_without_numeric_scores() -> None:
@@ -196,8 +210,26 @@ def test_reranker_rejects_rows_without_numeric_scores() -> None:
         client=SpyRerankClient({"results": [{"index": 0, "label": "bad"}]}),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ProviderError, match="numeric score"):
+    with pytest.raises(ProviderError, match="numeric score") as excinfo:
         reranker.rerank("request ids", [make_chunk("A")], top_k=1)
+
+    assert excinfo.value.failure_class == "invalid_response"
+
+
+def test_reranker_classifies_http_429_as_rate_limit() -> None:
+    reranker = NVIDIAReranker(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+        client=RateLimitedRerankClient(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderError, match="failed after retries") as excinfo:
+        reranker.rerank("request ids", [make_chunk("A")], top_k=1)
+
+    assert excinfo.value.failure_class == "rate_limit"
 
 
 def make_chunk(chunk_id: str) -> ScoredChunk:
