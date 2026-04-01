@@ -63,13 +63,13 @@ class IngestService:
         """Load, chunk, embed, and persist the policy corpus."""
         documents = load_policy_documents(self._corpus_root)
         runtime_rules_artifact = _compile_runtime_rules_artifact(documents)
+        chunks = chunk_policy_documents(documents)
+        vectors = self._embedder.embed_documents([chunk.text for chunk in chunks])
+        embedded_chunks = _attach_embeddings(chunks, vectors)
         staged_artifact_path = _stage_runtime_rules_artifact(
             runtime_rules_artifact,
             self._runtime_rules_artifact_path,
         )
-        chunks = chunk_policy_documents(documents)
-        vectors = self._embedder.embed_documents([chunk.text for chunk in chunks])
-        embedded_chunks = _attach_embeddings(chunks, vectors)
 
         try:
             self._index_store.replace(embedded_chunks)
@@ -162,6 +162,8 @@ def _stage_runtime_rules_artifact(
     destination: Path,
 ) -> Path:
     """Write the artifact to a sibling temp file before mutating the index."""
+    if destination.exists() and destination.is_dir():
+        raise OSError(f"Runtime rules artifact path {destination} must not be a directory.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(
         artifact.model_dump(mode="json"),
