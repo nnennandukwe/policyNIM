@@ -443,26 +443,18 @@ def _parse_runtime_rule(
             action=cast(RuntimeActionKind, _required_runtime_rule_string(rule_data.get("action"))),
             effect=cast(RuntimeRuleEffect, _required_runtime_rule_string(rule_data.get("effect"))),
             reason=_required_runtime_rule_string(rule_data.get("reason")),
-            path_globs=_runtime_rule_matcher_values(
-                rule_data.get("path_globs"),
-                source_path=source_path,
-                line_number=_frontmatter_line_number(start_index),
-            ),
-            command_regexes=_runtime_rule_matcher_values(
-                rule_data.get("command_regexes"),
-                source_path=source_path,
-                line_number=_frontmatter_line_number(start_index),
-            ),
-            url_host_patterns=_runtime_rule_matcher_values(
-                rule_data.get("url_host_patterns"),
-                source_path=source_path,
-                line_number=_frontmatter_line_number(start_index),
+            path_globs=_parsed_runtime_rule_matcher_values(rule_data.get("path_globs")),
+            command_regexes=_parsed_runtime_rule_matcher_values(rule_data.get("command_regexes")),
+            url_host_patterns=_parsed_runtime_rule_matcher_values(
+                rule_data.get("url_host_patterns")
             ),
             start_line=_frontmatter_line_number(start_index),
             end_line=_frontmatter_line_number(last_content_index),
         )
-    except ValidationError as exc:
-        message = exc.errors()[0]["msg"]
+    except (ValidationError, ValueError) as exc:
+        message = str(exc)
+        if isinstance(exc, ValidationError):
+            message = exc.errors()[0]["msg"]
         raise _invalid_runtime_rule(
             source_path,
             _frontmatter_line_number(start_index),
@@ -507,11 +499,24 @@ def _consume_runtime_rule_field(
         )
 
     if remainder:
+        parsed_value = remainder
+        if (
+            key in RUNTIME_RULE_MATCHER_FIELDS
+            and remainder.startswith("[")
+            and remainder.endswith("]")
+        ):
+            parsed_value = _parse_runtime_rule_inline_matcher_list(
+                remainder,
+                source_path=source_path,
+                line_number=_frontmatter_line_number(index),
+            )
+        else:
+            parsed_value = _parse_frontmatter_scalar_or_list(remainder, source_path)
         return (
             key,
             _coerce_runtime_rule_value(
                 key,
-                _parse_frontmatter_scalar_or_list(remainder, source_path),
+                parsed_value,
                 source_path=source_path,
                 line_number=_frontmatter_line_number(index),
             ),
@@ -575,6 +580,19 @@ def _parse_runtime_rule_matcher_list(
         )
 
     return values, index, last_item_index
+
+
+def _parse_runtime_rule_inline_matcher_list(
+    value: str,
+    *,
+    source_path: str,
+    line_number: int,
+) -> list[str]:
+    """Parse matcher inline lists without unquoting before validation."""
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    return _split_inline_list(inner)
 
 
 def _coerce_runtime_rule_value(
@@ -652,6 +670,15 @@ def _runtime_rule_matcher_values(
         )
         for item in value
     ]
+
+
+def _parsed_runtime_rule_matcher_values(value: object) -> list[str]:
+    """Return already-validated matcher lists stored during field parsing."""
+    if value is None:
+        return []
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ValueError("matcher families must use list syntax.")
 
 
 def _parse_runtime_rule_matcher_item(

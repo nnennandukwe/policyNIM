@@ -323,6 +323,26 @@ def test_runtime_rules_parse_with_line_spans_and_matcher_values(tmp_path: Path) 
     assert document.runtime_rules[1].end_line == 14
 
 
+def test_runtime_rules_inline_matcher_lists_preserve_quoted_scalars(tmp_path: Path) -> None:
+    write_policy(
+        tmp_path / "policies" / "backend" / "quoted-inline-matchers.md",
+        """
+        ---
+        runtime_rules:
+          - action: file_write
+            effect: block
+            reason: Preserve quoted matcher scalars.
+            path_globs: ["true", "1"]
+        ---
+        # Quoted Inline Matchers
+        """,
+    )
+
+    document = load_policy_documents(tmp_path / "policies")[0]
+
+    assert document.runtime_rules[0].path_globs == ["true", "1"]
+
+
 def test_runtime_rules_key_requires_at_least_one_rule_entry(tmp_path: Path) -> None:
     write_policy(
         tmp_path / "policies" / "backend" / "empty-runtime-rules.md",
