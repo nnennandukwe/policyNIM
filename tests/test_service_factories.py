@@ -62,6 +62,7 @@ def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: 
     settings = Settings(
         corpus_dir=tmp_path / "policies",
         lancedb_uri=tmp_path / "ingest-index",
+        runtime_rules_artifact_path=tmp_path / "runtime" / "rules.json",
         nvidia_embed_model="test-embed-model",
     )
 
@@ -73,6 +74,9 @@ def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: 
     assert service._index_store.table_name == settings.lancedb_table
     assert service._corpus_root == (tmp_path / "policies").resolve(strict=False)
     assert service._embedding_model == "test-embed-model"
+    assert service._runtime_rules_artifact_path == (tmp_path / "runtime" / "rules.json").resolve(
+        strict=False
+    )
 
 
 def test_create_search_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:

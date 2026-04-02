@@ -5,13 +5,31 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from pathlib import PurePosixPath
-from typing import Protocol, TypedDict
+from typing import Protocol, TypedDict, cast
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
+from pydantic import ValidationError
 
 from policynim.errors import InvalidPolicyDocumentError
-from policynim.types import DocumentSection, ParsedDocument, PolicyMetadata
+from policynim.types import (
+    RUNTIME_RULE_MATCHER_FIELDS,
+    DocumentSection,
+    ParsedDocument,
+    ParsedRuntimeRule,
+    PolicyMetadata,
+    RuntimeActionKind,
+    RuntimeRuleEffect,
+)
+
+_RUNTIME_RULE_ALLOWED_KEYS = {
+    "action",
+    "effect",
+    "reason",
+    *RUNTIME_RULE_MATCHER_FIELDS,
+}
+_NON_STRING_YAML_SCALARS = {"true", "false", "null", "~", "yes", "no", "on", "off"}
+_NUMERIC_YAML_SCALAR_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 class DocumentParser(Protocol):
@@ -50,10 +68,12 @@ class MarkdownParser:
         tokens = self._markdown.parse(body)
         headings = _collect_heading_titles(tokens)
         metadata = _normalize_metadata(source_path, frontmatter, headings)
+        runtime_rules = _runtime_rules_from_frontmatter(frontmatter.get("runtime_rules"))
 
         return ParsedDocument(
             source_path=source_path,
             metadata=metadata,
+            runtime_rules=runtime_rules,
             body=body,
             body_start_line=body_start_line,
         )
@@ -191,6 +211,15 @@ def _normalize_metadata(
     )
 
 
+def _runtime_rules_from_frontmatter(value: object) -> list[ParsedRuntimeRule]:
+    """Return parsed runtime rules from frontmatter, if present."""
+    if value is None:
+        return []
+    if isinstance(value, list) and all(isinstance(item, ParsedRuntimeRule) for item in value):
+        return list(value)
+    raise InvalidPolicyDocumentError("Policy frontmatter parser produced invalid runtime_rules.")
+
+
 def _collect_heading_titles(tokens: Sequence[Token]) -> list[tuple[int, str]]:
     """Collect heading titles and levels in document order."""
     return [
@@ -282,6 +311,24 @@ def _parse_frontmatter_mapping(raw_frontmatter: str, source_path: str) -> dict[s
 
         key = match.group(1).strip()
         remainder = match.group(2).strip()
+        if key == "runtime_rules":
+            if remainder:
+                raise _invalid_runtime_rule(
+                    source_path,
+                    _frontmatter_line_number(index),
+                    "runtime_rules must use block-list syntax.",
+                )
+            runtime_rules, next_index = _parse_runtime_rules(lines, index + 1, source_path)
+            if not runtime_rules:
+                raise _invalid_runtime_rule(
+                    source_path,
+                    _frontmatter_line_number(index),
+                    "runtime_rules must include at least one rule entry.",
+                )
+            data[key] = runtime_rules
+            index = next_index
+            continue
+
         if remainder:
             data[key] = _parse_frontmatter_scalar_or_list(remainder, source_path)
             index += 1
@@ -302,6 +349,406 @@ def _parse_frontmatter_mapping(raw_frontmatter: str, source_path: str) -> dict[s
         index += 1
 
     return data
+
+
+def _parse_runtime_rules(
+    lines: Sequence[str],
+    start_index: int,
+    source_path: str,
+) -> tuple[list[ParsedRuntimeRule], int]:
+    """Parse the narrow runtime_rules list syntax from frontmatter."""
+    rules: list[ParsedRuntimeRule] = []
+    index = start_index
+
+    while index < len(lines):
+        raw_line = lines[index]
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+        if raw_line.startswith("  - "):
+            rule, index = _parse_runtime_rule(lines, index, source_path)
+            rules.append(rule)
+            continue
+        if raw_line.startswith((" ", "\t")):
+            raise _invalid_runtime_rule(
+                source_path,
+                _frontmatter_line_number(index),
+                "expected a rule entry beginning with `-`.",
+            )
+        break
+
+    return rules, index
+
+
+def _parse_runtime_rule(
+    lines: Sequence[str],
+    start_index: int,
+    source_path: str,
+) -> tuple[ParsedRuntimeRule, int]:
+    """Parse one runtime rule and preserve its line span."""
+    rule_data: dict[str, object] = {}
+    seen_keys: set[str] = set()
+
+    key, value, index, last_content_index = _consume_runtime_rule_field(
+        lines,
+        start_index,
+        source_path,
+        prefix="  - ",
+    )
+    rule_data[key] = value
+    seen_keys.add(key)
+
+    while index < len(lines):
+        raw_line = lines[index]
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+        if raw_line.startswith("  - "):
+            break
+        if raw_line.startswith("      - "):
+            raise _invalid_runtime_rule(
+                source_path,
+                _frontmatter_line_number(index),
+                "matcher list items must follow a matcher-family key.",
+            )
+        if raw_line.startswith("    "):
+            key, value, index, consumed_line_index = _consume_runtime_rule_field(
+                lines,
+                index,
+                source_path,
+                prefix="    ",
+            )
+            if key in seen_keys:
+                raise _invalid_runtime_rule(
+                    source_path,
+                    _frontmatter_line_number(consumed_line_index),
+                    f"duplicate rule key `{key}`.",
+                )
+            rule_data[key] = value
+            seen_keys.add(key)
+            last_content_index = max(last_content_index, consumed_line_index)
+            continue
+        if raw_line.startswith((" ", "\t")):
+            raise _invalid_runtime_rule(
+                source_path,
+                _frontmatter_line_number(index),
+                "unexpected indentation inside runtime_rules.",
+            )
+        break
+
+    try:
+        rule = ParsedRuntimeRule(
+            action=cast(RuntimeActionKind, _required_runtime_rule_string(rule_data.get("action"))),
+            effect=cast(RuntimeRuleEffect, _required_runtime_rule_string(rule_data.get("effect"))),
+            reason=_required_runtime_rule_string(rule_data.get("reason")),
+            path_globs=_parsed_runtime_rule_matcher_values(rule_data.get("path_globs")),
+            command_regexes=_parsed_runtime_rule_matcher_values(rule_data.get("command_regexes")),
+            url_host_patterns=_parsed_runtime_rule_matcher_values(
+                rule_data.get("url_host_patterns")
+            ),
+            start_line=_frontmatter_line_number(start_index),
+            end_line=_frontmatter_line_number(last_content_index),
+        )
+    except (ValidationError, ValueError) as exc:
+        message = str(exc)
+        if isinstance(exc, ValidationError):
+            message = exc.errors()[0]["msg"]
+        raise _invalid_runtime_rule(
+            source_path,
+            _frontmatter_line_number(start_index),
+            message,
+        ) from exc
+
+    return rule, index
+
+
+def _consume_runtime_rule_field(
+    lines: Sequence[str],
+    index: int,
+    source_path: str,
+    *,
+    prefix: str,
+) -> tuple[str, object, int, int]:
+    """Consume one rule field from the supplied line index."""
+    raw_line = lines[index]
+    if not raw_line.startswith(prefix):
+        raise _invalid_runtime_rule(
+            source_path,
+            _frontmatter_line_number(index),
+            "expected a runtime_rules field.",
+        )
+
+    field_text = raw_line.removeprefix(prefix)
+    match = re.match(r"^([A-Za-z0-9_-]+):(.*)$", field_text)
+    if match is None:
+        raise _invalid_runtime_rule(
+            source_path,
+            _frontmatter_line_number(index),
+            "expected `key: value` syntax inside runtime_rules.",
+        )
+
+    key = match.group(1).strip()
+    remainder = match.group(2).strip()
+    if key not in _RUNTIME_RULE_ALLOWED_KEYS:
+        raise _invalid_runtime_rule(
+            source_path,
+            _frontmatter_line_number(index),
+            f"unknown runtime_rules key `{key}`.",
+        )
+
+    if remainder:
+        parsed_value = remainder
+        if (
+            key in RUNTIME_RULE_MATCHER_FIELDS
+            and remainder.startswith("[")
+            and remainder.endswith("]")
+        ):
+            parsed_value = _parse_runtime_rule_inline_matcher_list(
+                remainder,
+                source_path=source_path,
+                line_number=_frontmatter_line_number(index),
+            )
+        else:
+            parsed_value = _parse_frontmatter_scalar_or_list(remainder, source_path)
+        return (
+            key,
+            _coerce_runtime_rule_value(
+                key,
+                parsed_value,
+                source_path=source_path,
+                line_number=_frontmatter_line_number(index),
+            ),
+            index + 1,
+            index,
+        )
+
+    if key not in RUNTIME_RULE_MATCHER_FIELDS:
+        raise _invalid_runtime_rule(
+            source_path,
+            _frontmatter_line_number(index),
+            f"`{key}` must use single-line scalar syntax.",
+        )
+
+    values, next_index, last_item_index = _parse_runtime_rule_matcher_list(
+        lines,
+        index + 1,
+        source_path,
+    )
+    return key, values, next_index, last_item_index if last_item_index is not None else index
+
+
+def _parse_runtime_rule_matcher_list(
+    lines: Sequence[str],
+    start_index: int,
+    source_path: str,
+) -> tuple[list[str], int, int | None]:
+    """Parse a matcher-family block list nested under one runtime rule."""
+    values: list[str] = []
+    index = start_index
+    last_item_index: int | None = None
+
+    while index < len(lines):
+        raw_line = lines[index]
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+        if raw_line.startswith("      - "):
+            raw_value = raw_line.removeprefix("      - ").strip()
+            values.append(
+                _parse_runtime_rule_matcher_item(
+                    raw_value,
+                    source_path=source_path,
+                    line_number=_frontmatter_line_number(index),
+                )
+            )
+            last_item_index = index
+            index += 1
+            continue
+        if raw_line.startswith("    ") and not raw_line.startswith("      "):
+            break
+        if raw_line.startswith("  - "):
+            break
+        if not raw_line.startswith((" ", "\t")):
+            break
+        raise _invalid_runtime_rule(
+            source_path,
+            _frontmatter_line_number(index),
+            "expected a matcher list item beginning with `-`.",
+        )
+
+    return values, index, last_item_index
+
+
+def _parse_runtime_rule_inline_matcher_list(
+    value: str,
+    *,
+    source_path: str,
+    line_number: int,
+) -> list[str]:
+    """Parse matcher inline lists without unquoting before validation."""
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    try:
+        return _split_inline_list(inner)
+    except InvalidPolicyDocumentError as exc:
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            str(exc),
+        ) from exc
+
+
+def _coerce_runtime_rule_value(
+    key: str,
+    value: object,
+    *,
+    source_path: str,
+    line_number: int,
+) -> str | list[str]:
+    """Normalize one parsed runtime-rule field into a typed value."""
+    if key in RUNTIME_RULE_MATCHER_FIELDS:
+        return _runtime_rule_matcher_values(
+            value,
+            source_path=source_path,
+            line_number=line_number,
+        )
+    return _runtime_rule_scalar_value(
+        key,
+        value,
+        source_path=source_path,
+        line_number=line_number,
+    )
+
+
+def _runtime_rule_scalar_value(
+    key: str,
+    value: object,
+    *,
+    source_path: str,
+    line_number: int,
+) -> str:
+    """Validate a required runtime-rule scalar field."""
+    if not isinstance(value, str):
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            f"`{key}` must be a single string value.",
+        )
+    normalized = _required_runtime_rule_string(value)
+    if not normalized:
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            f"`{key}` must not be empty.",
+        )
+    return normalized
+
+
+def _required_runtime_rule_string(value: object) -> str:
+    """Return one required runtime-rule scalar as a stripped string."""
+    normalized = _string_value(value)
+    return normalized or ""
+
+
+def _runtime_rule_matcher_values(
+    value: object,
+    *,
+    source_path: str,
+    line_number: int,
+) -> list[str]:
+    """Normalize matcher values into a list of validated strings."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            "matcher families must use list syntax.",
+        )
+    return [
+        _parse_runtime_rule_matcher_item(
+            item,
+            source_path=source_path,
+            line_number=line_number,
+        )
+        for item in value
+    ]
+
+
+def _parsed_runtime_rule_matcher_values(value: object) -> list[str]:
+    """Return already-validated matcher lists stored during field parsing."""
+    if value is None:
+        return []
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ValueError("matcher families must use list syntax.")
+
+
+def _parse_runtime_rule_matcher_item(
+    value: object,
+    *,
+    source_path: str,
+    line_number: int,
+) -> str:
+    """Validate one matcher item as a real string, not a YAML typed scalar."""
+    if not isinstance(value, str):
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            "matcher list items must be strings.",
+        )
+    stripped = value.strip()
+    if not stripped:
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            "matcher list items must not be empty.",
+        )
+    if _looks_like_non_string_yaml_scalar(stripped):
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            "matcher list items must be strings, not YAML booleans, nulls, numbers, or maps.",
+        )
+    return _parse_frontmatter_scalar(stripped, source_path)
+
+
+def _looks_like_non_string_yaml_scalar(value: str) -> bool:
+    """Return whether an unquoted matcher item looks like a non-string YAML scalar."""
+    if not value:
+        return False
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return False
+    lowered = value.lower()
+    if lowered in _NON_STRING_YAML_SCALARS:
+        return True
+    if _NUMERIC_YAML_SCALAR_RE.match(value):
+        return True
+    if (value.startswith("{") and value.endswith("}")) or (
+        value.startswith("[") and value.endswith("]")
+    ):
+        return True
+    return False
+
+
+def _frontmatter_line_number(index: int) -> int:
+    """Convert a raw frontmatter index into an absolute file line number."""
+    return index + 2
+
+
+def _invalid_runtime_rule(
+    source_path: str,
+    line_number: int,
+    message: str,
+) -> InvalidPolicyDocumentError:
+    """Return a consistent runtime-rules parsing error."""
+    return InvalidPolicyDocumentError(
+        f"Policy document {source_path} has invalid runtime_rules at line {line_number}: {message}"
+    )
 
 
 def _parse_frontmatter_list(

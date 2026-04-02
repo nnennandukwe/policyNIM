@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     corpus_dir: Path | None = None
     lancedb_uri: Path = Path("data/lancedb")
     lancedb_table: str = "policy_chunks"
+    runtime_rules_artifact_path: Path = Path("data/runtime/runtime_rules.json")
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
@@ -85,6 +86,14 @@ class Settings(BaseSettings):
     def normalize_empty_public_base_url(cls, value: Any) -> Any:
         """Treat empty configured hosted MCP base URLs as unset."""
         return _normalize_optional_setting(value)
+
+    @field_validator("runtime_rules_artifact_path", mode="before")
+    @classmethod
+    def validate_runtime_rules_artifact_path(cls, value: Any) -> Any:
+        """Reject empty configured artifact paths before Path coercion."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH must not be empty.")
+        return value
 
     @model_validator(mode="after")
     def validate_hosted_mcp_settings(self) -> Settings:

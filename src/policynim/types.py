@@ -10,6 +10,9 @@ MIN_TOP_K = 1
 MAX_TOP_K = 20
 DEFAULT_TOP_K = 5
 TopK = Annotated[int, Field(ge=MIN_TOP_K, le=MAX_TOP_K)]
+RuntimeActionKind = Literal["shell_command", "file_write", "http_request"]
+RuntimeRuleEffect = Literal["confirm", "block"]
+RUNTIME_RULE_MATCHER_FIELDS = ("path_globs", "command_regexes", "url_host_patterns")
 
 
 class StrictModel(BaseModel):
@@ -46,12 +49,73 @@ class EmbeddedChunk(PolicyChunk):
     vector: list[float] = Field(default_factory=list)
 
 
+class RuntimeRuleBase(StrictModel):
+    """Shared matcher fields for parsed and compiled runtime rules."""
+
+    action: RuntimeActionKind
+    effect: RuntimeRuleEffect
+    reason: str = Field(min_length=1)
+    path_globs: list[str] = Field(default_factory=list)
+    command_regexes: list[str] = Field(default_factory=list)
+    url_host_patterns: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_matcher_family(self) -> Self:
+        """Require exactly one non-empty matcher family."""
+        matcher_count = sum(
+            1 for field_name in RUNTIME_RULE_MATCHER_FIELDS if getattr(self, field_name)
+        )
+        if matcher_count != 1:
+            raise ValueError("runtime_rules must define exactly one non-empty matcher family.")
+        return self
+
+
+class ParsedRuntimeRule(RuntimeRuleBase):
+    """One parsed runtime rule with source line metadata."""
+
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_line_range(self) -> Self:
+        """Prevent impossible source line spans."""
+        if self.end_line < self.start_line:
+            raise ValueError("end_line must be greater than or equal to start_line.")
+        return self
+
+
+class CompiledRuntimeRule(RuntimeRuleBase):
+    """One compiled runtime rule persisted for later enforcement."""
+
+    policy_id: str
+    title: str
+    domain: str
+    source_path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_line_range(self) -> Self:
+        """Prevent impossible source line spans."""
+        if self.end_line < self.start_line:
+            raise ValueError("end_line must be greater than or equal to start_line.")
+        return self
+
+
+class RuntimeRulesArtifact(StrictModel):
+    """Deterministic runtime-rules snapshot produced during ingest."""
+
+    schema_version: Literal[1] = 1
+    rules: list[CompiledRuntimeRule] = Field(default_factory=list)
+
+
 class ParsedDocument(StrictModel):
     """Normalized source document returned by an ingest parser."""
 
     source_path: str
     format: str = "markdown"
     metadata: PolicyMetadata
+    runtime_rules: list[ParsedRuntimeRule] = Field(default_factory=list)
     body: str
     body_start_line: int = Field(default=1, ge=1)
 
