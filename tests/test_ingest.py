@@ -343,6 +343,33 @@ def test_runtime_rules_inline_matcher_lists_preserve_quoted_scalars(tmp_path: Pa
     assert document.runtime_rules[0].path_globs == ["true", "1"]
 
 
+def test_runtime_rules_inline_matcher_list_errors_keep_file_and_line_context(
+    tmp_path: Path,
+) -> None:
+    write_policy(
+        tmp_path / "policies" / "backend" / "broken-inline-matchers.md",
+        """
+        ---
+        runtime_rules:
+          - action: file_write
+            effect: block
+            reason: Broken inline matcher.
+            path_globs: ["unterminated]
+        ---
+        # Broken Inline Matchers
+        """,
+    )
+
+    with pytest.raises(
+        InvalidPolicyDocumentError,
+        match=(
+            r"Policy document policies/backend/broken-inline-matchers\.md has "
+            r"invalid runtime_rules at line 6"
+        ),
+    ):
+        load_policy_documents(tmp_path / "policies")
+
+
 def test_runtime_rules_key_requires_at_least_one_rule_entry(tmp_path: Path) -> None:
     write_policy(
         tmp_path / "policies" / "backend" / "empty-runtime-rules.md",

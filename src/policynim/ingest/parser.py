@@ -592,7 +592,14 @@ def _parse_runtime_rule_inline_matcher_list(
     inner = value[1:-1].strip()
     if not inner:
         return []
-    return _split_inline_list(inner)
+    try:
+        return _split_inline_list(inner)
+    except InvalidPolicyDocumentError as exc:
+        raise _invalid_runtime_rule(
+            source_path,
+            line_number,
+            str(exc),
+        ) from exc
 
 
 def _coerce_runtime_rule_value(
