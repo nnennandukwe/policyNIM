@@ -20,7 +20,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from starlette.datastructures import Headers
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
@@ -425,6 +425,7 @@ def _register_beta_routes(
             return _render_beta_landing(
                 settings,
                 message=f"GitHub sign-in failed: {error}. Retry the sign-in flow.",
+                status_code=400,
             )
 
         expected_state = request.session.pop(_BETA_GITHUB_STATE_SESSION_KEY, None)
@@ -564,8 +565,8 @@ def _render_beta_asset(filename: str, *, media_type: str) -> Response:
     asset_path = _beta_asset_path(filename)
     if not asset_path.is_file():
         return Response("Missing beta asset.", status_code=404)
-    return Response(
-        asset_path.read_bytes(),
+    return FileResponse(
+        asset_path,
         media_type=media_type,
         headers={"Cache-Control": "public, max-age=3600"},
     )

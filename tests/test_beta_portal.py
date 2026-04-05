@@ -170,6 +170,23 @@ def test_beta_portal_rejects_invalid_oauth_state(monkeypatch) -> None:
     assert "OAuth state was missing or invalid" in response.text
 
 
+def test_beta_portal_returns_400_for_github_oauth_error(monkeypatch) -> None:
+    stub = StubBetaAuthService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get(
+            "/auth/github/callback?error=access_denied",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 400
+    assert 'class="beta-page beta-page--landing"' in response.text
+    assert "GitHub sign-in failed: access_denied" in response.text
+
+
 def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
     stub = ExplodingBetaAuthService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
