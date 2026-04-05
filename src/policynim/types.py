@@ -272,7 +272,7 @@ RuntimeExecutionRequest = Annotated[
 class ShellCommandExecutionMetadata(StrictModel):
     """Safe shell-command execution metadata."""
 
-    exit_code: int
+    exit_code: int | None = None
     duration_ms: float = Field(ge=0.0)
 
 

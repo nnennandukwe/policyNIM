@@ -66,6 +66,7 @@ class RuntimeExecutionService:
         evidence_store: RuntimeEvidenceStoreProtocol,
         confirmer: Callable[[RuntimeDecisionResult], bool] | None = None,
         http_client: httpx.Client | None = None,
+        shell_timeout_seconds: float = 300.0,
     ) -> None:
         self._decision_service = decision_service
         self._evidence_store = evidence_store
@@ -75,6 +76,7 @@ class RuntimeExecutionService:
             follow_redirects=False,
         )
         self._owns_http_client = http_client is None
+        self._shell_timeout_seconds = shell_timeout_seconds
 
     def __enter__(self) -> RuntimeExecutionService:
         return self
@@ -183,7 +185,11 @@ class RuntimeExecutionService:
                 )
                 return result
 
-        runner_result = _run_action(self._http_client, request_with_session)
+        runner_result = _run_action(
+            self._http_client,
+            request_with_session,
+            shell_timeout_seconds=self._shell_timeout_seconds,
+        )
         execution_outcome: RuntimeExecutionOutcome
         if runner_result.succeeded:
             execution_outcome = "confirmed" if decision_result.decision == "confirm" else "allowed"
@@ -223,6 +229,7 @@ def create_runtime_execution_service(
             path=resolve_runtime_path(active_settings.runtime_evidence_db_path)
         ),
         confirmer=confirmer,
+        shell_timeout_seconds=active_settings.runtime_shell_timeout_seconds,
     )
 
 
@@ -261,9 +268,14 @@ def _run_confirmation(
     return "confirmed", None
 
 
-def _run_action(http_client: httpx.Client, request: RuntimeActionRequest) -> _ActionExecutionResult:
+def _run_action(
+    http_client: httpx.Client,
+    request: RuntimeActionRequest,
+    *,
+    shell_timeout_seconds: float,
+) -> _ActionExecutionResult:
     if isinstance(request, ShellCommandActionRequest):
-        return _run_shell_command(request)
+        return _run_shell_command(request, timeout_seconds=shell_timeout_seconds)
     if isinstance(request, FileWriteActionRequest):
         return _run_file_write(request)
     if isinstance(request, HTTPRequestActionRequest):
@@ -271,7 +283,11 @@ def _run_action(http_client: httpx.Client, request: RuntimeActionRequest) -> _Ac
     raise TypeError(f"Unsupported runtime action request type: {type(request)!r}.")
 
 
-def _run_shell_command(request: ShellCommandActionRequest) -> _ActionExecutionResult:
+def _run_shell_command(
+    request: ShellCommandActionRequest,
+    *,
+    timeout_seconds: float,
+) -> _ActionExecutionResult:
     start = time.perf_counter()
     try:
         completed = subprocess.run(
@@ -279,6 +295,16 @@ def _run_shell_command(request: ShellCommandActionRequest) -> _ActionExecutionRe
             cwd=request.cwd,
             check=False,
             capture_output=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return _ActionExecutionResult(
+            succeeded=False,
+            metadata=ShellCommandExecutionMetadata(
+                exit_code=None,
+                duration_ms=_elapsed_ms(start),
+            ),
+            failure_class="timeout",
         )
     except OSError:
         return _ActionExecutionResult(

@@ -198,6 +198,31 @@ def test_runtime_execution_service_returns_failed_for_non_zero_shell_exit(tmp_pa
     assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
 
 
+def test_runtime_execution_service_returns_failed_for_shell_timeout(tmp_path: Path) -> None:
+    evidence_store = StubEvidenceStore()
+    service = RuntimeExecutionService(
+        decision_service=StubDecisionService("allow"),
+        evidence_store=evidence_store,
+        shell_timeout_seconds=0.01,
+    )
+
+    result = service.execute(
+        ShellCommandActionRequest(
+            kind="shell_command",
+            task="Run a hanging shell command.",
+            cwd=tmp_path,
+            command=[sys.executable, "-c", "import time; time.sleep(0.2)"],
+        )
+    )
+
+    assert result.execution_outcome == "failed"
+    assert result.failure_class == "timeout"
+    assert result.result_metadata is not None
+    assert result.result_metadata.exit_code is None
+    assert result.result_metadata.duration_ms >= 0.0
+    assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
+
+
 def test_runtime_execution_service_returns_failed_for_missing_file_parent(tmp_path: Path) -> None:
     evidence_store = StubEvidenceStore()
     service = RuntimeExecutionService(

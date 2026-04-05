@@ -75,6 +75,12 @@ def test_settings_uses_default_runtime_evidence_db_path() -> None:
     assert settings.runtime_evidence_db_path == Path("data/runtime/runtime_evidence.sqlite3")
 
 
+def test_settings_uses_default_runtime_shell_timeout_seconds() -> None:
+    settings = load_settings_without_env_file()
+
+    assert settings.runtime_shell_timeout_seconds == 300.0
+
+
 def test_settings_rejects_empty_runtime_rules_artifact_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

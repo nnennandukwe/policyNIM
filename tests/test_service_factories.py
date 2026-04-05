@@ -195,3 +195,4 @@ def test_create_runtime_execution_service_uses_runtime_paths(
     assert service._evidence_store.path == (
         tmp_path / "runtime" / "runtime_evidence.sqlite3"
     ).resolve(strict=False)
+    assert service._shell_timeout_seconds == settings.runtime_shell_timeout_seconds
