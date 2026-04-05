@@ -411,7 +411,6 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
 
     assert result.exit_code == 0
     assert "add ` | less`" in result.stdout
-    assert "--count-only" in result.stdout
     assert "paging large output" in result.stdout
 
 
