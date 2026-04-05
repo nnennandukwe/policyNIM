@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MIN_TOP_K = 1
 MAX_TOP_K = 20
@@ -108,6 +109,100 @@ class RuntimeRulesArtifact(StrictModel):
 
     schema_version: Literal[1] = 1
     rules: list[CompiledRuntimeRule] = Field(default_factory=list)
+
+
+RuntimeDecision = Literal["allow", "confirm", "block"]
+
+
+class RuntimeActionRequestBase(StrictModel):
+    """Common request fields for runtime decision inputs."""
+
+    task: str = Field(min_length=1)
+    cwd: Path
+    session_id: str | None = None
+    agent_name: str | None = None
+    repo_root: Path | None = None
+
+    @field_validator("task", mode="before")
+    @classmethod
+    def validate_task(cls, value: object) -> object:
+        """Reject empty task strings before later request normalization."""
+        return _validate_non_empty_string(value, field_name="task")
+
+    @field_validator("cwd", "repo_root", mode="before")
+    @classmethod
+    def validate_common_paths(cls, value: object, info: object) -> object:
+        """Reject empty path-like request fields before Path coercion."""
+        return _validate_non_empty_path(value, field_name=getattr(info, "field_name", "path"))
+
+    @field_validator("session_id", "agent_name", mode="before")
+    @classmethod
+    def validate_optional_strings(cls, value: object, info: object) -> object:
+        """Reject empty optional string values when provided."""
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, field_name=getattr(info, "field_name", "value"))
+
+
+class ShellCommandActionRequest(RuntimeActionRequestBase):
+    """Runtime decision input for one shell command."""
+
+    kind: Literal["shell_command"]
+    command: list[str] = Field(min_length=1)
+
+    @field_validator("command")
+    @classmethod
+    def validate_command(cls, value: list[str]) -> list[str]:
+        """Require at least one non-empty shell argument."""
+        normalized: list[str] = []
+        for item in value:
+            normalized.append(_validate_non_empty_string(item, field_name="command item"))
+        return normalized
+
+
+class FileWriteActionRequest(RuntimeActionRequestBase):
+    """Runtime decision input for one file write."""
+
+    kind: Literal["file_write"]
+    path: Path
+    content: str
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def validate_path(cls, value: object) -> object:
+        """Reject empty file-write paths before Path coercion."""
+        return _validate_non_empty_path(value, field_name="path")
+
+
+class HTTPRequestActionRequest(RuntimeActionRequestBase):
+    """Runtime decision input for one HTTP request."""
+
+    kind: Literal["http_request"]
+    method: str = Field(min_length=1)
+    url: AnyHttpUrl
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def validate_method(cls, value: object) -> str:
+        """Normalize HTTP verbs while rejecting empty method values."""
+        normalized = _validate_non_empty_string(value, field_name="method")
+        return normalized.upper()
+
+
+RuntimeActionRequest = Annotated[
+    ShellCommandActionRequest | FileWriteActionRequest | HTTPRequestActionRequest,
+    Field(discriminator="kind"),
+]
+
+
+class RuntimeDecisionResult(StrictModel):
+    """Read-only runtime decision output with matched rule evidence."""
+
+    request: RuntimeActionRequest
+    decision: RuntimeDecision
+    summary: str = Field(min_length=1)
+    matched_rules: list[CompiledRuntimeRule] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ParsedDocument(StrictModel):
@@ -236,6 +331,23 @@ class BetaAuthDecision(StrictModel):
     source: Literal["api_key", "break_glass"] | None = None
     account: BetaAccount | None = None
     usage: BetaUsageSnapshot | None = None
+
+
+def _validate_non_empty_string(value: object, *, field_name: str) -> str:
+    """Return one trimmed required string and reject empty values."""
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string.")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty.")
+    return normalized
+
+
+def _validate_non_empty_path(value: object, *, field_name: str) -> object:
+    """Reject empty string path inputs without changing valid Path values."""
+    if isinstance(value, str) and not value.strip():
+        raise ValueError(f"{field_name} must not be empty.")
+    return value
 
 
 class PolicyGuidance(StrictModel):
