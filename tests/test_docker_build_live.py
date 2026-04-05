@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -12,6 +13,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _RUN_DOCKER_TESTS = os.getenv("POLICYNIM_RUN_DOCKER_TESTS", "").strip() == "1"
+_NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
 
 
 def _docker_ready() -> tuple[bool, str]:
@@ -90,3 +92,57 @@ def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
 
     assert result.returncode != 0
     assert "NVIDIA_API_KEY is required for embeddings." in combined_output
+
+
+def test_runtime_image_contains_non_empty_baked_index() -> None:
+    if not _NVIDIA_API_KEY:
+        pytest.skip("NVIDIA_API_KEY is not configured for positive Docker build validation.")
+
+    tag = f"policynim-hosted-baked-index:{uuid.uuid4().hex[:12]}"
+    env = dict(os.environ)
+    env["DOCKER_BUILDKIT"] = "1"
+    env["NVIDIA_API_KEY"] = _NVIDIA_API_KEY
+
+    try:
+        build_result = subprocess.run(
+            [
+                "docker",
+                "build",
+                "--progress=plain",
+                "--build-arg",
+                "NVIDIA_API_KEY",
+                "-t",
+                tag,
+                ".",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            env=env,
+            timeout=900,
+        )
+        build_output = build_result.stdout + build_result.stderr
+        assert build_result.returncode == 0, build_output
+
+        dump_result = subprocess.run(
+            ["docker", "run", "--rm", tag, "policynim", "dump-index", "--count-only"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=120,
+        )
+    finally:
+        subprocess.run(
+            ["docker", "image", "rm", "-f", tag],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=False,
+        )
+
+    dump_output = dump_result.stdout + dump_result.stderr
+    assert dump_result.returncode == 0, dump_output
+
+    match = re.search(r"Indexed chunks:\s*(\d+)", dump_result.stdout)
+    assert match is not None, dump_output
+    assert int(match.group(1)) > 0

@@ -387,6 +387,18 @@ def test_dump_index_command_prints_chunks(monkeypatch) -> None:
     assert "Use request ids in backend logs." in result.stdout
 
 
+def test_dump_index_count_only_prints_only_count(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_index_dump_service",
+        lambda settings: MockIndexDumpService(),
+    )
+
+    result = runner.invoke(app, ["dump-index", "--count-only"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Indexed chunks: 1\n"
+
+
 def test_help_includes_dump_index_command() -> None:
     result = runner.invoke(app, ["--help"])
 

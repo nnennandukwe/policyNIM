@@ -17,7 +17,7 @@ Current automated coverage includes:
 - Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper
 - Hosted MCP structured logs for auth rejects, tool name, latency, and upstream failure class
 - Hosted docs parity for the canonical Codex and Claude hosted MCP commands plus recovery guidance
-- Opt-in Docker builder-stage failure coverage for missing `NVIDIA_API_KEY`
+- Opt-in Docker hosted-image contract coverage for missing `NVIDIA_API_KEY` and a non-empty baked index
 - Opt-in live NVIDIA embedding smoke coverage behind `NVIDIA_API_KEY`
 - Opt-in live Railway hosted MCP smoke coverage behind:
   - `POLICYNIM_BETA_MCP_URL`
@@ -33,6 +33,8 @@ Hosted onboarding versus Docker build-test env vars:
 
 - Set `POLICYNIM_RUN_DOCKER_TESTS=1` only when you want to run the Docker build
   regression locally against a working Docker daemon.
+- Set `NVIDIA_API_KEY` as well if you want the positive baked-index image validation
+  to run instead of skip.
 - Do not rely on `-m live` to pick up Docker build checks; they use the dedicated
   `docker_live` marker.
 

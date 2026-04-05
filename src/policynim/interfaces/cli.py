@@ -48,7 +48,15 @@ def ingest() -> None:
         "add ` | less` to command for paging large output."
     ),
 )
-def dump_index() -> None:
+def dump_index(
+    count_only: Annotated[
+        bool,
+        typer.Option(
+            "--count-only",
+            help="Print only the indexed chunk count.",
+        ),
+    ] = False,
+) -> None:
     """Print all indexed chunks in a terminal-friendly format."""
     try:
         service = create_index_dump_service(get_settings())
@@ -57,6 +65,8 @@ def dump_index() -> None:
         _exit_with_error(str(exc))
 
     typer.echo(f"Indexed chunks: {len(chunks)}")
+    if count_only:
+        return
     for chunk in chunks:
         typer.echo("=" * 100)
         typer.echo(chunk.chunk_id)
