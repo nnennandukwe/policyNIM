@@ -93,6 +93,42 @@ def test_settings_prefers_prefixed_mcp_port_over_railway_port(
     assert settings.mcp_port == 9001
 
 
+def test_settings_defaults_host_to_wildcard_for_production_railway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POLICYNIM_MCP_HOST", raising=False)
+    monkeypatch.setenv("POLICYNIM_ENV", "production")
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = load_settings_without_env_file()
+
+    assert settings.mcp_host == "0.0.0.0"
+
+
+def test_settings_preserves_explicit_host_for_production_railway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POLICYNIM_ENV", "production")
+    monkeypatch.setenv("POLICYNIM_MCP_HOST", "127.0.0.1")
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = load_settings_without_env_file()
+
+    assert settings.mcp_host == "127.0.0.1"
+
+
+def test_settings_keeps_loopback_host_outside_production_even_with_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POLICYNIM_MCP_HOST", raising=False)
+    monkeypatch.delenv("POLICYNIM_ENV", raising=False)
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = load_settings_without_env_file()
+
+    assert settings.mcp_host == "127.0.0.1"
+
+
 def test_settings_requires_bearer_tokens_when_auth_is_enabled() -> None:
     with pytest.raises(
         ValidationError,

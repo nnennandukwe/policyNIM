@@ -17,7 +17,7 @@ Install the repo and configure runtime credentials:
 
 ```bash
 uv sync
-cp .env.example .env
+cp .env.development.example .env
 ```
 
 Set `NVIDIA_API_KEY` in `.env` or your shell before running the live retrieval

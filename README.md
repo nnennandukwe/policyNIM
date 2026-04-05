@@ -81,7 +81,7 @@ If you want the shortest path from clone to a real preflight run:
 
 ```bash
 uv sync
-cp .env.example .env
+cp .env.development.example .env
 uv run policynim ingest
 uv run policynim search --query "refresh token cleanup background job"
 uv run policynim preflight --task "Implement a refresh-token cleanup background job"
@@ -97,9 +97,10 @@ Notes:
   shows the API-key flow, and the
   [Build catalog](https://build.nvidia.com/) is where developers can browse models
   and use the "Get API Key" flow.
-- Copying `.env.example` intentionally leaves `POLICYNIM_CORPUS_DIR` unset, so the
-  bundled sample corpus is used by default. Add `POLICYNIM_CORPUS_DIR=/abs/path`
-  yourself only if you want to index a different corpus.
+- Copying `.env.development.example` intentionally leaves `POLICYNIM_CORPUS_DIR`
+  unset, so the bundled sample corpus is used by default. Add
+  `POLICYNIM_CORPUS_DIR=/abs/path` yourself only if you want to index a different
+  corpus.
 - `eval` defaults to offline mode, so it can run without NVIDIA credentials.
 - `policynim mcp` works without `--transport`; it defaults to `stdio`.
 - Add `--transport streamable-http` only if you want the HTTP transport instead of
@@ -117,10 +118,10 @@ Install the runtime dependencies:
 uv sync
 ```
 
-Copy the example environment file:
+Copy the development example environment file:
 
 ```bash
-cp .env.example .env
+cp .env.development.example .env
 ```
 
 Then set `NVIDIA_API_KEY` in `.env` or your shell. For the official key-creation
@@ -131,9 +132,16 @@ and [Build catalog](https://build.nvidia.com/).
 If you want to index a custom policy directory instead of the bundled sample
 corpus, add `POLICYNIM_CORPUS_DIR=/abs/path/to/policies` manually to `.env`.
 
+Environment templates shipped in the repo:
+
+- `.env.development.example` is the preferred local-development template.
+- `.env.production.example` is the hosted Railway and Docker reference.
+- `.env.example` remains a backward-compatible alias for the development defaults.
+
 Important runtime settings:
 
 - `NVIDIA_API_KEY`
+- `POLICYNIM_ENV`
 - `POLICYNIM_CORPUS_DIR`
 - `POLICYNIM_LANCEDB_URI`
 - `POLICYNIM_LANCEDB_TABLE`
@@ -145,7 +153,7 @@ Important runtime settings:
 - `POLICYNIM_MCP_PUBLIC_BASE_URL`
 - `POLICYNIM_EVAL_UI_PORT`
 
-Model references used by the default config in `.env.example`:
+Model references used by the default example configs:
 
 - embeddings:
   [`nvidia/llama-nemotron-embed-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-embed-1b-v2)
@@ -222,18 +230,29 @@ root `Dockerfile` and probes `GET /healthz`.
 Recommended beta setup:
 
 1. Create one Railway service from this GitHub repo.
-2. Set the Railway service variable `NVIDIA_API_KEY`.
-3. Deploy once so the service becomes healthy on `/healthz`.
-4. Generate a Railway public domain for that service.
-5. Set these runtime variables and redeploy:
+2. Start from `.env.production.example` when translating settings into Railway
+   service variables.
+3. Set at least these Railway service variables:
+   - `NVIDIA_API_KEY`
+   - `POLICYNIM_ENV=production`
+   - `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+   - `POLICYNIM_MCP_HOST=0.0.0.0`
+4. Deploy once so the service becomes healthy on `/healthz`.
+5. Generate a Railway public domain for that service.
+6. Set these runtime variables and redeploy:
    - `POLICYNIM_MCP_REQUIRE_AUTH=true`
    - `POLICYNIM_MCP_BEARER_TOKENS=<beta-token>`
    - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
+- Leave `POLICYNIM_MCP_PORT` unset on Railway unless you intentionally want to
+  override Railway's injected `PORT`.
 
 Important Day 3 hosted behavior:
 
 - Railway injects `PORT`; PolicyNIM now uses that automatically unless
   `POLICYNIM_MCP_PORT` is explicitly set.
+- When `POLICYNIM_ENV=production` and `POLICYNIM_MCP_HOST` is unset, PolicyNIM
+  defaults hosted MCP binding to `0.0.0.0` so Railway health checks can reach
+  the process.
 - The public beta MCP URL is always `https://<generated-domain>/mcp`.
 - `/healthz` stays public for Railway health checks.
 - `/mcp` returns `401 {"error":"Unauthorized."}` for missing or invalid bearer
@@ -376,7 +395,7 @@ uv run policynim mcp --transport streamable-http
 ```
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other than
-the default `127.0.0.1:8000`.
+the default development bind `127.0.0.1:8000`.
 
 Hosted HTTP notes:
 
@@ -393,6 +412,8 @@ Hosted HTTP notes:
 - `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
   URL.
 - `stdio` ignores the hosted auth settings completely.
+- When `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP defaults
+  to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set.
 - The baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
   as the fast path. Hosted startup only falls back to `policynim ingest` when
   that local index is missing or empty.

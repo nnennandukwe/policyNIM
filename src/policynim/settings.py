@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -94,6 +95,25 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             raise ValueError("POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH must not be empty.")
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_hosted_runtime_defaults(cls, data: Any) -> Any:
+        """Default hosted production runtimes to a wildcard bind when Railway injects PORT."""
+        if not isinstance(data, dict):
+            return data
+        if "mcp_host" in data or "POLICYNIM_MCP_HOST" in data:
+            return data
+        if not os.getenv("PORT"):
+            return data
+
+        policynim_env = data.get("policynim_env") or data.get("POLICYNIM_ENV")
+        if str(policynim_env).strip().lower() != "production":
+            return data
+
+        payload = dict(data)
+        payload["mcp_host"] = "0.0.0.0"
+        return payload
 
     @model_validator(mode="after")
     def validate_hosted_mcp_settings(self) -> Settings:
