@@ -393,11 +393,6 @@ def _run_streamable_http_app(
     server.run()
 
 
-def _should_fail_fast_for_hosted_http(settings: Settings) -> bool:
-    """Return whether hosted HTTP startup should require a ready local index."""
-    return settings.mcp_public_base_url is not None
-
-
 def run_server(transport: str = "stdio") -> None:
     """Run the PolicyNIM MCP server."""
     if transport not in SUPPORTED_TRANSPORTS:
@@ -408,8 +403,7 @@ def run_server(transport: str = "stdio") -> None:
     if transport == "streamable-http":
         _configure_hosted_logger()
         _ensure_streamable_http_port_available(settings.mcp_host, settings.mcp_port)
-        if _should_fail_fast_for_hosted_http(settings):
-            ensure_hosted_runtime_ready(settings)
+        ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
         app = _build_streamable_http_app(settings)
         try:
             _run_streamable_http_app(app, host=settings.mcp_host, port=settings.mcp_port)

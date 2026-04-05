@@ -7,6 +7,7 @@ import logging
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError
 from policynim.runtime_paths import resolve_runtime_path
+from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
 from policynim.types import HealthCheckResult
@@ -77,25 +78,33 @@ def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHe
     )
 
 
-def ensure_hosted_runtime_ready(settings: Settings | None = None) -> None:
+def ensure_hosted_runtime_ready(
+    settings: Settings | None = None,
+    *,
+    rebuild_if_missing: bool = False,
+) -> None:
     """Fail fast when hosted HTTP startup points at a missing or empty local index."""
     active_settings = settings or get_settings()
     index_uri = resolve_runtime_path(active_settings.lancedb_uri)
 
-    try:
-        result = create_runtime_health_service(active_settings).check()
-    except Exception as exc:
-        reason = f"Local index readiness could not be inspected: {type(exc).__name__}: {exc}."
+    result = _check_hosted_runtime_health(active_settings, index_uri=index_uri)
+    if result.ready:
+        return
+
+    if rebuild_if_missing:
+        _rebuild_hosted_runtime_index(active_settings, index_uri=index_uri, reason=result.reason)
+        result = _check_hosted_runtime_health(active_settings, index_uri=index_uri)
+        if result.ready:
+            return
+
+        reason = result.reason or "Local index readiness could not be inspected after rebuild."
         raise ConfigurationError(
             _format_hosted_runtime_error(
                 index_uri=index_uri,
                 table_name=active_settings.lancedb_table,
                 reason=reason,
             )
-        ) from exc
-
-    if result.ready:
-        return
+        )
 
     reason = result.reason or "Local index readiness could not be inspected."
     raise ConfigurationError(
@@ -104,6 +113,56 @@ def ensure_hosted_runtime_ready(settings: Settings | None = None) -> None:
             table_name=active_settings.lancedb_table,
             reason=reason,
         )
+    )
+
+
+def _check_hosted_runtime_health(
+    settings: Settings,
+    *,
+    index_uri,
+) -> HealthCheckResult:
+    try:
+        return create_runtime_health_service(settings).check()
+    except Exception as exc:
+        reason = f"Local index readiness could not be inspected: {type(exc).__name__}: {exc}."
+        raise ConfigurationError(
+            _format_hosted_runtime_error(
+                index_uri=index_uri,
+                table_name=settings.lancedb_table,
+                reason=reason,
+            )
+        ) from exc
+
+
+def _rebuild_hosted_runtime_index(
+    settings: Settings,
+    *,
+    index_uri,
+    reason: str | None,
+) -> None:
+    summary = reason or "Local index readiness could not be inspected."
+    LOGGER.warning(
+        "Hosted runtime index at %s is not ready. Rebuilding before serving traffic. Reason: %s",
+        index_uri,
+        summary,
+    )
+    try:
+        result = create_ingest_service(settings).run()
+    except Exception as exc:
+        rebuild_reason = f"Automatic hosted-index rebuild failed: {type(exc).__name__}: {exc}."
+        raise ConfigurationError(
+            _format_hosted_runtime_error(
+                index_uri=index_uri,
+                table_name=settings.lancedb_table,
+                reason=rebuild_reason,
+            )
+        ) from exc
+
+    LOGGER.info(
+        "Hosted runtime index rebuilt at %s with %s chunks across %s documents.",
+        result.index_uri,
+        result.chunk_count,
+        result.document_count,
     )
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from policynim.errors import ConfigurationError
@@ -182,6 +184,86 @@ def test_ensure_hosted_runtime_ready_raises_for_empty_index(
 
     with pytest.raises(ConfigurationError, match="contains no rows"):
         health_module.ensure_hosted_runtime_ready(Settings())
+
+
+def test_ensure_hosted_runtime_ready_rebuilds_missing_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results = iter(
+        [
+            HealthCheckResult(
+                status="error",
+                ready=False,
+                table_name="policy_chunks",
+                row_count=0,
+                mcp_url="https://beta.example.com/mcp",
+                reason="Local index table 'policy_chunks' does not exist.",
+            ),
+            HealthCheckResult(
+                status="ok",
+                ready=True,
+                table_name="policy_chunks",
+                row_count=4,
+                mcp_url="https://beta.example.com/mcp",
+                reason=None,
+            ),
+        ]
+    )
+    rebuilds: list[str] = []
+
+    monkeypatch.setattr(
+        health_module,
+        "create_runtime_health_service",
+        lambda settings: StaticHealthService(next(results)),
+    )
+    monkeypatch.setattr(
+        health_module,
+        "create_ingest_service",
+        lambda settings: SimpleNamespace(
+            run=lambda: (
+                rebuilds.append("run")
+                or SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
+            )
+        ),
+    )
+
+    health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
+
+    assert rebuilds == ["run"]
+
+
+def test_ensure_hosted_runtime_ready_raises_when_automatic_rebuild_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
+
+    monkeypatch.setattr(
+        health_module,
+        "create_runtime_health_service",
+        lambda settings: StaticHealthService(
+            HealthCheckResult(
+                status="error",
+                ready=False,
+                table_name="policy_chunks",
+                row_count=0,
+                mcp_url="https://beta.example.com/mcp",
+                reason="Local index table 'policy_chunks' does not exist.",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        health_module,
+        "create_ingest_service",
+        lambda settings: SimpleNamespace(run=lambda: (_ for _ in ()).throw(failure)),
+    )
+
+    with pytest.raises(
+        ConfigurationError,
+        match="Automatic hosted-index rebuild failed",
+    ) as exc_info:
+        health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
+
+    assert exc_info.value.__cause__ is failure
 
 
 def test_ensure_hosted_runtime_ready_wraps_constructor_errors(

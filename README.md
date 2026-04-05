@@ -382,9 +382,10 @@ Hosted HTTP notes:
 
 - `GET /healthz` is a public readiness endpoint. It returns `200` only when the
   configured local index exists and contains rows; otherwise it returns `503`.
-- If `POLICYNIM_MCP_PUBLIC_BASE_URL` is set, hosted `streamable-http` startup
-  now fails before serving traffic when the configured local index is missing or
-  empty.
+- Hosted `streamable-http` startup now checks the configured local index before
+  serving traffic. If the baked index is missing or empty, it attempts one
+  rebuild with the runtime `NVIDIA_API_KEY` and then fails fast if readiness is
+  still not satisfied.
 - To protect only the HTTP MCP route, set:
   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
   - `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b`
@@ -393,7 +394,8 @@ Hosted HTTP notes:
   URL.
 - `stdio` ignores the hosted auth settings completely.
 - The baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
-  and does not run `policynim ingest` at container startup.
+  as the fast path. Hosted startup only falls back to `policynim ingest` when
+  that local index is missing or empty.
 
 Example readiness check:
 
