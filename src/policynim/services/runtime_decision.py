@@ -45,7 +45,7 @@ class _NormalizedRuntimeAction:
     """One normalized runtime action target used for deterministic rule matching."""
 
     kind: RuntimeActionKind
-    match_value: str
+    match_values: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,12 +218,12 @@ def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRunti
     if isinstance(request, ShellCommandActionRequest):
         return _NormalizedRuntimeAction(
             kind=request.kind,
-            match_value=shlex.join(request.command),
+            match_values=(shlex.join(request.command),),
         )
     if isinstance(request, FileWriteActionRequest):
         return _NormalizedRuntimeAction(
             kind=request.kind,
-            match_value=_normalize_file_write_path(request),
+            match_values=_normalize_file_write_paths(request),
         )
     if isinstance(request, HTTPRequestActionRequest):
         host = request.url.host
@@ -231,25 +231,32 @@ def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRunti
             raise ValueError("http_request url must include a hostname.")
         return _NormalizedRuntimeAction(
             kind=request.kind,
-            match_value=str(host).lower(),
+            match_values=(str(host).lower(),),
         )
     raise TypeError(f"Unsupported runtime action request type: {type(request)!r}.")
 
 
-def _normalize_file_write_path(request: FileWriteActionRequest) -> str:
-    """Return the deterministic POSIX path used for file-write matching."""
+def _normalize_file_write_paths(request: FileWriteActionRequest) -> tuple[str, ...]:
+    """Return deterministic file-write match candidates without symlink bypasses."""
+    lexical_cwd = _absolute_lexical_path(request.cwd, base=Path.cwd())
+    lexical_target = _absolute_lexical_path(request.path, base=lexical_cwd)
     resolved_cwd = _resolve_from_base(request.cwd, base=Path.cwd())
     resolved_target = _resolve_from_base(request.path, base=resolved_cwd)
-    if request.repo_root is not None:
-        resolved_repo_root = _resolve_from_base(request.repo_root, base=resolved_cwd)
-        repo_relative = _relative_posix_path(resolved_target, root=resolved_repo_root)
-        if repo_relative is not None:
-            return repo_relative
+    candidate_paths: list[str] = []
 
-    cwd_relative = _relative_posix_path(resolved_target, root=resolved_cwd)
+    if request.repo_root is not None:
+        lexical_repo_root = _absolute_lexical_path(request.repo_root, base=lexical_cwd)
+        repo_relative = _relative_posix_path(lexical_target, root=lexical_repo_root)
+        if repo_relative is not None:
+            candidate_paths.append(repo_relative)
+
+    cwd_relative = _relative_posix_path(lexical_target, root=lexical_cwd)
     if cwd_relative is not None:
-        return cwd_relative
-    return resolved_target.as_posix()
+        candidate_paths.append(cwd_relative)
+
+    candidate_paths.append(lexical_target.as_posix())
+    candidate_paths.append(resolved_target.as_posix())
+    return tuple(_ordered_unique(candidate_paths))
 
 
 def _resolve_from_base(path: Path, *, base: Path) -> Path:
@@ -259,12 +266,53 @@ def _resolve_from_base(path: Path, *, base: Path) -> Path:
     return (base / path).resolve(strict=False)
 
 
+def _absolute_lexical_path(path: Path, *, base: Path) -> Path:
+    """Return an absolute path with `.` and `..` collapsed without following symlinks."""
+    if path.is_absolute():
+        return _lexicalize_path(path)
+    return _lexicalize_path(base / path)
+
+
+def _lexicalize_path(path: Path) -> Path:
+    """Collapse lexical path segments without touching the filesystem."""
+    anchor = path.anchor
+    segments: list[str] = []
+    for part in path.parts:
+        if part in ("", ".", anchor):
+            continue
+        if part == "..":
+            if segments and segments[-1] != "..":
+                segments.pop()
+                continue
+            if not anchor:
+                segments.append(part)
+            continue
+        segments.append(part)
+    if anchor:
+        return Path(anchor, *segments)
+    if segments:
+        return Path(*segments)
+    return Path(".")
+
+
 def _relative_posix_path(path: Path, *, root: Path) -> str | None:
     """Return a POSIX relative path when the target is rooted under the base path."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:
         return None
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    """Keep first-seen string order while dropping duplicates."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        ordered.append(value)
+        seen.add(value)
+    return ordered
 
 
 def _rule_matches(
@@ -277,14 +325,17 @@ def _rule_matches(
         return False
     if rule.action == "shell_command":
         return any(
-            re.search(pattern, normalized_request.match_value) is not None
+            re.search(pattern, normalized_request.match_values[0]) is not None
             for pattern in rule.command_regexes
         )
     if rule.action == "file_write":
-        target_path = PurePosixPath(normalized_request.match_value)
-        return any(target_path.match(pattern) for pattern in rule.path_globs)
+        return any(
+            PurePosixPath(candidate).match(pattern)
+            for candidate in normalized_request.match_values
+            for pattern in rule.path_globs
+        )
     if rule.action == "http_request":
-        hostname = normalized_request.match_value
+        hostname = normalized_request.match_values[0]
         return any(fnmatchcase(hostname, pattern.lower()) for pattern in rule.url_host_patterns)
     return False
 

@@ -176,6 +176,51 @@ def test_runtime_decision_service_matches_file_write_rule_using_repo_relative_pa
     assert [citation.chunk_id for citation in result.citations] == ["BACKEND-1"]
 
 
+def test_runtime_decision_service_matches_repo_relative_file_rules_through_symlinks(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    cwd = repo_root / "tools"
+    outside_secrets = tmp_path / "outside" / "secrets"
+    outside_secrets.mkdir(parents=True)
+    repo_root.mkdir()
+    cwd.mkdir()
+    try:
+        (repo_root / "secrets").symlink_to(outside_secrets, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable in this environment: {exc}")
+
+    artifact_path = write_runtime_rules_artifact(
+        tmp_path / "runtime_rules.json",
+        rules=[
+            make_rule(
+                action="file_write",
+                effect="block",
+                reason="Protect production secrets files.",
+                path_globs=["secrets/prod.env"],
+            )
+        ],
+    )
+    service = RuntimeDecisionService(
+        index_store=MockIndexStore([make_chunk()]),
+        runtime_rules_artifact_path=artifact_path,
+    )
+
+    result = service.decide(
+        FileWriteActionRequest(
+            kind="file_write",
+            task="Update production secret file through a symlinked repo path.",
+            cwd=cwd,
+            repo_root=repo_root,
+            path=Path("../secrets/prod.env"),
+            content="TOKEN=redacted",
+        )
+    )
+
+    assert result.decision == "block"
+    assert [citation.chunk_id for citation in result.citations] == ["BACKEND-1"]
+
+
 def test_runtime_decision_service_matches_http_request_host_case_insensitively(
     tmp_path: Path,
 ) -> None:
