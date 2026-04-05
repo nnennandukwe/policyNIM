@@ -406,6 +406,15 @@ def _register_beta_routes(
             account = beta_auth_service.complete_github_oauth(code=code)
         except (PolicyNIMError, ProviderError) as exc:
             return HTMLResponse(str(exc), status_code=502)
+        except Exception:
+            LOGGER.exception("Unexpected hosted beta OAuth callback failure.")
+            return HTMLResponse(
+                (
+                    "GitHub sign-in failed due to an unexpected upstream error. "
+                    "Retry the sign-in flow."
+                ),
+                status_code=502,
+            )
 
         request.session[_BETA_ACCOUNT_SESSION_KEY] = account.account_id
         return RedirectResponse(_BETA_PATH, status_code=302)

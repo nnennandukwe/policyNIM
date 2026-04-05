@@ -61,6 +61,13 @@ class StubBetaAuthService:
         )
 
 
+class ExplodingBetaAuthService(StubBetaAuthService):
+    """Portal auth stub that raises an unexpected exception during callback."""
+
+    def complete_github_oauth(self, *, code: str) -> BetaAccount:
+        raise RuntimeError("unexpected oauth failure")
+
+
 def _signup_settings(
     *,
     base_url: str = "https://beta.example.com",
@@ -146,6 +153,23 @@ def test_beta_portal_rejects_invalid_oauth_state(monkeypatch) -> None:
 
     assert response.status_code == 400
     assert "OAuth state was missing or invalid" in response.text
+
+
+def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
+    stub = ExplodingBetaAuthService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        client.get("/auth/github/start", follow_redirects=False)
+        response = client.get(
+            f"/auth/github/callback?state={stub.oauth_states[0]}&code=oauth-code",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 502
+    assert "unexpected upstream error" in response.text
 
 
 def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> None:

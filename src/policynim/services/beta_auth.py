@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -218,7 +220,10 @@ class BetaAuthService:
         except httpx.HTTPError as exc:
             raise ProviderError("GitHub OAuth token exchange failed.") from exc
 
-        payload = response.json()
+        payload = _parse_json_mapping(
+            response,
+            error_message="GitHub OAuth token exchange returned an invalid JSON payload.",
+        )
         access_token = str(payload.get("access_token") or "").strip()
         if not access_token:
             raise ProviderError("GitHub OAuth token exchange did not return an access token.")
@@ -234,15 +239,22 @@ class BetaAuthService:
             with httpx.Client(timeout=30.0, headers=headers) as client:
                 profile_response = client.get(_GITHUB_USER_URL)
                 profile_response.raise_for_status()
-                profile_payload = profile_response.json()
+                profile_payload = _parse_json_mapping(
+                    profile_response,
+                    error_message="GitHub account lookup returned an invalid JSON payload.",
+                )
                 email = self._fetch_primary_verified_email(client)
         except httpx.HTTPError as exc:
             raise ProviderError("GitHub account lookup failed.") from exc
 
-        github_user_id = int(profile_payload["id"])
-        github_login = str(profile_payload["login"]).strip()
+        try:
+            github_user_id = int(profile_payload.get("id"))
+        except (TypeError, ValueError) as exc:
+            raise ProviderError("GitHub account lookup did not return a valid user id.") from exc
+
+        github_login = str(profile_payload.get("login") or "").strip()
         if not github_login:
-            raise ProviderError("GitHub account lookup returned an empty login.")
+            raise ProviderError("GitHub account lookup did not return a valid login.")
         profile_email = str(profile_payload.get("email") or "").strip() or None
         return _GitHubIdentity(
             github_user_id=github_user_id,
@@ -257,7 +269,10 @@ class BetaAuthService:
         except httpx.HTTPError:
             return None
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
         if not isinstance(payload, list):
             return None
 
@@ -284,6 +299,20 @@ class BetaAuthService:
 
 def _hash_api_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _parse_json_mapping(
+    response: httpx.Response,
+    *,
+    error_message: str,
+) -> Mapping[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(error_message) from exc
+    if not isinstance(payload, dict):
+        raise ProviderError(error_message)
+    return payload
 
 
 def create_beta_auth_service(settings: Settings | None = None) -> BetaAuthService:
