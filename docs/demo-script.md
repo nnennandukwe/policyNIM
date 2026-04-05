@@ -152,15 +152,18 @@ uv run policynim eval
 
 Then open `http://localhost:8001`.
 
-## Step 6: Show MCP Availability
+## Step 6: Show Hosted MCP Availability
 
-Start the server:
+If you have an issued beta token and Railway domain, connect your client to the
+hosted MCP first:
 
 ```bash
-uv run policynim mcp --transport stdio
+export POLICYNIM_TOKEN=<issued-beta-token>
+codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-var POLICYNIM_TOKEN
+claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
 ```
 
-Then point an MCP-capable client at it using one of the existing examples:
+Then point the demo prompts at the hosted service using one of the existing examples:
 
 - [examples/codex/README.md](../examples/codex/README.md)
 - [examples/claude-code/README.md](../examples/claude-code/README.md)
@@ -171,10 +174,17 @@ What to say during the demo:
 - `policy_search` is the raw retrieval and debugging workflow
 - both surfaces return the same typed payloads used by the CLI
 
-## Optional Step 7: Show Hosted HTTP Readiness
+## Optional Step 7: Show Local MCP And Hosted HTTP Readiness
 
-If you want to demonstrate the hosted HTTP transport instead of `stdio`, start
-the server with:
+If you want to demonstrate the local repo path instead of the hosted beta, start
+the local server with:
+
+```bash
+uv run policynim mcp --transport stdio
+```
+
+If you want to demonstrate the local hosted HTTP transport instead of `stdio`,
+start the server with:
 
 ```bash
 uv run policynim mcp --transport streamable-http
@@ -200,6 +210,11 @@ If you enable hosted auth, set:
 
 ## Failure Recovery Notes
 
+### Invalid Token
+
+If the hosted MCP returns `401 {"error":"Unauthorized."}`, re-check
+`POLICYNIM_TOKEN` or ask the beta operator for a new token.
+
 ### Missing Index
 
 If `search`, `preflight`, or an MCP tool call fails with a missing-index error,
@@ -221,6 +236,24 @@ uv run policynim eval --headless
 ```
 
 This still demonstrates the evaluation workflow without live NVIDIA calls.
+
+### Temporary Upstream NVIDIA Failure
+
+If a hosted tool call fails even though `/healthz` is healthy, retry after a
+short delay first. If the issue persists, inspect the hosted logs for
+`upstream_failure_class`.
+
+### Insufficient Context
+
+If the response sets `insufficient_context: true`, the failure is in grounded
+retrieval quality, not auth or service availability. Narrow the task, add a
+domain, or use `policy_search` first.
+
+### Service Unavailable
+
+If the hosted service does not respond or `/healthz` returns `503`, the hosted
+service or baked index is not ready yet. Retry after the service becomes
+healthy.
 
 ## Suggested Demo Narrative
 
