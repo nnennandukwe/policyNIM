@@ -101,6 +101,7 @@ def test_runtime_image_contains_non_empty_baked_index() -> None:
     tag = f"policynim-hosted-baked-index:{uuid.uuid4().hex[:12]}"
     env = dict(os.environ)
     env["DOCKER_BUILDKIT"] = "1"
+    env["NVIDIA_API_KEY"] = _NVIDIA_API_KEY
 
     try:
         build_result = subprocess.run(
@@ -109,7 +110,7 @@ def test_runtime_image_contains_non_empty_baked_index() -> None:
                 "build",
                 "--progress=plain",
                 "--build-arg",
-                f"NVIDIA_API_KEY={_NVIDIA_API_KEY}",
+                "NVIDIA_API_KEY",
                 "-t",
                 tag,
                 ".",
@@ -124,7 +125,7 @@ def test_runtime_image_contains_non_empty_baked_index() -> None:
         assert build_result.returncode == 0, build_output
 
         dump_result = subprocess.run(
-            ["docker", "run", "--rm", tag, "policynim", "dump-index"],
+            ["docker", "run", "--rm", tag, "policynim", "dump-index", "--count-only"],
             capture_output=True,
             text=True,
             cwd=REPO_ROOT,
