@@ -5,13 +5,16 @@ Use the local `stdio` fallback only if you need to run PolicyNIM from a clone.
 
 ## Hosted Railway MCP
 
-1. Export the issued beta token:
+1. Open `https://<railway-domain>/beta`, sign in with GitHub, and generate or
+   rotate your hosted API key.
+
+2. Export the generated beta token:
 
 ```bash
-export POLICYNIM_TOKEN=<issued-beta-token>
+export POLICYNIM_TOKEN=<generated-beta-token>
 ```
 
-2. Add the hosted MCP server:
+3. Add the hosted MCP server:
 
 ```bash
 claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
@@ -28,7 +31,7 @@ Example prompts:
 ## Recovery
 
 - Invalid token: if Claude Code gets `401 {"error":"Unauthorized."}`, re-check
-  `POLICYNIM_TOKEN` or ask the beta operator for a new token.
+  `POLICYNIM_TOKEN` or rotate the hosted key again from `/beta`.
 - Temporary upstream NVIDIA failure: retry after a short delay; if it keeps
   failing, the operator should inspect hosted logs for the classified upstream
   failure.

@@ -31,8 +31,8 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `preflight`,
   `eval`, and `mcp`.
 - MCP tools for `policy_preflight` and `policy_search`.
-- Hosted HTTP `streamable-http` with a public `/healthz` readiness route and
-  optional bearer auth on `/mcp`.
+- Hosted HTTP `streamable-http` with a public `/healthz` readiness route, a
+  self-serve `/beta` portal, and bearer auth on `/mcp`.
 - Offline-first evaluation with rerank on/off comparison and local Evidently UI.
 
 ## Repo Guide
@@ -69,8 +69,8 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 ### Hosted HTTP
 
 - `GET /healthz` reports local index readiness when using `streamable-http`.
-- `POLICYNIM_MCP_REQUIRE_AUTH` and `POLICYNIM_MCP_BEARER_TOKENS` protect only
-  the HTTP `/mcp` route.
+- `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route. `/beta`
+  stays as the self-serve signup and key-management surface.
 - Hosted `streamable-http` startup fails fast when
   `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
   missing or empty.
@@ -81,7 +81,11 @@ If you want the shortest path to a real hosted preflight run, connect your MCP
 client to the Railway beta instead of cloning the repo:
 
 ```bash
-export POLICYNIM_TOKEN=<issued-beta-token>
+# 1. Open https://<railway-domain>/beta
+# 2. Sign in with GitHub
+# 3. Generate or rotate your hosted API key
+# 4. Export the key you just received
+export POLICYNIM_TOKEN=<generated-beta-token>
 codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-var POLICYNIM_TOKEN
 claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
 ```
@@ -93,11 +97,13 @@ Then ask your client to call the MCP tools directly:
 
 Hosted beta notes:
 
-- Replace `https://<railway-domain>/mcp` with the issued Railway beta URL.
+- Replace `https://<railway-domain>/mcp` with the deployed Railway beta URL.
+- Self-serve users should start from `https://<railway-domain>/beta`, not from
+  an operator-issued secret.
 - `POLICYNIM_TOKEN` is a client-side shell variable only. It is not a PolicyNIM
   app setting.
-- The Railway service itself uses `POLICYNIM_MCP_BEARER_TOKENS`, not
-  `POLICYNIM_TOKEN`.
+- `POLICYNIM_MCP_BEARER_TOKENS` is now optional and reserved for operator
+  break-glass access on `/mcp`.
 - If you run the opt-in live smoke test locally, export the same deployed values
   as `POLICYNIM_BETA_MCP_URL` and `POLICYNIM_BETA_MCP_TOKEN`.
 - Use the local setup below only if you are contributing to the repo or debugging
@@ -109,8 +115,8 @@ Hosted beta notes:
 
 - Expect `401 {"error":"Unauthorized."}` from `/mcp` for a missing or invalid
   bearer token.
-- Re-check `POLICYNIM_TOKEN`, then ask the beta operator to reissue or rotate the
-  token if needed.
+- Re-check `POLICYNIM_TOKEN`, then revisit `/beta` and rotate the hosted API key
+  if needed.
 
 ### Temporary Upstream NVIDIA Failure
 
@@ -180,6 +186,12 @@ Important runtime settings:
 - `POLICYNIM_MCP_REQUIRE_AUTH`
 - `POLICYNIM_MCP_BEARER_TOKENS`
 - `POLICYNIM_MCP_PUBLIC_BASE_URL`
+- `POLICYNIM_BETA_SIGNUP_ENABLED`
+- `POLICYNIM_BETA_AUTH_DB_PATH`
+- `POLICYNIM_BETA_SESSION_SECRET`
+- `POLICYNIM_BETA_GITHUB_CLIENT_ID`
+- `POLICYNIM_BETA_GITHUB_CLIENT_SECRET`
+- `POLICYNIM_BETA_DAILY_REQUEST_QUOTA`
 - `POLICYNIM_EVAL_UI_PORT`
 
 Model references used by the default example configs:
@@ -270,10 +282,18 @@ Recommended beta setup:
    - `POLICYNIM_MCP_HOST=0.0.0.0`
 4. Deploy once so the service becomes healthy on `/healthz`.
 5. Generate a Railway public domain for that service.
-6. Set these runtime variables and redeploy:
+6. Mount one Railway volume at `/app/state` for the hosted auth SQLite database.
+7. Set these runtime variables and redeploy:
    - `POLICYNIM_MCP_REQUIRE_AUTH=true`
-   - `POLICYNIM_MCP_BEARER_TOKENS=<beta-token>`
    - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
+   - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
+   - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
+   - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
+   - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
+   - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`
+   - `POLICYNIM_BETA_DAILY_REQUEST_QUOTA=500`
+- Optionally set `POLICYNIM_MCP_BEARER_TOKENS=<break-glass-token>` if you want
+  one operator-only fallback token on `/mcp`.
 - Leave `POLICYNIM_MCP_PORT` unset on Railway unless you intentionally want to
   override Railway's injected `PORT`.
 
@@ -281,10 +301,14 @@ Operator and client env mapping:
 
 - Railway service vars:
   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
-  - `POLICYNIM_MCP_BEARER_TOKENS=<beta-token>`
   - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
+  - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
+  - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
+  - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
+  - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
+  - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`
 - Client setup docs use:
-  - `POLICYNIM_TOKEN=<beta-token>`
+  - `POLICYNIM_TOKEN=<generated portal token>`
 - Live smoke tests use:
   - `POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp`
   - `POLICYNIM_BETA_MCP_TOKEN=<beta-token>`
@@ -297,9 +321,12 @@ Important Day 3 hosted behavior:
   defaults hosted MCP binding to `0.0.0.0` so Railway health checks can reach
   the process.
 - The public beta MCP URL is always `https://<generated-domain>/mcp`.
+- The public self-serve portal URL is always `https://<generated-domain>/beta`.
 - `/healthz` stays public for Railway health checks.
-- `/mcp` returns `401 {"error":"Unauthorized."}` for missing or invalid bearer
-  tokens.
+- `/mcp` returns:
+  - `401 {"error":"Unauthorized."}` for missing, invalid, or revoked bearer tokens
+  - `403 {"error":"Account suspended."}` for suspended self-serve accounts
+  - `429 {"error":"Quota exceeded."}` when the UTC-day request quota is exhausted
 - Hosted MCP logs now emit one JSON object per line for auth rejects and tool
   calls, including `auth_result`, `tool_name`, `latency_ms`, and
   `upstream_failure_class`.
@@ -450,8 +477,15 @@ Hosted HTTP notes:
   still not satisfied.
 - To protect only the HTTP MCP route, set:
   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
-  - `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b`
   - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://your-host`
+- For self-serve hosted beta signup, also set:
+  - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
+  - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
+  - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
+  - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
+  - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`
+- `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b` is optional and reserved for
+  operator break-glass access when self-serve auth is enabled.
 - `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
   URL.
 - `stdio` ignores the hosted auth settings completely.

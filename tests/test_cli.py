@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.cli import app
 from policynim.types import (
+    BetaAccount,
     Citation,
     EvalAggregateMetrics,
     EvalCaseMetrics,
@@ -237,6 +239,44 @@ class MockEvalService:
     def start_ui(self, *, port: int | None = None) -> None:
         self.launch_port = port
         self.started_ui = True
+
+
+class MockBetaAuthService:
+    """Static hosted beta auth service for CLI tests."""
+
+    def __init__(self) -> None:
+        self._account = BetaAccount(
+            account_id=1,
+            github_user_id=123,
+            github_login="octocat",
+            email="octocat@example.com",
+            status="active",
+            created_at=datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+            last_login_at=datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+            api_key_prefix="pnm_current",
+            api_key_created_at=datetime(2026, 4, 5, 12, 5, tzinfo=UTC),
+        )
+
+    def close(self) -> None:
+        return None
+
+    def list_accounts(self) -> list[BetaAccount]:
+        return [self._account]
+
+    def suspend_account(self, *, github_login: str) -> BetaAccount:
+        assert github_login == "octocat"
+        self._account = self._account.model_copy(update={"status": "suspended"})
+        return self._account
+
+    def resume_account(self, *, github_login: str) -> BetaAccount:
+        assert github_login == "octocat"
+        self._account = self._account.model_copy(update={"status": "active"})
+        return self._account
+
+    def revoke_api_key(self, *, github_login: str) -> BetaAccount:
+        assert github_login == "octocat"
+        self._account = self._account.model_copy(update={"api_key_prefix": None})
+        return self._account
 
 
 def test_ingest_command_prints_summary(monkeypatch) -> None:
@@ -524,3 +564,52 @@ def test_mcp_command_surfaces_hosted_rebuild_key_errors(monkeypatch) -> None:
     assert result.exit_code == 1
     assert "NVIDIA_API_KEY is required for embeddings." in result.stderr
     assert "Rebuild the image so `policynim ingest` runs during Docker build" in result.stderr
+
+
+def test_beta_admin_list_accounts_prints_json(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_beta_auth_service",
+        lambda settings: MockBetaAuthService(),
+    )
+
+    result = runner.invoke(app, ["beta-admin", "list-accounts"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["github_login"] == "octocat"
+
+
+def test_beta_admin_suspend_and_resume_print_json(monkeypatch) -> None:
+    service = MockBetaAuthService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_beta_auth_service",
+        lambda settings: service,
+    )
+
+    suspended = runner.invoke(app, ["beta-admin", "suspend", "--github-login", "octocat"])
+    resumed = runner.invoke(app, ["beta-admin", "resume", "--github-login", "octocat"])
+
+    assert suspended.exit_code == 0
+    assert json.loads(suspended.stdout)["status"] == "suspended"
+    assert resumed.exit_code == 0
+    assert json.loads(resumed.stdout)["status"] == "active"
+
+
+def test_beta_admin_revoke_key_prints_json(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_beta_auth_service",
+        lambda settings: MockBetaAuthService(),
+    )
+
+    result = runner.invoke(app, ["beta-admin", "revoke-key", "--github-login", "octocat"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["api_key_prefix"] is None
+
+
+def test_beta_admin_help_mentions_operator_commands() -> None:
+    result = runner.invoke(app, ["beta-admin", "--help"])
+
+    assert result.exit_code == 0
+    assert "list-accounts" in result.stdout
+    assert "revoke-key" in result.stdout

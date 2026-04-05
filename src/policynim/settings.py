@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None
+    beta_signup_enabled: bool = False
+    beta_auth_db_path: Path = Path("data/runtime/auth.sqlite3")
+    beta_session_secret: str | None = None
+    beta_github_client_id: str | None = None
+    beta_github_client_secret: str | None = None
+    beta_daily_request_quota: Annotated[int, Field(ge=1)] = 500
+    beta_auth_rate_limit_max_attempts: Annotated[int, Field(ge=1)] = 20
+    beta_auth_rate_limit_window_seconds: Annotated[int, Field(ge=1)] = 900
     eval_ui_port: Annotated[int, Field(ge=1, le=65535)] = 8001
 
     model_config = SettingsConfigDict(
@@ -88,12 +96,31 @@ class Settings(BaseSettings):
         """Treat empty configured hosted MCP base URLs as unset."""
         return _normalize_optional_setting(value)
 
+    @field_validator(
+        "beta_session_secret",
+        "beta_github_client_id",
+        "beta_github_client_secret",
+        mode="before",
+    )
+    @classmethod
+    def normalize_empty_beta_secrets(cls, value: Any) -> Any:
+        """Treat empty hosted beta auth strings as unset."""
+        return _normalize_optional_setting(value)
+
     @field_validator("runtime_rules_artifact_path", mode="before")
     @classmethod
     def validate_runtime_rules_artifact_path(cls, value: Any) -> Any:
         """Reject empty configured artifact paths before Path coercion."""
         if isinstance(value, str) and not value.strip():
             raise ValueError("POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH must not be empty.")
+        return value
+
+    @field_validator("beta_auth_db_path", mode="before")
+    @classmethod
+    def validate_beta_auth_db_path(cls, value: Any) -> Any:
+        """Reject empty configured auth db paths before Path coercion."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("POLICYNIM_BETA_AUTH_DB_PATH must not be empty.")
         return value
 
     @model_validator(mode="before")
@@ -129,13 +156,39 @@ class Settings(BaseSettings):
                     "POLICYNIM_MCP_PUBLIC_BASE_URL must not include a query string or fragment."
                 )
 
-        if self.mcp_require_auth and not self.mcp_bearer_tokens:
+        if self.mcp_require_auth and not self.mcp_bearer_tokens and not self.beta_signup_enabled:
             raise ValueError(
-                "POLICYNIM_MCP_BEARER_TOKENS must be set when POLICYNIM_MCP_REQUIRE_AUTH is true."
+                "POLICYNIM_MCP_BEARER_TOKENS must be set when POLICYNIM_MCP_REQUIRE_AUTH is true "
+                "and self-serve beta signup is disabled."
             )
         if self.mcp_require_auth and self.mcp_public_base_url is None:
             raise ValueError(
                 "POLICYNIM_MCP_PUBLIC_BASE_URL must be set when POLICYNIM_MCP_REQUIRE_AUTH is true."
+            )
+        if self.beta_signup_enabled and not self.mcp_require_auth:
+            raise ValueError(
+                "POLICYNIM_MCP_REQUIRE_AUTH must be true when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
+            )
+        if self.beta_signup_enabled and self.beta_session_secret is None:
+            raise ValueError(
+                "POLICYNIM_BETA_SESSION_SECRET must be set when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
+            )
+        if self.beta_signup_enabled and self.beta_github_client_id is None:
+            raise ValueError(
+                "POLICYNIM_BETA_GITHUB_CLIENT_ID must be set when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
+            )
+        if self.beta_signup_enabled and self.beta_github_client_secret is None:
+            raise ValueError(
+                "POLICYNIM_BETA_GITHUB_CLIENT_SECRET must be set when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
+            )
+        if self.beta_signup_enabled and self.mcp_public_base_url is None:
+            raise ValueError(
+                "POLICYNIM_MCP_PUBLIC_BASE_URL must be set when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
             )
         return self
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -192,6 +193,49 @@ class HealthCheckResult(StrictModel):
     row_count: int = Field(ge=0)
     mcp_url: str | None = None
     reason: str | None = None
+
+
+BetaAccountStatus = Literal["active", "suspended"]
+
+
+class BetaAccount(StrictModel):
+    """One self-serve hosted beta account."""
+
+    account_id: int = Field(ge=1)
+    github_user_id: int = Field(ge=1)
+    github_login: str = Field(min_length=1)
+    email: str | None = None
+    status: BetaAccountStatus
+    created_at: datetime
+    last_login_at: datetime
+    api_key_prefix: str | None = None
+    api_key_created_at: datetime | None = None
+
+
+class BetaUsageSnapshot(StrictModel):
+    """Current daily hosted-usage state for one beta account."""
+
+    usage_date: date
+    request_count: int = Field(ge=0)
+    quota: int = Field(ge=1)
+    remaining: int = Field(ge=0)
+
+
+class BetaIssuedApiKey(StrictModel):
+    """One newly issued hosted beta API key."""
+
+    account: BetaAccount
+    api_key: str = Field(min_length=1)
+    usage: BetaUsageSnapshot
+
+
+class BetaAuthDecision(StrictModel):
+    """Result of authenticating one hosted MCP HTTP request."""
+
+    status: Literal["authorized", "unauthorized", "suspended", "quota_exceeded"]
+    source: Literal["api_key", "break_glass"] | None = None
+    account: BetaAccount | None = None
+    usage: BetaUsageSnapshot | None = None
 
 
 class PolicyGuidance(StrictModel):

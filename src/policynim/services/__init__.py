@@ -1,5 +1,6 @@
 """Application services for PolicyNIM."""
 
+from policynim.services.beta_auth import BetaAuthService, create_beta_auth_service
 from policynim.services.dump import IndexDumpService, create_index_dump_service
 from policynim.services.eval import EvalService, create_eval_service
 from policynim.services.health import (
@@ -12,12 +13,14 @@ from policynim.services.preflight import PreflightService, create_preflight_serv
 from policynim.services.search import SearchService, create_search_service
 
 __all__ = [
+    "BetaAuthService",
     "EvalService",
     "IndexDumpService",
     "IngestService",
     "PreflightService",
     "RuntimeHealthService",
     "SearchService",
+    "create_beta_auth_service",
     "create_eval_service",
     "create_runtime_health_service",
     "ensure_hosted_runtime_ready",
