@@ -13,8 +13,9 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
-from policynim.errors import ConfigurationError, MissingIndexError
+from policynim.errors import ConfigurationError, MissingIndexError, ProviderError
 from policynim.interfaces import mcp as mcp_module
+from policynim.services.preflight import PreflightService
 from policynim.settings import Settings
 from policynim.types import (
     Citation,
@@ -502,6 +503,99 @@ def test_call_tool_logs_failure_class_when_tool_raises(monkeypatch) -> None:
             "event": "mcp.tool",
             "auth_result": "not_required",
             "tool_name": "policy_search",
+            "latency_ms": events[0]["latency_ms"],
+            "upstream_failure_class": "timeout",
+            "request_id": None,
+        }
+    ]
+    assert isinstance(events[0]["latency_ms"], float)
+    assert events[0]["latency_ms"] >= 0
+
+
+def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
+    monkeypatch,
+) -> None:
+    events: list[dict[str, object]] = []
+
+    class StaticEmbedder:
+        def embed_query(self, text: str) -> list[float]:
+            return [1.0, 0.0]
+
+    class StaticIndexStore:
+        def exists(self) -> bool:
+            return True
+
+        def count(self) -> int:
+            return 1
+
+        def search(
+            self,
+            query_embedding,
+            *,
+            top_k: int,
+            domain: str | None = None,
+        ) -> list[ScoredChunk]:
+            return [
+                ScoredChunk(
+                    chunk_id="AUTH-1",
+                    path="policies/security/auth-review.md",
+                    section="Cleanup",
+                    lines="10-16",
+                    text="Cleanup must preserve revocation semantics.",
+                    policy=PolicyMetadata(
+                        policy_id="AUTH-001",
+                        title="Auth Reviews",
+                        doc_type="guidance",
+                        domain="security",
+                    ),
+                    score=0.99,
+                )
+            ]
+
+        def replace(self, chunks) -> None:  # pragma: no cover - protocol filler for tests
+            raise NotImplementedError
+
+        def list_chunks(self):  # pragma: no cover - protocol filler for tests
+            raise NotImplementedError
+
+    class StaticReranker:
+        def rerank(
+            self,
+            query: str,
+            candidates: list[ScoredChunk],
+            *,
+            top_k: int,
+        ) -> list[ScoredChunk]:
+            return list(candidates)[:top_k]
+
+    class TimeoutGenerator:
+        def generate_preflight(self, request, context) -> PreflightResult:  # noqa: ANN001
+            raise ProviderError("upstream timeout", failure_class="timeout")
+
+    monkeypatch.setattr(
+        mcp_module,
+        "create_preflight_service",
+        lambda settings: PreflightService(
+            embedder=StaticEmbedder(),
+            index_store=StaticIndexStore(),
+            reranker=StaticReranker(),
+            generator=TimeoutGenerator(),
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_emit_hosted_event",
+        lambda event, **fields: events.append({"event": event, **fields}),
+    )
+
+    with pytest.raises(ToolError, match="upstream timeout"):
+        _call_tool("policy_preflight", {"task": "refresh token cleanup", "top_k": 1})
+
+    assert events == [
+        {
+            "event": "mcp.tool",
+            "auth_result": "not_required",
+            "tool_name": "policy_preflight",
             "latency_ms": events[0]["latency_ms"],
             "upstream_failure_class": "timeout",
             "request_id": None,

@@ -490,3 +490,25 @@ def test_mcp_command_surfaces_hosted_startup_index_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "populated local index" in result.stderr
+
+
+def test_mcp_command_surfaces_hosted_rebuild_key_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.run_server",
+        lambda transport: (_ for _ in ()).throw(
+            ConfigurationError(
+                "Hosted streamable-http startup requires a populated local index at "
+                "/app/data/lancedb-baked (table: policy_chunks). "
+                "Automatic hosted-index rebuild failed: ConfigurationError: "
+                "NVIDIA_API_KEY is required for embeddings. "
+                "Rebuild the image so `policynim ingest` runs during Docker build "
+                "or set `POLICYNIM_LANCEDB_URI` to a populated directory."
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["mcp", "--transport", "streamable-http"])
+
+    assert result.exit_code == 1
+    assert "NVIDIA_API_KEY is required for embeddings." in result.stderr
+    assert "Rebuild the image so `policynim ingest` runs during Docker build" in result.stderr

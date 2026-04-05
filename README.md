@@ -207,6 +207,8 @@ Important container defaults:
 - the image bakes the LanceDB index at `/app/data/lancedb-baked`
 - the image sets `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
 - the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the container
+- if `NVIDIA_API_KEY` is unset or empty at build time, `docker build` fails while
+  `policynim ingest` tries to bake the index
 - the final image does not store the build-time `NVIDIA_API_KEY`
 - runtime `NVIDIA_API_KEY` is still required because live `search` and
   `preflight` call NVIDIA-hosted APIs
@@ -458,6 +460,8 @@ Hosted HTTP notes:
 - The baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
   as the fast path. Hosted startup only falls back to `policynim ingest` when
   that local index is missing or empty.
+- If that automatic rebuild path runs without a runtime `NVIDIA_API_KEY`, hosted
+  startup fails fast with an explicit recovery message instead of serving traffic.
 
 Example readiness check:
 

@@ -50,4 +50,5 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 markers = [
   "live: tests that make real NVIDIA API calls and are excluded from offline CI",
+  "docker_live: tests that require a working Docker daemon and an explicit opt-in env gate",
 ]
