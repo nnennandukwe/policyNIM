@@ -39,6 +39,10 @@ class RuntimeCitationLinkError(PolicyNIMError):
     """Raised when matched runtime rules cannot be linked to indexed evidence."""
 
 
+class RuntimeEvidencePersistenceError(PolicyNIMError):
+    """Raised when runtime execution evidence cannot be persisted durably."""
+
+
 class WeakEvidenceError(PolicyNIMError):
     """Raised when retrieval evidence is too weak to support synthesis."""
 
