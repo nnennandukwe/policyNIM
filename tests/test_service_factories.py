@@ -9,6 +9,7 @@ from pathlib import Path
 import policynim.services.eval as eval_module
 import policynim.services.ingest as ingest_module
 import policynim.services.preflight as preflight_module
+import policynim.services.runtime_decision as runtime_decision_module
 import policynim.services.search as search_module
 from policynim.settings import Settings
 
@@ -43,7 +44,8 @@ import policynim.services.ingest
 import policynim.services.eval
 import policynim.services.search
 import policynim.services.preflight
-"""
+import policynim.services.runtime_decision
+    """
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
@@ -124,6 +126,27 @@ def test_create_preflight_service_builds_default_components(
     assert isinstance(service._index_store, MockIndexStore)
     assert service._index_store.uri == (tmp_path / "preflight-index").resolve(strict=False)
     assert service._index_store.table_name == settings.lancedb_table
+
+
+def test_create_runtime_decision_service_uses_runtime_paths(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(runtime_decision_module, "LanceDBIndexStore", MockIndexStore)
+
+    settings = Settings(
+        lancedb_uri=tmp_path / "runtime-index",
+        runtime_rules_artifact_path=tmp_path / "runtime" / "runtime_rules.json",
+    )
+
+    service = runtime_decision_module.create_runtime_decision_service(settings)
+
+    assert isinstance(service._index_store, MockIndexStore)
+    assert service._index_store.uri == (tmp_path / "runtime-index").resolve(strict=False)
+    assert service._index_store.table_name == settings.lancedb_table
+    assert service._runtime_rules_artifact_path == (
+        tmp_path / "runtime" / "runtime_rules.json"
+    ).resolve(strict=False)
 
 
 def test_create_eval_service_uses_runtime_workspace_path(tmp_path: Path) -> None:

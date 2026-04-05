@@ -27,6 +27,18 @@ class MissingIndexError(PolicyNIMError):
     """Raised when the local retrieval index is missing or empty."""
 
 
+class RuntimeRulesArtifactMissingError(PolicyNIMError):
+    """Raised when the compiled runtime-rules artifact is missing."""
+
+
+class RuntimeRulesArtifactInvalidError(PolicyNIMError):
+    """Raised when the compiled runtime-rules artifact cannot be trusted."""
+
+
+class RuntimeCitationLinkError(PolicyNIMError):
+    """Raised when matched runtime rules cannot be linked to indexed evidence."""
+
+
 class WeakEvidenceError(PolicyNIMError):
     """Raised when retrieval evidence is too weak to support synthesis."""
 
