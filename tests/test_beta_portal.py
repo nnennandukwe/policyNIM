@@ -61,7 +61,11 @@ class StubBetaAuthService:
         )
 
 
-def _signup_settings() -> Settings:
+def _signup_settings(
+    *,
+    base_url: str = "https://beta.example.com",
+    rate_limit_max_attempts: int = 20,
+) -> Settings:
     return Settings.model_validate(
         {
             "mcp_require_auth": True,
@@ -69,7 +73,8 @@ def _signup_settings() -> Settings:
             "beta_session_secret": "session-secret",
             "beta_github_client_id": "github-client-id",
             "beta_github_client_secret": "github-client-secret",
-            "mcp_public_base_url": "https://beta.example.com",
+            "beta_auth_rate_limit_max_attempts": rate_limit_max_attempts,
+            "mcp_public_base_url": base_url,
         }
     )
 
@@ -106,7 +111,7 @@ def test_beta_portal_login_flow_sets_session_and_renders_dashboard(monkeypatch) 
 
     app = mcp_module._build_streamable_http_app(_signup_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         start = client.get("/auth/github/start", follow_redirects=False)
         assert start.status_code == 302
         assert start.headers["location"].startswith("https://github.example.test/authorize")
@@ -132,7 +137,7 @@ def test_beta_portal_rejects_invalid_oauth_state(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(_signup_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         client.get("/auth/github/start", follow_redirects=False)
         response = client.get(
             "/auth/github/callback?state=wrong-state&code=oauth-code",
@@ -149,7 +154,7 @@ def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> Non
 
     app = mcp_module._build_streamable_http_app(_signup_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         client.get("/auth/github/start", follow_redirects=False)
         client.get(
             f"/auth/github/callback?state={stub.oauth_states[0]}&code=oauth-code",
@@ -160,3 +165,35 @@ def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> Non
     assert response.status_code == 200
     assert "pnm_new_secret" in response.text
     assert "export POLICYNIM_TOKEN=pnm_new_secret" in response.text
+
+
+def test_beta_portal_uses_secure_session_cookie_for_https_deployments(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "create_beta_auth_service",
+        lambda settings: StubBetaAuthService(),
+    )
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get("/auth/github/start", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert "secure" in response.headers["set-cookie"].lower()
+
+
+def test_beta_portal_keeps_http_session_cookie_for_local_http_development(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "create_beta_auth_service",
+        lambda settings: StubBetaAuthService(),
+    )
+
+    app = mcp_module._build_streamable_http_app(_signup_settings(base_url="http://localhost:8000"))
+
+    with TestClient(app) as client:
+        response = client.get("/auth/github/start", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert "secure" not in response.headers["set-cookie"].lower()

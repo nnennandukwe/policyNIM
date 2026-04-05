@@ -630,6 +630,13 @@ def _require_beta_session_account_id(request: Request) -> int | None:
         return None
 
 
+def _beta_session_https_only(settings: Settings) -> bool:
+    """Use secure beta session cookies for HTTPS-hosted deployments."""
+    if settings.mcp_public_base_url is None:
+        return False
+    return settings.mcp_public_base_url.scheme == "https"
+
+
 def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
     if not settings.beta_signup_enabled and not settings.mcp_require_auth:
         return None
@@ -739,7 +746,7 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
             app,
             secret_key=settings.beta_session_secret,
             same_site="lax",
-            https_only=False,
+            https_only=_beta_session_https_only(settings),
         )
     if not settings.mcp_require_auth:
         return app
