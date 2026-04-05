@@ -16,10 +16,17 @@ Current automated coverage includes:
 - MCP startup wiring for `stdio` and `streamable-http`
 - Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper
 - Hosted MCP structured logs for auth rejects, tool name, latency, and upstream failure class
+- Hosted docs parity for the canonical Codex and Claude hosted MCP commands plus recovery guidance
 - Opt-in live NVIDIA embedding smoke coverage behind `NVIDIA_API_KEY`
 - Opt-in live Railway hosted MCP smoke coverage behind:
   - `POLICYNIM_BETA_MCP_URL`
   - `POLICYNIM_BETA_MCP_TOKEN`
+
+Hosted onboarding versus live smoke env vars:
+
+- Beta users follow the docs with `POLICYNIM_TOKEN` as the client-side bearer token env var.
+- Operators and maintainers use `POLICYNIM_BETA_MCP_URL` and `POLICYNIM_BETA_MCP_TOKEN`
+  only for the deployed-service smoke harness.
 
 Run the deployed-service smoke suite manually with:
 

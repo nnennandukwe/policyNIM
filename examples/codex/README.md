@@ -1,8 +1,53 @@
 # Codex Example
 
-This example connects Codex to a local PolicyNIM MCP server over `stdio`.
+This example connects Codex to the hosted PolicyNIM Railway MCP over HTTP. Use
+the local `stdio` fallback only if you need to run PolicyNIM from a clone.
 
-## Prerequisites
+## Hosted Railway MCP
+
+1. Export the issued beta token:
+
+```bash
+export POLICYNIM_TOKEN=<issued-beta-token>
+```
+
+2. Add the hosted MCP server:
+
+```bash
+codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-var POLICYNIM_TOKEN
+```
+
+3. Inspect the saved server entry:
+
+```bash
+codex mcp get policynim
+```
+
+After the server is added, ask Codex to use the MCP tools directly. The primary
+workflow is `policy_preflight`; `policy_search` is the debug path.
+
+Example prompts:
+
+- `Use policy_preflight for: Implement a refresh-token cleanup background job.`
+- `Use policy_search for: refresh token cleanup background job`
+
+## Recovery
+
+- Invalid token: if Codex gets `401 {"error":"Unauthorized."}`, re-check
+  `POLICYNIM_TOKEN` or ask the beta operator for a new token.
+- Temporary upstream NVIDIA failure: retry after a short delay; if it keeps
+  failing, the operator should inspect hosted logs for the classified upstream
+  failure.
+- Insufficient context: use `policy_search` first, narrow the task, or add a
+  domain so the hosted service can ground the answer.
+- Service unavailable: retry when the hosted service is healthy again; operators
+  should check `/healthz` and Railway deploy status.
+
+## Local Fallback
+
+Use this only if you want Codex to launch a local `stdio` server from this repo.
+
+### Prerequisites
 
 1. Install dependencies:
 
@@ -18,8 +63,6 @@ This example connects Codex to a local PolicyNIM MCP server over `stdio`.
    uv run policynim ingest
    ```
 
-## Add PolicyNIM To Codex
-
 ### Codex CLI
 
 Run this from anywhere on your machine, replacing `/ABS/PATH/TO/policyNIM` with
@@ -29,12 +72,6 @@ the absolute path to this repo:
 codex mcp add policynim \
   --env NVIDIA_API_KEY=$NVIDIA_API_KEY \
   -- uv run --directory /ABS/PATH/TO/policyNIM policynim mcp --transport stdio
-```
-
-Inspect the saved server entry:
-
-```bash
-codex mcp get policynim
 ```
 
 ### Codex App
@@ -72,17 +109,7 @@ Using the same repo path in both places is the least error-prone setup for this
 project. If you keep `--directory`, the app working directory is mostly
 redundant, but keeping both aligned avoids confusion.
 
-## Use It In Codex
-
-After the server is added, ask Codex to use the MCP tools directly. The primary
-workflow is `policy_preflight`; `policy_search` is the debug path.
-
-Example prompts:
-
-- `Use policy_preflight for: Implement a refresh-token cleanup background job.`
-- `Use policy_search for: refresh token cleanup background job`
-
-## Notes
+### Notes
 
 - This example uses `stdio`, which is the primary tested MCP transport in this repo.
 - If Codex cannot find `uv`, use the absolute path to the `uv` executable in the

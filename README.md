@@ -77,38 +77,67 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 
 ## What To Run First
 
-If you want the shortest path from clone to a real preflight run:
+If you want the shortest path to a real hosted preflight run, connect your MCP
+client to the Railway beta instead of cloning the repo:
 
 ```bash
-uv sync
-cp .env.development.example .env
-uv run policynim ingest
-uv run policynim search --query "refresh token cleanup background job"
-uv run policynim preflight --task "Implement a refresh-token cleanup background job"
-uv run policynim eval --headless
-uv run policynim mcp --transport stdio
+export POLICYNIM_TOKEN=<issued-beta-token>
+codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-var POLICYNIM_TOKEN
+claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
 ```
 
-Notes:
+Then ask your client to call the MCP tools directly:
 
-- `NVIDIA_API_KEY` must be set before `ingest`, `search`, or `preflight`. NVIDIA's
-  official
-  [API Catalog Quickstart Guide](https://docs.api.nvidia.com/nim/docs/api-quickstart)
-  shows the API-key flow, and the
-  [Build catalog](https://build.nvidia.com/) is where developers can browse models
-  and use the "Get API Key" flow.
-- Copying `.env.development.example` intentionally leaves `POLICYNIM_CORPUS_DIR`
-  unset, so the bundled sample corpus is used by default. Add
-  `POLICYNIM_CORPUS_DIR=/abs/path` yourself only if you want to index a different
-  corpus.
-- `eval` defaults to offline mode, so it can run without NVIDIA credentials.
-- `policynim mcp` works without `--transport`; it defaults to `stdio`.
-- Add `--transport streamable-http` only if you want the HTTP transport instead of
-  the default `stdio` server.
-- `mcp` starts the PolicyNIM server only; an agent client such as Codex or Claude
-  Code connects to that server separately.
+- `Use policy_preflight for: Implement a refresh-token cleanup background job.`
+- `Use policy_search for: refresh token cleanup background job`
 
-## Setup
+Hosted beta notes:
+
+- Replace `https://<railway-domain>/mcp` with the issued Railway beta URL.
+- `POLICYNIM_TOKEN` is a client-side shell variable only. It is not a PolicyNIM
+  app setting.
+- The Railway service itself uses `POLICYNIM_MCP_BEARER_TOKENS`, not
+  `POLICYNIM_TOKEN`.
+- If you run the opt-in live smoke test locally, export the same deployed values
+  as `POLICYNIM_BETA_MCP_URL` and `POLICYNIM_BETA_MCP_TOKEN`.
+- Use the local setup below only if you are contributing to the repo or debugging
+  the service from a clone.
+
+## Hosted Beta Recovery
+
+### Invalid Token
+
+- Expect `401 {"error":"Unauthorized."}` from `/mcp` for a missing or invalid
+  bearer token.
+- Re-check `POLICYNIM_TOKEN`, then ask the beta operator to reissue or rotate the
+  token if needed.
+
+### Temporary Upstream NVIDIA Failure
+
+- Hosted MCP can stay healthy on `/healthz` while an individual tool call fails
+  because NVIDIA embeddings, reranking, or grounded generation is temporarily
+  unavailable.
+- Retry after a short delay first.
+- If the failure persists, the operator should inspect hosted MCP logs for
+  `upstream_failure_class` such as `timeout`, `connection`, or `rate_limit`.
+
+### Insufficient Context
+
+- `insufficient_context=true` is a grounded no-answer, not an auth or availability
+  failure.
+- Recover by narrowing the task, adding a domain, or calling `policy_search`
+  first to inspect the retrieved evidence.
+
+### Service Unavailable
+
+- If the hosted MCP URL does not respond, or `/healthz` returns `503`, the hosted
+  service or baked local index is not ready yet.
+- Retry after the service becomes healthy. If you operate the service, check the
+  Railway deploy state and `/healthz` first.
+
+## Local Contributor Setup
+
+Use this path only if you need to run PolicyNIM yourself from a local checkout.
 
 ### Runtime Workflow
 
@@ -245,6 +274,18 @@ Recommended beta setup:
    - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
 - Leave `POLICYNIM_MCP_PORT` unset on Railway unless you intentionally want to
   override Railway's injected `PORT`.
+
+Operator and client env mapping:
+
+- Railway service vars:
+  - `POLICYNIM_MCP_REQUIRE_AUTH=true`
+  - `POLICYNIM_MCP_BEARER_TOKENS=<beta-token>`
+  - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
+- Client setup docs use:
+  - `POLICYNIM_TOKEN=<beta-token>`
+- Live smoke tests use:
+  - `POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp`
+  - `POLICYNIM_BETA_MCP_TOKEN=<beta-token>`
 
 Important Day 3 hosted behavior:
 
@@ -424,7 +465,7 @@ Example readiness check:
 curl http://localhost:8000/healthz
 ```
 
-For client setup examples, see:
+For hosted-first client setup examples, see:
 
 - [examples/codex/README.md](examples/codex/README.md)
 - [examples/claude-code/README.md](examples/claude-code/README.md)
