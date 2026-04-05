@@ -111,6 +111,9 @@ def test_beta_portal_renders_signed_out_landing(monkeypatch) -> None:
     assert response.status_code == 200
     assert 'class="beta-page beta-page--landing"' in response.text
     assert "data-theme-toggle" in response.text
+    assert f'href="{mcp_module._BETA_CSS_ROUTE}"' in response.text
+    assert f'src="{mcp_module._BETA_THEME_INIT_JS_ROUTE}"' in response.text
+    assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in response.text
     assert "Continue with GitHub" in response.text
     assert "Connect in three moves" in response.text
     assert "policy-aware engineering preflight layer" in response.text
@@ -140,6 +143,9 @@ def test_beta_portal_login_flow_sets_session_and_renders_dashboard(monkeypatch) 
     assert dashboard.status_code == 200
     assert 'class="beta-page beta-page--dashboard"' in dashboard.text
     assert "data-theme-toggle" in dashboard.text
+    assert f'href="{mcp_module._BETA_CSS_ROUTE}"' in dashboard.text
+    assert f'src="{mcp_module._BETA_THEME_INIT_JS_ROUTE}"' in dashboard.text
+    assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in dashboard.text
     assert "octocat" in dashboard.text
     assert "Copy command" in dashboard.text
     assert "codex mcp add policynim" in dashboard.text
@@ -214,12 +220,23 @@ def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
     with TestClient(app) as client:
         light = client.get(mcp_module._BETA_LIGHT_LOGO_ROUTE)
         dark = client.get(mcp_module._BETA_DARK_LOGO_ROUTE)
+        css = client.get(mcp_module._BETA_CSS_ROUTE)
+        theme_init_js = client.get(mcp_module._BETA_THEME_INIT_JS_ROUTE)
+        page_js = client.get(mcp_module._BETA_PAGE_JS_ROUTE)
         favicon = client.get("/favicon.ico")
 
     assert light.status_code == 200
     assert light.headers["content-type"].startswith("image/png")
     assert dark.status_code == 200
     assert dark.headers["content-type"].startswith("image/jpeg")
+    assert css.status_code == 200
+    assert css.headers["content-type"].startswith("text/css")
+    assert '[data-copy-state="copied"]::before' in css.text
+    assert theme_init_js.status_code == 200
+    assert theme_init_js.headers["content-type"].startswith("text/javascript")
+    assert page_js.status_code == 200
+    assert page_js.headers["content-type"].startswith("text/javascript")
+    assert 'button.dataset.copyState = "copied"' in page_js.text
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/png")
 

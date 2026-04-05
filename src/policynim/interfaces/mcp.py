@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import html
 import json
 import logging
 import secrets
@@ -13,8 +12,10 @@ import sys
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
+from functools import lru_cache
 from pathlib import Path
 
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.datastructures import Headers
 from starlette.middleware.sessions import SessionMiddleware
@@ -54,762 +55,16 @@ _BETA_LOGOUT_PATH = "/beta/logout"
 _BETA_ASSET_PATH = "/beta/assets"
 _BETA_LIGHT_LOGO_FILENAME = "policynim_lightmode.png"
 _BETA_DARK_LOGO_FILENAME = "policynim_darkmode.jpg"
+_BETA_CSS_FILENAME = "beta.css"
+_BETA_THEME_INIT_JS_FILENAME = "beta-theme-init.js"
+_BETA_PAGE_JS_FILENAME = "beta-page.js"
 _BETA_LIGHT_LOGO_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_LIGHT_LOGO_FILENAME}"
 _BETA_DARK_LOGO_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_DARK_LOGO_FILENAME}"
+_BETA_CSS_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_CSS_FILENAME}"
+_BETA_THEME_INIT_JS_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_THEME_INIT_JS_FILENAME}"
+_BETA_PAGE_JS_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_PAGE_JS_FILENAME}"
 _BETA_ACCOUNT_SESSION_KEY = "beta_account_id"
 _BETA_GITHUB_STATE_SESSION_KEY = "beta_github_oauth_state"
-_BETA_PAGE_STYLES = """
-:root,
-html[data-theme="light"] {
-  --beta-radius-xl: 30px;
-  --beta-radius-lg: 22px;
-  --beta-radius-md: 16px;
-  color-scheme: light;
-  --beta-bg: #edf2eb;
-  --beta-bg-strong: #dbe6d7;
-  --beta-surface: rgba(255, 255, 255, 0.78);
-  --beta-surface-strong: rgba(255, 255, 255, 0.94);
-  --beta-surface-muted: rgba(243, 248, 241, 0.86);
-  --beta-border: rgba(28, 44, 29, 0.12);
-  --beta-text: #17211a;
-  --beta-text-muted: #516252;
-  --beta-heading: #102d17;
-  --beta-primary: #58b947;
-  --beta-primary-strong: #2f8f34;
-  --beta-primary-soft: rgba(88, 185, 71, 0.14);
-  --beta-warning: #8a5a00;
-  --beta-warning-soft: rgba(255, 207, 102, 0.24);
-  --beta-danger: #a7372f;
-  --beta-danger-soft: rgba(236, 95, 85, 0.14);
-  --beta-success: #0d7a50;
-  --beta-success-soft: rgba(20, 184, 112, 0.14);
-  --beta-shadow: 0 24px 60px rgba(16, 45, 23, 0.12);
-  --beta-shadow-soft: 0 12px 30px rgba(16, 45, 23, 0.08);
-  --beta-code-bg: #f5f8f4;
-  --beta-code-border: rgba(47, 143, 52, 0.18);
-}
-
-html[data-theme="dark"] {
-  color-scheme: dark;
-  --beta-bg: #111715;
-  --beta-bg-strong: #18201d;
-  --beta-surface: rgba(18, 26, 22, 0.84);
-  --beta-surface-strong: rgba(24, 33, 29, 0.94);
-  --beta-surface-muted: rgba(19, 28, 24, 0.92);
-  --beta-border: rgba(129, 203, 116, 0.18);
-  --beta-text: #e6f0e6;
-  --beta-text-muted: #a3b5a4;
-  --beta-heading: #f4faf4;
-  --beta-primary: #74d260;
-  --beta-primary-strong: #98e67e;
-  --beta-primary-soft: rgba(116, 210, 96, 0.16);
-  --beta-warning: #ffd276;
-  --beta-warning-soft: rgba(255, 210, 118, 0.14);
-  --beta-danger: #ff8e82;
-  --beta-danger-soft: rgba(255, 142, 130, 0.14);
-  --beta-success: #6de0ae;
-  --beta-success-soft: rgba(109, 224, 174, 0.14);
-  --beta-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
-  --beta-shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.3);
-  --beta-code-bg: rgba(10, 15, 12, 0.92);
-  --beta-code-border: rgba(116, 210, 96, 0.2);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  min-height: 100%;
-}
-
-body.beta-page {
-  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
-  background:
-    radial-gradient(circle at top left, rgba(116, 210, 96, 0.18), transparent 32%),
-    radial-gradient(circle at top right, rgba(16, 45, 23, 0.18), transparent 38%),
-    linear-gradient(180deg, var(--beta-bg) 0%, var(--beta-bg-strong) 100%);
-  color: var(--beta-text);
-  line-height: 1.6;
-}
-
-a {
-  color: inherit;
-}
-
-.beta-page__backdrop {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 15% 20%, rgba(88, 185, 71, 0.1), transparent 22%),
-    radial-gradient(circle at 85% 0%, rgba(88, 185, 71, 0.12), transparent 28%);
-}
-
-.beta-shell {
-  position: relative;
-  z-index: 1;
-  width: min(1160px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 48px 0 72px;
-}
-
-.beta-shell__utility {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 14px;
-}
-
-.beta-theme-toggle {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 16px;
-  border-radius: 999px;
-  border: 1px solid var(--beta-border);
-  background: var(--beta-surface-strong);
-  color: var(--beta-text);
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: var(--beta-shadow-soft);
-}
-
-.beta-theme-toggle:hover {
-  transform: translateY(-1px);
-}
-
-.beta-theme-toggle:focus-visible {
-  outline: 3px solid var(--beta-primary-soft);
-  outline-offset: 2px;
-}
-
-.beta-theme-toggle__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.7rem;
-  height: 1.7rem;
-  border-radius: 999px;
-  background: var(--beta-primary-soft);
-  color: var(--beta-primary-strong);
-  font-size: 0.92rem;
-}
-
-.beta-topbar,
-.beta-hero,
-.beta-card,
-.beta-panel,
-.beta-callout {
-  border: 1px solid var(--beta-border);
-  background: var(--beta-surface);
-  backdrop-filter: blur(16px);
-  box-shadow: var(--beta-shadow-soft);
-}
-
-.beta-topbar,
-.beta-hero {
-  border-radius: var(--beta-radius-xl);
-}
-
-.beta-card,
-.beta-panel,
-.beta-callout {
-  border-radius: var(--beta-radius-lg);
-}
-
-.beta-topbar,
-.beta-hero,
-.beta-card,
-.beta-panel,
-.beta-callout,
-.beta-notice {
-  overflow: hidden;
-}
-
-.beta-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 22px 28px;
-  margin-bottom: 24px;
-}
-
-.beta-brand {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  min-width: 0;
-}
-
-.beta-brand__copy {
-  min-width: 0;
-}
-
-.beta-kicker,
-.beta-eyebrow {
-  margin: 0 0 8px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--beta-primary-strong);
-}
-
-.beta-eyebrow {
-  font-size: 0.74rem;
-}
-
-.beta-title,
-.beta-section-title,
-.beta-card-title {
-  margin: 0;
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-  color: var(--beta-heading);
-  line-height: 1.05;
-  text-wrap: balance;
-}
-
-.beta-title {
-  max-width: 10ch;
-  font-size: clamp(2.3rem, 5vw, 3.7rem);
-}
-
-.beta-topbar .beta-title {
-  max-width: 12ch;
-  font-size: clamp(1.8rem, 3.2vw, 2.45rem);
-}
-
-.beta-section-title {
-  font-size: clamp(1.7rem, 3vw, 2.5rem);
-}
-
-.beta-card-title {
-  font-size: 1.45rem;
-}
-
-.beta-subtitle,
-.beta-body-copy,
-.beta-fineprint,
-.beta-inline-hint,
-.beta-meta-label,
-.beta-command-description,
-.beta-notice__body,
-.beta-status-pill,
-.beta-facts dt {
-  color: var(--beta-text-muted);
-}
-
-.beta-subtitle,
-.beta-body-copy {
-  margin: 0;
-  font-size: 1.04rem;
-}
-
-.beta-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.9fr);
-  gap: 28px;
-  padding: 30px;
-  margin-bottom: 24px;
-}
-
-.beta-hero__content {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.beta-hero__content .beta-lockup {
-  width: min(420px, 100%);
-}
-
-.beta-lockup,
-.beta-lockup__image {
-  display: block;
-  max-width: 100%;
-}
-
-.beta-lockup {
-  position: relative;
-}
-
-.beta-lockup__image {
-  width: 100%;
-  height: auto;
-}
-
-.beta-lockup__image--dark {
-  display: none;
-}
-
-html[data-theme="dark"] .beta-lockup__image--light {
-  display: none;
-}
-
-html[data-theme="dark"] .beta-lockup__image--dark {
-  display: block;
-}
-
-.beta-lockup--compact {
-  width: 220px;
-  flex: 0 0 auto;
-}
-
-.beta-callout {
-  position: relative;
-  padding: 24px;
-  background:
-    linear-gradient(180deg, rgba(88, 185, 71, 0.11), transparent 52%),
-    var(--beta-surface-strong);
-}
-
-.beta-callout::after {
-  content: "";
-  position: absolute;
-  inset: auto -18% -42% auto;
-  width: 220px;
-  height: 220px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(88, 185, 71, 0.16), transparent 70%);
-  pointer-events: none;
-}
-
-.beta-action-row,
-.beta-button-row,
-.beta-command-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
-.beta-button-row form {
-  margin: 0;
-}
-
-.beta-button,
-.beta-copy-button {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 48px;
-  padding: 0 18px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font: inherit;
-  font-weight: 700;
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    transform 120ms ease,
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
-}
-
-.beta-button:hover,
-.beta-copy-button:hover {
-  transform: translateY(-1px);
-}
-
-.beta-button:focus-visible,
-.beta-copy-button:focus-visible {
-  outline: 3px solid var(--beta-primary-soft);
-  outline-offset: 2px;
-}
-
-.beta-button--primary {
-  background: linear-gradient(135deg, var(--beta-primary), var(--beta-primary-strong));
-  color: #061009;
-  box-shadow: 0 14px 32px rgba(88, 185, 71, 0.26);
-}
-
-.beta-button--secondary {
-  border-color: var(--beta-border);
-  background: var(--beta-surface-strong);
-  color: var(--beta-text);
-}
-
-.beta-copy-button {
-  display: none;
-  min-height: 40px;
-  padding: 0 14px;
-  border-color: var(--beta-border);
-  background: transparent;
-  color: var(--beta-text);
-}
-
-body[data-js="ready"] .beta-copy-button {
-  display: inline-flex;
-}
-
-.beta-section {
-  margin-top: 28px;
-}
-
-.beta-section__header {
-  margin-bottom: 16px;
-}
-
-.beta-card-grid {
-  display: grid;
-  gap: 18px;
-}
-
-.beta-card-grid--steps {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.beta-card-grid--dashboard,
-.beta-card-grid--commands {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.beta-card,
-.beta-panel {
-  padding: 24px;
-}
-
-.beta-card__header,
-.beta-command-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.beta-notice-stack {
-  display: grid;
-  gap: 12px;
-}
-
-.beta-notice {
-  border-radius: var(--beta-radius-md);
-  border: 1px solid transparent;
-  padding: 16px 18px;
-}
-
-.beta-notice--error {
-  border-color: rgba(167, 55, 47, 0.24);
-  background: var(--beta-danger-soft);
-}
-
-.beta-notice--success {
-  border-color: rgba(13, 122, 80, 0.24);
-  background: var(--beta-success-soft);
-}
-
-.beta-notice--warning {
-  border-color: rgba(138, 90, 0, 0.24);
-  background: var(--beta-warning-soft);
-}
-
-.beta-notice__title {
-  margin: 0 0 4px;
-  color: var(--beta-heading);
-  font-weight: 700;
-}
-
-.beta-notice__body {
-  margin: 0;
-}
-
-.beta-inline-code,
-.beta-command-block {
-  border-radius: var(--beta-radius-md);
-  border: 1px solid var(--beta-code-border);
-  background: var(--beta-code-bg);
-}
-
-.beta-inline-code {
-  margin: 16px 0;
-  padding: 12px 14px;
-  font-family: "SFMono-Regular", "SF Mono", "Consolas", monospace;
-  overflow-wrap: anywhere;
-}
-
-.beta-meta-list,
-.beta-facts {
-  display: grid;
-  gap: 14px;
-}
-
-.beta-meta-row,
-.beta-facts__row {
-  display: grid;
-  gap: 4px;
-}
-
-.beta-meta-label,
-.beta-facts dt {
-  font-size: 0.86rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.beta-meta-row a {
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-}
-
-.beta-facts {
-  margin: 0;
-}
-
-.beta-facts__row {
-  padding-bottom: 14px;
-  border-bottom: 1px solid rgba(28, 44, 29, 0.08);
-}
-
-.beta-facts__row:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
-.beta-facts dt,
-.beta-facts dd {
-  margin: 0;
-}
-
-.beta-facts dd {
-  color: var(--beta-text);
-  font-size: 1rem;
-  overflow-wrap: anywhere;
-}
-
-.beta-status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
-  border: 1px solid var(--beta-border);
-  background: var(--beta-surface-muted);
-  font-weight: 700;
-}
-
-.beta-status-pill::before {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--beta-text-muted);
-}
-
-.beta-status-pill--active::before {
-  background: var(--beta-success);
-}
-
-.beta-status-pill--suspended::before {
-  background: var(--beta-warning);
-}
-
-.beta-usage {
-  margin-top: 20px;
-}
-
-.beta-usage__row {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: baseline;
-  margin-bottom: 10px;
-}
-
-.beta-usage__bar {
-  position: relative;
-  height: 12px;
-  border-radius: 999px;
-  background: rgba(28, 44, 29, 0.08);
-  overflow: hidden;
-}
-
-.beta-usage__bar span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: inherit;
-  background: linear-gradient(135deg, var(--beta-primary), var(--beta-primary-strong));
-}
-
-.beta-command-block {
-  margin: 16px 0 0;
-  padding: 16px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: "SFMono-Regular", "SF Mono", "Consolas", monospace;
-  color: var(--beta-text);
-}
-
-.beta-command-description,
-.beta-fineprint,
-.beta-inline-hint {
-  margin: 0;
-  font-size: 0.94rem;
-}
-
-.beta-grid-note {
-  margin-top: 16px;
-}
-
-.beta-step-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  margin-bottom: 16px;
-  background: var(--beta-primary-soft);
-  color: var(--beta-primary-strong);
-  font-weight: 800;
-}
-
-.beta-card--emphasis {
-  background:
-    linear-gradient(180deg, rgba(88, 185, 71, 0.12), transparent 55%),
-    var(--beta-surface-strong);
-}
-
-.beta-card--secret {
-  background:
-    linear-gradient(180deg, rgba(13, 122, 80, 0.11), transparent 55%),
-    var(--beta-surface-strong);
-}
-
-@media (max-width: 900px) {
-  .beta-shell {
-    width: min(100% - 24px, 1160px);
-    padding: 24px 0 48px;
-  }
-
-  .beta-topbar,
-  .beta-hero,
-  .beta-card-grid--dashboard,
-  .beta-card-grid--commands,
-  .beta-card-grid--steps {
-    grid-template-columns: 1fr;
-  }
-
-  .beta-topbar {
-    padding: 20px;
-  }
-
-  .beta-hero,
-  .beta-card,
-  .beta-panel {
-    padding: 20px;
-  }
-
-  .beta-brand {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
-@media (max-width: 640px) {
-  .beta-shell {
-    width: min(100% - 18px, 1160px);
-  }
-
-  .beta-topbar,
-  .beta-hero,
-  .beta-card,
-  .beta-panel {
-    border-radius: 22px;
-  }
-
-  .beta-topbar,
-  .beta-card__header,
-  .beta-command-header,
-  .beta-usage__row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-"""
-_BETA_THEME_INIT_SCRIPT = """
-(() => {
-  const root = document.documentElement;
-  if (!root) {
-    return;
-  }
-  let theme = "";
-  try {
-    theme = window.localStorage.getItem("policynim-beta-theme") || "";
-  } catch (error) {
-    theme = "";
-  }
-  if (theme !== "light" && theme !== "dark") {
-    theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  root.dataset.theme = theme;
-})();
-"""
-_BETA_PAGE_SCRIPT = """
-(() => {
-  const root = document.documentElement;
-  const body = document.body;
-  if (!root || !body) {
-    return;
-  }
-  const toggleButton = document.querySelector("[data-theme-toggle]");
-  const toggleLabel = toggleButton?.querySelector("[data-theme-label]");
-  const applyTheme = (theme) => {
-    root.dataset.theme = theme;
-    if (toggleButton) {
-      toggleButton.setAttribute("aria-pressed", String(theme === "dark"));
-      toggleButton.setAttribute(
-        "title",
-        theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-      );
-    }
-    if (toggleLabel) {
-      toggleLabel.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
-    }
-  };
-  applyTheme(root.dataset.theme === "dark" ? "dark" : "light");
-  toggleButton?.addEventListener("click", () => {
-    const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
-    applyTheme(nextTheme);
-    try {
-      window.localStorage.setItem("policynim-beta-theme", nextTheme);
-    } catch (error) {
-      // Ignore storage failures and keep the in-memory theme state.
-    }
-  });
-  body.dataset.js = "ready";
-  for (const button of document.querySelectorAll("[data-copy]")) {
-    button.addEventListener("click", async () => {
-      const originalLabel = button.textContent || "Copy command";
-      const text = button.getAttribute("data-copy") || "";
-      try {
-        if (!navigator.clipboard || !window.isSecureContext) {
-          throw new Error("Clipboard access unavailable.");
-        }
-        await navigator.clipboard.writeText(text);
-        button.textContent = "Copied";
-      } catch (error) {
-        window.prompt("Copy this command:", text);
-        button.textContent = "Copy again";
-      } finally {
-        window.setTimeout(() => {
-          button.textContent = originalLabel;
-        }, 1400);
-      }
-    });
-  }
-})();
-"""
 LOGGER = logging.getLogger(__name__)
 _HOSTED_LOGGER_NAME = "policynim.hosted"
 _HOSTED_AUTH_RESULT: ContextVar[str] = ContextVar(
@@ -1116,6 +371,18 @@ def _register_beta_routes(
     async def beta_dark_logo(_: Request) -> Response:
         return _render_beta_asset(_BETA_DARK_LOGO_FILENAME, media_type="image/jpeg")
 
+    @server.custom_route(_BETA_CSS_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_css(_: Request) -> Response:
+        return _render_beta_asset(_BETA_CSS_FILENAME, media_type="text/css")
+
+    @server.custom_route(_BETA_THEME_INIT_JS_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_theme_init_js(_: Request) -> Response:
+        return _render_beta_asset(_BETA_THEME_INIT_JS_FILENAME, media_type="text/javascript")
+
+    @server.custom_route(_BETA_PAGE_JS_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_page_js(_: Request) -> Response:
+        return _render_beta_asset(_BETA_PAGE_JS_FILENAME, media_type="text/javascript")
+
     @server.custom_route(_FAVICON_PATH, methods=["GET"], include_in_schema=False)
     async def favicon(_: Request) -> Response:
         return _render_beta_asset(_BETA_LIGHT_LOGO_FILENAME, media_type="image/png")
@@ -1277,6 +544,22 @@ def _beta_asset_path(filename: str) -> Path:
     return Path(__file__).resolve().parent.parent / "assets" / "beta" / filename
 
 
+def _beta_template_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "templates"
+
+
+@lru_cache(maxsize=1)
+def _beta_template_environment() -> Environment:
+    return Environment(
+        loader=FileSystemLoader(str(_beta_template_root())),
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "j2"),
+            default=True,
+            default_for_string=True,
+        ),
+    )
+
+
 def _render_beta_asset(filename: str, *, media_type: str) -> Response:
     asset_path = _beta_asset_path(filename)
     if not asset_path.is_file():
@@ -1288,102 +571,50 @@ def _render_beta_asset(filename: str, *, media_type: str) -> Response:
     )
 
 
-def _render_beta_logo(*, alt: str, compact: bool = False) -> str:
-    classes = "beta-lockup"
-    if compact:
-        classes += " beta-lockup--compact"
-    return f"""
-<div class="{classes}" role="img" aria-label="{html.escape(alt, quote=True)}">
-  <img
-    class="beta-lockup__image beta-lockup__image--light"
-    src="{_BETA_LIGHT_LOGO_ROUTE}"
-    alt=""
-    aria-hidden="true"
-  >
-  <img
-    class="beta-lockup__image beta-lockup__image--dark"
-    src="{_BETA_DARK_LOGO_ROUTE}"
-    alt=""
-    aria-hidden="true"
-  >
-</div>
-"""
+def _beta_notice_context(*, title: str, message: str, tone: str) -> dict[str, str]:
+    return {
+        "title": title,
+        "message": message,
+        "tone": tone,
+    }
 
 
-def _render_beta_theme_toggle() -> str:
-    return """
-<button
-  type="button"
-  class="beta-theme-toggle"
-  data-theme-toggle
-  aria-pressed="false"
-  title="Switch to dark mode"
->
-  <span class="beta-theme-toggle__icon" aria-hidden="true">◐</span>
-  <span data-theme-label>Theme</span>
-</button>
-"""
-
-
-def _render_beta_notice(*, title: str, message: str, tone: str) -> str:
-    return f"""
-<section class="beta-notice beta-notice--{tone}" role="status">
-  <p class="beta-notice__title">{html.escape(title)}</p>
-  <p class="beta-notice__body">{html.escape(message)}</p>
-</section>
-"""
-
-
-def _render_copyable_command(
+def _beta_command_card_context(
     *,
     title: str,
     description: str,
     command: str,
     button_label: str = "Copy command",
-) -> str:
-    return f"""
-<section class="beta-card">
-  <div class="beta-command-header">
-    <div>
-      <p class="beta-eyebrow">Client setup</p>
-      <h2 class="beta-card-title">{html.escape(title)}</h2>
-    </div>
-    <div class="beta-command-actions">
-      <button
-        type="button"
-        class="beta-copy-button"
-        data-copy="{html.escape(command, quote=True)}"
-      >
-        {html.escape(button_label)}
-      </button>
-    </div>
-  </div>
-  <p class="beta-command-description">{html.escape(description)}</p>
-  <pre class="beta-command-block">{html.escape(command)}</pre>
-</section>
-"""
+) -> dict[str, str]:
+    return {
+        "title": title,
+        "description": description,
+        "command": command,
+        "button_label": button_label,
+    }
 
 
-def _render_beta_page(*, page_class: str, content: str) -> HTMLResponse:
-    body = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
-    <link rel="icon" type="image/png" href="{_BETA_LIGHT_LOGO_ROUTE}">
-    <title>PolicyNIM Hosted Beta</title>
-    <script>{_BETA_THEME_INIT_SCRIPT}</script>
-    <style>{_BETA_PAGE_STYLES}</style>
-  </head>
-  <body class="beta-page {page_class}">
-    <div class="beta-page__backdrop" aria-hidden="true"></div>
-    {content}
-    <script>{_BETA_PAGE_SCRIPT}</script>
-  </body>
-</html>
-"""
-    return HTMLResponse(body)
+def _beta_page_context(*, page_class: str) -> dict[str, str]:
+    return {
+        "document_title": "PolicyNIM Hosted Beta",
+        "page_class": page_class,
+        "favicon_url": _BETA_LIGHT_LOGO_ROUTE,
+        "beta_css_url": _BETA_CSS_ROUTE,
+        "beta_theme_init_js_url": _BETA_THEME_INIT_JS_ROUTE,
+        "beta_page_js_url": _BETA_PAGE_JS_ROUTE,
+        "light_logo_url": _BETA_LIGHT_LOGO_ROUTE,
+        "dark_logo_url": _BETA_DARK_LOGO_ROUTE,
+    }
+
+
+def _render_beta_template(
+    *,
+    template_name: str,
+    context: dict[str, object],
+    status_code: int = 200,
+) -> HTMLResponse:
+    template = _beta_template_environment().get_template(template_name)
+    return HTMLResponse(template.render(**context), status_code=status_code)
 
 
 def _beta_usage_percent(usage: BetaUsageSnapshot) -> int:
@@ -1398,112 +629,60 @@ def _render_beta_landing(
 ) -> HTMLResponse:
     portal_url = _derive_beta_url(settings) or _BETA_PATH
     mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
-    portal_url_html = html.escape(portal_url)
-    mcp_url_html = html.escape(mcp_url)
-    notice_html = ""
+    notices: list[dict[str, str]] = []
     if message:
-        notice_html = (
-            '<div class="beta-notice-stack">'
-            + _render_beta_notice(
+        notices.append(
+            _beta_notice_context(
                 title="Attention required",
                 message=message,
                 tone="error",
             )
-            + "</div>"
         )
-    content = f"""
-<main class="beta-shell beta-shell--landing">
-  <div class="beta-shell__utility">
-    {_render_beta_theme_toggle()}
-  </div>
-  <section class="beta-hero">
-    <div class="beta-hero__content">
-      <p class="beta-kicker">Hosted MCP beta</p>
-      {_render_beta_logo(alt="PolicyNIM")}
-      <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
-      <p class="beta-subtitle">
-        PolicyNIM is a policy-aware engineering preflight layer for AI coding agents, exposed
-        here as a hosted MCP endpoint.
-      </p>
-      <p class="beta-body-copy">
-        Sign in with GitHub, issue a hosted MCP API key, and connect your coding client without
-        waiting on an operator handoff.
-      </p>
-      <p class="beta-body-copy">
-        The portal keeps the hosted workflow self-serve: authenticate once, generate a key, and
-        paste the ready-to-run setup commands into Codex or Claude Code.
-      </p>
-      {notice_html}
-      <div class="beta-action-row">
-        <a class="beta-button beta-button--primary" href="{_AUTH_GITHUB_START_PATH}">
-          Continue with GitHub
-        </a>
-        <p class="beta-inline-hint">
-          After sign-in, the portal will generate ready-to-run Codex and Claude setup commands.
-        </p>
-      </div>
-    </div>
-    <aside class="beta-callout">
-      <p class="beta-eyebrow">Hosted endpoint</p>
-      <h2 class="beta-card-title">Provision a bearer token for the shared MCP route.</h2>
-      <p class="beta-body-copy">
-        The hosted beta issues one active API key per account. Rotate the key whenever you need
-        to reconnect a client or invalidate an older secret.
-      </p>
-      <div class="beta-inline-code">{mcp_url_html}</div>
-      <div class="beta-meta-list">
-        <div class="beta-meta-row">
-          <span class="beta-meta-label">Portal URL</span>
-          <a href="{portal_url_html}">{portal_url_html}</a>
-        </div>
-        <div class="beta-meta-row">
-          <span class="beta-meta-label">Flow</span>
-          <strong>Sign in -&gt; generate key -&gt; connect client</strong>
-        </div>
-      </div>
-    </aside>
-  </section>
-
-  <section class="beta-section">
-    <div class="beta-section__header">
-      <p class="beta-kicker">Quickstart</p>
-      <h2 class="beta-section-title">Connect in three moves</h2>
-    </div>
-    <div class="beta-card-grid beta-card-grid--steps">
-      <article class="beta-card beta-card--emphasis">
-        <span class="beta-step-index">1</span>
-        <h3 class="beta-card-title">Authenticate with GitHub</h3>
-        <p class="beta-command-description">
-          Start the hosted beta session from the GitHub OAuth flow. PolicyNIM stores the portal
-          session and keeps the MCP endpoint locked behind bearer auth.
-        </p>
-      </article>
-      <article class="beta-card">
-        <span class="beta-step-index">2</span>
-        <h3 class="beta-card-title">Issue or rotate your API key</h3>
-        <p class="beta-command-description">
-          The dashboard reveals the full secret once, along with the current key prefix and the
-          latest issuance timestamp for quick recovery.
-        </p>
-      </article>
-      <article class="beta-card">
-        <span class="beta-step-index">3</span>
-        <h3 class="beta-card-title">Paste the generated client commands</h3>
-        <p class="beta-command-description">
-          Once signed in, the portal shows ready-to-run commands for both Codex and Claude Code
-          so the hosted MCP route is connected without any manual command assembly.
-        </p>
-      </article>
-    </div>
-    <p class="beta-grid-note beta-fineprint">
-      Portal URL: <a href="{portal_url_html}">{portal_url_html}</a>
-    </p>
-  </section>
-</main>
-"""
-    response = _render_beta_page(page_class="beta-page--landing", content=content)
-    response.status_code = status_code
-    return response
+    context: dict[str, object] = _beta_page_context(page_class="beta-page--landing")
+    context.update(
+        {
+            "portal_url": portal_url,
+            "mcp_url": mcp_url,
+            "github_start_path": _AUTH_GITHUB_START_PATH,
+            "notices": notices,
+            "steps": [
+                {
+                    "index": 1,
+                    "card_class": "beta-card beta-card--emphasis",
+                    "title": "Authenticate with GitHub",
+                    "description": (
+                        "Start the hosted beta session from the GitHub OAuth flow. PolicyNIM "
+                        "stores the portal session and keeps the MCP endpoint locked behind "
+                        "bearer auth."
+                    ),
+                },
+                {
+                    "index": 2,
+                    "card_class": "beta-card",
+                    "title": "Issue or rotate your API key",
+                    "description": (
+                        "The dashboard reveals the full secret once, along with the current key "
+                        "prefix and the latest issuance timestamp for quick recovery."
+                    ),
+                },
+                {
+                    "index": 3,
+                    "card_class": "beta-card",
+                    "title": "Paste the generated client commands",
+                    "description": (
+                        "Once signed in, the portal shows ready-to-run commands for both Codex "
+                        "and Claude Code so the hosted MCP route is connected without any manual "
+                        "command assembly."
+                    ),
+                },
+            ],
+        }
+    )
+    return _render_beta_template(
+        template_name="beta/landing.html.j2",
+        context=context,
+        status_code=status_code,
+    )
 
 
 def _render_beta_dashboard(
@@ -1532,10 +711,10 @@ def _render_beta_dashboard(
         f'{mcp_url} --header "Authorization: Bearer $POLICYNIM_TOKEN"'
     )
 
-    notice_parts: list[str] = []
+    notices: list[dict[str, str]] = []
     if account.status != "active":
-        notice_parts.append(
-            _render_beta_notice(
+        notices.append(
+            _beta_notice_context(
                 title="Account suspended",
                 message=("Existing API keys will be rejected until the account is resumed."),
                 tone="warning",
@@ -1543,179 +722,65 @@ def _render_beta_dashboard(
         )
     if message:
         notice_title = "Portal update" if message_tone == "success" else "Action required"
-        notice_parts.append(
-            _render_beta_notice(
+        notices.append(
+            _beta_notice_context(
                 title=notice_title,
                 message=message,
                 tone=message_tone,
             )
         )
-    notices_html = ""
-    if notice_parts:
-        notices_html = f'<div class="beta-notice-stack">{"".join(notice_parts)}</div>'
-
-    new_key_html = ""
+    new_key_context: dict[str, str] | None = None
     if new_api_key is not None:
         export_command = f"export POLICYNIM_TOKEN={new_api_key}"
-        new_key_html = f"""
-  <section class="beta-section">
-    <article class="beta-card beta-card--secret">
-      <div class="beta-card__header">
-        <div>
-          <p class="beta-eyebrow">New API key</p>
-          <h2 class="beta-card-title">Copy it now</h2>
-        </div>
-        <div class="beta-command-actions">
-          <button
-            type="button"
-            class="beta-copy-button"
-            data-copy="{html.escape(export_command, quote=True)}"
-          >
-            Copy export
-          </button>
-        </div>
-      </div>
-      <p class="beta-command-description">
-        This secret is shown only once. Set <code>POLICYNIM_TOKEN</code> before connecting your
-        client.
-      </p>
-      <pre class="beta-command-block">{html.escape(export_command)}</pre>
-    </article>
-  </section>
-"""
+        new_key_context = {
+            "button_label": "Copy export",
+            "export_command": export_command,
+        }
 
-    content = f"""
-<main class="beta-shell beta-shell--dashboard">
-  <div class="beta-shell__utility">
-    {_render_beta_theme_toggle()}
-  </div>
-  <header class="beta-topbar">
-    <div class="beta-brand">
-      {_render_beta_logo(alt="PolicyNIM", compact=True)}
-      <div class="beta-brand__copy">
-        <p class="beta-kicker">Hosted MCP beta</p>
-        <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
-      </div>
-    </div>
-    <div class="beta-command-actions">
-      <span class="{status_class}">{html.escape(account.status.title())}</span>
-      <p class="beta-inline-hint">
-        Portal URL:
-        <a href="{html.escape(portal_url, quote=True)}">{html.escape(portal_url)}</a>
-      </p>
-    </div>
-  </header>
-
-  {notices_html}
-
-  <section class="beta-card-grid beta-card-grid--dashboard">
-    <article class="beta-card beta-card--emphasis">
-      <div class="beta-card__header">
-        <div>
-          <p class="beta-eyebrow">Account</p>
-          <h2 class="beta-card-title">Signed in as {html.escape(account.github_login)}</h2>
-        </div>
-        <span class="{status_class}">{html.escape(account.status.title())}</span>
-      </div>
-      <dl class="beta-facts">
-        <div class="beta-facts__row">
-          <dt>GitHub</dt>
-          <dd>{html.escape(account.github_login)}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Email</dt>
-          <dd>{html.escape(account.email or "Not available")}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Status</dt>
-          <dd>{html.escape(account.status)}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Active key prefix</dt>
-          <dd>{html.escape(current_key)}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Key created at</dt>
-          <dd>{html.escape(current_key_created)}</dd>
-        </div>
-      </dl>
-      <div class="beta-usage">
-        <div class="beta-usage__row">
-          <span class="beta-meta-label">UTC-day usage</span>
-          <strong>{html.escape(usage_text)}</strong>
-        </div>
-        <div class="beta-usage__bar" aria-hidden="true">
-          <span style="width:{usage_percent}%"></span>
-        </div>
-        <p class="beta-fineprint">
-          Usage snapshot date: {html.escape(usage.usage_date.isoformat())} UTC.
-        </p>
-      </div>
-    </article>
-
-    <article class="beta-card">
-      <div class="beta-card__header">
-        <div>
-          <p class="beta-eyebrow">API key</p>
-          <h2 class="beta-card-title">Generate, rotate, and recover access</h2>
-        </div>
-      </div>
-      <p class="beta-command-description">
-        Generate a fresh API key whenever you reconnect a client. A new key replaces the previous
-        secret immediately, so copy the export command before closing the page.
-      </p>
-      <div class="beta-button-row">
-        <form method="post" action="{_BETA_API_KEY_REGENERATE_PATH}">
-          <button type="submit" class="beta-button beta-button--primary">
-            Generate or Rotate API Key
-          </button>
-        </form>
-        <form method="post" action="{_BETA_LOGOUT_PATH}">
-          <button type="submit" class="beta-button beta-button--secondary">Sign Out</button>
-        </form>
-      </div>
-      <div class="beta-meta-list">
-        <div class="beta-meta-row">
-          <span class="beta-meta-label">Hosted MCP endpoint</span>
-          <div class="beta-inline-code">{html.escape(mcp_url)}</div>
-        </div>
-      </div>
-    </article>
-  </section>
-
-  {new_key_html}
-
-  <section class="beta-section">
-    <div class="beta-section__header">
-      <p class="beta-kicker">Client setup</p>
-      <h2 class="beta-section-title">Copy the exact commands for your client</h2>
-    </div>
-    <div class="beta-card-grid beta-card-grid--commands">
-      {
-        _render_copyable_command(
-            title="Connect Codex",
-            description=(
-                "Add the hosted PolicyNIM MCP endpoint to Codex using the generated bearer token "
-                "environment variable."
-            ),
-            command=codex_command,
-        )
-    }
-      {
-        _render_copyable_command(
-            title="Connect Claude Code",
-            description=(
-                "Register the same hosted MCP endpoint in Claude Code and pass the bearer token "
-                "through the Authorization header."
-            ),
-            command=claude_command,
-        )
-    }
-    </div>
-  </section>
-</main>
-"""
-    return _render_beta_page(page_class="beta-page--dashboard", content=content)
+    context: dict[str, object] = _beta_page_context(page_class="beta-page--dashboard")
+    context.update(
+        {
+            "portal_url": portal_url,
+            "mcp_url": mcp_url,
+            "status_class": status_class,
+            "status_title": account.status.title(),
+            "account": {
+                "github_login": account.github_login,
+                "email": account.email or "Not available",
+                "status": account.status,
+                "current_key": current_key,
+                "current_key_created": current_key_created,
+            },
+            "usage": {
+                "text": usage_text,
+                "percent": usage_percent,
+                "usage_date": usage.usage_date.isoformat(),
+            },
+            "api_key_regenerate_path": _BETA_API_KEY_REGENERATE_PATH,
+            "logout_path": _BETA_LOGOUT_PATH,
+            "notices": notices,
+            "new_key": new_key_context,
+            "commands": [
+                _beta_command_card_context(
+                    title="Connect Codex",
+                    description=(
+                        "Add the hosted PolicyNIM MCP endpoint to Codex using the generated "
+                        "bearer token environment variable."
+                    ),
+                    command=codex_command,
+                ),
+                _beta_command_card_context(
+                    title="Connect Claude Code",
+                    description=(
+                        "Register the same hosted MCP endpoint in Claude Code and pass the "
+                        "bearer token through the Authorization header."
+                    ),
+                    command=claude_command,
+                ),
+            ],
+        }
+    )
+    return _render_beta_template(template_name="beta/dashboard.html.j2", context=context)
 
 
 def _client_address(request: Request, *, trust_forwarded_headers: bool = False) -> str:

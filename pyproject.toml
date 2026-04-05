@@ -8,6 +8,7 @@ dependencies = [
   "evidently==0.7.16",
   "httpx==0.28.1",
   "itsdangerous==2.2.0",
+  "jinja2==3.1.6",
   "lancedb==0.27.1",
   "markdown-it-py==4.0.0",
   "mcp[cli]==1.26.0",
@@ -32,6 +33,7 @@ packages = ["src/policynim"]
 "policies" = "policynim/policies"
 "evals" = "policynim/evals"
 "src/policynim/assets" = "policynim/assets"
+"src/policynim/templates" = "policynim/templates"
 
 [dependency-groups]
 test = [

@@ -1,0 +1,130 @@
+{% extends "beta/page.html.j2" %}
+
+{% block content %}
+<main class="beta-shell beta-shell--dashboard">
+  <div class="beta-shell__utility">
+    {% include "beta/partials/theme_toggle.html.j2" %}
+  </div>
+  <header class="beta-topbar">
+    <div class="beta-brand">
+      {% with alt="PolicyNIM", compact=true %}
+        {% include "beta/partials/logo.html.j2" %}
+      {% endwith %}
+      <div class="beta-brand__copy">
+        <p class="beta-kicker">Hosted MCP beta</p>
+        <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
+      </div>
+    </div>
+    <div class="beta-command-actions">
+      <span class="{{ status_class }}">{{ status_title }}</span>
+      <p class="beta-inline-hint">
+        Portal URL:
+        <a href="{{ portal_url }}">{{ portal_url }}</a>
+      </p>
+    </div>
+  </header>
+
+  {% if notices %}
+  <div class="beta-notice-stack">
+    {% for notice in notices %}
+      {% with title=notice.title, message=notice.message, tone=notice.tone %}
+        {% include "beta/partials/notice.html.j2" %}
+      {% endwith %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <section class="beta-card-grid beta-card-grid--dashboard">
+    <article class="beta-card beta-card--emphasis">
+      <div class="beta-card__header">
+        <div>
+          <p class="beta-eyebrow">Account</p>
+          <h2 class="beta-card-title">Signed in as {{ account.github_login }}</h2>
+        </div>
+        <span class="{{ status_class }}">{{ status_title }}</span>
+      </div>
+      <dl class="beta-facts">
+        <div class="beta-facts__row">
+          <dt>GitHub</dt>
+          <dd>{{ account.github_login }}</dd>
+        </div>
+        <div class="beta-facts__row">
+          <dt>Email</dt>
+          <dd>{{ account.email }}</dd>
+        </div>
+        <div class="beta-facts__row">
+          <dt>Status</dt>
+          <dd>{{ account.status }}</dd>
+        </div>
+        <div class="beta-facts__row">
+          <dt>Active key prefix</dt>
+          <dd>{{ account.current_key }}</dd>
+        </div>
+        <div class="beta-facts__row">
+          <dt>Key created at</dt>
+          <dd>{{ account.current_key_created }}</dd>
+        </div>
+      </dl>
+      <div class="beta-usage">
+        <div class="beta-usage__row">
+          <span class="beta-meta-label">UTC-day usage</span>
+          <strong>{{ usage.text }}</strong>
+        </div>
+        <div class="beta-usage__bar" aria-hidden="true">
+          <span style="width:{{ usage.percent }}%"></span>
+        </div>
+        <p class="beta-fineprint">
+          Usage snapshot date: {{ usage.usage_date }} UTC.
+        </p>
+      </div>
+    </article>
+
+    <article class="beta-card">
+      <div class="beta-card__header">
+        <div>
+          <p class="beta-eyebrow">API key</p>
+          <h2 class="beta-card-title">Generate, rotate, and recover access</h2>
+        </div>
+      </div>
+      <p class="beta-command-description">
+        Generate a fresh API key whenever you reconnect a client. A new key replaces the previous
+        secret immediately, so copy the export command before closing the page.
+      </p>
+      <div class="beta-button-row">
+        <form method="post" action="{{ api_key_regenerate_path }}">
+          <button type="submit" class="beta-button beta-button--primary">
+            Generate or Rotate API Key
+          </button>
+        </form>
+        <form method="post" action="{{ logout_path }}">
+          <button type="submit" class="beta-button beta-button--secondary">Sign Out</button>
+        </form>
+      </div>
+      <div class="beta-meta-list">
+        <div class="beta-meta-row">
+          <span class="beta-meta-label">Hosted MCP endpoint</span>
+          <div class="beta-inline-code">{{ mcp_url }}</div>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  {% if new_key %}
+    {% include "beta/partials/new_key_panel.html.j2" %}
+  {% endif %}
+
+  <section class="beta-section">
+    <div class="beta-section__header">
+      <p class="beta-kicker">Client setup</p>
+      <h2 class="beta-section-title">Copy the exact commands for your client</h2>
+    </div>
+    <div class="beta-card-grid beta-card-grid--commands">
+      {% for command_card in commands %}
+        {% with command=command_card %}
+          {% include "beta/partials/command_card.html.j2" %}
+        {% endwith %}
+      {% endfor %}
+    </div>
+  </section>
+</main>
+{% endblock %}

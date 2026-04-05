@@ -1,0 +1,19 @@
+<section class="beta-card">
+  <div class="beta-command-header">
+    <div>
+      <p class="beta-eyebrow">Client setup</p>
+      <h2 class="beta-card-title">{{ command.title }}</h2>
+    </div>
+    <div class="beta-command-actions">
+      <button
+        type="button"
+        class="beta-copy-button"
+        data-copy="{{ command.command }}"
+      >
+        {{ command.button_label }}
+      </button>
+    </div>
+  </div>
+  <p class="beta-command-description">{{ command.description }}</p>
+  <pre class="beta-command-block">{{ command.command }}</pre>
+</section>

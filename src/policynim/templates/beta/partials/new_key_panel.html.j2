@@ -1,0 +1,24 @@
+<section class="beta-section">
+  <article class="beta-card beta-card--secret">
+    <div class="beta-card__header">
+      <div>
+        <p class="beta-eyebrow">New API key</p>
+        <h2 class="beta-card-title">Copy it now</h2>
+      </div>
+      <div class="beta-command-actions">
+        <button
+          type="button"
+          class="beta-copy-button"
+          data-copy="{{ new_key.export_command }}"
+        >
+          {{ new_key.button_label }}
+        </button>
+      </div>
+    </div>
+    <p class="beta-command-description">
+      This secret is shown only once. Set <code>POLICYNIM_TOKEN</code> before connecting your
+      client.
+    </p>
+    <pre class="beta-command-block">{{ new_key.export_command }}</pre>
+  </article>
+</section>

@@ -1,0 +1,85 @@
+{% extends "beta/page.html.j2" %}
+
+{% block content %}
+<main class="beta-shell beta-shell--landing">
+  <div class="beta-shell__utility">
+    {% include "beta/partials/theme_toggle.html.j2" %}
+  </div>
+  <section class="beta-hero">
+    <div class="beta-hero__content">
+      <p class="beta-kicker">Hosted MCP beta</p>
+      {% with alt="PolicyNIM", compact=false %}
+        {% include "beta/partials/logo.html.j2" %}
+      {% endwith %}
+      <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
+      <p class="beta-subtitle">
+        PolicyNIM is a policy-aware engineering preflight layer for AI coding agents, exposed
+        here as a hosted MCP endpoint.
+      </p>
+      <p class="beta-body-copy">
+        Sign in with GitHub, issue a hosted MCP API key, and connect your coding client without
+        waiting on an operator handoff.
+      </p>
+      <p class="beta-body-copy">
+        The portal keeps the hosted workflow self-serve: authenticate once, generate a key, and
+        paste the ready-to-run setup commands into Codex or Claude Code.
+      </p>
+      {% if notices %}
+      <div class="beta-notice-stack">
+        {% for notice in notices %}
+          {% with title=notice.title, message=notice.message, tone=notice.tone %}
+            {% include "beta/partials/notice.html.j2" %}
+          {% endwith %}
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="beta-action-row">
+        <a class="beta-button beta-button--primary" href="{{ github_start_path }}">
+          Continue with GitHub
+        </a>
+        <p class="beta-inline-hint">
+          After sign-in, the portal will generate ready-to-run Codex and Claude setup commands.
+        </p>
+      </div>
+    </div>
+    <aside class="beta-callout">
+      <p class="beta-eyebrow">Hosted endpoint</p>
+      <h2 class="beta-card-title">Provision a bearer token for the shared MCP route.</h2>
+      <p class="beta-body-copy">
+        The hosted beta issues one active API key per account. Rotate the key whenever you need
+        to reconnect a client or invalidate an older secret.
+      </p>
+      <div class="beta-inline-code">{{ mcp_url }}</div>
+      <div class="beta-meta-list">
+        <div class="beta-meta-row">
+          <span class="beta-meta-label">Portal URL</span>
+          <a href="{{ portal_url }}">{{ portal_url }}</a>
+        </div>
+        <div class="beta-meta-row">
+          <span class="beta-meta-label">Flow</span>
+          <strong>Sign in -&gt; generate key -&gt; connect client</strong>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <section class="beta-section">
+    <div class="beta-section__header">
+      <p class="beta-kicker">Quickstart</p>
+      <h2 class="beta-section-title">Connect in three moves</h2>
+    </div>
+    <div class="beta-card-grid beta-card-grid--steps">
+      {% for step in steps %}
+      <article class="{{ step.card_class }}">
+        <span class="beta-step-index">{{ step.index }}</span>
+        <h3 class="beta-card-title">{{ step.title }}</h3>
+        <p class="beta-command-description">{{ step.description }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    <p class="beta-grid-note beta-fineprint">
+      Portal URL: <a href="{{ portal_url }}">{{ portal_url }}</a>
+    </p>
+  </section>
+</main>
+{% endblock %}
