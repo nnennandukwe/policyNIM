@@ -338,9 +338,14 @@ def _register_beta_routes(
         max_attempts=settings.beta_auth_rate_limit_max_attempts,
         window_seconds=settings.beta_auth_rate_limit_window_seconds,
     )
+    trust_forwarded_headers = _beta_session_https_only(settings)
 
     def _rate_limited(request: Request) -> HTMLResponse | None:
-        if limiter.allow(f"{request.url.path}:{_client_address(request)}"):
+        client_ip = _client_address(
+            request,
+            trust_forwarded_headers=trust_forwarded_headers,
+        )
+        if limiter.allow(f"{request.url.path}:{client_ip}"):
             return None
         return HTMLResponse(
             (
@@ -622,11 +627,40 @@ def _render_beta_dashboard(
     return HTMLResponse(body)
 
 
-def _client_address(request: Request) -> str:
+def _client_address(request: Request, *, trust_forwarded_headers: bool = False) -> str:
+    if trust_forwarded_headers:
+        forwarded_ip = _forwarded_client_address(request.headers)
+        if forwarded_ip is not None:
+            return forwarded_ip
+
     client = request.client
     if client is None or not client.host:
         return "unknown"
     return client.host
+
+
+def _forwarded_client_address(headers: Headers) -> str | None:
+    x_forwarded_for = headers.get("x-forwarded-for")
+    if x_forwarded_for is not None:
+        for candidate in x_forwarded_for.split(","):
+            forwarded_ip = candidate.strip()
+            if forwarded_ip:
+                return forwarded_ip
+
+    forwarded = headers.get("forwarded")
+    if forwarded is None:
+        return None
+
+    for forwarded_value in forwarded.split(","):
+        for attribute in forwarded_value.split(";"):
+            key, separator, value = attribute.partition("=")
+            if separator and key.strip().lower() == "for":
+                forwarded_ip = value.strip().strip('"')
+                if forwarded_ip.startswith("[") and "]" in forwarded_ip:
+                    return forwarded_ip[1 : forwarded_ip.index("]")]
+                if forwarded_ip:
+                    return forwarded_ip.removeprefix("for=").split(":")[0]
+    return None
 
 
 def _require_beta_session_account_id(request: Request) -> int | None:

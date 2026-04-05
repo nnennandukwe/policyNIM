@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from starlette.datastructures import Headers
 from starlette.testclient import TestClient
 
 from policynim.interfaces import mcp as mcp_module
@@ -221,3 +222,34 @@ def test_beta_portal_keeps_http_session_cookie_for_local_http_development(monkey
 
     assert response.status_code == 302
     assert "secure" not in response.headers["set-cookie"].lower()
+
+
+def test_beta_portal_rate_limit_uses_forwarded_client_ip(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "create_beta_auth_service",
+        lambda settings: StubBetaAuthService(),
+    )
+
+    app = mcp_module._build_streamable_http_app(_signup_settings(rate_limit_max_attempts=1))
+
+    with TestClient(app, base_url="https://testserver") as client:
+        first = client.get(
+            "/auth/github/start",
+            follow_redirects=False,
+            headers={"x-forwarded-for": "203.0.113.10"},
+        )
+        second = client.get(
+            "/auth/github/start",
+            follow_redirects=False,
+            headers={"x-forwarded-for": "203.0.113.11"},
+        )
+
+    assert first.status_code == 302
+    assert second.status_code == 302
+
+
+def test_forwarded_client_address_parses_forwarded_header() -> None:
+    headers = Headers({"forwarded": 'for="[2001:db8:cafe::17]:4711";proto=https'})
+
+    assert mcp_module._forwarded_client_address(headers) == "2001:db8:cafe::17"
