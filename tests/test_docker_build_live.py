@@ -53,7 +53,8 @@ pytestmark = [
 
 def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
     tag = f"policynim-hosted-missing-key:{uuid.uuid4().hex[:12]}"
-    env = os.environ | {"DOCKER_BUILDKIT": "1"}
+    env = dict(os.environ)
+    env["DOCKER_BUILDKIT"] = "1"
 
     try:
         result = subprocess.run(
