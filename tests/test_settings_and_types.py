@@ -6,10 +6,16 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from policynim.settings import Settings
-from policynim.types import DocumentSection, ParsedRuntimeRule
+from policynim.types import (
+    DocumentSection,
+    HTTPRequestActionRequest,
+    ParsedRuntimeRule,
+    RuntimeActionRequest,
+    RuntimeDecisionResult,
+)
 
 
 def load_settings_without_env_file(**overrides: Any) -> Settings:
@@ -233,4 +239,45 @@ def test_parsed_runtime_rule_requires_exactly_one_matcher_family() -> None:
             command_regexes=["^make "],
             start_line=4,
             end_line=6,
+        )
+
+
+def test_runtime_action_request_rejects_empty_shell_command_lists() -> None:
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        TypeAdapter(RuntimeActionRequest).validate_python(
+            {
+                "kind": "shell_command",
+                "task": "Run tests.",
+                "cwd": ".",
+                "command": [],
+            }
+        )
+
+
+def test_http_request_action_rejects_malformed_urls() -> None:
+    with pytest.raises(ValidationError, match="URL"):
+        HTTPRequestActionRequest.model_validate(
+            {
+                "kind": "http_request",
+                "task": "Call an HTTP endpoint.",
+                "cwd": Path("."),
+                "method": "GET",
+                "url": "not-a-url",
+            }
+        )
+
+
+def test_runtime_decision_result_rejects_invalid_decision_values() -> None:
+    with pytest.raises(ValidationError, match="Input should be 'allow', 'confirm' or 'block'"):
+        RuntimeDecisionResult.model_validate(
+            {
+                "request": {
+                    "kind": "shell_command",
+                    "task": "Run tests.",
+                    "cwd": Path("."),
+                    "command": ["make", "test"],
+                },
+                "decision": "maybe",
+                "summary": "Unknown runtime outcome.",
+            }
         )
