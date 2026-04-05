@@ -10,6 +10,10 @@ from policynim.services.health import (
 )
 from policynim.services.ingest import IngestService, create_ingest_service
 from policynim.services.preflight import PreflightService, create_preflight_service
+from policynim.services.runtime_decision import (
+    RuntimeDecisionService,
+    create_runtime_decision_service,
+)
 from policynim.services.search import SearchService, create_search_service
 
 __all__ = [
@@ -18,10 +22,12 @@ __all__ = [
     "IndexDumpService",
     "IngestService",
     "PreflightService",
+    "RuntimeDecisionService",
     "RuntimeHealthService",
     "SearchService",
     "create_beta_auth_service",
     "create_eval_service",
+    "create_runtime_decision_service",
     "create_runtime_health_service",
     "ensure_hosted_runtime_ready",
     "create_index_dump_service",
