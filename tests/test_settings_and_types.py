@@ -150,6 +150,55 @@ def test_settings_requires_public_base_url_when_auth_is_enabled() -> None:
         Settings(mcp_require_auth=True, mcp_bearer_tokens=["secret-token"])
 
 
+def test_settings_allows_db_backed_auth_when_self_serve_signup_is_enabled() -> None:
+    settings = Settings.model_validate(
+        {
+            "mcp_require_auth": True,
+            "beta_signup_enabled": True,
+            "beta_session_secret": "session-secret",
+            "beta_github_client_id": "github-client-id",
+            "beta_github_client_secret": "github-client-secret",
+            "mcp_public_base_url": "https://beta.example.com",
+        }
+    )
+
+    assert settings.beta_signup_enabled is True
+    assert settings.mcp_bearer_tokens == []
+
+
+def test_settings_rejects_empty_beta_auth_db_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICYNIM_BETA_AUTH_DB_PATH", "")
+
+    with pytest.raises(ValidationError, match="POLICYNIM_BETA_AUTH_DB_PATH must not be empty"):
+        load_settings_without_env_file()
+
+
+def test_settings_requires_beta_session_secret_when_signup_is_enabled() -> None:
+    with pytest.raises(ValidationError, match="POLICYNIM_BETA_SESSION_SECRET must be set"):
+        Settings.model_validate(
+            {
+                "mcp_require_auth": True,
+                "beta_signup_enabled": True,
+                "beta_github_client_id": "github-client-id",
+                "beta_github_client_secret": "github-client-secret",
+                "mcp_public_base_url": "https://beta.example.com",
+            }
+        )
+
+
+def test_settings_requires_mcp_auth_when_signup_is_enabled() -> None:
+    with pytest.raises(ValidationError, match="POLICYNIM_MCP_REQUIRE_AUTH must be true"):
+        Settings.model_validate(
+            {
+                "beta_signup_enabled": True,
+                "beta_session_secret": "session-secret",
+                "beta_github_client_id": "github-client-id",
+                "beta_github_client_secret": "github-client-secret",
+                "mcp_public_base_url": "https://beta.example.com",
+            }
+        )
+
+
 def test_settings_rejects_full_mcp_public_url() -> None:
     with pytest.raises(
         ValidationError,

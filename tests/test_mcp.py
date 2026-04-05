@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from collections.abc import Sequence
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -18,8 +19,12 @@ from policynim.interfaces import mcp as mcp_module
 from policynim.services.preflight import PreflightService
 from policynim.settings import Settings
 from policynim.types import (
+    BetaAuthDecision,
     Citation,
+    EmbeddedChunk,
+    GeneratedPreflightDraft,
     HealthCheckResult,
+    PolicyChunk,
     PolicyGuidance,
     PolicyMetadata,
     PreflightRequest,
@@ -128,6 +133,18 @@ class StreamableHTTPStubServer:
         return self._app
 
 
+class StaticBetaAuthService:
+    """Static hosted beta auth service for MCP auth-wrapper tests."""
+
+    def __init__(self, decision: BetaAuthDecision) -> None:
+        self._decision = decision
+        self.seen_tokens: list[str | None] = []
+
+    def authenticate_api_key(self, *, token: str | None) -> BetaAuthDecision:
+        self.seen_tokens.append(token)
+        return self._decision
+
+
 def _ok_starlette_app() -> ASGIApp:
     async def ok_endpoint(request) -> JSONResponse:
         return JSONResponse({"ok": True}, status_code=200)
@@ -159,6 +176,37 @@ def _hosted_settings(**overrides: object) -> Settings:
     }
     payload.update(overrides)
     return Settings.model_validate(payload)
+
+
+def _self_serve_hosted_settings(**overrides: object) -> Settings:
+    payload: dict[str, object] = {
+        "mcp_require_auth": True,
+        "mcp_bearer_tokens": [],
+        "beta_signup_enabled": True,
+        "beta_session_secret": "session-secret",
+        "beta_github_client_id": "github-client-id",
+        "beta_github_client_secret": "github-client-secret",
+        "mcp_public_base_url": "https://beta.example.com",
+    }
+    payload.update(overrides)
+    return Settings.model_validate(payload)
+
+
+def _stub_streamable_http_server(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    auth_service: StaticBetaAuthService | None = None,
+) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "_create_mcp_server",
+        lambda settings, beta_auth_service=None: StreamableHTTPStubServer(),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "_build_beta_auth_service",
+        lambda settings: auth_service,
+    )
 
 
 def test_policy_preflight_returns_exact_typed_payload(monkeypatch) -> None:
@@ -518,6 +566,9 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
     events: list[dict[str, object]] = []
 
     class StaticEmbedder:
+        def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
         def embed_query(self, text: str) -> list[float]:
             return [1.0, 0.0]
 
@@ -530,7 +581,7 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
 
         def search(
             self,
-            query_embedding,
+            query_embedding: Sequence[float],
             *,
             top_k: int,
             domain: str | None = None,
@@ -552,24 +603,31 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
                 )
             ]
 
-        def replace(self, chunks) -> None:  # pragma: no cover - protocol filler for tests
+        def replace(
+            self,
+            chunks: Sequence[EmbeddedChunk],
+        ) -> None:  # pragma: no cover - protocol filler for tests
             raise NotImplementedError
 
-        def list_chunks(self):  # pragma: no cover - protocol filler for tests
-            raise NotImplementedError
+        def list_chunks(self) -> list[PolicyChunk]:  # pragma: no cover - protocol filler
+            return []
 
     class StaticReranker:
         def rerank(
             self,
             query: str,
-            candidates: list[ScoredChunk],
+            candidates: Sequence[ScoredChunk],
             *,
             top_k: int,
         ) -> list[ScoredChunk]:
             return list(candidates)[:top_k]
 
     class TimeoutGenerator:
-        def generate_preflight(self, request, context) -> PreflightResult:  # noqa: ANN001
+        def generate_preflight(
+            self,
+            request: PreflightRequest,
+            context: Sequence[ScoredChunk],
+        ) -> GeneratedPreflightDraft:
             raise ProviderError("upstream timeout", failure_class="timeout")
 
     monkeypatch.setattr(
@@ -750,11 +808,7 @@ def test_healthz_constructs_service_once_and_runs_check_off_thread(monkeypatch) 
 
 
 def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> None:
-    monkeypatch.setattr(
-        mcp_module,
-        "_create_mcp_server",
-        lambda settings: StreamableHTTPStubServer(),
-    )
+    _stub_streamable_http_server(monkeypatch)
 
     app = mcp_module._build_streamable_http_app(Settings())
 
@@ -766,11 +820,7 @@ def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> N
 
 
 def test_streamable_http_app_rejects_missing_bearer_token(monkeypatch) -> None:
-    monkeypatch.setattr(
-        mcp_module,
-        "_create_mcp_server",
-        lambda settings: StreamableHTTPStubServer(),
-    )
+    _stub_streamable_http_server(monkeypatch)
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
@@ -784,11 +834,7 @@ def test_streamable_http_app_rejects_missing_bearer_token(monkeypatch) -> None:
 def test_streamable_http_app_logs_auth_rejection(monkeypatch) -> None:
     events: list[dict[str, object]] = []
 
-    monkeypatch.setattr(
-        mcp_module,
-        "_create_mcp_server",
-        lambda settings: StreamableHTTPStubServer(),
-    )
+    _stub_streamable_http_server(monkeypatch)
     monkeypatch.setattr(
         mcp_module,
         "_emit_hosted_event",
@@ -814,11 +860,7 @@ def test_streamable_http_app_logs_auth_rejection(monkeypatch) -> None:
 
 
 def test_streamable_http_app_rejects_malformed_bearer_header(monkeypatch) -> None:
-    monkeypatch.setattr(
-        mcp_module,
-        "_create_mcp_server",
-        lambda settings: StreamableHTTPStubServer(),
-    )
+    _stub_streamable_http_server(monkeypatch)
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
@@ -830,27 +872,21 @@ def test_streamable_http_app_rejects_malformed_bearer_header(monkeypatch) -> Non
 
 
 def test_streamable_http_app_rejects_invalid_bearer_token(monkeypatch) -> None:
-    monkeypatch.setattr(
-        mcp_module,
-        "_create_mcp_server",
-        lambda settings: StreamableHTTPStubServer(),
-    )
+    auth_service = StaticBetaAuthService(BetaAuthDecision(status="unauthorized"))
+    _stub_streamable_http_server(monkeypatch, auth_service=auth_service)
 
-    app = mcp_module._build_streamable_http_app(_hosted_settings())
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
     with TestClient(app) as client:
         response = client.get("/mcp", headers={"Authorization": "Bearer wrong-token"})
 
     assert response.status_code == 401
     assert response.json() == {"error": "Unauthorized."}
+    assert auth_service.seen_tokens == ["wrong-token"]
 
 
 def test_streamable_http_app_accepts_valid_bearer_token(monkeypatch) -> None:
-    monkeypatch.setattr(
-        mcp_module,
-        "_create_mcp_server",
-        lambda settings: StreamableHTTPStubServer(),
-    )
+    _stub_streamable_http_server(monkeypatch)
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
@@ -859,3 +895,45 @@ def test_streamable_http_app_accepts_valid_bearer_token(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+def test_streamable_http_app_accepts_valid_db_backed_api_key(monkeypatch) -> None:
+    auth_service = StaticBetaAuthService(BetaAuthDecision(status="authorized", source="api_key"))
+    _stub_streamable_http_server(monkeypatch, auth_service=auth_service)
+
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    with TestClient(app) as client:
+        response = client.get("/mcp", headers={"Authorization": "Bearer db-secret"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert auth_service.seen_tokens == ["db-secret"]
+
+
+def test_streamable_http_app_returns_403_for_suspended_beta_account(monkeypatch) -> None:
+    auth_service = StaticBetaAuthService(BetaAuthDecision(status="suspended", source="api_key"))
+    _stub_streamable_http_server(monkeypatch, auth_service=auth_service)
+
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    with TestClient(app) as client:
+        response = client.get("/mcp", headers={"Authorization": "Bearer suspended-secret"})
+
+    assert response.status_code == 403
+    assert response.json() == {"error": "Account suspended."}
+
+
+def test_streamable_http_app_returns_429_for_quota_exhausted_beta_account(monkeypatch) -> None:
+    auth_service = StaticBetaAuthService(
+        BetaAuthDecision(status="quota_exceeded", source="api_key")
+    )
+    _stub_streamable_http_server(monkeypatch, auth_service=auth_service)
+
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    with TestClient(app) as client:
+        response = client.get("/mcp", headers={"Authorization": "Bearer quota-secret"})
+
+    assert response.status_code == 429
+    assert response.json() == {"error": "Quota exceeded."}

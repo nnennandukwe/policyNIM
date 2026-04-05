@@ -17,9 +17,12 @@ constraints, not setup mistakes.
 
 ### Hosted Auth Is Still Beta-Simple
 
-- The hosted HTTP path uses manually issued bearer tokens from configuration.
-- There is no built-in token store, self-serve token issuance, or per-user audit
-  layer yet.
+- The hosted HTTP path now supports GitHub-based self-serve signup plus
+  SQLite-backed API keys, but it still runs as a small single-instance beta.
+- There is no billing system, team management, admin UI, or cross-replica auth
+  store yet.
+- The auth SQLite database depends on one writable mounted volume; it is not a
+  horizontally scaled multi-writer design.
 - The auth wrapper protects only `/mcp`; `/healthz` stays public for readiness
   probing.
 - `/healthz` reports local index readiness only; it does not prove upstream NVIDIA

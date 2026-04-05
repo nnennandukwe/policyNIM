@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal, NoReturn
 
 import typer
@@ -9,6 +10,7 @@ import typer
 from policynim.errors import PolicyNIMError
 from policynim.interfaces.mcp import run_server
 from policynim.services import (
+    create_beta_auth_service,
     create_eval_service,
     create_index_dump_service,
     create_ingest_service,
@@ -23,6 +25,12 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Policy-aware preflight tooling for AI coding agents.",
 )
+beta_admin_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Hosted beta operator commands.",
+)
+app.add_typer(beta_admin_app, name="beta-admin")
 
 
 @app.command()
@@ -212,6 +220,86 @@ def mcp(
         _exit_with_error(str(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
+
+
+@beta_admin_app.command("list-accounts")
+def beta_admin_list_accounts() -> None:
+    """Print all hosted beta accounts as JSON."""
+    service = None
+    try:
+        service = create_beta_auth_service(get_settings())
+        accounts = service.list_accounts()
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(
+        json.dumps(
+            [account.model_dump(mode="json") for account in accounts],
+            indent=2,
+        )
+    )
+
+
+@beta_admin_app.command("suspend")
+def beta_admin_suspend(
+    github_login: Annotated[
+        str,
+        typer.Option("--github-login", help="GitHub login for the hosted beta account."),
+    ],
+) -> None:
+    """Suspend one hosted beta account."""
+    service = None
+    try:
+        service = create_beta_auth_service(get_settings())
+        account = service.suspend_account(github_login=github_login)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(account.model_dump_json(indent=2))
+
+
+@beta_admin_app.command("resume")
+def beta_admin_resume(
+    github_login: Annotated[
+        str,
+        typer.Option("--github-login", help="GitHub login for the hosted beta account."),
+    ],
+) -> None:
+    """Resume one hosted beta account."""
+    service = None
+    try:
+        service = create_beta_auth_service(get_settings())
+        account = service.resume_account(github_login=github_login)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(account.model_dump_json(indent=2))
+
+
+@beta_admin_app.command("revoke-key")
+def beta_admin_revoke_key(
+    github_login: Annotated[
+        str,
+        typer.Option("--github-login", help="GitHub login for the hosted beta account."),
+    ],
+) -> None:
+    """Revoke the active hosted beta API key for one account."""
+    service = None
+    try:
+        service = create_beta_auth_service(get_settings())
+        account = service.revoke_api_key(github_login=github_login)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(account.model_dump_json(indent=2))
 
 
 def main() -> None:

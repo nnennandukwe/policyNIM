@@ -170,6 +170,8 @@ Important evaluation rules:
   persistence.
 - `IndexDumpService` handles terminal-friendly inspection of stored chunks.
 - `RuntimeHealthService` handles hosted HTTP readiness checks for the local index.
+- `BetaAuthService` handles hosted beta GitHub login, API-key issuance, and
+  daily request quota enforcement through the auth SQLite store.
 - Services may depend on `settings`, `types`, `contracts`, providers, and storage,
   but they must not import CLI or MCP modules.
 
@@ -177,8 +179,9 @@ Important evaluation rules:
 
 - Owns transport-specific entry points only.
 - `cli.py` defines terminal-facing commands and help text.
-- `mcp.py` defines the MCP tool surface, hosted HTTP auth gate, readiness route,
-  structured hosted logging, and server startup.
+- `mcp.py` defines the MCP tool surface, hosted HTTP auth gate, self-serve
+  `/beta` portal routes, readiness route, structured hosted logging, and server
+  startup.
 - Interface modules call services, not providers directly.
 
 ## Import Rules
@@ -204,6 +207,7 @@ Important evaluation rules:
 - `policynim preflight --task ...`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
+- `policynim beta-admin list-accounts|suspend|resume|revoke-key`
 
 ### MCP Tools
 
@@ -213,9 +217,16 @@ Important evaluation rules:
 ### Hosted HTTP Endpoint
 
 - `GET /healthz` returns a JSON readiness payload for the hosted HTTP runtime.
+- `GET /beta` renders the self-serve hosted beta portal when signup is enabled.
+- `GET /auth/github/start` and `GET /auth/github/callback` own the GitHub OAuth
+  login flow for the hosted beta portal.
+- `POST /beta/api-key/regenerate` rotates the active hosted beta API key.
+- `POST /beta/logout` clears the hosted beta session cookie.
 - `/healthz` is public even when hosted bearer auth is enabled for `/mcp`.
 - Hosted beta deployments on Railway use a generated public domain, and the MCP
   URL is always `<POLICYNIM_MCP_PUBLIC_BASE_URL>/mcp`.
+- Hosted self-serve portal deployments on Railway use the same public domain, and
+  the beta portal URL is always `<POLICYNIM_MCP_PUBLIC_BASE_URL>/beta`.
 - Hosted `streamable-http` startup fails fast when
   `POLICYNIM_MCP_PUBLIC_BASE_URL` is set and the configured local index is
   missing or empty.
@@ -228,6 +239,8 @@ Shared interface guarantees:
 - top-k validation is shared and explicit.
 - runtime setup failures are not masked as insufficient context.
 - hosted HTTP auth applies only to `/mcp`, never to `stdio`.
+- hosted beta auth stores one active API key per account in a local SQLite file
+  mounted on the Railway auth volume.
 - hosted tool logs emit JSON lines with auth result, tool name, latency, and
   classified upstream NVIDIA failure cause.
 
