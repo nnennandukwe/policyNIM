@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <link rel="icon" type="image/png" href="{{ favicon_url }}">
+    <title>{{ document_title }}</title>
+    <script src="{{ beta_theme_init_js_url }}"></script>
+    <link rel="stylesheet" href="{{ beta_css_url }}">
+  </head>
+  <body class="beta-page {{ page_class }}">
+    <div class="beta-page__backdrop" aria-hidden="true"></div>
+    {% block content %}{% endblock %}
+    <script src="{{ beta_page_js_url }}"></script>
+  </body>
+</html>

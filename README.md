@@ -1,5 +1,19 @@
 # PolicyNIM
 
+<p align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="src/policynim/assets/beta/policynim_darkmode.jpg"
+    >
+    <img
+      src="src/policynim/assets/beta/policynim_lightmode.png"
+      alt="PolicyNIM logo"
+      width="460"
+    >
+  </picture>
+</p>
+
 [![Built with NVIDIA NIM](https://img.shields.io/badge/Built%20with-NVIDIA%20NIM-76B900?logo=nvidia&logoColor=white)](https://docs.nvidia.com/nim/)
 
 PolicyNIM is a policy-aware engineering preflight layer for AI coding agents.
@@ -79,6 +93,20 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 
 If you want the shortest path to a real hosted preflight run, connect your MCP
 client to the Railway beta instead of cloning the repo:
+
+### Self-Serve Hosted Beta
+
+<p align="center">
+  <img
+    src="docs/assets/readme/policynim-beta-dark-landing-preview.png"
+    alt="PolicyNIM hosted beta landing page in dark mode"
+    width="1100"
+  >
+</p>
+
+The hosted beta is the fastest path for a new user: open `/beta`, sign in with
+GitHub, mint an API key, and paste the generated MCP command into Codex or
+Claude Code.
 
 ```bash
 # 1. Open https://<railway-domain>/beta

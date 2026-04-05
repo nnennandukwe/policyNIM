@@ -109,7 +109,14 @@ def test_beta_portal_renders_signed_out_landing(monkeypatch) -> None:
         response = client.get("/beta")
 
     assert response.status_code == 200
+    assert 'class="beta-page beta-page--landing"' in response.text
+    assert "data-theme-toggle" in response.text
+    assert f'href="{mcp_module._BETA_CSS_ROUTE}"' in response.text
+    assert f'src="{mcp_module._BETA_THEME_INIT_JS_ROUTE}"' in response.text
+    assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in response.text
     assert "Continue with GitHub" in response.text
+    assert "Connect in three moves" in response.text
+    assert "policy-aware engineering preflight layer" in response.text
     assert "codex mcp add policynim" not in response.text
 
 
@@ -134,7 +141,13 @@ def test_beta_portal_login_flow_sets_session_and_renders_dashboard(monkeypatch) 
         dashboard = client.get("/beta")
 
     assert dashboard.status_code == 200
+    assert 'class="beta-page beta-page--dashboard"' in dashboard.text
+    assert "data-theme-toggle" in dashboard.text
+    assert f'href="{mcp_module._BETA_CSS_ROUTE}"' in dashboard.text
+    assert f'src="{mcp_module._BETA_THEME_INIT_JS_ROUTE}"' in dashboard.text
+    assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in dashboard.text
     assert "octocat" in dashboard.text
+    assert "Copy command" in dashboard.text
     assert "codex mcp add policynim" in dashboard.text
     assert "claude mcp add --transport http policynim" in dashboard.text
 
@@ -153,7 +166,25 @@ def test_beta_portal_rejects_invalid_oauth_state(monkeypatch) -> None:
         )
 
     assert response.status_code == 400
+    assert 'class="beta-page beta-page--landing"' in response.text
     assert "OAuth state was missing or invalid" in response.text
+
+
+def test_beta_portal_returns_400_for_github_oauth_error(monkeypatch) -> None:
+    stub = StubBetaAuthService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get(
+            "/auth/github/callback?error=access_denied",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 400
+    assert 'class="beta-page beta-page--landing"' in response.text
+    assert "GitHub sign-in failed: access_denied" in response.text
 
 
 def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
@@ -170,6 +201,7 @@ def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
         )
 
     assert response.status_code == 502
+    assert 'class="beta-page beta-page--landing"' in response.text
     assert "unexpected upstream error" in response.text
 
 
@@ -189,7 +221,41 @@ def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> Non
 
     assert response.status_code == 200
     assert "pnm_new_secret" in response.text
+    assert "Copy export" in response.text
     assert "export POLICYNIM_TOKEN=pnm_new_secret" in response.text
+
+
+def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_module,
+        "create_beta_auth_service",
+        lambda settings: StubBetaAuthService(),
+    )
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app) as client:
+        light = client.get(mcp_module._BETA_LIGHT_LOGO_ROUTE)
+        dark = client.get(mcp_module._BETA_DARK_LOGO_ROUTE)
+        css = client.get(mcp_module._BETA_CSS_ROUTE)
+        theme_init_js = client.get(mcp_module._BETA_THEME_INIT_JS_ROUTE)
+        page_js = client.get(mcp_module._BETA_PAGE_JS_ROUTE)
+        favicon = client.get("/favicon.ico")
+
+    assert light.status_code == 200
+    assert light.headers["content-type"].startswith("image/png")
+    assert dark.status_code == 200
+    assert dark.headers["content-type"].startswith("image/jpeg")
+    assert css.status_code == 200
+    assert css.headers["content-type"].startswith("text/css")
+    assert '[data-copy-state="copied"]::before' in css.text
+    assert theme_init_js.status_code == 200
+    assert theme_init_js.headers["content-type"].startswith("text/javascript")
+    assert page_js.status_code == 200
+    assert page_js.headers["content-type"].startswith("text/javascript")
+    assert 'button.dataset.copyState = "copied"' in page_js.text
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"].startswith("image/png")
 
 
 def test_beta_portal_uses_secure_session_cookie_for_https_deployments(monkeypatch) -> None:

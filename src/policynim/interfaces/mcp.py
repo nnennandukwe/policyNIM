@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import html
 import json
 import logging
 import secrets
@@ -13,12 +12,15 @@ import sys
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
+from functools import lru_cache
+from pathlib import Path
 
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.datastructures import Headers
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
@@ -45,19 +47,24 @@ SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 _STREAMABLE_HTTP_PATH = "/mcp"
 _HEALTH_PATH = "/healthz"
 _BETA_PATH = "/beta"
+_FAVICON_PATH = "/favicon.ico"
 _AUTH_GITHUB_START_PATH = "/auth/github/start"
 _AUTH_GITHUB_CALLBACK_PATH = "/auth/github/callback"
 _BETA_API_KEY_REGENERATE_PATH = "/beta/api-key/regenerate"
 _BETA_LOGOUT_PATH = "/beta/logout"
+_BETA_ASSET_PATH = "/beta/assets"
+_BETA_LIGHT_LOGO_FILENAME = "policynim_lightmode.png"
+_BETA_DARK_LOGO_FILENAME = "policynim_darkmode.jpg"
+_BETA_CSS_FILENAME = "beta.css"
+_BETA_THEME_INIT_JS_FILENAME = "beta-theme-init.js"
+_BETA_PAGE_JS_FILENAME = "beta-page.js"
+_BETA_LIGHT_LOGO_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_LIGHT_LOGO_FILENAME}"
+_BETA_DARK_LOGO_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_DARK_LOGO_FILENAME}"
+_BETA_CSS_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_CSS_FILENAME}"
+_BETA_THEME_INIT_JS_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_THEME_INIT_JS_FILENAME}"
+_BETA_PAGE_JS_ROUTE = f"{_BETA_ASSET_PATH}/{_BETA_PAGE_JS_FILENAME}"
 _BETA_ACCOUNT_SESSION_KEY = "beta_account_id"
 _BETA_GITHUB_STATE_SESSION_KEY = "beta_github_oauth_state"
-_LANDING_BODY_STYLE = (
-    "font-family:Georgia,serif;max-width:760px;margin:40px auto;padding:0 16px;line-height:1.5;"
-)
-_DASHBOARD_BODY_STYLE = (
-    "font-family:Georgia,serif;max-width:880px;margin:40px auto;padding:0 16px;line-height:1.5;"
-)
-_PRE_STYLE = "padding:12px;background:#f5f5f4;border:1px solid #d6d3d1;white-space:pre-wrap;"
 LOGGER = logging.getLogger(__name__)
 _HOSTED_LOGGER_NAME = "policynim.hosted"
 _HOSTED_AUTH_RESULT: ContextVar[str] = ContextVar(
@@ -347,13 +354,38 @@ def _register_beta_routes(
         )
         if limiter.allow(f"{request.url.path}:{client_ip}"):
             return None
-        return HTMLResponse(
-            (
+        return _render_beta_landing(
+            settings,
+            message=(
                 "Too many beta authentication attempts from this IP. "
                 "Retry after the rate-limit window."
             ),
             status_code=429,
         )
+
+    @server.custom_route(_BETA_LIGHT_LOGO_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_light_logo(_: Request) -> Response:
+        return _render_beta_asset(_BETA_LIGHT_LOGO_FILENAME, media_type="image/png")
+
+    @server.custom_route(_BETA_DARK_LOGO_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_dark_logo(_: Request) -> Response:
+        return _render_beta_asset(_BETA_DARK_LOGO_FILENAME, media_type="image/jpeg")
+
+    @server.custom_route(_BETA_CSS_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_css(_: Request) -> Response:
+        return _render_beta_asset(_BETA_CSS_FILENAME, media_type="text/css")
+
+    @server.custom_route(_BETA_THEME_INIT_JS_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_theme_init_js(_: Request) -> Response:
+        return _render_beta_asset(_BETA_THEME_INIT_JS_FILENAME, media_type="text/javascript")
+
+    @server.custom_route(_BETA_PAGE_JS_ROUTE, methods=["GET"], include_in_schema=False)
+    async def beta_page_js(_: Request) -> Response:
+        return _render_beta_asset(_BETA_PAGE_JS_FILENAME, media_type="text/javascript")
+
+    @server.custom_route(_FAVICON_PATH, methods=["GET"], include_in_schema=False)
+    async def favicon(_: Request) -> Response:
+        return _render_beta_asset(_BETA_LIGHT_LOGO_FILENAME, media_type="image/png")
 
     @server.custom_route(_BETA_PATH, methods=["GET"], include_in_schema=False)
     async def beta_dashboard(request: Request) -> Response:
@@ -393,13 +425,15 @@ def _register_beta_routes(
             return _render_beta_landing(
                 settings,
                 message=f"GitHub sign-in failed: {error}. Retry the sign-in flow.",
+                status_code=400,
             )
 
         expected_state = request.session.pop(_BETA_GITHUB_STATE_SESSION_KEY, None)
         returned_state = str(request.query_params.get("state") or "").strip()
         if not expected_state or not returned_state or returned_state != expected_state:
-            return HTMLResponse(
-                (
+            return _render_beta_landing(
+                settings,
+                message=(
                     "GitHub sign-in failed because the OAuth state was missing or invalid. "
                     "Start the sign-in flow again from /beta."
                 ),
@@ -410,11 +444,12 @@ def _register_beta_routes(
         try:
             account = beta_auth_service.complete_github_oauth(code=code)
         except (PolicyNIMError, ProviderError) as exc:
-            return HTMLResponse(str(exc), status_code=502)
+            return _render_beta_landing(settings, message=str(exc), status_code=502)
         except Exception:
             LOGGER.exception("Unexpected hosted beta OAuth callback failure.")
-            return HTMLResponse(
-                (
+            return _render_beta_landing(
+                settings,
+                message=(
                     "GitHub sign-in failed due to an unexpected upstream error. "
                     "Retry the sign-in flow."
                 ),
@@ -442,6 +477,7 @@ def _register_beta_routes(
                 account=account,
                 usage=usage,
                 message=str(exc),
+                message_tone="error",
             )
         return _render_beta_dashboard(
             settings,
@@ -449,6 +485,7 @@ def _register_beta_routes(
             usage=issued_key.usage,
             new_api_key=issued_key.api_key,
             message="API key generated. Export `POLICYNIM_TOKEN` before connecting your client.",
+            message_tone="success",
         )
 
     @server.custom_route(_BETA_LOGOUT_PATH, methods=["POST"], include_in_schema=False)
@@ -504,36 +541,149 @@ def _derive_beta_url(settings: Settings) -> str | None:
     return str(settings.mcp_public_base_url).rstrip("/") + _BETA_PATH
 
 
-def _render_beta_landing(settings: Settings, *, message: str | None = None) -> HTMLResponse:
+def _beta_asset_path(filename: str) -> Path:
+    return Path(__file__).resolve().parent.parent / "assets" / "beta" / filename
+
+
+def _beta_template_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "templates"
+
+
+@lru_cache(maxsize=1)
+def _beta_template_environment() -> Environment:
+    return Environment(
+        loader=FileSystemLoader(str(_beta_template_root())),
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "j2"),
+            default=True,
+            default_for_string=True,
+        ),
+    )
+
+
+def _render_beta_asset(filename: str, *, media_type: str) -> Response:
+    asset_path = _beta_asset_path(filename)
+    if not asset_path.is_file():
+        return Response("Missing beta asset.", status_code=404)
+    return FileResponse(
+        asset_path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+def _beta_notice_context(*, title: str, message: str, tone: str) -> dict[str, str]:
+    return {
+        "title": title,
+        "message": message,
+        "tone": tone,
+    }
+
+
+def _beta_command_card_context(
+    *,
+    title: str,
+    description: str,
+    command: str,
+    button_label: str = "Copy command",
+) -> dict[str, str]:
+    return {
+        "title": title,
+        "description": description,
+        "command": command,
+        "button_label": button_label,
+    }
+
+
+def _beta_page_context(*, page_class: str) -> dict[str, str]:
+    return {
+        "document_title": "PolicyNIM Hosted Beta",
+        "page_class": page_class,
+        "favicon_url": _BETA_LIGHT_LOGO_ROUTE,
+        "beta_css_url": _BETA_CSS_ROUTE,
+        "beta_theme_init_js_url": _BETA_THEME_INIT_JS_ROUTE,
+        "beta_page_js_url": _BETA_PAGE_JS_ROUTE,
+        "light_logo_url": _BETA_LIGHT_LOGO_ROUTE,
+        "dark_logo_url": _BETA_DARK_LOGO_ROUTE,
+    }
+
+
+def _render_beta_template(
+    *,
+    template_name: str,
+    context: dict[str, object],
+    status_code: int = 200,
+) -> HTMLResponse:
+    template = _beta_template_environment().get_template(template_name)
+    return HTMLResponse(template.render(**context), status_code=status_code)
+
+
+def _beta_usage_percent(usage: BetaUsageSnapshot) -> int:
+    return max(0, min(100, round((usage.request_count / usage.quota) * 100)))
+
+
+def _render_beta_landing(
+    settings: Settings,
+    *,
+    message: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
     portal_url = _derive_beta_url(settings) or _BETA_PATH
     mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
-    intro_text = (
-        "Sign in with GitHub to generate a hosted MCP API key for "
-        f"<code>{html.escape(mcp_url)}</code>."
-    )
-    message_html = ""
+    notices: list[dict[str, str]] = []
     if message:
-        message_html = (
-            f'<p style="padding:12px;border:1px solid #b91c1c;background:#fef2f2;">'
-            f"{html.escape(message)}</p>"
+        notices.append(
+            _beta_notice_context(
+                title="Attention required",
+                message=message,
+                tone="error",
+            )
         )
-    body = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>PolicyNIM Hosted Beta</title>
-  </head>
-  <body style="{_LANDING_BODY_STYLE}">
-    <h1>PolicyNIM Hosted Beta</h1>
-    <p>{intro_text}</p>
-    {message_html}
-    <p><a href="{_AUTH_GITHUB_START_PATH}">Continue with GitHub</a></p>
-    <p>After sign-in, the portal will generate ready-to-run Codex and Claude setup commands.</p>
-    <p><a href="{html.escape(portal_url)}">{html.escape(portal_url)}</a></p>
-  </body>
-</html>
-"""
-    return HTMLResponse(body)
+    context: dict[str, object] = _beta_page_context(page_class="beta-page--landing")
+    context.update(
+        {
+            "portal_url": portal_url,
+            "mcp_url": mcp_url,
+            "github_start_path": _AUTH_GITHUB_START_PATH,
+            "notices": notices,
+            "steps": [
+                {
+                    "index": 1,
+                    "card_class": "beta-card beta-card--emphasis",
+                    "title": "Authenticate with GitHub",
+                    "description": (
+                        "Start the hosted beta session from the GitHub OAuth flow. PolicyNIM "
+                        "stores the portal session and keeps the MCP endpoint locked behind "
+                        "bearer auth."
+                    ),
+                },
+                {
+                    "index": 2,
+                    "card_class": "beta-card",
+                    "title": "Issue or rotate your API key",
+                    "description": (
+                        "The dashboard reveals the full secret once, along with the current key "
+                        "prefix and the latest issuance timestamp for quick recovery."
+                    ),
+                },
+                {
+                    "index": 3,
+                    "card_class": "beta-card",
+                    "title": "Paste the generated client commands",
+                    "description": (
+                        "Once signed in, the portal shows ready-to-run commands for both Codex "
+                        "and Claude Code so the hosted MCP route is connected without any manual "
+                        "command assembly."
+                    ),
+                },
+            ],
+        }
+    )
+    return _render_beta_template(
+        template_name="beta/landing.html.j2",
+        context=context,
+        status_code=status_code,
+    )
 
 
 def _render_beta_dashboard(
@@ -543,39 +693,17 @@ def _render_beta_dashboard(
     usage: BetaUsageSnapshot,
     new_api_key: str | None = None,
     message: str | None = None,
+    message_tone: str = "warning",
 ) -> HTMLResponse:
+    portal_url = _derive_beta_url(settings) or _BETA_PATH
     mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
-    status_html = (
-        '<p style="padding:12px;border:1px solid #b91c1c;background:#fef2f2;">'
-        "This account is suspended. Existing API keys will be rejected until the "
-        "account is resumed."
-        "</p>"
-        if account.status != "active"
-        else ""
-    )
-    message_html = ""
-    if message:
-        message_html = (
-            f'<p style="padding:12px;border:1px solid #0f766e;background:#f0fdfa;">'
-            f"{html.escape(message)}</p>"
-        )
-    new_key_html = ""
-    if new_api_key is not None:
-        new_key_intro = (
-            "This secret is shown only once. Set <code>POLICYNIM_TOKEN</code> "
-            "before connecting your client."
-        )
-        new_key_html = f"""
-    <section>
-      <h2>New API Key</h2>
-      <p>{new_key_intro}</p>
-      <pre style="{_PRE_STYLE}">export POLICYNIM_TOKEN={html.escape(new_api_key)}</pre>
-    </section>
-"""
     current_key = account.api_key_prefix or "No active key"
     current_key_created = (
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
     )
+    usage_text = f"{usage.request_count} / {usage.quota} requests, {usage.remaining} remaining."
+    usage_percent = _beta_usage_percent(usage)
+    status_class = f"beta-status-pill beta-status-pill--{account.status}"
     codex_command = (
         f"codex mcp add policynim --url {mcp_url} --bearer-token-env-var POLICYNIM_TOKEN"
     )
@@ -583,48 +711,77 @@ def _render_beta_dashboard(
         "claude mcp add --transport http policynim "
         f'{mcp_url} --header "Authorization: Bearer $POLICYNIM_TOKEN"'
     )
-    usage_text = f"{usage.request_count} / {usage.quota} requests, {usage.remaining} remaining."
-    body = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>PolicyNIM Hosted Beta</title>
-  </head>
-  <body style="{_DASHBOARD_BODY_STYLE}">
-    <h1>PolicyNIM Hosted Beta</h1>
-    {status_html}
-    {message_html}
-    <section>
-      <h2>Account</h2>
-      <p><strong>GitHub:</strong> {html.escape(account.github_login)}</p>
-      <p><strong>Email:</strong> {html.escape(account.email or "Not available")}</p>
-      <p><strong>Status:</strong> {html.escape(account.status)}</p>
-      <p><strong>Active key prefix:</strong> {html.escape(current_key)}</p>
-      <p><strong>Key created at:</strong> {html.escape(current_key_created)}</p>
-      <p><strong>UTC-day usage:</strong> {usage_text}</p>
-    </section>
-    {new_key_html}
-    <section>
-      <h2>API Key</h2>
-      <form method="post" action="{_BETA_API_KEY_REGENERATE_PATH}">
-        <button type="submit">Generate or Rotate API Key</button>
-      </form>
-      <form method="post" action="{_BETA_LOGOUT_PATH}" style="margin-top:12px;">
-        <button type="submit">Sign Out</button>
-      </form>
-    </section>
-    <section>
-      <h2>Connect Codex</h2>
-      <pre style="{_PRE_STYLE}">{html.escape(codex_command)}</pre>
-    </section>
-    <section>
-      <h2>Connect Claude Code</h2>
-      <pre style="{_PRE_STYLE}">{html.escape(claude_command)}</pre>
-    </section>
-  </body>
-</html>
-"""
-    return HTMLResponse(body)
+
+    notices: list[dict[str, str]] = []
+    if account.status != "active":
+        notices.append(
+            _beta_notice_context(
+                title="Account suspended",
+                message=("Existing API keys will be rejected until the account is resumed."),
+                tone="warning",
+            )
+        )
+    if message:
+        notice_title = "Portal update" if message_tone == "success" else "Action required"
+        notices.append(
+            _beta_notice_context(
+                title=notice_title,
+                message=message,
+                tone=message_tone,
+            )
+        )
+    new_key_context: dict[str, str] | None = None
+    if new_api_key is not None:
+        export_command = f"export POLICYNIM_TOKEN={new_api_key}"
+        new_key_context = {
+            "button_label": "Copy export",
+            "export_command": export_command,
+        }
+
+    context: dict[str, object] = _beta_page_context(page_class="beta-page--dashboard")
+    context.update(
+        {
+            "portal_url": portal_url,
+            "mcp_url": mcp_url,
+            "status_class": status_class,
+            "status_title": account.status.title(),
+            "account": {
+                "github_login": account.github_login,
+                "email": account.email or "Not available",
+                "status": account.status,
+                "current_key": current_key,
+                "current_key_created": current_key_created,
+            },
+            "usage": {
+                "text": usage_text,
+                "percent": usage_percent,
+                "usage_date": usage.usage_date.isoformat(),
+            },
+            "api_key_regenerate_path": _BETA_API_KEY_REGENERATE_PATH,
+            "logout_path": _BETA_LOGOUT_PATH,
+            "notices": notices,
+            "new_key": new_key_context,
+            "commands": [
+                _beta_command_card_context(
+                    title="Connect Codex",
+                    description=(
+                        "Add the hosted PolicyNIM MCP endpoint to Codex using the generated "
+                        "bearer token environment variable."
+                    ),
+                    command=codex_command,
+                ),
+                _beta_command_card_context(
+                    title="Connect Claude Code",
+                    description=(
+                        "Register the same hosted MCP endpoint in Claude Code and pass the "
+                        "bearer token through the Authorization header."
+                    ),
+                    command=claude_command,
+                ),
+            ],
+        }
+    )
+    return _render_beta_template(template_name="beta/dashboard.html.j2", context=context)
 
 
 def _client_address(request: Request, *, trust_forwarded_headers: bool = False) -> str:
