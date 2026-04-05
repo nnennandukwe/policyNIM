@@ -91,7 +91,6 @@ class RuntimeDecisionService:
             artifact,
             artifact_path=self._runtime_rules_artifact_path,
         )
-        indexed_chunks = _load_indexed_chunk_spans(self._index_store)
         normalized_request = _normalize_runtime_action(request)
         matched_rules = [
             rule
@@ -100,6 +99,7 @@ class RuntimeDecisionService:
             and _rule_matches(rule, normalized_request=normalized_request)
         ]
         if not matched_rules:
+            _ensure_index_ready(self._index_store)
             return RuntimeDecisionResult(
                 request=request,
                 decision="allow",
@@ -107,6 +107,7 @@ class RuntimeDecisionService:
                 matched_rules=[],
                 citations=[],
             )
+        indexed_chunks = _load_indexed_chunk_spans(self._index_store)
 
         return RuntimeDecisionResult(
             request=request,
@@ -237,7 +238,7 @@ def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRunti
 
 def _normalize_file_write_path(request: FileWriteActionRequest) -> str:
     """Return the deterministic POSIX path used for file-write matching."""
-    resolved_cwd = request.cwd.resolve(strict=False)
+    resolved_cwd = _resolve_from_base(request.cwd, base=Path.cwd())
     resolved_target = _resolve_from_base(request.path, base=resolved_cwd)
     if request.repo_root is not None:
         resolved_repo_root = _resolve_from_base(request.repo_root, base=resolved_cwd)

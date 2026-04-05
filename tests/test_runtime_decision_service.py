@@ -36,6 +36,7 @@ class MockIndexStore:
     def __init__(self, chunks: list[PolicyChunk], *, exists: bool = True) -> None:
         self._chunks = list(chunks)
         self._exists = exists
+        self.list_chunks_calls = 0
 
     def exists(self) -> bool:
         return self._exists
@@ -44,6 +45,7 @@ class MockIndexStore:
         return len(self._chunks) if self._exists else 0
 
     def list_chunks(self) -> list[PolicyChunk]:
+        self.list_chunks_calls += 1
         return list(self._chunks)
 
     def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
@@ -60,6 +62,7 @@ class MockIndexStore:
 
 
 def test_runtime_decision_service_returns_allow_for_unmatched_shell_command(tmp_path: Path) -> None:
+    index_store = MockIndexStore([make_chunk(lines="bad-span")])
     artifact_path = write_runtime_rules_artifact(
         tmp_path / "runtime_rules.json",
         rules=[
@@ -72,7 +75,7 @@ def test_runtime_decision_service_returns_allow_for_unmatched_shell_command(tmp_
         ],
     )
     service = RuntimeDecisionService(
-        index_store=MockIndexStore([make_chunk()]),
+        index_store=index_store,
         runtime_rules_artifact_path=artifact_path,
     )
 
@@ -89,6 +92,7 @@ def test_runtime_decision_service_returns_allow_for_unmatched_shell_command(tmp_
     assert result.summary == "No runtime policy rules matched this action."
     assert result.matched_rules == []
     assert result.citations == []
+    assert index_store.list_chunks_calls == 0
 
 
 def test_runtime_decision_service_matches_shell_command_rule_and_links_citations(
@@ -428,7 +432,17 @@ def test_runtime_decision_service_requires_non_empty_index(tmp_path: Path) -> No
 
 
 def test_runtime_decision_service_rejects_malformed_chunk_line_spans(tmp_path: Path) -> None:
-    artifact_path = write_runtime_rules_artifact(tmp_path / "runtime_rules.json", rules=[])
+    artifact_path = write_runtime_rules_artifact(
+        tmp_path / "runtime_rules.json",
+        rules=[
+            make_rule(
+                action="shell_command",
+                effect="confirm",
+                reason="Review deploy commands.",
+                command_regexes=["^deploy:"],
+            )
+        ],
+    )
     service = RuntimeDecisionService(
         index_store=MockIndexStore([make_chunk(lines="bad-span")]),
         runtime_rules_artifact_path=artifact_path,
@@ -438,9 +452,9 @@ def test_runtime_decision_service_rejects_malformed_chunk_line_spans(tmp_path: P
         service.decide(
             ShellCommandActionRequest(
                 kind="shell_command",
-                task="Run tests.",
+                task="Deploy staging stack.",
                 cwd=tmp_path,
-                command=["make", "test"],
+                command=["deploy:staging"],
             )
         )
 
