@@ -170,7 +170,8 @@ Important evaluation rules:
 - `PreflightService` handles retrieval, grounded synthesis, and citation
   validation.
 - `RuntimeDecisionService` compiles and matches runtime rules against the local
-  index, then links the matched rules back to indexed evidence.
+  index by loading the compiled runtime rules artifact, matching actions
+  against it, and linking the matched rules back to indexed evidence.
 - `RuntimeExecutionService` enforces runtime decisions, optionally executes the
   sanitized action, and persists immutable evidence events.
 - `EvalService` handles gold-case execution, scoring, comparison, and report

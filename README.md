@@ -85,7 +85,10 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 
 ### Operator CLI
 
-- `policynim beta-admin list-accounts|suspend|resume|revoke-key`
+- `policynim beta-admin list-accounts`
+- `policynim beta-admin suspend --github-login <login>`
+- `policynim beta-admin resume --github-login <login>`
+- `policynim beta-admin revoke-key --github-login <login>`
 
 ### Hosted HTTP
 
