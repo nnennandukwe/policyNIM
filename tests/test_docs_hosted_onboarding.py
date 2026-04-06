@@ -6,6 +6,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "README.md"
+DOCS_INDEX = REPO_ROOT / "docs" / "index.md"
+CONTRIBUTOR_GUIDE = REPO_ROOT / "docs" / "contributor-guide.md"
+WORKFLOWS_GUIDE = REPO_ROOT / "docs" / "workflows.md"
+HOSTED_OPERATIONS = REPO_ROOT / "docs" / "hosted-beta-operations.md"
 CODEX_README = REPO_ROOT / "examples" / "codex" / "README.md"
 CLAUDE_README = REPO_ROOT / "examples" / "claude-code" / "README.md"
 TESTS_README = REPO_ROOT / "tests" / "README.md"
@@ -43,6 +47,29 @@ def test_readme_uses_hosted_first_commands() -> None:
     _assert_contains_command(hosted_section, CLAUDE_HOSTED_COMMAND)
 
 
+def test_readme_links_to_split_docs_structure() -> None:
+    text = _read_text(README)
+
+    for relative_path in (
+        "docs/index.md",
+        "docs/contributor-guide.md",
+        "docs/workflows.md",
+        "docs/hosted-beta-operations.md",
+    ):
+        assert relative_path in text
+
+
+def test_docs_index_points_to_the_split_guides() -> None:
+    text = _read_text(DOCS_INDEX)
+
+    for relative_path in (
+        "contributor-guide.md",
+        "workflows.md",
+        "hosted-beta-operations.md",
+    ):
+        assert relative_path in text
+
+
 def test_codex_example_is_hosted_first() -> None:
     text = _read_text(CODEX_README)
     local_fallback_heading = "## Local Fallback"
@@ -69,8 +96,8 @@ def test_claude_example_is_hosted_first() -> None:
     )
 
 
-def test_readme_covers_required_recovery_topics() -> None:
-    text = _read_text(README).lower()
+def test_hosted_operations_doc_covers_required_recovery_topics() -> None:
+    text = _read_text(HOSTED_OPERATIONS).lower()
 
     for topic in (
         "invalid token",
@@ -79,6 +106,13 @@ def test_readme_covers_required_recovery_topics() -> None:
         "service unavailable",
     ):
         assert topic in text
+
+
+def test_readme_links_to_contributor_and_workflow_guides() -> None:
+    text = _read_text(README)
+
+    assert CONTRIBUTOR_GUIDE.name in text
+    assert WORKFLOWS_GUIDE.name in text
 
 
 def test_tests_readme_distinguishes_client_and_smoke_env_vars() -> None:
