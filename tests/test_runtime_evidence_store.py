@@ -91,6 +91,35 @@ def test_runtime_evidence_store_lists_session_events_in_created_order(tmp_path: 
     assert events[1].result_metadata == ShellCommandExecutionMetadata(exit_code=0, duration_ms=12.5)
 
 
+def test_runtime_evidence_store_preserves_append_order_for_out_of_order_timestamps(
+    tmp_path: Path,
+) -> None:
+    store = RuntimeEvidenceStore(path=tmp_path / "runtime_evidence.sqlite3")
+    first_created_at = datetime(2026, 4, 5, 12, 5, tzinfo=UTC)
+    second_created_at = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+
+    store.append_event(
+        make_record(
+            event_id="event-1",
+            execution_id="exec-1",
+            created_at=first_created_at,
+            event_kind="decision",
+        )
+    )
+    store.append_event(
+        make_record(
+            event_id="event-2",
+            execution_id="exec-1",
+            created_at=second_created_at,
+            event_kind="allowed",
+        )
+    )
+
+    events = store.list_session_events("session-1")
+
+    assert [event.event_id for event in events] == ["event-1", "event-2"]
+
+
 def test_runtime_evidence_store_reset_for_tests_clears_existing_state(tmp_path: Path) -> None:
     store = RuntimeEvidenceStore(path=tmp_path / "runtime_evidence.sqlite3")
     store.append_event(make_record(event_id="event-1", execution_id="exec-1"))
@@ -132,4 +161,4 @@ def test_runtime_evidence_store_handles_concurrent_appends(tmp_path: Path) -> No
     events = store.list_session_events("session-1")
 
     assert len(events) == 20
-    assert [event.event_id for event in events] == [f"event-{index}" for index in range(20)]
+    assert {event.event_id for event in events} == {f"event-{index}" for index in range(20)}

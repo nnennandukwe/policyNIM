@@ -129,7 +129,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
                     residual_uncertainty
                 FROM runtime_execution_events
                 WHERE session_id = ?
-                ORDER BY created_at ASC, rowid ASC
+                ORDER BY rowid ASC
                 """,
                 (session_id,),
             ).fetchall()
