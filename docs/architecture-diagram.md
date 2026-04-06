@@ -27,6 +27,8 @@ flowchart LR
         IngestSvc["IngestService"]
         SearchSvc["SearchService"]
         PreflightSvc["PreflightService"]
+        RuntimeDecisionSvc["RuntimeDecisionService"]
+        RuntimeExecSvc["RuntimeExecutionService"]
         EvalSvc["EvalService"]
         DumpSvc["IndexDumpService"]
         HealthSvc["RuntimeHealthService"]
@@ -37,6 +39,7 @@ flowchart LR
         IngestPkg["ingest/<br/>loader, parser, chunking"]
         NvidiaAdapter["providers/nvidia.py"]
         LanceStore["storage/lancedb.py"]
+        RuntimeEvidenceStore["storage/runtime_evidence.py"]
     end
 
     subgraph Shared["Shared Core"]
@@ -50,6 +53,8 @@ flowchart LR
         direction TB
         Policies["policies/ corpus"]
         EvalSuite["evals/ suite"]
+        RuntimeRules["runtime_rules.json"]
+        RuntimeEvidenceDB["runtime_evidence.sqlite3"]
         Artifacts["data/ artifacts"]
         UI["Evidently UI"]
     end
@@ -72,10 +77,15 @@ flowchart LR
 
     Policies --> IngestPkg --> IngestSvc
     EvalSuite --> EvalSvc
+    IngestSvc --> RuntimeRules
+    RuntimeDecisionSvc --> RuntimeRules
 
     IngestSvc --> NvidiaAdapter
     SearchSvc --> NvidiaAdapter
     PreflightSvc --> NvidiaAdapter
+    RuntimeDecisionSvc --> LanceStore
+    RuntimeExecSvc --> RuntimeDecisionSvc
+    RuntimeExecSvc --> RuntimeEvidenceStore
     IngestSvc --> LanceStore
     SearchSvc --> LanceStore
     PreflightSvc --> LanceStore
@@ -87,6 +97,7 @@ flowchart LR
     EvalSvc --> PreflightSvc
     EvalSvc --> Artifacts
     EvalSvc --> UI
+    RuntimeExecSvc --> RuntimeEvidenceDB
 
     NvidiaAdapter --> Embed
     NvidiaAdapter --> Rerank
@@ -95,22 +106,28 @@ flowchart LR
     IngestSvc -. typed requests and results .-> Types
     SearchSvc -. typed requests and results .-> Types
     PreflightSvc -. typed requests and results .-> Types
+    RuntimeDecisionSvc -. typed requests and results .-> Types
+    RuntimeExecSvc -. typed requests and results .-> Types
     EvalSvc -. typed requests and results .-> Types
     HealthSvc -. typed requests and results .-> Types
     IngestSvc -. validated settings .-> Settings
     SearchSvc -. validated settings .-> Settings
     PreflightSvc -. validated settings .-> Settings
+    RuntimeDecisionSvc -. validated settings .-> Settings
+    RuntimeExecSvc -. validated settings .-> Settings
     EvalSvc -. validated settings .-> Settings
     HealthSvc -. validated settings .-> Settings
     IngestSvc -. contracts .-> Contracts
     SearchSvc -. contracts .-> Contracts
     PreflightSvc -. contracts .-> Contracts
+    RuntimeDecisionSvc -. contracts .-> Contracts
+    RuntimeExecSvc -. contracts .-> Contracts
 
     class CLI,MCP iface
-    class IngestSvc,SearchSvc,PreflightSvc,EvalSvc,DumpSvc,HealthSvc service
-    class IngestPkg,NvidiaAdapter,LanceStore adapter
+    class IngestSvc,SearchSvc,PreflightSvc,RuntimeDecisionSvc,RuntimeExecSvc,EvalSvc,DumpSvc,HealthSvc service
+    class IngestPkg,NvidiaAdapter,LanceStore,RuntimeEvidenceStore adapter
     class Settings,Types,Contracts shared
-    class Policies,EvalSuite local
+    class Policies,EvalSuite,RuntimeRules,RuntimeEvidenceDB local
     class Embed,Rerank,Ground nvidia
     class Artifacts,UI artifact
 ```
@@ -156,6 +173,15 @@ flowchart TB
         Enough -- no --> Insufficient["insufficient_context=true"]
     end
 
+    subgraph Runtime["Runtime Decisions"]
+        direction LR
+        Action["Runtime action request"] --> LoadRules["Load runtime rules artifact"]
+        LoadRules --> MatchRules["Match local policy rules"]
+        MatchRules --> Decision["Allow / confirm / block"]
+        Decision --> Execute["Optionally execute sanitized action"]
+        Execute --> Persist["Append SQLite evidence"]
+    end
+
     subgraph Hosted["Hosted HTTP Readiness"]
         direction LR
         HealthRoute["GET /healthz"] --> HealthRuntime["RuntimeHealthService"]
@@ -172,6 +198,9 @@ flowchart TB
 
     Index -. vector lookup .-> DenseSearch
     Index -. vector lookup .-> DensePreflight
+    RuntimeRules -. compiled rules .-> LoadRules
+    Index -. indexed evidence .-> MatchRules
+    RuntimeEvidenceDB -. persisted evidence .-> Persist
 
     EmbedDocs --> Embeddings["NVIDIA embeddings"]
     EmbedQuery --> Embeddings
@@ -183,6 +212,8 @@ flowchart TB
     class Policies,Query,Task,EvalSuite input
     class Parse,Chunk,EmbedDocs,EmbedQuery,DenseSearch,DomainFilter,SearchRerank,EmbedTask,DensePreflight,PreflightRerank,Retain,Generate,Validate,EvalRun,Compare,Reports step
     class Index store
+    class Action input
+    class LoadRules,MatchRules,Decision,Execute,Persist step
     class Embeddings,RerankAPI,GroundAPI nvidia
     class Enough decision
     class HealthRoute input

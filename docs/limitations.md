@@ -12,6 +12,8 @@ constraints, not setup mistakes.
   state under `data/`.
 - There is no built-in shared index service, remote storage layer, or multi-user
   coordination model.
+- Runtime decisions and execution evidence also stay local under `data/runtime/`;
+  there is no shared runtime-audit service or remote evidence store yet.
 - The hosted beta still uses a baked local index inside the container image; it
   does not use a shared volume or remote index service.
 

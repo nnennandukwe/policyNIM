@@ -42,9 +42,12 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
   [LanceDB quickstart](https://docs.lancedb.com/quickstart).
 - NVIDIA-hosted reranking for better retrieval ordering.
 - Grounded preflight synthesis with citation validation and fail-closed fallback.
+- Compiled runtime-rule decisions plus SQLite-backed evidence for allowed,
+  confirmed, blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `preflight`,
   `eval`, and `mcp`.
 - MCP tools for `policy_preflight` and `policy_search`.
+- Operator CLI commands for `beta-admin list-accounts|suspend|resume|revoke-key`.
 - Hosted HTTP `streamable-http` with a public `/healthz` readiness route, a
   self-serve `/beta` portal, and bearer auth on `/mcp`.
 - Offline-first evaluation with rerank on/off comparison and local Evidently UI.
@@ -79,6 +82,13 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
+
+### Operator CLI
+
+- `policynim beta-admin list-accounts`
+- `policynim beta-admin suspend --github-login <login>`
+- `policynim beta-admin resume --github-login <login>`
+- `policynim beta-admin revoke-key --github-login <login>`
 
 ### Hosted HTTP
 
@@ -221,6 +231,9 @@ Important runtime settings:
 - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET`
 - `POLICYNIM_BETA_DAILY_REQUEST_QUOTA`
 - `POLICYNIM_EVAL_UI_PORT`
+- `POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH`
+- `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH`
+- `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS`
 
 Model references used by the default example configs:
 
@@ -230,6 +243,20 @@ Model references used by the default example configs:
   [`nvidia/llama-nemotron-rerank-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-1b-v2-infer)
 - grounded generation:
   [NVIDIA LLM API reference](https://docs.api.nvidia.com/nim/reference/llm-apis)
+
+### Runtime Decisions And Evidence
+
+PolicyNIM also compiles `runtime_rules` frontmatter from the policy corpus into
+a deterministic runtime-rules artifact during ingest.
+
+That compiled artifact is what powers the runtime decision and execution
+services:
+
+- `POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH` points at the compiled rule snapshot.
+- `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH` points at the SQLite evidence store that
+  records decision and execution events.
+- `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS` sets the default shell timeout for
+  runtime execution.
 
 Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
 
