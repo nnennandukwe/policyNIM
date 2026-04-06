@@ -45,7 +45,7 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 - Compiled runtime-rule decisions plus SQLite-backed evidence for allowed,
   confirmed, blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `preflight`,
-  `eval`, and `mcp`.
+  `eval`, `mcp`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Operator CLI commands for `beta-admin list-accounts|suspend|resume|revoke-key`.
 - Hosted HTTP `streamable-http` with a public `/healthz` readiness route, a
@@ -77,6 +77,9 @@ PolicyNIM ships as a small Python-first repo with two public surfaces:
 - `policynim preflight --task "..."`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
+- `policynim runtime decide --input <path|->`
+- `policynim runtime execute --input <path|->`
+- `policynim evidence report --session-id <id>`
 
 ### MCP Tools
 
@@ -257,6 +260,36 @@ services:
   records decision and execution events.
 - `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS` sets the default shell timeout for
   runtime execution.
+
+The Day 4 runtime CLI flow is JSON-first and file- or stdin-driven:
+
+```bash
+# Decide without side effects.
+cat <<'JSON' | uv run policynim runtime decide --input -
+{
+  "kind": "shell_command",
+  "task": "Run the unit test suite.",
+  "cwd": "/abs/path/to/repo",
+  "command": ["make", "test"]
+}
+JSON
+
+# Execute with policy enforcement and durable evidence.
+uv run policynim runtime execute --input request.json
+
+# Summarize the stored evidence for one execution session.
+uv run policynim evidence report --session-id <session-id-from-runtime-execute>
+```
+
+Contract notes:
+
+- `runtime decide` and `runtime execute` accept the same `RuntimeActionRequest`
+  JSON schema.
+- `--input -` reads a single JSON object from stdin; otherwise `--input` must
+  be a UTF-8 JSON file path.
+- `runtime execute` prints the resolved `session_id` in its JSON result.
+- `evidence report` is summary-only: it aggregates one session from the SQLite
+  runtime evidence store rather than dumping raw rows.
 
 Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
 

@@ -5,11 +5,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
+import httpx
+
 from policynim.types import (
     EmbeddedChunk,
     GeneratedPreflightDraft,
     PolicyChunk,
     PreflightRequest,
+    RuntimeActionRequest,
+    RuntimeDecisionResult,
     RuntimeExecutionEvidenceRecord,
     ScoredChunk,
 )
@@ -80,6 +84,30 @@ class IndexStore(Protocol):
         domain: str | None = None,
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
+        ...
+
+
+class RuntimeDecisionServiceProtocol(Protocol):
+    """Minimal runtime decision service contract used by execution flows."""
+
+    def decide(self, request: RuntimeActionRequest) -> RuntimeDecisionResult:
+        """Return the runtime decision for one action request."""
+        ...
+
+    def close(self) -> None:
+        """Release owned resources."""
+        ...
+
+
+class HTTPRequestClientProtocol(Protocol):
+    """Minimal synchronous HTTP client contract used by runtime execution."""
+
+    def request(self, method: str, url: str) -> httpx.Response:
+        """Execute one HTTP request."""
+        ...
+
+    def close(self) -> None:
+        """Release owned resources."""
         ...
 
 

@@ -14,6 +14,10 @@ from policynim.services.runtime_decision import (
     RuntimeDecisionService,
     create_runtime_decision_service,
 )
+from policynim.services.runtime_evidence_report import (
+    RuntimeEvidenceReportService,
+    create_runtime_evidence_report_service,
+)
 from policynim.services.runtime_execution import (
     RuntimeExecutionService,
     create_runtime_execution_service,
@@ -27,12 +31,14 @@ __all__ = [
     "IngestService",
     "PreflightService",
     "RuntimeDecisionService",
+    "RuntimeEvidenceReportService",
     "RuntimeExecutionService",
     "RuntimeHealthService",
     "SearchService",
     "create_beta_auth_service",
     "create_eval_service",
     "create_runtime_decision_service",
+    "create_runtime_evidence_report_service",
     "create_runtime_execution_service",
     "create_runtime_health_service",
     "ensure_hosted_runtime_ready",

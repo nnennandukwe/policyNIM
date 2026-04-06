@@ -14,13 +14,14 @@ from uuid import uuid4
 
 import httpx
 
-from policynim.contracts import RuntimeEvidenceStoreProtocol
+from policynim.contracts import (
+    HTTPRequestClientProtocol,
+    RuntimeDecisionServiceProtocol,
+    RuntimeEvidenceStoreProtocol,
+)
 from policynim.errors import RuntimeEvidencePersistenceError
 from policynim.runtime_paths import resolve_runtime_path
-from policynim.services.runtime_decision import (
-    RuntimeDecisionService,
-    create_runtime_decision_service,
-)
+from policynim.services.runtime_decision import create_runtime_decision_service
 from policynim.settings import Settings, get_settings
 from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
@@ -62,10 +63,10 @@ class RuntimeExecutionService:
     def __init__(
         self,
         *,
-        decision_service: RuntimeDecisionService,
+        decision_service: RuntimeDecisionServiceProtocol,
         evidence_store: RuntimeEvidenceStoreProtocol,
         confirmer: Callable[[RuntimeDecisionResult], bool] | None = None,
-        http_client: httpx.Client | None = None,
+        http_client: HTTPRequestClientProtocol | None = None,
         shell_timeout_seconds: float = 300.0,
     ) -> None:
         self._decision_service = decision_service
@@ -269,7 +270,7 @@ def _run_confirmation(
 
 
 def _run_action(
-    http_client: httpx.Client,
+    http_client: HTTPRequestClientProtocol,
     request: RuntimeActionRequest,
     *,
     shell_timeout_seconds: float,
@@ -365,7 +366,7 @@ def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:
 
 
 def _run_http_request(
-    http_client: httpx.Client,
+    http_client: HTTPRequestClientProtocol,
     request: HTTPRequestActionRequest,
 ) -> _ActionExecutionResult:
     start = time.perf_counter()

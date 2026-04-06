@@ -7,7 +7,6 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -247,8 +246,14 @@ class BetaAuthService:
         except httpx.HTTPError as exc:
             raise ProviderError("GitHub account lookup failed.") from exc
 
+        raw_github_user_id = profile_payload.get("id")
+        if raw_github_user_id is None:
+            raise ProviderError("GitHub account lookup did not return a valid user id.")
+        if isinstance(raw_github_user_id, bool) or not isinstance(raw_github_user_id, int | str):
+            raise ProviderError("GitHub account lookup did not return a valid user id.")
+
         try:
-            github_user_id = int(profile_payload.get("id"))
+            github_user_id = int(raw_github_user_id)
         except (TypeError, ValueError) as exc:
             raise ProviderError("GitHub account lookup did not return a valid user id.") from exc
 
@@ -305,7 +310,7 @@ def _parse_json_mapping(
     response: httpx.Response,
     *,
     error_message: str,
-) -> Mapping[str, Any]:
+) -> Mapping[str, object]:
     try:
         payload = response.json()
     except ValueError as exc:

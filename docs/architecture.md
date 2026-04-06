@@ -174,6 +174,8 @@ Important evaluation rules:
   against it, and linking the matched rules back to indexed evidence.
 - `RuntimeExecutionService` enforces runtime decisions, optionally executes the
   sanitized action, and persists immutable evidence events.
+- `RuntimeEvidenceReportService` reads persisted runtime evidence rows and
+  returns a typed session summary for the CLI `evidence report` flow.
 - `EvalService` handles gold-case execution, scoring, comparison, and report
   persistence.
 - `IndexDumpService` handles terminal-friendly inspection of stored chunks.
@@ -215,6 +217,9 @@ Important evaluation rules:
 - `policynim preflight --task ...`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
+- `policynim runtime decide --input <path|->`
+- `policynim runtime execute --input <path|->`
+- `policynim evidence report --session-id <id>`
 - `policynim beta-admin list-accounts|suspend|resume|revoke-key`
 
 ### MCP Tools
@@ -244,6 +249,10 @@ Shared interface guarantees:
 - CLI `search` and MCP `policy_search` use the same `SearchResult` shape.
 - CLI `preflight` and MCP `policy_preflight` use the same `PreflightResult`
   shape.
+- CLI `runtime decide` and `runtime execute` use the same `RuntimeActionRequest`
+  input shape.
+- CLI `evidence report` returns a typed session summary over the SQLite runtime
+  evidence store.
 - top-k validation is shared and explicit.
 - runtime setup failures are not masked as insufficient context.
 - hosted HTTP auth applies only to `/mcp`, never to `stdio`.
@@ -277,6 +286,8 @@ PolicyNIM also compiles and enforces runtime policy rules locally:
    confirmation
 4. immutable runtime evidence events are appended to the local SQLite evidence
    store
+5. `RuntimeEvidenceReportService` summarizes one stored session for the CLI
+   reporting flow
 
 Runtime decisions are intentionally local-first. They depend on the same
 indexed policy corpus, but they do not call NVIDIA-hosted APIs directly.

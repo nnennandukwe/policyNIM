@@ -332,6 +332,56 @@ class RuntimeExecutionEvidenceRecord(StrictModel):
     residual_uncertainty: str | None = None
 
 
+class RuntimeEvidenceExecutionSummary(StrictModel):
+    """Compact summary for one execution inside a reported evidence session."""
+
+    execution_id: str = Field(min_length=1)
+    action_kind: RuntimeActionKind
+    task: str = Field(min_length=1)
+    decision: RuntimeDecision
+    summary: str = Field(min_length=1)
+    confirmation_outcome: RuntimeConfirmationOutcome
+    execution_outcome: RuntimeExecutionOutcome | None = None
+    failure_class: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    matched_rules: list[CompiledRuntimeRule] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_completion_range(self) -> Self:
+        """Prevent impossible summary completion timestamps."""
+        if self.completed_at is not None and self.completed_at < self.started_at:
+            raise ValueError("completed_at must be greater than or equal to started_at.")
+        return self
+
+
+class RuntimeEvidenceSessionSummary(StrictModel):
+    """Session-level summary returned by the evidence report command."""
+
+    session_id: str = Field(min_length=1)
+    started_at: datetime
+    completed_at: datetime | None = None
+    event_count: int = Field(ge=0)
+    execution_count: int = Field(ge=0)
+    allowed_count: int = Field(default=0, ge=0)
+    confirmed_count: int = Field(default=0, ge=0)
+    blocked_count: int = Field(default=0, ge=0)
+    refused_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    incomplete_count: int = Field(default=0, ge=0)
+    executions: list[RuntimeEvidenceExecutionSummary] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_summary_counts(self) -> Self:
+        """Keep aggregated counts aligned with the execution list."""
+        if self.execution_count != len(self.executions):
+            raise ValueError("execution_count must match the number of execution summaries.")
+        if self.completed_at is not None and self.completed_at < self.started_at:
+            raise ValueError("completed_at must be greater than or equal to started_at.")
+        return self
+
+
 class ParsedDocument(StrictModel):
     """Normalized source document returned by an ingest parser."""
 
