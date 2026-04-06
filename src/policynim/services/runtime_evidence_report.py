@@ -82,7 +82,7 @@ def _summarize_session_events(
 
     return RuntimeEvidenceSessionSummary(
         session_id=session_id,
-        started_at=execution_summaries[0].started_at,
+        started_at=min(summary.started_at for summary in execution_summaries),
         completed_at=session_completed_at,
         event_count=len(events),
         execution_count=len(execution_summaries),
@@ -100,25 +100,36 @@ def _summarize_execution_events(
     execution_events: list[RuntimeExecutionEvidenceRecord],
 ) -> RuntimeEvidenceExecutionSummary:
     first_event = execution_events[0]
-    last_event = execution_events[-1]
-    completed_at = None if last_event.event_kind == "decision" else last_event.created_at
+    started_at = min(event.created_at for event in execution_events)
+    terminal_event = _last_terminal_event(execution_events)
+    result_event = terminal_event or first_event
+    completed_at = None if terminal_event is None else terminal_event.created_at
 
-    matched_rules = last_event.matched_rules or first_event.matched_rules
-    citations = last_event.citations or first_event.citations
+    matched_rules = result_event.matched_rules or first_event.matched_rules
+    citations = result_event.citations or first_event.citations
     return RuntimeEvidenceExecutionSummary(
         execution_id=first_event.execution_id,
         action_kind=first_event.request.kind,
         task=first_event.request.task,
-        decision=last_event.decision,
-        summary=last_event.summary,
-        confirmation_outcome=last_event.confirmation_outcome,
-        execution_outcome=last_event.execution_outcome,
-        failure_class=last_event.failure_class,
-        started_at=first_event.created_at,
+        decision=result_event.decision,
+        summary=result_event.summary,
+        confirmation_outcome=result_event.confirmation_outcome,
+        execution_outcome=result_event.execution_outcome,
+        failure_class=result_event.failure_class,
+        started_at=started_at,
         completed_at=completed_at,
         matched_rules=list(matched_rules),
         citations=list(citations),
     )
+
+
+def _last_terminal_event(
+    execution_events: list[RuntimeExecutionEvidenceRecord],
+) -> RuntimeExecutionEvidenceRecord | None:
+    for event in reversed(execution_events):
+        if event.event_kind != "decision":
+            return event
+    return None
 
 
 def _count_execution_outcomes(

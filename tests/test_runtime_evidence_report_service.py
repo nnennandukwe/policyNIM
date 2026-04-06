@@ -183,6 +183,51 @@ def test_runtime_evidence_report_service_preserves_execution_order_and_outcome_c
     assert summary.completed_at == base_time + timedelta(seconds=4)
 
 
+def test_runtime_evidence_report_service_uses_timestamp_extrema_not_append_order(
+    tmp_path: Path,
+) -> None:
+    store = RuntimeEvidenceStore(path=tmp_path / "runtime_evidence.sqlite3")
+    later_time = datetime(2026, 4, 5, 12, 5, tzinfo=UTC)
+    earlier_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    session_earliest_time = datetime(2026, 4, 5, 11, 55, tzinfo=UTC)
+
+    store.append_event(
+        make_record(
+            event_id="event-1",
+            execution_id="exec-1",
+            created_at=later_time,
+            event_kind="decision",
+        )
+    )
+    store.append_event(
+        make_record(
+            event_id="event-2",
+            execution_id="exec-1",
+            created_at=earlier_time,
+            event_kind="allowed",
+        )
+    )
+    store.append_event(
+        make_record(
+            event_id="event-3",
+            execution_id="exec-2",
+            created_at=session_earliest_time,
+            event_kind="decision",
+        )
+    )
+
+    service = RuntimeEvidenceReportService(evidence_store=store)
+
+    summary = service.report_session("session-1")
+
+    assert summary.started_at == session_earliest_time
+    assert summary.incomplete_count == 1
+    assert summary.executions[0].execution_id == "exec-1"
+    assert summary.executions[0].started_at == earlier_time
+    assert summary.executions[0].completed_at == earlier_time
+    assert summary.executions[0].execution_outcome == "allowed"
+
+
 def test_runtime_evidence_report_service_keeps_latest_failure_metadata_and_completion_state(
     tmp_path: Path,
 ) -> None:
