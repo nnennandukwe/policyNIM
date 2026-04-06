@@ -5,10 +5,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
+    RuntimeEvidenceEventKind,
     RuntimeExecutionEvidenceRecord,
+    RuntimeExecutionOutcome,
     ShellCommandExecutionMetadata,
     ShellCommandExecutionRequest,
 )
@@ -20,9 +23,12 @@ def make_record(
     execution_id: str,
     session_id: str = "session-1",
     created_at: datetime | None = None,
-    event_kind: str = "allowed",
+    event_kind: RuntimeEvidenceEventKind = "allowed",
 ) -> RuntimeExecutionEvidenceRecord:
     timestamp = created_at or datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    execution_outcome: RuntimeExecutionOutcome | None = None
+    if event_kind != "decision":
+        execution_outcome = cast(RuntimeExecutionOutcome, event_kind)
     return RuntimeExecutionEvidenceRecord(
         event_id=event_id,
         execution_id=execution_id,
@@ -41,7 +47,7 @@ def make_record(
         matched_rules=[],
         citations=[],
         confirmation_outcome="not_required",
-        execution_outcome=None if event_kind == "decision" else "allowed",
+        execution_outcome=execution_outcome,
         result_metadata=(
             None
             if event_kind == "decision"

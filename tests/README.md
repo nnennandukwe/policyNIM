@@ -8,6 +8,7 @@ Current automated coverage includes:
 - Day 3 search orchestration with domain filters and missing-index handling
 - Day 2 runtime decision orchestration with compiled runtime rules and evidence-linked citations
 - Day 3 runtime execution orchestration with confirmation handling, redaction, and durable evidence persistence
+- Day 4 runtime evidence session-summary reporting over the SQLite evidence store
 - Runtime execution SQLite store schema, ordering, reopen, and concurrency behavior
 - Day 6 eval orchestration, rerank on/off comparison, and isolated live-eval index handling
 - Day 4 grounded preflight orchestration, citation validation, and fallback behavior
@@ -15,6 +16,7 @@ Current automated coverage includes:
 - NVIDIA response-validation coverage for malformed grounded-generation and reranking payloads
 - CLI output for `ingest`, JSON-first `search`, and JSON-first `preflight`
 - CLI output for `eval`
+- CLI output for `runtime decide`, `runtime execute`, and `evidence report`
 - CLI output for `beta-admin` hosted operator commands
 - MCP tool parity for `policy_preflight` and `policy_search`
 - MCP startup wiring for `stdio` and `streamable-http`

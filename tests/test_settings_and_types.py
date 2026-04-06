@@ -15,6 +15,8 @@ from policynim.types import (
     ParsedRuntimeRule,
     RuntimeActionRequest,
     RuntimeDecisionResult,
+    RuntimeEvidenceExecutionSummary,
+    RuntimeEvidenceSessionSummary,
     RuntimeExecutionEvidenceRecord,
     RuntimeExecutionResult,
     ShellCommandExecutionMetadata,
@@ -386,3 +388,63 @@ def test_runtime_execution_evidence_record_accepts_terminal_event_payload() -> N
         command=["make", "test"],
     )
     assert record.result_metadata == ShellCommandExecutionMetadata(exit_code=0, duration_ms=12.5)
+
+
+def test_runtime_evidence_execution_summary_accepts_nullable_terminal_fields() -> None:
+    summary = RuntimeEvidenceExecutionSummary.model_validate(
+        {
+            "execution_id": "exec-1",
+            "action_kind": "shell_command",
+            "task": "Run tests.",
+            "decision": "allow",
+            "summary": "No runtime policy rules matched this action.",
+            "confirmation_outcome": "not_required",
+            "execution_outcome": None,
+            "failure_class": None,
+            "started_at": "2026-04-05T12:00:00+00:00",
+            "completed_at": None,
+            "matched_rules": [],
+            "citations": [],
+        }
+    )
+
+    assert summary.execution_outcome is None
+    assert summary.completed_at is None
+
+
+def test_runtime_evidence_session_summary_accepts_aggregate_counts() -> None:
+    summary = RuntimeEvidenceSessionSummary.model_validate(
+        {
+            "session_id": "session-1",
+            "started_at": "2026-04-05T12:00:00+00:00",
+            "completed_at": "2026-04-05T12:00:10+00:00",
+            "event_count": 2,
+            "execution_count": 1,
+            "allowed_count": 1,
+            "confirmed_count": 0,
+            "blocked_count": 0,
+            "refused_count": 0,
+            "failed_count": 0,
+            "incomplete_count": 0,
+            "executions": [
+                {
+                    "execution_id": "exec-1",
+                    "action_kind": "shell_command",
+                    "task": "Run tests.",
+                    "decision": "allow",
+                    "summary": "No runtime policy rules matched this action.",
+                    "confirmation_outcome": "not_required",
+                    "execution_outcome": "allowed",
+                    "failure_class": None,
+                    "started_at": "2026-04-05T12:00:00+00:00",
+                    "completed_at": "2026-04-05T12:00:10+00:00",
+                    "matched_rules": [],
+                    "citations": [],
+                }
+            ],
+        }
+    )
+
+    assert summary.execution_count == 1
+    assert summary.allowed_count == 1
+    assert summary.executions[0].execution_outcome == "allowed"

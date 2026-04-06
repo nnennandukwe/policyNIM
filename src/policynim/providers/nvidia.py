@@ -136,19 +136,19 @@ class NVIDIAEmbedder(Embedder):
                     f"NVIDIA embeddings request failed with status {exc.status_code}.",
                     failure_class="http_status",
                 ) from exc
-            except APIConnectionError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="connection",
-                ) from exc
             except APITimeoutError as exc:
                 if attempt < self._max_retries:
                     continue
                 raise ProviderError(
                     "NVIDIA embeddings request failed after retries.",
                     failure_class="timeout",
+                ) from exc
+            except APIConnectionError as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA embeddings request failed after retries.",
+                    failure_class="connection",
                 ) from exc
             except Exception as exc:  # pragma: no cover - defensive guard.
                 raise ProviderError(
@@ -392,19 +392,19 @@ class NVIDIAGenerator(Generator):
                     f"NVIDIA grounded generation request failed with status {exc.status_code}.",
                     failure_class="http_status",
                 ) from exc
-            except APIConnectionError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA grounded generation request failed after retries.",
-                    failure_class="connection",
-                ) from exc
             except APITimeoutError as exc:
                 if attempt < self._max_retries:
                     continue
                 raise ProviderError(
                     "NVIDIA grounded generation request failed after retries.",
                     failure_class="timeout",
+                ) from exc
+            except APIConnectionError as exc:
+                if attempt < self._max_retries:
+                    continue
+                raise ProviderError(
+                    "NVIDIA grounded generation request failed after retries.",
+                    failure_class="connection",
                 ) from exc
             except Exception as exc:  # pragma: no cover - defensive guard.
                 raise ProviderError(

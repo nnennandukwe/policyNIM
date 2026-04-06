@@ -595,7 +595,7 @@ def _beta_command_card_context(
     }
 
 
-def _beta_page_context(*, page_class: str) -> dict[str, str]:
+def _beta_page_context(*, page_class: str) -> dict[str, object]:
     return {
         "document_title": "PolicyNIM Hosted Beta",
         "page_class": page_class,

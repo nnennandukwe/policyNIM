@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Annotated, Literal, NoReturn
 
 import typer
+from pydantic import TypeAdapter, ValidationError
 
 from policynim.errors import PolicyNIMError
 from policynim.interfaces.mcp import run_server
@@ -15,10 +18,23 @@ from policynim.services import (
     create_index_dump_service,
     create_ingest_service,
     create_preflight_service,
+    create_runtime_decision_service,
+    create_runtime_evidence_report_service,
+    create_runtime_execution_service,
     create_search_service,
 )
 from policynim.settings import get_settings
-from policynim.types import MAX_TOP_K, EvalExecutionMode, PreflightRequest, SearchRequest
+from policynim.types import (
+    MAX_TOP_K,
+    EvalExecutionMode,
+    PreflightRequest,
+    RuntimeActionRequest,
+    RuntimeDecisionResult,
+    RuntimeExecutionOutcome,
+    SearchRequest,
+)
+
+_RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
 
 app = typer.Typer(
     add_completion=False,
@@ -30,7 +46,19 @@ beta_admin_app = typer.Typer(
     no_args_is_help=True,
     help="Hosted beta operator commands.",
 )
+runtime_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Deterministic runtime decision and execution commands.",
+)
+evidence_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Runtime evidence reporting commands.",
+)
 app.add_typer(beta_admin_app, name="beta-admin")
+app.add_typer(runtime_app, name="runtime")
+app.add_typer(evidence_app, name="evidence")
 
 
 @app.command()
@@ -150,6 +178,80 @@ def search(
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     except ValueError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(result.model_dump_json(indent=2))
+
+
+@runtime_app.command("decide")
+def runtime_decide(
+    input: Annotated[
+        str,
+        typer.Option(
+            "--input",
+            help="Path to a runtime request JSON file, or - to read JSON from stdin.",
+        ),
+    ],
+) -> None:
+    """Return a deterministic runtime decision for one action request."""
+    service = None
+    try:
+        request = _load_runtime_request_payload(input)
+        service = create_runtime_decision_service(get_settings())
+        result = service.decide(request)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(result.model_dump_json(indent=2))
+
+
+@runtime_app.command("execute")
+def runtime_execute(
+    input: Annotated[
+        str,
+        typer.Option(
+            "--input",
+            help="Path to a runtime request JSON file, or - to read JSON from stdin.",
+        ),
+    ],
+) -> None:
+    """Enforce runtime policy, optionally confirm, and execute one action."""
+    service = None
+    try:
+        request = _load_runtime_request_payload(input)
+        service = create_runtime_execution_service(get_settings(), confirmer=_build_cli_confirmer())
+        result = service.execute(request)
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(result.model_dump_json(indent=2))
+    exit_code = _exit_code_for_runtime_execution(result.execution_outcome)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+@evidence_app.command("report")
+def evidence_report(
+    session_id: Annotated[
+        str,
+        typer.Option(
+            "--session-id",
+            help="Runtime evidence session id to summarize.",
+        ),
+    ],
+) -> None:
+    """Summarize one runtime evidence session from SQLite-backed storage."""
+    service = None
+    try:
+        service = create_runtime_evidence_report_service(get_settings())
+        result = service.report_session(session_id)
+    except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     finally:
         _close_service(service)
@@ -310,6 +412,76 @@ def main() -> None:
 def _exit_with_error(message: str) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
+
+
+def _read_json_input(input_value: str) -> object:
+    source_label = _describe_runtime_input_source(input_value)
+    try:
+        if input_value == "-":
+            raw_text = sys.stdin.read()
+        else:
+            raw_text = Path(input_value).read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise PolicyNIMError(
+            f"Could not read runtime input file {input_value}: file not found."
+        ) from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        if input_value == "-":
+            raise PolicyNIMError("Could not read runtime input from stdin.") from exc
+        raise PolicyNIMError(f"Could not read runtime input file {input_value}.") from exc
+
+    if not raw_text.strip():
+        raise PolicyNIMError(f"Runtime input from {source_label} must not be empty.")
+
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise PolicyNIMError(f"Runtime input from {source_label} must be valid JSON.") from exc
+
+    if not isinstance(payload, dict):
+        raise PolicyNIMError(f"Runtime input from {source_label} must be a JSON object.")
+    return payload
+
+
+def _load_runtime_request_payload(input_value: str) -> RuntimeActionRequest:
+    payload = _read_json_input(input_value)
+    try:
+        return _RUNTIME_REQUEST_ADAPTER.validate_python(payload)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        location = ".".join(str(part) for part in error["loc"]) or "request"
+        raise PolicyNIMError(f"Runtime input is invalid at {location}: {error['msg']}.") from exc
+
+
+def _build_cli_confirmer():
+    def confirm(decision_result: RuntimeDecisionResult) -> bool:
+        if not sys.stdin.isatty() or not sys.stderr.isatty():
+            raise PolicyNIMError(
+                "Runtime execution required explicit confirmation, "
+                "but no interactive terminal is available.",
+                failure_class="confirmation_unavailable",
+            )
+        return bool(
+            typer.confirm(
+                f"{decision_result.summary} Continue with runtime execution?",
+                default=False,
+                err=True,
+            )
+        )
+
+    return confirm
+
+
+def _exit_code_for_runtime_execution(outcome: RuntimeExecutionOutcome) -> int:
+    if outcome in ("allowed", "confirmed"):
+        return 0
+    return 1
+
+
+def _describe_runtime_input_source(input_value: str) -> str:
+    if input_value == "-":
+        return "stdin"
+    return str(Path(input_value))
 
 
 def _close_service(service: object | None) -> None:

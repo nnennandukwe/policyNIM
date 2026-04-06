@@ -10,6 +10,7 @@ import policynim.services.eval as eval_module
 import policynim.services.ingest as ingest_module
 import policynim.services.preflight as preflight_module
 import policynim.services.runtime_decision as runtime_decision_module
+import policynim.services.runtime_evidence_report as runtime_evidence_report_module
 import policynim.services.runtime_execution as runtime_execution_module
 import policynim.services.search as search_module
 from policynim.settings import Settings
@@ -53,6 +54,7 @@ import policynim.services.eval
 import policynim.services.search
 import policynim.services.preflight
 import policynim.services.runtime_decision
+import policynim.services.runtime_evidence_report
 import policynim.services.runtime_execution
     """
     result = subprocess.run(
@@ -196,3 +198,25 @@ def test_create_runtime_execution_service_uses_runtime_paths(
         tmp_path / "runtime" / "runtime_evidence.sqlite3"
     ).resolve(strict=False)
     assert service._shell_timeout_seconds == settings.runtime_shell_timeout_seconds
+
+
+def test_create_runtime_evidence_report_service_uses_runtime_paths(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runtime_evidence_report_module,
+        "RuntimeEvidenceStore",
+        MockRuntimeEvidenceStore,
+    )
+
+    settings = Settings(
+        runtime_evidence_db_path=tmp_path / "runtime" / "runtime_evidence.sqlite3",
+    )
+
+    service = runtime_evidence_report_module.create_runtime_evidence_report_service(settings)
+
+    assert isinstance(service._evidence_store, MockRuntimeEvidenceStore)
+    assert service._evidence_store.path == (
+        tmp_path / "runtime" / "runtime_evidence.sqlite3"
+    ).resolve(strict=False)

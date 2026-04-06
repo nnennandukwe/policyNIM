@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError
@@ -119,7 +120,7 @@ def ensure_hosted_runtime_ready(
 def _check_hosted_runtime_health(
     settings: Settings,
     *,
-    index_uri,
+    index_uri: Path,
 ) -> HealthCheckResult:
     try:
         return create_runtime_health_service(settings).check()
@@ -137,7 +138,7 @@ def _check_hosted_runtime_health(
 def _rebuild_hosted_runtime_index(
     settings: Settings,
     *,
-    index_uri,
+    index_uri: Path,
     reason: str | None,
 ) -> None:
     summary = reason or "Local index readiness could not be inspected."
@@ -172,10 +173,11 @@ def _derive_mcp_url(settings: Settings) -> str | None:
     return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
 
 
-def _format_hosted_runtime_error(*, index_uri: str, table_name: str, reason: str) -> str:
+def _format_hosted_runtime_error(*, index_uri: Path | str, table_name: str, reason: str) -> str:
+    index_uri_text = str(index_uri)
     return (
         "Hosted streamable-http startup requires a populated local index at "
-        f"{index_uri} (table: {table_name}). "
+        f"{index_uri_text} (table: {table_name}). "
         f"{reason} Rebuild the image so `policynim ingest` runs during Docker build "
         "or set `POLICYNIM_LANCEDB_URI` to a populated directory."
     )

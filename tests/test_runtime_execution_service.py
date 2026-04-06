@@ -13,21 +13,25 @@ from policynim.services.runtime_execution import RuntimeExecutionService
 from policynim.types import (
     FileWriteActionRequest,
     HTTPRequestActionRequest,
+    RuntimeActionRequest,
+    RuntimeDecision,
     RuntimeDecisionResult,
+    RuntimeExecutionEvidenceRecord,
     ShellCommandActionRequest,
+    ShellCommandExecutionMetadata,
 )
 
 
 class StubDecisionService:
     """Static runtime decision service for execution tests."""
 
-    def __init__(self, decision: str, *, summary: str | None = None) -> None:
-        self._decision = decision
+    def __init__(self, decision: RuntimeDecision, *, summary: str | None = None) -> None:
+        self._decision: RuntimeDecision = decision
         self._summary = summary or "Decision summary."
-        self.last_request = None
+        self.last_request: RuntimeActionRequest | None = None
         self.closed = False
 
-    def decide(self, request):
+    def decide(self, request: RuntimeActionRequest) -> RuntimeDecisionResult:
         self.last_request = request
         return RuntimeDecisionResult(
             request=request,
@@ -47,16 +51,16 @@ class StubEvidenceStore:
     def __init__(self, *, fail_on_call: int | None = None) -> None:
         self._fail_on_call = fail_on_call
         self._calls = 0
-        self.events = []
+        self.events: list[RuntimeExecutionEvidenceRecord] = []
         self.closed = False
 
-    def append_event(self, record) -> None:
+    def append_event(self, record: RuntimeExecutionEvidenceRecord) -> None:
         self._calls += 1
         if self._fail_on_call == self._calls:
             raise OSError("disk full")
         self.events.append(record)
 
-    def list_session_events(self, session_id: str):
+    def list_session_events(self, session_id: str) -> list[RuntimeExecutionEvidenceRecord]:
         return [event for event in self.events if event.session_id == session_id]
 
     def close(self) -> None:
@@ -142,7 +146,7 @@ def test_runtime_execution_service_returns_refused_without_executing(tmp_path: P
             kind="file_write",
             task="Write a guarded file.",
             cwd=tmp_path,
-            path=target_path.name,
+            path=Path(target_path.name),
             content="secret payload",
         )
     )
@@ -166,7 +170,7 @@ def test_runtime_execution_service_returns_blocked_without_executing(tmp_path: P
             kind="file_write",
             task="Write a blocked file.",
             cwd=tmp_path,
-            path=target_path.name,
+            path=Path(target_path.name),
             content="blocked payload",
         )
     )
@@ -217,7 +221,7 @@ def test_runtime_execution_service_returns_failed_for_shell_timeout(tmp_path: Pa
 
     assert result.execution_outcome == "failed"
     assert result.failure_class == "timeout"
-    assert result.result_metadata is not None
+    assert isinstance(result.result_metadata, ShellCommandExecutionMetadata)
     assert result.result_metadata.exit_code is None
     assert result.result_metadata.duration_ms >= 0.0
     assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
@@ -235,7 +239,7 @@ def test_runtime_execution_service_returns_failed_for_missing_file_parent(tmp_pa
             kind="file_write",
             task="Write into a missing directory.",
             cwd=tmp_path,
-            path="missing/notes.txt",
+            path=Path("missing/notes.txt"),
             content="payload",
         )
     )
@@ -289,7 +293,7 @@ def test_runtime_execution_service_fails_closed_when_confirmer_is_missing(tmp_pa
             kind="file_write",
             task="Write a confirmed file.",
             cwd=tmp_path,
-            path=target_path.name,
+            path=Path(target_path.name),
             content="payload",
         )
     )
@@ -316,7 +320,7 @@ def test_runtime_execution_service_raises_when_initial_evidence_persistence_fail
                 kind="file_write",
                 task="Write without initial evidence.",
                 cwd=tmp_path,
-                path=target_path.name,
+                path=Path(target_path.name),
                 content="payload",
             )
         )
@@ -339,7 +343,7 @@ def test_runtime_execution_service_raises_when_terminal_evidence_persistence_fai
                 kind="file_write",
                 task="Write with failing terminal evidence.",
                 cwd=tmp_path,
-                path=target_path.name,
+                path=Path(target_path.name),
                 content="payload",
             )
         )
@@ -361,7 +365,7 @@ def test_runtime_execution_service_redacts_file_content_from_results_and_evidenc
             kind="file_write",
             task="Write a file without persisting the body.",
             cwd=tmp_path,
-            path="notes.txt",
+            path=Path("notes.txt"),
             content="super-secret-body",
         )
     )

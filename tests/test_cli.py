@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
 
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.cli import app
+from policynim.services.runtime_execution import RuntimeExecutionService
 from policynim.types import (
     BetaAccount,
     Citation,
@@ -24,6 +28,9 @@ from policynim.types import (
     PolicyMetadata,
     PreflightRequest,
     PreflightResult,
+    RuntimeDecision,
+    RuntimeDecisionResult,
+    RuntimeExecutionResult,
     ScoredChunk,
     SearchRequest,
     SearchResult,
@@ -136,6 +143,77 @@ class MockIndexDumpService:
                 ),
             )
         ]
+
+
+class MockRuntimeDecisionService:
+    """Static runtime decision service for CLI tests."""
+
+    def __init__(
+        self,
+        *,
+        decision: RuntimeDecision = "allow",
+        summary: str | None = None,
+    ) -> None:
+        self.decision: RuntimeDecision = decision
+        self.summary: str = summary or "No runtime policy rules matched this action."
+        self.closed: bool = False
+        self.last_request: object | None = None
+
+    def decide(self, request) -> RuntimeDecisionResult:
+        self.last_request = request
+        return RuntimeDecisionResult(
+            request=request,
+            decision=self.decision,
+            summary=self.summary,
+            matched_rules=[],
+            citations=[],
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class StubRuntimeEvidenceStore:
+    """Minimal append-only evidence store for CLI runtime execution tests."""
+
+    def __init__(self) -> None:
+        self.events = []
+        self.closed = False
+
+    def append_event(self, record) -> None:
+        self.events.append(record)
+
+    def list_session_events(self, session_id: str):
+        return [event for event in self.events if event.session_id == session_id]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _MockJSONModel:
+    """Tiny JSON-emitting model used by CLI report tests."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def model_dump_json(self, *, indent: int | None = None) -> str:
+        return json.dumps(self._payload, indent=indent)
+
+
+class MockRuntimeEvidenceReportService:
+    """Static evidence report service for CLI tests."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+        self.closed = False
+        self.last_session_id: str | None = None
+
+    def report_session(self, session_id: str) -> _MockJSONModel:
+        self.last_session_id = session_id
+        return _MockJSONModel(self._payload)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockEvalService:
@@ -277,6 +355,41 @@ class MockBetaAuthService:
         assert github_login == "octocat"
         self._account = self._account.model_copy(update={"api_key_prefix": None})
         return self._account
+
+
+class _RuntimeDecisionStub:
+    """Static decision stub for wiring the real execution service in CLI tests."""
+
+    def __init__(self, decision: RuntimeDecision, *, summary: str | None = None) -> None:
+        self._decision: RuntimeDecision = decision
+        self._summary: str = summary or "Decision summary."
+        self.closed: bool = False
+
+    def decide(self, request) -> RuntimeDecisionResult:
+        return RuntimeDecisionResult(
+            request=request,
+            decision=self._decision,
+            summary=self._summary,
+            matched_rules=[],
+            citations=[],
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def make_runtime_execution_service(
+    *,
+    decision: RuntimeDecision,
+    summary: str | None = None,
+    confirmer=None,
+) -> RuntimeExecutionService:
+    """Build the real runtime execution service with test doubles behind it."""
+    return RuntimeExecutionService(
+        decision_service=cast(Any, _RuntimeDecisionStub(decision, summary=summary)),
+        evidence_store=StubRuntimeEvidenceStore(),
+        confirmer=confirmer,
+    )
 
 
 def test_ingest_command_prints_summary(monkeypatch) -> None:
@@ -446,6 +559,29 @@ def test_help_includes_dump_index_command() -> None:
     assert "dump-index" in result.stdout
 
 
+def test_help_includes_runtime_and_evidence_commands() -> None:
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "runtime" in result.stdout
+    assert "evidence" in result.stdout
+
+
+def test_runtime_help_mentions_decide_and_execute_commands() -> None:
+    result = runner.invoke(app, ["runtime", "--help"])
+
+    assert result.exit_code == 0
+    assert "decide" in result.stdout
+    assert "execute" in result.stdout
+
+
+def test_evidence_help_mentions_report_command() -> None:
+    result = runner.invoke(app, ["evidence", "--help"])
+
+    assert result.exit_code == 0
+    assert "report" in result.stdout
+
+
 def test_dump_index_help_mentions_less_for_paging() -> None:
     result = runner.invoke(app, ["dump-index", "--help"])
 
@@ -613,3 +749,346 @@ def test_beta_admin_help_mentions_operator_commands() -> None:
     assert result.exit_code == 0
     assert "list-accounts" in result.stdout
     assert "revoke-key" in result.stdout
+
+
+def test_runtime_decide_command_reads_request_from_file_and_prints_json(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "kind": "shell_command",
+                "task": "Run tests.",
+                "cwd": str(tmp_path),
+                "command": ["make", "test"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MockRuntimeDecisionService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_decision_service",
+        lambda settings: service,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["runtime", "decide", "--input", str(request_path)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "allow"
+    assert payload["request"]["command"] == ["make", "test"]
+    assert service.closed is True
+
+
+def test_runtime_decide_command_reads_request_from_stdin(monkeypatch, tmp_path: Path) -> None:
+    service = MockRuntimeDecisionService(decision="block", summary="Protect deploy commands.")
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_decision_service",
+        lambda settings: service,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "decide", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "shell_command",
+                "task": "Run deploy.",
+                "cwd": str(tmp_path),
+                "command": ["make", "deploy"],
+            }
+        ),
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "block"
+    assert payload["summary"] == "Protect deploy commands."
+
+
+def test_runtime_decide_command_rejects_invalid_json_input_file(tmp_path: Path) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text("{not-json", encoding="utf-8")
+
+    result = runner.invoke(app, ["runtime", "decide", "--input", str(request_path)])
+
+    assert result.exit_code == 1
+    assert str(request_path) in result.stderr
+    assert "JSON" in result.stderr
+
+
+def test_runtime_execute_command_rejects_whitespace_only_stdin() -> None:
+    result = runner.invoke(app, ["runtime", "execute", "--input", "-"], input="   \n")
+
+    assert result.exit_code == 1
+    assert "must not be empty" in result.stderr
+
+
+def test_runtime_execute_command_rejects_malformed_runtime_request(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "task": "Run tests.",
+                "cwd": str(tmp_path),
+                "command": ["make", "test"],
+            }
+        ),
+    )
+
+    assert result.exit_code == 1
+    assert "kind" in result.stderr
+
+
+def test_runtime_execute_command_reads_request_from_stdin_and_echoes_resolved_session_id(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="allow",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "shell_command",
+                "task": "Run a passing shell command.",
+                "cwd": str(tmp_path),
+                "command": [sys.executable, "-c", "raise SystemExit(0)"],
+            }
+        ),
+    )
+
+    assert result.exit_code == 0
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "allowed"
+    assert payload.session_id
+    assert payload.request.session_id == payload.session_id
+
+
+def test_runtime_execute_command_preserves_caller_provided_session_id(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="allow",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "shell_command",
+                "task": "Run a passing shell command.",
+                "cwd": str(tmp_path),
+                "session_id": "session-from-request",
+                "command": [sys.executable, "-c", "raise SystemExit(0)"],
+            }
+        ),
+    )
+
+    assert result.exit_code == 0
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.session_id == "session-from-request"
+
+
+def test_runtime_execute_command_returns_non_zero_for_blocked_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="block",
+            summary="Protect this file.",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "file_write",
+                "task": "Write a blocked file.",
+                "cwd": str(tmp_path),
+                "path": "blocked.txt",
+                "content": "payload",
+            }
+        ),
+    )
+
+    assert result.exit_code == 1
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "blocked"
+
+
+def test_runtime_execute_command_returns_non_zero_for_refused_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="confirm",
+            summary="Review this write.",
+            confirmer=lambda _: False,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "file_write",
+                "task": "Write a guarded file.",
+                "cwd": str(tmp_path),
+                "path": "guarded.txt",
+                "content": "payload",
+            }
+        ),
+    )
+
+    assert result.exit_code == 1
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "refused"
+
+
+def test_runtime_execute_command_returns_non_zero_for_failed_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="allow",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "shell_command",
+                "task": "Run a failing shell command.",
+                "cwd": str(tmp_path),
+                "command": [sys.executable, "-c", "raise SystemExit(7)"],
+            }
+        ),
+    )
+
+    assert result.exit_code == 1
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "failed"
+    assert payload.failure_class == "non_zero_exit"
+
+
+def test_runtime_execute_command_fails_closed_when_confirmation_is_non_interactive(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="confirm",
+            summary="Review this write.",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", "-"],
+        input=json.dumps(
+            {
+                "kind": "file_write",
+                "task": "Write a confirmed file.",
+                "cwd": str(tmp_path),
+                "path": "guarded.txt",
+                "content": "payload",
+            }
+        ),
+    )
+
+    assert result.exit_code == 1
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "failed"
+    assert payload.failure_class == "confirmation_unavailable"
+
+
+def test_evidence_report_command_prints_session_summary_json(monkeypatch) -> None:
+    service = MockRuntimeEvidenceReportService(
+        {
+            "session_id": "session-1",
+            "started_at": "2026-04-05T12:00:00+00:00",
+            "completed_at": "2026-04-05T12:00:10+00:00",
+            "event_count": 2,
+            "execution_count": 1,
+            "allowed_count": 1,
+            "confirmed_count": 0,
+            "blocked_count": 0,
+            "refused_count": 0,
+            "failed_count": 0,
+            "incomplete_count": 0,
+            "executions": [],
+        }
+    )
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: service,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["evidence", "report", "--session-id", "session-1"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == "session-1"
+    assert payload["execution_count"] == 1
+    assert service.closed is True
+
+
+def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) -> None:
+    class MissingSessionReportService:
+        def report_session(self, session_id: str):
+            raise PolicyNIMError(f"No runtime evidence found for session {session_id}.")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: MissingSessionReportService(),
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["evidence", "report", "--session-id", "missing-session"])
+
+    assert result.exit_code == 1
+    assert "missing-session" in result.stderr
