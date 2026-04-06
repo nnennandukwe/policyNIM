@@ -10,6 +10,7 @@ from policynim.types import (
     GeneratedPreflightDraft,
     PolicyChunk,
     PreflightRequest,
+    RuntimeExecutionEvidenceRecord,
     ScoredChunk,
 )
 
@@ -79,4 +80,16 @@ class IndexStore(Protocol):
         domain: str | None = None,
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
+        ...
+
+
+class RuntimeEvidenceStoreProtocol(Protocol):
+    """Append-only runtime evidence persistence."""
+
+    def append_event(self, record: RuntimeExecutionEvidenceRecord) -> None:
+        """Persist one immutable runtime execution evidence event."""
+        ...
+
+    def list_session_events(self, session_id: str) -> list[RuntimeExecutionEvidenceRecord]:
+        """Return all persisted events for one session."""
         ...

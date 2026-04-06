@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     lancedb_uri: Path = Path("data/lancedb")
     lancedb_table: str = "policy_chunks"
     runtime_rules_artifact_path: Path = Path("data/runtime/runtime_rules.json")
+    runtime_evidence_db_path: Path = Path("data/runtime/runtime_evidence.sqlite3")
+    runtime_shell_timeout_seconds: Annotated[float, Field(gt=0)] = 300.0
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
@@ -113,6 +115,14 @@ class Settings(BaseSettings):
         """Reject empty configured artifact paths before Path coercion."""
         if isinstance(value, str) and not value.strip():
             raise ValueError("POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH must not be empty.")
+        return value
+
+    @field_validator("runtime_evidence_db_path", mode="before")
+    @classmethod
+    def validate_runtime_evidence_db_path(cls, value: Any) -> Any:
+        """Reject empty configured evidence DB paths before Path coercion."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("POLICYNIM_RUNTIME_EVIDENCE_DB_PATH must not be empty.")
         return value
 
     @field_validator("beta_auth_db_path", mode="before")

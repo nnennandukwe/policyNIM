@@ -112,6 +112,16 @@ class RuntimeRulesArtifact(StrictModel):
 
 
 RuntimeDecision = Literal["allow", "confirm", "block"]
+RuntimeExecutionOutcome = Literal["allowed", "confirmed", "blocked", "refused", "failed"]
+RuntimeConfirmationOutcome = Literal["not_required", "confirmed", "refused", "unavailable"]
+RuntimeEvidenceEventKind = Literal[
+    "decision",
+    "allowed",
+    "confirmed",
+    "blocked",
+    "refused",
+    "failed",
+]
 
 
 class RuntimeActionRequestBase(StrictModel):
@@ -203,6 +213,123 @@ class RuntimeDecisionResult(StrictModel):
     summary: str = Field(min_length=1)
     matched_rules: list[CompiledRuntimeRule] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
+
+
+class RuntimeExecutionRequestBase(RuntimeActionRequestBase):
+    """Sanitized runtime execution request persisted in results and evidence."""
+
+
+class ShellCommandExecutionRequest(RuntimeExecutionRequestBase):
+    """Sanitized execution request for one shell command."""
+
+    kind: Literal["shell_command"]
+    command: list[str] = Field(min_length=1)
+
+    @field_validator("command")
+    @classmethod
+    def validate_command(cls, value: list[str]) -> list[str]:
+        """Require at least one non-empty shell argument."""
+        normalized: list[str] = []
+        for item in value:
+            normalized.append(_validate_non_empty_string(item, field_name="command item"))
+        return normalized
+
+
+class FileWriteExecutionRequest(RuntimeExecutionRequestBase):
+    """Sanitized execution request for one file write."""
+
+    kind: Literal["file_write"]
+    path: Path
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def validate_path(cls, value: object) -> object:
+        """Reject empty file-write paths before Path coercion."""
+        return _validate_non_empty_path(value, field_name="path")
+
+
+class HTTPRequestExecutionRequest(RuntimeExecutionRequestBase):
+    """Sanitized execution request for one HTTP request."""
+
+    kind: Literal["http_request"]
+    method: str = Field(min_length=1)
+    url: AnyHttpUrl
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def validate_method(cls, value: object) -> str:
+        """Normalize HTTP verbs while rejecting empty method values."""
+        normalized = _validate_non_empty_string(value, field_name="method")
+        return normalized.upper()
+
+
+RuntimeExecutionRequest = Annotated[
+    ShellCommandExecutionRequest | FileWriteExecutionRequest | HTTPRequestExecutionRequest,
+    Field(discriminator="kind"),
+]
+
+
+class ShellCommandExecutionMetadata(StrictModel):
+    """Safe shell-command execution metadata."""
+
+    exit_code: int | None = None
+    duration_ms: float = Field(ge=0.0)
+
+
+class FileWriteExecutionMetadata(StrictModel):
+    """Safe file-write execution metadata."""
+
+    path: Path
+    bytes_written: int = Field(ge=0)
+
+
+class HTTPRequestExecutionMetadata(StrictModel):
+    """Safe HTTP request execution metadata."""
+
+    status_code: int | None = Field(default=None, ge=100, le=599)
+    duration_ms: float = Field(ge=0.0)
+
+
+RuntimeExecutionMetadata = (
+    ShellCommandExecutionMetadata | FileWriteExecutionMetadata | HTTPRequestExecutionMetadata
+)
+
+
+class RuntimeExecutionResult(StrictModel):
+    """Top-level result for one runtime execution attempt."""
+
+    execution_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    request: RuntimeExecutionRequest
+    decision: RuntimeDecision
+    summary: str = Field(min_length=1)
+    matched_rules: list[CompiledRuntimeRule] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    confirmation_outcome: RuntimeConfirmationOutcome
+    execution_outcome: RuntimeExecutionOutcome
+    result_metadata: RuntimeExecutionMetadata | None = None
+    failure_class: str | None = None
+    residual_uncertainty: str | None = None
+
+
+class RuntimeExecutionEvidenceRecord(StrictModel):
+    """One immutable persisted runtime execution evidence event."""
+
+    event_id: str = Field(min_length=1)
+    execution_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    created_at: datetime
+    event_kind: RuntimeEvidenceEventKind
+    request: RuntimeExecutionRequest
+    decision: RuntimeDecision
+    summary: str = Field(min_length=1)
+    matched_rules: list[CompiledRuntimeRule] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    confirmation_outcome: RuntimeConfirmationOutcome
+    execution_outcome: RuntimeExecutionOutcome | None = None
+    result_metadata: RuntimeExecutionMetadata | None = None
+    failure_class: str | None = None
+    residual_uncertainty: str | None = None
 
 
 class ParsedDocument(StrictModel):

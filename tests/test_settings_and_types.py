@@ -15,6 +15,10 @@ from policynim.types import (
     ParsedRuntimeRule,
     RuntimeActionRequest,
     RuntimeDecisionResult,
+    RuntimeExecutionEvidenceRecord,
+    RuntimeExecutionResult,
+    ShellCommandExecutionMetadata,
+    ShellCommandExecutionRequest,
 )
 
 
@@ -65,6 +69,18 @@ def test_settings_uses_default_runtime_rules_artifact_path() -> None:
     assert settings.runtime_rules_artifact_path == Path("data/runtime/runtime_rules.json")
 
 
+def test_settings_uses_default_runtime_evidence_db_path() -> None:
+    settings = load_settings_without_env_file()
+
+    assert settings.runtime_evidence_db_path == Path("data/runtime/runtime_evidence.sqlite3")
+
+
+def test_settings_uses_default_runtime_shell_timeout_seconds() -> None:
+    settings = load_settings_without_env_file()
+
+    assert settings.runtime_shell_timeout_seconds == 300.0
+
+
 def test_settings_rejects_empty_runtime_rules_artifact_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -73,6 +89,18 @@ def test_settings_rejects_empty_runtime_rules_artifact_path(
     with pytest.raises(
         ValidationError,
         match="POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH must not be empty",
+    ):
+        load_settings_without_env_file()
+
+
+def test_settings_rejects_empty_runtime_evidence_db_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POLICYNIM_RUNTIME_EVIDENCE_DB_PATH", "")
+
+    with pytest.raises(
+        ValidationError,
+        match="POLICYNIM_RUNTIME_EVIDENCE_DB_PATH must not be empty",
     ):
         load_settings_without_env_file()
 
@@ -281,3 +309,80 @@ def test_runtime_decision_result_rejects_invalid_decision_values() -> None:
                 "summary": "Unknown runtime outcome.",
             }
         )
+
+
+def test_runtime_execution_result_accepts_sanitized_request_and_metadata() -> None:
+    result = RuntimeExecutionResult.model_validate(
+        {
+            "execution_id": "exec-1",
+            "session_id": "session-1",
+            "request": {
+                "kind": "shell_command",
+                "task": "Run tests.",
+                "cwd": "/tmp/workspace",
+                "session_id": "session-1",
+                "command": ["make", "test"],
+            },
+            "decision": "allow",
+            "summary": "No runtime policy rules matched this action.",
+            "matched_rules": [],
+            "citations": [],
+            "confirmation_outcome": "not_required",
+            "execution_outcome": "allowed",
+            "result_metadata": {
+                "exit_code": 0,
+                "duration_ms": 12.5,
+            },
+            "failure_class": None,
+            "residual_uncertainty": None,
+        }
+    )
+
+    assert result.request == ShellCommandExecutionRequest(
+        kind="shell_command",
+        task="Run tests.",
+        cwd=Path("/tmp/workspace"),
+        session_id="session-1",
+        command=["make", "test"],
+    )
+    assert result.result_metadata == ShellCommandExecutionMetadata(exit_code=0, duration_ms=12.5)
+
+
+def test_runtime_execution_evidence_record_accepts_terminal_event_payload() -> None:
+    record = RuntimeExecutionEvidenceRecord.model_validate(
+        {
+            "event_id": "event-1",
+            "execution_id": "exec-1",
+            "session_id": "session-1",
+            "created_at": "2026-04-05T12:00:00+00:00",
+            "event_kind": "allowed",
+            "request": {
+                "kind": "shell_command",
+                "task": "Run tests.",
+                "cwd": "/tmp/workspace",
+                "session_id": "session-1",
+                "command": ["make", "test"],
+            },
+            "decision": "allow",
+            "summary": "No runtime policy rules matched this action.",
+            "matched_rules": [],
+            "citations": [],
+            "confirmation_outcome": "not_required",
+            "execution_outcome": "allowed",
+            "result_metadata": {
+                "exit_code": 0,
+                "duration_ms": 12.5,
+            },
+            "failure_class": None,
+            "residual_uncertainty": None,
+        }
+    )
+
+    assert record.request == ShellCommandExecutionRequest(
+        kind="shell_command",
+        task="Run tests.",
+        cwd=Path("/tmp/workspace"),
+        session_id="session-1",
+        command=["make", "test"],
+    )
+    assert record.result_metadata == ShellCommandExecutionMetadata(exit_code=0, duration_ms=12.5)
