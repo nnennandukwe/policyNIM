@@ -11,6 +11,8 @@ The architecture stays intentionally small:
 - typed contracts shared by CLI and MCP
 - explicit provider and storage adapters
 - application services for ingest, retrieval, preflight, and evaluation
+- application services for runtime decisions, runtime execution, and durable
+  evidence capture
 - fail-closed grounding rules instead of best-effort freeform answers
 
 ## Design Principles
@@ -156,7 +158,8 @@ Important evaluation rules:
 
 ### `src/policynim/storage/`
 
-- Owns LanceDB persistence, row mapping, replacement, and search behavior.
+- Owns LanceDB persistence, runtime evidence storage, row mapping, replacement,
+  and search behavior.
 - Must not read environment variables directly.
 
 ### `src/policynim/services/`
@@ -166,6 +169,10 @@ Important evaluation rules:
 - `SearchService` handles query embedding, retrieval, and reranking.
 - `PreflightService` handles retrieval, grounded synthesis, and citation
   validation.
+- `RuntimeDecisionService` compiles and matches runtime rules against the local
+  index, then links the matched rules back to indexed evidence.
+- `RuntimeExecutionService` enforces runtime decisions, optionally executes the
+  sanitized action, and persists immutable evidence events.
 - `EvalService` handles gold-case execution, scoring, comparison, and report
   persistence.
 - `IndexDumpService` handles terminal-friendly inspection of stored chunks.
@@ -257,12 +264,30 @@ NVIDIA-hosted APIs are used for:
 
 These steps require `NVIDIA_API_KEY`.
 
+### Runtime Policy Decisions
+
+PolicyNIM also compiles and enforces runtime policy rules locally:
+
+1. ingest compiles `runtime_rules` frontmatter into a deterministic runtime
+   rules artifact
+2. `RuntimeDecisionService` loads the local index plus the compiled rules
+   artifact to return allow, confirm, or block decisions with citations
+3. `RuntimeExecutionService` can execute the sanitized action after any required
+   confirmation
+4. immutable runtime evidence events are appended to the local SQLite evidence
+   store
+
+Runtime decisions are intentionally local-first. They depend on the same
+indexed policy corpus, but they do not call NVIDIA-hosted APIs directly.
+
 ### Local-Only Steps
 
 Local runtime components own:
 
 - policy discovery and parsing
 - chunk assembly and citation spans
+- compiled runtime rules artifacts
+- runtime execution evidence in SQLite
 - LanceDB persistence and dense candidate lookup
 - baked-index startup validation for hosted HTTP images
 - offline eval execution
@@ -274,6 +299,7 @@ Local runtime components own:
 - malformed policy frontmatter
 - duplicate effective policy IDs
 - missing or empty local index
+- missing runtime rules artifact
 - malformed provider responses
 - invalid grounded citation references
 - CLI and MCP payload drift
