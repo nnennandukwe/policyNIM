@@ -12,7 +12,9 @@ from policynim.errors import RuntimeEvidencePersistenceError
 from policynim.services.runtime_execution import RuntimeExecutionService
 from policynim.types import (
     FileWriteActionRequest,
+    FileWriteExecutionMetadata,
     HTTPRequestActionRequest,
+    HTTPRequestExecutionMetadata,
     RuntimeActionRequest,
     RuntimeDecision,
     RuntimeDecisionResult,
@@ -249,6 +251,33 @@ def test_runtime_execution_service_returns_failed_for_missing_file_parent(tmp_pa
     assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
 
 
+def test_runtime_execution_service_runs_allowed_file_write(tmp_path: Path) -> None:
+    target_path = tmp_path / "notes.txt"
+    evidence_store = StubEvidenceStore()
+    service = RuntimeExecutionService(
+        decision_service=StubDecisionService("allow"),
+        evidence_store=evidence_store,
+    )
+
+    result = service.execute(
+        FileWriteActionRequest(
+            kind="file_write",
+            task="Write an allowed file.",
+            cwd=tmp_path,
+            path=Path(target_path.name),
+            content="hello world",
+        )
+    )
+
+    assert result.execution_outcome == "allowed"
+    assert target_path.read_text(encoding="utf-8") == "hello world"
+    assert result.result_metadata == FileWriteExecutionMetadata(
+        path=target_path,
+        bytes_written=len(b"hello world"),
+    )
+    assert [event.event_kind for event in evidence_store.events] == ["decision", "allowed"]
+
+
 def test_runtime_execution_service_returns_failed_for_http_transport_error(
     tmp_path: Path,
 ) -> None:
@@ -280,6 +309,61 @@ def test_runtime_execution_service_returns_failed_for_http_transport_error(
     assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
 
 
+def test_runtime_execution_service_runs_allowed_http_request(tmp_path: Path) -> None:
+    http_request = HTTPRequestActionRequest.model_validate(
+        {
+            "kind": "http_request",
+            "task": "Call a healthy remote API.",
+            "cwd": tmp_path,
+            "method": "GET",
+            "url": "https://example.com/api",
+        }
+    )
+    evidence_store = StubEvidenceStore()
+    service = RuntimeExecutionService(
+        decision_service=StubDecisionService("allow"),
+        evidence_store=evidence_store,
+        http_client=StubHTTPClient(status_code=204),
+    )
+
+    result = service.execute(http_request)
+
+    assert result.execution_outcome == "allowed"
+    assert isinstance(result.result_metadata, HTTPRequestExecutionMetadata)
+    assert result.result_metadata.status_code == 204
+    assert result.result_metadata.duration_ms >= 0.0
+    assert [event.event_kind for event in evidence_store.events] == ["decision", "allowed"]
+
+
+def test_runtime_execution_service_returns_failed_for_http_status_error(
+    tmp_path: Path,
+) -> None:
+    http_request = HTTPRequestActionRequest.model_validate(
+        {
+            "kind": "http_request",
+            "task": "Call an unhealthy remote API.",
+            "cwd": tmp_path,
+            "method": "GET",
+            "url": "https://example.com/api",
+        }
+    )
+    evidence_store = StubEvidenceStore()
+    service = RuntimeExecutionService(
+        decision_service=StubDecisionService("allow"),
+        evidence_store=evidence_store,
+        http_client=StubHTTPClient(status_code=429),
+    )
+
+    result = service.execute(http_request)
+
+    assert result.execution_outcome == "failed"
+    assert result.failure_class == "http_status"
+    assert isinstance(result.result_metadata, HTTPRequestExecutionMetadata)
+    assert result.result_metadata.status_code == 429
+    assert result.result_metadata.duration_ms >= 0.0
+    assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
+
+
 def test_runtime_execution_service_fails_closed_when_confirmer_is_missing(tmp_path: Path) -> None:
     target_path = tmp_path / "guarded.txt"
     evidence_store = StubEvidenceStore()
@@ -301,6 +385,36 @@ def test_runtime_execution_service_fails_closed_when_confirmer_is_missing(tmp_pa
     assert result.execution_outcome == "failed"
     assert result.confirmation_outcome == "unavailable"
     assert result.failure_class == "confirmation_unavailable"
+    assert target_path.exists() is False
+    assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
+
+
+def test_runtime_execution_service_returns_failed_when_confirmer_raises(tmp_path: Path) -> None:
+    target_path = tmp_path / "guarded.txt"
+    evidence_store = StubEvidenceStore()
+
+    def raise_from_confirmer(_: RuntimeDecisionResult) -> bool:
+        raise ValueError("prompt failed")
+
+    service = RuntimeExecutionService(
+        decision_service=StubDecisionService("confirm"),
+        evidence_store=evidence_store,
+        confirmer=raise_from_confirmer,
+    )
+
+    result = service.execute(
+        FileWriteActionRequest(
+            kind="file_write",
+            task="Write a confirmed file.",
+            cwd=tmp_path,
+            path=Path(target_path.name),
+            content="payload",
+        )
+    )
+
+    assert result.execution_outcome == "failed"
+    assert result.confirmation_outcome == "unavailable"
+    assert result.failure_class == "confirmation_error"
     assert target_path.exists() is False
     assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
 

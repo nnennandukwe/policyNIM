@@ -197,6 +197,14 @@ For hosted-first client setup examples, see:
 PolicyNIM compiles `runtime_rules` frontmatter from the policy corpus into a
 deterministic runtime-rules artifact during ingest.
 
+Runtime-rule authoring contract:
+
+- `runtime_rules` is optional frontmatter
+- each rule uses `action`, `effect`, `reason`, and exactly one matcher family
+- matcher families are `path_globs`, `command_regexes`, or `url_host_patterns`
+- authored `effect` values are `confirm` or `block`
+- allow is still a no-match runtime decision outcome, not an authored effect
+
 That compiled artifact powers the runtime decision and execution services:
 
 - `POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH` points at the compiled rule snapshot
@@ -218,8 +226,29 @@ cat <<'JSON' | uv run policynim runtime decide --input -
 }
 JSON
 
-# Execute with policy enforcement and durable evidence.
+# Execute a file write with policy enforcement and durable evidence.
+cat > request.json <<'JSON'
+{
+  "kind": "file_write",
+  "task": "Write a local note with runtime evidence.",
+  "cwd": "/abs/path/to/repo",
+  "session_id": "runtime-session-1",
+  "path": "notes/runtime.txt",
+  "content": "hello from PolicyNIM"
+}
+JSON
 uv run policynim runtime execute --input request.json
+
+# Execute an HTTP request from stdin.
+cat <<'JSON' | uv run policynim runtime execute --input -
+{
+  "kind": "http_request",
+  "task": "Call the status endpoint.",
+  "cwd": "/abs/path/to/repo",
+  "method": "GET",
+  "url": "https://example.com/healthz"
+}
+JSON
 
 # Summarize the stored evidence for one execution session.
 uv run policynim evidence report --session-id <session-id-from-runtime-execute>
@@ -229,11 +258,37 @@ Contract notes:
 
 - `runtime decide` and `runtime execute` accept the same `RuntimeActionRequest`
   JSON schema
+- supported action payloads are:
+  - `shell_command`: `command: list[str]`
+  - `file_write`: `path` and `content`
+  - `http_request`: `method` and `url`
 - `--input -` reads a single JSON object from stdin; otherwise `--input` must
   be a UTF-8 JSON file path
+- non-object JSON, empty input, invalid JSON, and schema mismatches fail with
+  explicit CLI errors
 - `runtime execute` prints the resolved `session_id` in its JSON result
+- caller-provided `session_id` is preserved; otherwise `runtime execute`
+  generates one before evidence is persisted
+- `runtime execute` exits `0` for `allowed` and `confirmed`
+- `runtime execute` exits `1` for `blocked`, `refused`, and `failed`
 - `evidence report` is summary-only: it aggregates one session from the SQLite
   runtime evidence store rather than dumping raw rows
+
+SQLite runtime evidence notes:
+
+- default runtime rules artifact path: `data/runtime/runtime_rules.json`
+- default runtime evidence DB path: `data/runtime/runtime_evidence.sqlite3`
+- persisted events live in the `runtime_execution_events` table
+- `evidence report` is the supported operator surface for session summaries
+- raw SQLite inspection is a debugging aid, not a formal public API
+
+Useful inspection commands:
+
+```bash
+sqlite3 data/runtime/runtime_evidence.sqlite3 ".schema runtime_execution_events"
+sqlite3 data/runtime/runtime_evidence.sqlite3 \
+  "SELECT session_id, execution_id, event_kind, created_at FROM runtime_execution_events ORDER BY rowid DESC LIMIT 20;"
+```
 
 ## Retrieval And Grounding Model
 
