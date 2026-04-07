@@ -75,6 +75,21 @@ def test_resolve_corpus_root_falls_back_to_checkout_when_package_resource_is_mis
     assert resolve_corpus_root() == checkout_corpus
 
 
+def test_resolve_corpus_root_skips_checkout_candidates_that_are_not_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout_root = tmp_path / "checkout"
+    valid_corpus = checkout_root / "policies"
+    valid_corpus.mkdir(parents=True)
+    package_root = checkout_root / ".venv" / "lib" / "site-packages" / "policynim"
+    package_root.mkdir(parents=True)
+    wrong_type_corpus = checkout_root / ".venv" / "lib" / "policies"
+    wrong_type_corpus.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
+
+    assert resolve_corpus_root() == valid_corpus
+
+
 def test_resolve_corpus_root_raises_with_override_guidance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -118,6 +133,22 @@ def test_resolve_eval_suite_path_falls_back_to_checkout_when_package_resource_is
     monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
 
     assert resolve_eval_suite_path() == checkout_suite
+
+
+def test_resolve_eval_suite_path_skips_checkout_candidates_that_are_not_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout_root = tmp_path / "checkout"
+    valid_suite = checkout_root / "evals" / "default_cases.json"
+    valid_suite.parent.mkdir(parents=True)
+    valid_suite.write_text("[]", encoding="utf-8")
+    package_root = checkout_root / ".venv" / "lib" / "site-packages" / "policynim"
+    package_root.mkdir(parents=True)
+    wrong_type_suite = checkout_root / ".venv" / "lib" / "evals" / "default_cases.json"
+    wrong_type_suite.mkdir(parents=True)
+    monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
+
+    assert resolve_eval_suite_path() == valid_suite
 
 
 def test_resolve_eval_suite_path_raises_with_override_guidance(

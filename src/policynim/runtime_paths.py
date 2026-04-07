@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+from collections.abc import Callable
 from contextlib import ExitStack
 from importlib import resources
 from pathlib import Path
@@ -42,7 +43,7 @@ def resolve_corpus_root(configured_root: Path | str | None = None) -> Path:
     if bundled_corpus is not None and bundled_corpus.is_dir():
         return bundled_corpus
 
-    checkout_corpus = _resolve_checkout_resource("policies")
+    checkout_corpus = _resolve_checkout_resource("policies", predicate=Path.is_dir)
     if checkout_corpus is not None:
         return checkout_corpus
 
@@ -58,7 +59,11 @@ def resolve_eval_suite_path() -> Path:
     if bundled_suite is not None and bundled_suite.is_file():
         return bundled_suite
 
-    checkout_suite = _resolve_checkout_resource("evals", "default_cases.json")
+    checkout_suite = _resolve_checkout_resource(
+        "evals",
+        "default_cases.json",
+        predicate=Path.is_file,
+    )
     if checkout_suite is not None:
         return checkout_suite
 
@@ -79,11 +84,14 @@ def _resolve_packaged_resource(*parts: str) -> Path | None:
     return _PACKAGED_RESOURCE_STACK.enter_context(resources.as_file(resource))
 
 
-def _resolve_checkout_resource(*parts: str) -> Path | None:
+def _resolve_checkout_resource(
+    *parts: str,
+    predicate: Callable[[Path], bool],
+) -> Path | None:
     """Resolve a checkout-relative fallback by walking parents of the package path."""
     package_root = Path(__file__).resolve().parent
     for parent in package_root.parents:
         candidate = parent.joinpath(*parts)
-        if candidate.exists():
+        if predicate(candidate):
             return candidate
     return None
