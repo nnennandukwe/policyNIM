@@ -92,6 +92,7 @@ Important container defaults:
 - the final image does not store the build-time `NVIDIA_API_KEY`
 - runtime `NVIDIA_API_KEY` is still required because live `search` and
   `preflight` call NVIDIA-hosted APIs
+- this standard Docker path uses the repo root `Dockerfile`
 
 Example hosted run:
 
@@ -135,8 +136,17 @@ What to expect:
 
 ## Railway Beta Deploy
 
-The repo ships a root [`railway.toml`](../railway.toml) so Railway uses the root
-`Dockerfile` and probes `GET /healthz`.
+The repo ships a root [`railway.toml`](../railway.toml) so Railway uses
+[`Dockerfile.railway`](../Dockerfile.railway) and probes `GET /healthz`.
+
+Railway-specific build note:
+
+- Railway only supports `--mount=type=cache`, so it rejects the secret-mount
+  form used in the standard [`Dockerfile`](../Dockerfile)
+- `Dockerfile.railway` is the platform-compatible exception and still declares
+  `ARG NVIDIA_API_KEY` for the bake-time ingest step
+- set `NVIDIA_API_KEY` as a Railway service variable before deploy so it is
+  available during the image build as well as at runtime for live retrieval
 
 Recommended beta setup:
 

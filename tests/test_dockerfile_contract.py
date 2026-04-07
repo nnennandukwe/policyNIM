@@ -6,6 +6,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "Dockerfile"
+RAILWAY_DOCKERFILE = REPO_ROOT / "Dockerfile.railway"
+RAILWAY_CONFIG = REPO_ROOT / "railway.toml"
 HOSTED_OPERATIONS = REPO_ROOT / "docs" / "hosted-beta-operations.md"
 
 
@@ -29,3 +31,20 @@ def test_hosted_operations_doc_uses_secret_build_invocation() -> None:
     assert "--secret id=nvidia_api_key,env=NVIDIA_API_KEY" in text
     assert "-t policynim-hosted ." in text
     assert "--build-arg NVIDIA_API_KEY" not in text
+
+
+def test_railway_uses_a_dedicated_compatible_dockerfile() -> None:
+    railway_text = _read_text(RAILWAY_CONFIG)
+    dockerfile_text = _read_text(RAILWAY_DOCKERFILE)
+
+    assert 'dockerfilePath = "Dockerfile.railway"' in railway_text
+    assert "ARG NVIDIA_API_KEY" in dockerfile_text
+    assert "--mount=type=secret" not in dockerfile_text
+
+
+def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
+    text = " ".join(_read_text(HOSTED_OPERATIONS).split())
+
+    assert "Railway only supports `--mount=type=cache`" in text
+    assert "`Dockerfile.railway`" in text
+    assert "`Dockerfile`" in text
