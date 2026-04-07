@@ -53,10 +53,17 @@ pytestmark = [
 ]
 
 
-def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
+def _write_nvidia_secret_file(tmp_path: Path, value: str) -> Path:
+    secret_path = tmp_path / "nvidia_api_key.txt"
+    secret_path.write_text(value, encoding="utf-8")
+    return secret_path
+
+
+def test_docker_builder_stage_fails_without_nvidia_api_key(tmp_path: Path) -> None:
     tag = f"policynim-hosted-missing-key:{uuid.uuid4().hex[:12]}"
     env = dict(os.environ)
     env["DOCKER_BUILDKIT"] = "1"
+    secret_path = _write_nvidia_secret_file(tmp_path, "")
 
     try:
         result = subprocess.run(
@@ -67,8 +74,8 @@ def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
                 "builder",
                 "--no-cache",
                 "--progress=plain",
-                "--build-arg",
-                "NVIDIA_API_KEY=",
+                "--secret",
+                f"id=nvidia_api_key,src={secret_path}",
                 "-t",
                 tag,
                 ".",
@@ -94,14 +101,14 @@ def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
     assert "NVIDIA_API_KEY is required for embeddings." in combined_output
 
 
-def test_runtime_image_contains_non_empty_baked_index() -> None:
+def test_runtime_image_contains_non_empty_baked_index(tmp_path: Path) -> None:
     if not _NVIDIA_API_KEY:
         pytest.skip("NVIDIA_API_KEY is not configured for positive Docker build validation.")
 
     tag = f"policynim-hosted-baked-index:{uuid.uuid4().hex[:12]}"
     env = dict(os.environ)
     env["DOCKER_BUILDKIT"] = "1"
-    env["NVIDIA_API_KEY"] = _NVIDIA_API_KEY
+    secret_path = _write_nvidia_secret_file(tmp_path, _NVIDIA_API_KEY)
 
     try:
         build_result = subprocess.run(
@@ -109,8 +116,8 @@ def test_runtime_image_contains_non_empty_baked_index() -> None:
                 "docker",
                 "build",
                 "--progress=plain",
-                "--build-arg",
-                "NVIDIA_API_KEY",
+                "--secret",
+                f"id=nvidia_api_key,src={secret_path}",
                 "-t",
                 tag,
                 ".",

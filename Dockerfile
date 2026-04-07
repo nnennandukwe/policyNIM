@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 ARG PYTHON_BASE_IMAGE=python:3.11.15-slim-trixie@sha256:9358444059ed78e2975ada2c189f1c1a3144a5dab6f35bff8c981afb38946634
 
 FROM ${PYTHON_BASE_IMAGE} AS builder
@@ -15,10 +16,9 @@ COPY src ./src
 COPY policies ./policies
 COPY evals ./evals
 
-ARG NVIDIA_API_KEY
-
 RUN uv sync --frozen
-RUN export NVIDIA_API_KEY && uv run policynim ingest
+RUN --mount=type=secret,id=nvidia_api_key,required=true \
+    sh -c 'NVIDIA_API_KEY="$(cat /run/secrets/nvidia_api_key)" uv run policynim ingest'
 
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime

@@ -70,11 +70,13 @@ Hosted beta notes:
 
 ## Container Build For Hosted HTTP
 
-Build the production image with a build-time NVIDIA key so the index is baked
-into the image:
+Build the production image with a BuildKit secret for the bake-time NVIDIA key
+so the index is baked into the image:
 
 ```bash
-docker build --build-arg NVIDIA_API_KEY=$NVIDIA_API_KEY -t policynim-hosted .
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=nvidia_api_key,env=NVIDIA_API_KEY \
+  -t policynim-hosted .
 ```
 
 Important container defaults:
@@ -83,8 +85,10 @@ Important container defaults:
 - the image sets `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
 - the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the
   container
-- if `NVIDIA_API_KEY` is unset or empty at build time, `docker build` fails
-  while `policynim ingest` tries to bake the index
+- the builder stage reads the bake-time key from the temporary BuildKit secret
+  mounted at `/run/secrets/nvidia_api_key`
+- if that secret is missing or empty, `docker build` fails while
+  `policynim ingest` tries to bake the index
 - the final image does not store the build-time `NVIDIA_API_KEY`
 - runtime `NVIDIA_API_KEY` is still required because live `search` and
   `preflight` call NVIDIA-hosted APIs
