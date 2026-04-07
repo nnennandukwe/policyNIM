@@ -46,7 +46,8 @@ Hosted onboarding versus Docker build-test env vars:
 - Set `POLICYNIM_RUN_DOCKER_TESTS=1` only when you want to run the Docker build
   regression locally against a working Docker daemon.
 - Set `NVIDIA_API_KEY` as well if you want the positive baked-index image validation
-  to run instead of skip.
+  to run instead of skip; the Docker harness passes it as a BuildKit secret, not
+  as a build arg.
 - Do not rely on `-m live` to pick up Docker build checks; they use the dedicated
   `docker_live` marker.
 

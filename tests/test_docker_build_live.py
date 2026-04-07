@@ -57,6 +57,7 @@ def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
     tag = f"policynim-hosted-missing-key:{uuid.uuid4().hex[:12]}"
     env = dict(os.environ)
     env["DOCKER_BUILDKIT"] = "1"
+    env["NVIDIA_API_KEY"] = ""
 
     try:
         result = subprocess.run(
@@ -67,8 +68,8 @@ def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
                 "builder",
                 "--no-cache",
                 "--progress=plain",
-                "--build-arg",
-                "NVIDIA_API_KEY=",
+                "--secret",
+                "id=nvidia_api_key,env=NVIDIA_API_KEY",
                 "-t",
                 tag,
                 ".",
@@ -109,8 +110,8 @@ def test_runtime_image_contains_non_empty_baked_index() -> None:
                 "docker",
                 "build",
                 "--progress=plain",
-                "--build-arg",
-                "NVIDIA_API_KEY",
+                "--secret",
+                "id=nvidia_api_key,env=NVIDIA_API_KEY",
                 "-t",
                 tag,
                 ".",

@@ -70,11 +70,13 @@ Hosted beta notes:
 
 ## Container Build For Hosted HTTP
 
-Build the production image with a build-time NVIDIA key so the index is baked
-into the image:
+Build the production image with a BuildKit secret for the bake-time NVIDIA key
+so the index is baked into the image:
 
 ```bash
-docker build --build-arg NVIDIA_API_KEY=$NVIDIA_API_KEY -t policynim-hosted .
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=nvidia_api_key,env=NVIDIA_API_KEY \
+  -t policynim-hosted .
 ```
 
 Important container defaults:
@@ -83,11 +85,14 @@ Important container defaults:
 - the image sets `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
 - the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the
   container
-- if `NVIDIA_API_KEY` is unset or empty at build time, `docker build` fails
-  while `policynim ingest` tries to bake the index
+- the builder stage reads the bake-time key from the temporary BuildKit secret
+  mounted at `/run/secrets/nvidia_api_key`
+- if that secret is missing or empty, `docker build` fails while
+  `policynim ingest` tries to bake the index
 - the final image does not store the build-time `NVIDIA_API_KEY`
 - runtime `NVIDIA_API_KEY` is still required because live `search` and
   `preflight` call NVIDIA-hosted APIs
+- this standard Docker path uses the repo root `Dockerfile`
 
 Example hosted run:
 
@@ -131,8 +136,17 @@ What to expect:
 
 ## Railway Beta Deploy
 
-The repo ships a root [`railway.toml`](../railway.toml) so Railway uses the root
-`Dockerfile` and probes `GET /healthz`.
+The repo ships a root [`railway.toml`](../railway.toml) so Railway uses
+[`Dockerfile.railway`](../Dockerfile.railway) and probes `GET /healthz`.
+
+Railway-specific build note:
+
+- Railway only supports `--mount=type=cache`, so it rejects the secret-mount
+  form used in the standard [`Dockerfile`](../Dockerfile)
+- `Dockerfile.railway` is the platform-compatible exception and still declares
+  `ARG NVIDIA_API_KEY` for the bake-time ingest step
+- set `NVIDIA_API_KEY` as a Railway service variable before deploy so it is
+  available during the image build as well as at runtime for live retrieval
 
 Recommended beta setup:
 
