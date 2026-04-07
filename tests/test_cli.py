@@ -12,7 +12,10 @@ from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.cli import app
+from policynim.services.runtime_evidence_report import RuntimeEvidenceReportService
 from policynim.services.runtime_execution import RuntimeExecutionService
+from policynim.settings import Settings
+from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
     BetaAccount,
     Citation,
@@ -390,6 +393,34 @@ def make_runtime_execution_service(
         evidence_store=StubRuntimeEvidenceStore(),
         confirmer=confirmer,
     )
+
+
+def make_sqlite_runtime_execution_service(
+    *,
+    db_path: Path,
+    decision: RuntimeDecision,
+    summary: str | None = None,
+    confirmer=None,
+) -> RuntimeExecutionService:
+    """Build the real runtime execution service backed by SQLite evidence."""
+    return RuntimeExecutionService(
+        decision_service=cast(Any, _RuntimeDecisionStub(decision, summary=summary)),
+        evidence_store=RuntimeEvidenceStore(path=db_path),
+        confirmer=confirmer,
+    )
+
+
+def make_stderr_prompt_confirmer():
+    """Read confirmation from stdin while keeping prompt text off stdout."""
+
+    def confirm(decision_result: RuntimeDecisionResult) -> bool:
+        sys.stderr.write(f"{decision_result.summary} Continue with runtime execution? [y/N]: ")
+        sys.stderr.flush()
+        response = sys.stdin.readline().strip().lower()
+        sys.stderr.write("\n")
+        return response in {"y", "yes"}
+
+    return confirm
 
 
 def test_ingest_command_prints_summary(monkeypatch) -> None:
@@ -845,6 +876,46 @@ def test_runtime_execute_command_rejects_malformed_runtime_request(tmp_path: Pat
     assert "kind" in result.stderr
 
 
+def test_runtime_execute_command_reads_request_from_file(monkeypatch, tmp_path: Path) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "kind": "shell_command",
+                "task": "Run a passing shell command.",
+                "cwd": str(tmp_path),
+                "command": [sys.executable, "-c", "raise SystemExit(0)"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="allow",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["runtime", "execute", "--input", str(request_path)])
+
+    assert result.exit_code == 0
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "allowed"
+    assert payload.session_id
+
+
+def test_runtime_execute_command_rejects_non_object_json(tmp_path: Path) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text('["not-an-object"]', encoding="utf-8")
+
+    result = runner.invoke(app, ["runtime", "execute", "--input", str(request_path)])
+
+    assert result.exit_code == 1
+    assert "JSON object" in result.stderr
+
+
 def test_runtime_execute_command_reads_request_from_stdin_and_echoes_resolved_session_id(
     monkeypatch,
     tmp_path: Path,
@@ -1040,6 +1111,154 @@ def test_runtime_execute_command_fails_closed_when_confirmation_is_non_interacti
     payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
     assert payload.execution_outcome == "failed"
     assert payload.failure_class == "confirmation_unavailable"
+
+
+def test_runtime_execute_command_accepts_interactive_confirmation_without_stdout_noise(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "kind": "file_write",
+                "task": "Write a confirmed file.",
+                "cwd": str(tmp_path),
+                "path": "guarded.txt",
+                "content": "payload",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli._build_cli_confirmer",
+        make_stderr_prompt_confirmer,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="confirm",
+            summary="Review this write.",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", str(request_path)],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "confirmed"
+    assert "Continue with runtime execution?" not in result.stdout
+    assert "Continue with runtime execution?" in result.stderr
+
+
+def test_runtime_execute_command_rejects_interactive_confirmation_without_stdout_noise(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "kind": "file_write",
+                "task": "Write a confirmed file.",
+                "cwd": str(tmp_path),
+                "path": "guarded.txt",
+                "content": "payload",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli._build_cli_confirmer",
+        make_stderr_prompt_confirmer,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_runtime_execution_service(
+            decision="confirm",
+            summary="Review this write.",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["runtime", "execute", "--input", str(request_path)],
+        input="n\n",
+    )
+
+    assert result.exit_code == 1
+    payload = RuntimeExecutionResult.model_validate(json.loads(result.stdout))
+    assert payload.execution_outcome == "refused"
+    assert "Continue with runtime execution?" not in result.stdout
+    assert "Continue with runtime execution?" in result.stderr
+
+
+def test_runtime_execute_and_evidence_report_share_real_sqlite_session_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "kind": "file_write",
+                "task": "Write a file with durable evidence.",
+                "cwd": str(tmp_path),
+                "path": "notes.txt",
+                "content": "payload",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_db_path = tmp_path / "runtime" / "runtime_evidence.sqlite3"
+    runtime_settings = Settings(runtime_evidence_db_path=runtime_db_path)
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_execution_service",
+        lambda settings, confirmer=None: make_sqlite_runtime_execution_service(
+            db_path=runtime_db_path,
+            decision="allow",
+            confirmer=confirmer,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: RuntimeEvidenceReportService(
+            evidence_store=RuntimeEvidenceStore(path=runtime_db_path)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr("policynim.interfaces.cli.get_settings", lambda: runtime_settings)
+
+    execution = runner.invoke(app, ["runtime", "execute", "--input", str(request_path)])
+
+    assert execution.exit_code == 0
+    execution_payload = RuntimeExecutionResult.model_validate(json.loads(execution.stdout))
+    assert execution_payload.execution_outcome == "allowed"
+
+    report = runner.invoke(
+        app,
+        ["evidence", "report", "--session-id", execution_payload.session_id],
+    )
+
+    assert report.exit_code == 0
+    payload = json.loads(report.stdout)
+    assert payload["session_id"] == execution_payload.session_id
+    assert payload["allowed_count"] == 1
+    assert payload["execution_count"] == 1
 
 
 def test_evidence_report_command_prints_session_summary_json(monkeypatch) -> None:

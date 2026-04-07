@@ -70,8 +70,11 @@ Hosted MCP and beta portal:
 Runtime rules, evidence, and eval UI:
 
 - `POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH`
+  default: `data/runtime/runtime_rules.json`
 - `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH`
+  default: `data/runtime/runtime_evidence.sqlite3`
 - `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS`
+  default: `300`
 - `POLICYNIM_EVAL_UI_PORT`
 
 ## Default Model References

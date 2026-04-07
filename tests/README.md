@@ -10,6 +10,9 @@ Current automated coverage includes:
 - Day 3 runtime execution orchestration with confirmation handling, redaction, and durable evidence persistence
 - Day 4 runtime evidence session-summary reporting over the SQLite evidence store
 - Runtime execution SQLite store schema, ordering, reopen, and concurrency behavior
+- Day 5 runtime hardening for file-write and HTTP execution paths plus confirmation-callback failures
+- Day 5 real SQLite-backed CLI runtime execution plus `evidence report` coverage
+- Day 5 runtime docs parity for command forms, env examples, and policy authoring guidance
 - Day 6 eval orchestration, rerank on/off comparison, and isolated live-eval index handling
 - Day 4 grounded preflight orchestration, citation validation, and fallback behavior
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases

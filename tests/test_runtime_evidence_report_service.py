@@ -14,10 +14,16 @@ from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
     Citation,
     CompiledRuntimeRule,
+    FileWriteExecutionMetadata,
+    FileWriteExecutionRequest,
+    HTTPRequestExecutionMetadata,
+    HTTPRequestExecutionRequest,
     RuntimeEvidenceEventKind,
     RuntimeEvidenceSessionSummary,
     RuntimeExecutionEvidenceRecord,
+    RuntimeExecutionMetadata,
     RuntimeExecutionOutcome,
+    RuntimeExecutionRequest,
     ShellCommandExecutionMetadata,
     ShellCommandExecutionRequest,
 )
@@ -34,6 +40,8 @@ def make_record(
     failure_class: str | None = None,
     matched_rules: list[CompiledRuntimeRule] | None = None,
     citations: list[Citation] | None = None,
+    request: RuntimeExecutionRequest | None = None,
+    result_metadata: RuntimeExecutionMetadata | None = None,
 ) -> RuntimeExecutionEvidenceRecord:
     timestamp = created_at or datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
     effective_outcome = execution_outcome
@@ -45,12 +53,16 @@ def make_record(
         session_id=session_id,
         created_at=timestamp,
         event_kind=event_kind,
-        request=ShellCommandExecutionRequest(
-            kind="shell_command",
-            task=f"Run task for {execution_id}.",
-            cwd=Path("/tmp/workspace"),
-            session_id=session_id,
-            command=["make", execution_id],
+        request=(
+            request
+            if request is not None
+            else ShellCommandExecutionRequest(
+                kind="shell_command",
+                task=f"Run task for {execution_id}.",
+                cwd=Path("/tmp/workspace"),
+                session_id=session_id,
+                command=["make", execution_id],
+            )
         ),
         decision="allow" if event_kind != "blocked" else "block",
         summary="Decision summary.",
@@ -59,9 +71,13 @@ def make_record(
         confirmation_outcome="not_required",
         execution_outcome=effective_outcome,
         result_metadata=(
-            None
-            if event_kind == "decision"
-            else ShellCommandExecutionMetadata(exit_code=0, duration_ms=12.5)
+            result_metadata
+            if result_metadata is not None
+            else (
+                None
+                if event_kind == "decision"
+                else ShellCommandExecutionMetadata(exit_code=0, duration_ms=12.5)
+            )
         ),
         failure_class=failure_class,
         residual_uncertainty=None,
@@ -304,6 +320,124 @@ def test_runtime_evidence_report_service_preserves_rules_and_citations(
     assert summary.confirmed_count == 1
     assert summary.executions[0].matched_rules == [rule]
     assert summary.executions[0].citations == [citation]
+
+
+def test_runtime_evidence_report_service_summarizes_mixed_action_kinds(
+    tmp_path: Path,
+) -> None:
+    store = RuntimeEvidenceStore(path=tmp_path / "runtime_evidence.sqlite3")
+    base_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    store.append_event(
+        make_record(
+            event_id="event-1",
+            execution_id="exec-1",
+            created_at=base_time,
+            event_kind="decision",
+            request=FileWriteExecutionRequest(
+                kind="file_write",
+                task="Write a file.",
+                cwd=tmp_path,
+                session_id="session-1",
+                path=Path("notes.txt"),
+            ),
+        )
+    )
+    store.append_event(
+        make_record(
+            event_id="event-2",
+            execution_id="exec-1",
+            created_at=base_time + timedelta(seconds=1),
+            event_kind="allowed",
+            request=FileWriteExecutionRequest(
+                kind="file_write",
+                task="Write a file.",
+                cwd=tmp_path,
+                session_id="session-1",
+                path=Path("notes.txt"),
+            ),
+            result_metadata=FileWriteExecutionMetadata(
+                path=tmp_path / "notes.txt",
+                bytes_written=12,
+            ),
+        )
+    )
+    store.append_event(
+        make_record(
+            event_id="event-3",
+            execution_id="exec-2",
+            created_at=base_time + timedelta(seconds=2),
+            event_kind="decision",
+            request=HTTPRequestExecutionRequest(
+                kind="http_request",
+                task="Call the API.",
+                cwd=tmp_path,
+                session_id="session-1",
+                method="GET",
+                url="https://example.com/api",
+            ),
+        )
+    )
+    store.append_event(
+        make_record(
+            event_id="event-4",
+            execution_id="exec-2",
+            created_at=base_time + timedelta(seconds=3),
+            event_kind="failed",
+            failure_class="http_status",
+            request=HTTPRequestExecutionRequest(
+                kind="http_request",
+                task="Call the API.",
+                cwd=tmp_path,
+                session_id="session-1",
+                method="GET",
+                url="https://example.com/api",
+            ),
+            result_metadata=HTTPRequestExecutionMetadata(
+                status_code=429,
+                duration_ms=12.5,
+            ),
+        )
+    )
+
+    summary = RuntimeEvidenceReportService(evidence_store=store).report_session("session-1")
+
+    assert [execution.action_kind for execution in summary.executions] == [
+        "file_write",
+        "http_request",
+    ]
+    assert summary.allowed_count == 1
+    assert summary.failed_count == 1
+    assert summary.executions[1].failure_class == "http_status"
+
+
+def test_runtime_evidence_report_service_keeps_single_decision_execution_incomplete(
+    tmp_path: Path,
+) -> None:
+    store = RuntimeEvidenceStore(path=tmp_path / "runtime_evidence.sqlite3")
+    created_at = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    store.append_event(
+        make_record(
+            event_id="event-1",
+            execution_id="exec-1",
+            created_at=created_at,
+            event_kind="decision",
+            request=FileWriteExecutionRequest(
+                kind="file_write",
+                task="Write a file later.",
+                cwd=tmp_path,
+                session_id="session-1",
+                path=Path("notes.txt"),
+            ),
+        )
+    )
+
+    summary = RuntimeEvidenceReportService(evidence_store=store).report_session("session-1")
+
+    assert summary.completed_at is None
+    assert summary.incomplete_count == 1
+    assert summary.executions[0].action_kind == "file_write"
+    assert summary.executions[0].execution_outcome is None
+    assert summary.executions[0].completed_at is None
 
 
 def test_runtime_evidence_report_service_raises_for_unknown_session(tmp_path: Path) -> None:
