@@ -56,6 +56,17 @@ def test_contributor_guide_and_env_examples_include_runtime_settings() -> None:
             assert token in text, f"{path.name} is missing {token}"
 
 
+def test_production_env_example_uses_absolute_runtime_paths() -> None:
+    production_text = _read_text(REPO_ROOT / ".env.production.example")
+
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json" in (
+        production_text
+    )
+    assert "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3" in (
+        production_text
+    )
+
+
 def test_policy_template_includes_runtime_rules_authoring_guidance() -> None:
     text = _read_text(POLICY_TEMPLATE)
 
