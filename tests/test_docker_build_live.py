@@ -53,17 +53,11 @@ pytestmark = [
 ]
 
 
-def _write_nvidia_secret_file(tmp_path: Path, value: str) -> Path:
-    secret_path = tmp_path / "nvidia_api_key.txt"
-    secret_path.write_text(value, encoding="utf-8")
-    return secret_path
-
-
-def test_docker_builder_stage_fails_without_nvidia_api_key(tmp_path: Path) -> None:
+def test_docker_builder_stage_fails_without_nvidia_api_key() -> None:
     tag = f"policynim-hosted-missing-key:{uuid.uuid4().hex[:12]}"
     env = dict(os.environ)
     env["DOCKER_BUILDKIT"] = "1"
-    secret_path = _write_nvidia_secret_file(tmp_path, "")
+    env["NVIDIA_API_KEY"] = ""
 
     try:
         result = subprocess.run(
@@ -75,7 +69,7 @@ def test_docker_builder_stage_fails_without_nvidia_api_key(tmp_path: Path) -> No
                 "--no-cache",
                 "--progress=plain",
                 "--secret",
-                f"id=nvidia_api_key,src={secret_path}",
+                "id=nvidia_api_key,env=NVIDIA_API_KEY",
                 "-t",
                 tag,
                 ".",
@@ -101,14 +95,14 @@ def test_docker_builder_stage_fails_without_nvidia_api_key(tmp_path: Path) -> No
     assert "NVIDIA_API_KEY is required for embeddings." in combined_output
 
 
-def test_runtime_image_contains_non_empty_baked_index(tmp_path: Path) -> None:
+def test_runtime_image_contains_non_empty_baked_index() -> None:
     if not _NVIDIA_API_KEY:
         pytest.skip("NVIDIA_API_KEY is not configured for positive Docker build validation.")
 
     tag = f"policynim-hosted-baked-index:{uuid.uuid4().hex[:12]}"
     env = dict(os.environ)
     env["DOCKER_BUILDKIT"] = "1"
-    secret_path = _write_nvidia_secret_file(tmp_path, _NVIDIA_API_KEY)
+    env["NVIDIA_API_KEY"] = _NVIDIA_API_KEY
 
     try:
         build_result = subprocess.run(
@@ -117,7 +111,7 @@ def test_runtime_image_contains_non_empty_baked_index(tmp_path: Path) -> None:
                 "build",
                 "--progress=plain",
                 "--secret",
-                f"id=nvidia_api_key,src={secret_path}",
+                "id=nvidia_api_key,env=NVIDIA_API_KEY",
                 "-t",
                 tag,
                 ".",
