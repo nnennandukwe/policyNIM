@@ -15,15 +15,51 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    NoDecode,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
+import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
 from policynim.types import DEFAULT_TOP_K, TopK
+
+
+class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
+    """Provide user-owned path defaults for installed standalone runtimes."""
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        if _should_use_repo_relative_defaults():
+            return {}
+
+        standalone = config_discovery.standalone_paths()
+        return {
+            "lancedb_uri": standalone.lancedb_uri,
+            "runtime_rules_artifact_path": standalone.runtime_rules_artifact_path,
+            "runtime_evidence_db_path": standalone.runtime_evidence_db_path,
+            "eval_workspace_dir": standalone.eval_workspace_dir,
+        }
+
+
+class ProcessEnvOnlyConfigDotEnvSettingsSource(DotEnvSettingsSource):
+    """Drop config-file overrides from dotenv sources so only process env can set them."""
+
+    def __call__(self) -> dict[str, Any]:
+        data = super().__call__()
+        data.pop("config_file", None)
+        return data
 
 
 class Settings(BaseSettings):
     """Validated environment-backed settings."""
 
+    config_file: Path | None = Field(default=None, exclude=True, repr=False)
     nvidia_api_key: str | None = Field(default=None, validation_alias="NVIDIA_API_KEY")
     policynim_env: str = Field(default="development", validation_alias="POLICYNIM_ENV")
     corpus_dir: Path | None = None
@@ -71,6 +107,50 @@ class Settings(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        resolved_dotenv = dotenv_settings
+        if isinstance(dotenv_settings, DotEnvSettingsSource):
+            if _uses_default_env_file(dotenv_settings.env_file):
+                resolved_dotenv = _build_discovered_dotenv_source(settings_cls, dotenv_settings)
+            else:
+                resolved_dotenv = _clone_filtered_dotenv_source(
+                    settings_cls,
+                    dotenv_settings,
+                    env_file=dotenv_settings.env_file,
+                )
+
+        return (
+            init_settings,
+            env_settings,
+            resolved_dotenv,
+            file_secret_settings,
+            StandaloneDefaultPathsSource(settings_cls),
+        )
+
+    @field_validator("config_file", mode="before")
+    @classmethod
+    def validate_config_file(cls, value: Any) -> Any:
+        """Reject empty or missing explicit config-file overrides."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("POLICYNIM_CONFIG_FILE must not be empty.")
+            value = Path(stripped).expanduser()
+        if isinstance(value, Path):
+            if not value.is_file():
+                raise ValueError("POLICYNIM_CONFIG_FILE must point to an existing env file.")
+        return value
 
     @field_validator("corpus_dir", mode="before")
     @classmethod
@@ -226,6 +306,58 @@ def _dedupe_tokens(values: list[str] | tuple[str, ...]) -> list[str]:
         deduped.append(token)
         seen.add(token)
     return deduped
+
+
+def _uses_default_env_file(env_file: object) -> bool:
+    """Return whether dotenv loading still points at the model's default `.env`."""
+    if isinstance(env_file, (str, Path)):
+        return Path(env_file) == Path(".env")
+    if isinstance(env_file, (list, tuple)) and len(env_file) == 1:
+        candidate = env_file[0]
+        return isinstance(candidate, (str, Path)) and Path(candidate) == Path(".env")
+    return False
+
+
+def _build_discovered_dotenv_source(
+    settings_cls: type[BaseSettings],
+    template: DotEnvSettingsSource,
+) -> DotEnvSettingsSource:
+    """Replace the static `.env` source with Day 1 discovery precedence."""
+    discovery = config_discovery.discover_config_files()
+    return _clone_filtered_dotenv_source(
+        settings_cls,
+        template,
+        env_file=discovery.env_files or None,
+    )
+
+
+def _clone_filtered_dotenv_source(
+    settings_cls: type[BaseSettings],
+    template: DotEnvSettingsSource,
+    *,
+    env_file: object,
+) -> DotEnvSettingsSource:
+    """Clone the existing dotenv source while keeping config-file override process-env only."""
+    return ProcessEnvOnlyConfigDotEnvSettingsSource(
+        settings_cls,
+        env_file=env_file,
+        env_file_encoding=template.env_file_encoding,
+        case_sensitive=template.case_sensitive,
+        env_prefix=template.env_prefix,
+        env_prefix_target=template.env_prefix_target,
+        env_nested_delimiter=template.env_nested_delimiter,
+        env_nested_max_split=template.env_nested_max_split,
+        env_ignore_empty=template.env_ignore_empty,
+        env_parse_none_str=template.env_parse_none_str,
+        env_parse_enums=template.env_parse_enums,
+    )
+
+
+def _should_use_repo_relative_defaults() -> bool:
+    """Preserve checkout and hosted path defaults instead of forcing platformdirs."""
+    if config_discovery.is_source_checkout():
+        return True
+    return config_discovery.is_hosted_process_environment()
 
 
 @lru_cache(maxsize=1)
