@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from policynim.settings import Settings
 from policynim.types import (
+    DEFAULT_TOP_K,
     DocumentSection,
     HTTPRequestActionRequest,
     ParsedRuntimeRule,
@@ -28,6 +29,88 @@ def load_settings_without_env_file(**overrides: Any) -> Settings:
     """Construct Settings without reading the repo .env file."""
     settings_type = cast(Any, Settings)
     return settings_type(_env_file=None, **overrides)
+
+
+def write_env_file(path: Path, **values: str) -> None:
+    """Write a small env-style config file for precedence tests."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{key}={value}" for key, value in values.items()]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def clear_day1_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear env variables that would interfere with Day 1 precedence tests."""
+    for key in (
+        "POLICYNIM_CONFIG_FILE",
+        "POLICYNIM_DEFAULT_TOP_K",
+        "POLICYNIM_LANCEDB_URI",
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
+        "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
+        "POLICYNIM_EVAL_WORKSPACE_DIR",
+        "POLICYNIM_ENV",
+        "PORT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+def configure_standalone_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, Path, Path]:
+    """Simulate an installed runtime outside a source checkout."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+
+    config_root = tmp_path / "user-config"
+    data_root = tmp_path / "user-data"
+    package_root = tmp_path / "site-packages" / "policynim"
+    package_root.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "policynim.settings.config_discovery.user_config_path",
+        lambda *args, **kwargs: config_root,
+    )
+    monkeypatch.setattr(
+        "policynim.settings.config_discovery.user_data_path",
+        lambda *args, **kwargs: data_root,
+    )
+    monkeypatch.setattr(
+        "policynim.settings.config_discovery.__file__",
+        str(package_root / "config_discovery.py"),
+    )
+
+    return workspace, config_root, data_root
+
+
+def configure_checkout_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, Path, Path]:
+    """Simulate running from a contributor checkout."""
+    checkout_root = tmp_path / "checkout"
+    package_root = checkout_root / "src" / "policynim"
+    package_root.mkdir(parents=True)
+    (checkout_root / "pyproject.toml").write_text(
+        "[project]\nname = 'policynim'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(checkout_root)
+
+    config_root = tmp_path / "user-config"
+    data_root = tmp_path / "user-data"
+    monkeypatch.setattr(
+        "policynim.settings.config_discovery.user_config_path",
+        lambda *args, **kwargs: config_root,
+    )
+    monkeypatch.setattr(
+        "policynim.settings.config_discovery.user_data_path",
+        lambda *args, **kwargs: data_root,
+    )
+    monkeypatch.setattr(
+        "policynim.settings.config_discovery.__file__",
+        str(package_root / "config_discovery.py"),
+    )
+
+    return checkout_root, config_root, data_root
 
 
 def test_settings_reads_prefixed_env_and_nvidia_alias(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,6 +146,96 @@ def test_settings_parses_csv_bearer_tokens(monkeypatch: pytest.MonkeyPatch) -> N
     settings = load_settings_without_env_file()
 
     assert settings.mcp_bearer_tokens == ["token-a", "token-b"]
+
+
+def test_settings_uses_user_config_and_standalone_defaults_when_no_local_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    _, config_root, data_root = configure_standalone_discovery(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="8")
+
+    settings = Settings()
+
+    assert settings.default_top_k == 8
+    assert settings.lancedb_uri == data_root / "lancedb"
+    assert settings.eval_workspace_dir == data_root / "evals" / "workspace"
+
+
+def test_settings_prefers_explicit_config_file_over_cwd_dotenv_and_user_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    workspace, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
+    write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
+    explicit_config = tmp_path / "explicit.env"
+    write_env_file(explicit_config, POLICYNIM_DEFAULT_TOP_K="5")
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(explicit_config))
+
+    settings = Settings()
+
+    assert settings.default_top_k == 5
+
+
+def test_settings_prefers_cwd_dotenv_over_user_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    workspace, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
+    write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
+
+    settings = Settings()
+
+    assert settings.default_top_k == 4
+
+
+def test_settings_prefers_process_env_over_all_discovered_config_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    workspace, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
+    write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
+    explicit_config = tmp_path / "explicit.env"
+    write_env_file(explicit_config, POLICYNIM_DEFAULT_TOP_K="5")
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(explicit_config))
+    monkeypatch.setenv("POLICYNIM_DEFAULT_TOP_K", "6")
+
+    settings = Settings()
+
+    assert settings.default_top_k == 6
+
+
+def test_settings_fails_closed_when_explicit_config_file_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    configure_standalone_discovery(monkeypatch, tmp_path)
+    missing_config = tmp_path / "missing.env"
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(missing_config))
+
+    with pytest.raises(ValidationError, match="POLICYNIM_CONFIG_FILE"):
+        Settings()
+
+
+def test_settings_ignores_config_file_from_discovered_user_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    _, config_root, data_root = configure_standalone_discovery(monkeypatch, tmp_path)
+    write_env_file(
+        config_root / "config.env",
+        POLICYNIM_DEFAULT_TOP_K="8",
+        POLICYNIM_CONFIG_FILE=str(tmp_path / "missing.env"),
+    )
+
+    settings = Settings()
+
+    assert settings.default_top_k == 8
+    assert settings.config_file is None
+    assert settings.lancedb_uri == data_root / "lancedb"
 
 
 def test_settings_uses_default_runtime_rules_artifact_path() -> None:
@@ -163,6 +336,58 @@ def test_settings_keeps_loopback_host_outside_production_even_with_port(
     settings = load_settings_without_env_file()
 
     assert settings.mcp_host == "127.0.0.1"
+
+
+def test_settings_ignores_user_config_when_platform_port_is_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    _, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
+    write_env_file(
+        config_root / "config.env",
+        POLICYNIM_ENV="production",
+        POLICYNIM_DEFAULT_TOP_K="8",
+    )
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = Settings()
+
+    assert settings.policynim_env == "development"
+    assert settings.default_top_k == DEFAULT_TOP_K
+    assert settings.mcp_host == "127.0.0.1"
+    assert settings.lancedb_uri == Path("data/lancedb")
+    assert settings.eval_workspace_dir == Path("data/evals/workspace")
+
+
+def test_settings_keeps_checkout_defaults_when_running_from_source_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    checkout_root, config_root, _ = configure_checkout_discovery(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
+    write_env_file(checkout_root / ".env", POLICYNIM_DEFAULT_TOP_K="11")
+
+    settings = Settings()
+
+    assert settings.default_top_k == 11
+    assert settings.lancedb_uri == Path("data/lancedb")
+    assert settings.eval_workspace_dir == Path("data/evals/workspace")
+
+
+def test_settings_keeps_hosted_defaults_out_of_standalone_platformdirs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_day1_env(monkeypatch)
+    configure_standalone_discovery(monkeypatch, tmp_path)
+    monkeypatch.setenv("POLICYNIM_ENV", "production")
+    monkeypatch.setenv("PORT", "8123")
+
+    settings = Settings()
+
+    assert settings.mcp_host == "0.0.0.0"
+    assert settings.mcp_port == 8123
+    assert settings.lancedb_uri == Path("data/lancedb")
+    assert settings.eval_workspace_dir == Path("data/evals/workspace")
 
 
 def test_settings_requires_bearer_tokens_when_auth_is_enabled() -> None:

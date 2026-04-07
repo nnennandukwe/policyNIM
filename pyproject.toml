@@ -14,6 +14,7 @@ dependencies = [
   "mcp[cli]==1.26.0",
   "openai==2.29.0",
   "pandas==2.2.3",
+  "platformdirs==4.5.0",
   "pydantic==2.12.5",
   "pydantic-settings==2.13.1",
   "typer==0.24.1",

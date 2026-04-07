@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import atexit
+from collections.abc import Callable
+from contextlib import ExitStack
+from importlib import resources
 from pathlib import Path
 
 from policynim.errors import InvalidPolicyDocumentError
+
+_PACKAGED_RESOURCE_STACK = ExitStack()
+atexit.register(_PACKAGED_RESOURCE_STACK.close)
 
 
 def resolve_runtime_path(path: Path) -> Path:
@@ -32,34 +39,59 @@ def resolve_corpus_root(configured_root: Path | str | None = None) -> Path:
     if normalized_root is not None:
         return resolve_runtime_path(normalized_root)
 
-    package_root = Path(__file__).resolve().parent
-    bundled_corpus = package_root / "policies"
-    if bundled_corpus.is_dir():
+    bundled_corpus = _resolve_packaged_resource("policies")
+    if bundled_corpus is not None and bundled_corpus.is_dir():
         return bundled_corpus
 
-    for parent in package_root.parents:
-        checkout_corpus = parent / "policies"
-        if checkout_corpus.is_dir():
-            return checkout_corpus
+    checkout_corpus = _resolve_checkout_resource("policies", predicate=Path.is_dir)
+    if checkout_corpus is not None:
+        return checkout_corpus
 
     raise InvalidPolicyDocumentError(
-        "Could not locate the policy corpus. Set `POLICYNIM_CORPUS_DIR` to the directory "
-        "containing your policy Markdown files."
+        "Could not locate the policy corpus in installed package resources or a source checkout. "
+        "Set `POLICYNIM_CORPUS_DIR` to the directory containing your policy Markdown files."
     )
 
 
 def resolve_eval_suite_path() -> Path:
     """Resolve the bundled default eval suite."""
-    package_root = Path(__file__).resolve().parent
-    bundled_suite = package_root / "evals" / "default_cases.json"
-    if bundled_suite.is_file():
+    bundled_suite = _resolve_packaged_resource("evals", "default_cases.json")
+    if bundled_suite is not None and bundled_suite.is_file():
         return bundled_suite
 
-    for parent in package_root.parents:
-        checkout_suite = parent / "evals" / "default_cases.json"
-        if checkout_suite.is_file():
-            return checkout_suite
+    checkout_suite = _resolve_checkout_resource(
+        "evals",
+        "default_cases.json",
+        predicate=Path.is_file,
+    )
+    if checkout_suite is not None:
+        return checkout_suite
 
     raise InvalidPolicyDocumentError(
-        "Could not locate the default eval suite. Add `evals/default_cases.json` to the project."
+        "Could not locate the default eval suite in installed package resources or a source "
+        "checkout. Reinstall PolicyNIM or run from a source checkout that contains "
+        "`evals/default_cases.json`."
     )
+
+
+def _resolve_packaged_resource(*parts: str) -> Path | None:
+    """Resolve a packaged resource to a filesystem path when the package ships it."""
+    resource = resources.files("policynim")
+    for part in parts:
+        resource = resource.joinpath(part)
+    if not resource.exists():
+        return None
+    return _PACKAGED_RESOURCE_STACK.enter_context(resources.as_file(resource))
+
+
+def _resolve_checkout_resource(
+    *parts: str,
+    predicate: Callable[[Path], bool],
+) -> Path | None:
+    """Resolve a checkout-relative fallback by walking parents of the package path."""
+    package_root = Path(__file__).resolve().parent
+    for parent in package_root.parents:
+        candidate = parent.joinpath(*parts)
+        if predicate(candidate):
+            return candidate
+    return None
