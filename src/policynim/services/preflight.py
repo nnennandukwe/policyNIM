@@ -17,9 +17,11 @@ from policynim.types import (
     CompileRequest,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
+    PolicyConformanceTraceStep,
     PolicyGuidance,
     PreflightRequest,
     PreflightResult,
+    PreflightTraceResult,
     ScoredChunk,
 )
 
@@ -88,12 +90,47 @@ class PreflightService:
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
         """Run the grounded preflight pipeline."""
+        output = self._run_preflight(request, with_trace=False)
+        assert isinstance(output, PreflightResult)
+        return output
+
+    def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
+        """Run preflight and retain internal data needed for eval scoring."""
+        output = self._run_preflight(request, with_trace=True)
+        assert isinstance(output, PreflightTraceResult)
+        return output
+
+    def _run_preflight(
+        self,
+        request: PreflightRequest,
+        *,
+        with_trace: bool,
+    ) -> PreflightResult | PreflightTraceResult:
         compile_result = self._compiler_service.compile(
             CompileRequest(task=request.task, domain=request.domain, top_k=request.top_k)
         )
         compiled_packet = compile_result.packet
+        trace_steps: list[PolicyConformanceTraceStep] | None = [] if with_trace else None
+        if trace_steps is not None:
+            trace_steps.append(
+                _trace_step(
+                    step_id="compile",
+                    kind="policy_compilation",
+                    summary=(
+                        "Compiled policy packet had insufficient context."
+                        if compiled_packet.insufficient_context
+                        else "Compiled policy packet for generation."
+                    ),
+                    citation_ids=[citation.chunk_id for citation in compiled_packet.citations],
+                )
+            )
         if compiled_packet.insufficient_context or not compile_result.retained_context:
-            return _insufficient_context_result(request)
+            return _preflight_output(
+                result=_insufficient_context_result(request),
+                compiled_packet=compiled_packet,
+                retained_context=compile_result.retained_context,
+                trace_steps=trace_steps,
+            )
 
         retained_context = compile_result.retained_context
         generated = self._generator.generate_preflight(
@@ -103,10 +140,46 @@ class PreflightService:
         )
         draft = _coerce_generated_draft(generated)
         draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
+        if trace_steps is not None:
+            trace_steps.append(
+                _trace_step(
+                    step_id="generate",
+                    kind="grounded_generation",
+                    summary=draft.summary or "Generated preflight draft.",
+                    citation_ids=draft.citation_ids,
+                )
+            )
         validated = _validate_and_materialize_result(request, retained_context, draft)
         if validated is None:
-            return _insufficient_context_result(request)
-        return validated
+            return _preflight_output(
+                result=_insufficient_context_result(request),
+                compiled_packet=compiled_packet,
+                retained_context=retained_context,
+                trace_steps=trace_steps,
+            )
+        return _preflight_output(
+            result=validated,
+            compiled_packet=compiled_packet,
+            retained_context=retained_context,
+            trace_steps=trace_steps,
+        )
+
+
+def _preflight_output(
+    *,
+    result: PreflightResult,
+    compiled_packet: CompiledPolicyPacket,
+    retained_context: list[ScoredChunk],
+    trace_steps: list[PolicyConformanceTraceStep] | None,
+) -> PreflightResult | PreflightTraceResult:
+    if trace_steps is None:
+        return result
+    return PreflightTraceResult(
+        result=result,
+        compiled_packet=compiled_packet,
+        retained_context=retained_context,
+        trace_steps=trace_steps,
+    )
 
 
 def create_preflight_service(settings: Settings | None = None) -> PreflightService:
@@ -302,6 +375,21 @@ def _constraint_statements(
     constraints: Sequence[CompiledPolicyConstraint],
 ) -> list[str]:
     return [constraint.statement for constraint in constraints]
+
+
+def _trace_step(
+    *,
+    step_id: str,
+    kind: str,
+    summary: str,
+    citation_ids: Sequence[str],
+) -> PolicyConformanceTraceStep:
+    return PolicyConformanceTraceStep(
+        step_id=step_id,
+        kind=kind,
+        summary=summary.strip() or kind,
+        citation_ids=_ordered_unique(list(citation_ids)),
+    )
 
 
 def _close_component(component: object | None) -> None:

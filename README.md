@@ -36,6 +36,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Policy compilation into citation-backed planning and generation constraints.
 - Grounded preflight synthesis with compiled plan steps, citation validation, and
   fail-closed fallback.
+- Eval backend selection with optional policy-conformance scoring for compiled
+  plans and preflight outputs.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,

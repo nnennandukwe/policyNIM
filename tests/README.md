@@ -19,12 +19,15 @@ Current automated coverage includes:
   and weak-evidence fallback behavior
 - Build 2 policy compilation, compiled constraint citation validation,
   fail-closed handling, and preflight conditioning
+- Build 3 policy conformance scoring, eval backend selection, preflight trace
+  handling, and NVIDIA conformance-response validation
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads
 - CLI output for `ingest`, JSON-first `search`, JSON-first `route`, JSON-first
   `compile`, and JSON-first `preflight`
 - CLI output for `eval`
+- CLI output for `eval --backend default|nemo`
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`
 - CLI output for `beta-admin` hosted operator commands
 - MCP tool parity for `policy_preflight` and `policy_search`

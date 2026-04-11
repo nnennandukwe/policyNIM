@@ -36,9 +36,10 @@ constraints, not setup mistakes.
   JSON logs for auth rejects and MCP tool calls, but there is no tracing or
   metrics pipeline yet.
 
-### NVIDIA Dependency For Live Retrieval
+### NVIDIA Dependency For Live Retrieval And Live Conformance
 
-- `ingest`, `search`, `preflight`, and live eval mode depend on NVIDIA-hosted APIs.
+- `ingest`, `search`, `route`, `compile`, `preflight`, live eval mode, and live
+  `eval --backend nemo` depend on NVIDIA-hosted APIs.
 - There is no offline fallback model path for those live retrieval workflows.
 - Runtime failures related to missing credentials or provider access remain
   explicit operator errors.
@@ -76,8 +77,11 @@ constraints, not setup mistakes.
 
 - The built-in eval suite is deterministic and small.
 - It is useful for regression detection, not for benchmarking broad model quality.
-- Eval scoring checks recall and insufficient-context behavior; it does not attempt
-  to judge prose quality or policy nuance beyond those coded expectations.
+- The default eval backend checks recall and insufficient-context behavior without
+  LLM-as-judge scoring.
+- The `nemo` eval backend adds policy-conformance checks for preflight cases, but
+  it remains a narrow conformance signal rather than a broad benchmark of prose
+  quality or policy nuance.
 
 ### No Separate Review Or Approval Layer
 

@@ -13,7 +13,7 @@ reference that used to live in the root README.
 - `policynim route --task "..."`
 - `policynim compile --task "..."`
 - `policynim preflight --task "..."`
-- `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
+- `policynim eval --mode offline|live [--backend default|nemo] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
@@ -170,6 +170,7 @@ uv run policynim eval
 Default behavior:
 
 - runs the bundled eval suite in `offline` mode
+- uses the `default` eval backend unless `--backend nemo` is provided
 - executes rerank-enabled and rerank-disabled runs
 - writes JSON artifacts and HTML reports under `data/evals/workspace`
 - starts the local Evidently UI on `http://localhost:8001`
@@ -179,11 +180,17 @@ Useful variants:
 ```bash
 uv run policynim eval --headless
 uv run policynim eval --no-compare-rerank
+uv run policynim eval --backend nemo --headless
 uv run policynim eval --mode live
+uv run policynim eval --mode live --backend nemo --headless
 ```
 
 `--mode live` requires `NVIDIA_API_KEY` and uses an isolated temporary index so
 it does not overwrite the normal runtime index.
+
+`--backend nemo` adds policy-conformance scoring for preflight eval cases. In
+offline mode it uses deterministic local fixtures; in live mode it reuses the
+configured NVIDIA chat model for final-adherence judgment.
 
 ### 6. Run The MCP Server
 
@@ -359,6 +366,7 @@ PolicyNIM keeps the retrieval stack explicit:
 6. compile selected policy evidence into constraint packets
 7. generate grounded guidance from routed evidence and compiled constraints
 8. validate every citation against retrieved chunks before returning results
+9. optionally score policy conformance during `eval --backend nemo`
 
 The system is designed to fail closed:
 
@@ -429,5 +437,5 @@ uv run policynim ingest
 
 ### Missing NVIDIA Credentials
 
-`ingest`, `search`, `route`, `compile`, `preflight`, and live eval mode require
-`NVIDIA_API_KEY`. Offline eval mode does not.
+`ingest`, `search`, `route`, `compile`, `preflight`, live eval mode, and live
+`eval --backend nemo` require `NVIDIA_API_KEY`. Offline eval mode does not.

@@ -19,6 +19,7 @@ import pandas as pd
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
+from policynim.services.conformance import PolicyConformanceService
 from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import PreflightService
 from policynim.services.search import SearchService
@@ -28,6 +29,7 @@ from policynim.types import (
     CompiledPolicyPacket,
     CompileRequest,
     EvalAggregateMetrics,
+    EvalBackend,
     EvalCase,
     EvalCaseMetrics,
     EvalCaseResult,
@@ -37,10 +39,13 @@ from policynim.types import (
     EvalRunResult,
     EvalSuite,
     GeneratedCompiledPolicyDraft,
+    GeneratedPolicyConformanceDraft,
     GeneratedPolicyConstraint,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicyChunk,
+    PolicyConformanceRequest,
+    PolicyConformanceResult,
     PolicyMetadata,
     PolicySelectionPacket,
     PreflightRequest,
@@ -84,6 +89,7 @@ class EvalService:
         self,
         *,
         mode: EvalExecutionMode = "offline",
+        backend: EvalBackend = "default",
         compare_rerank: bool = True,
     ) -> EvalRunResult:
         """Run the requested eval suite and persist the resulting reports."""
@@ -96,6 +102,7 @@ class EvalService:
             case_results = self._run_suite_cases(
                 suite,
                 mode=mode,
+                backend=backend,
                 rerank_enabled=rerank_enabled,
             )
             mode_results.append(
@@ -103,6 +110,7 @@ class EvalService:
                     suite=suite,
                     suite_path=suite_path,
                     mode=mode,
+                    backend=backend,
                     rerank_enabled=rerank_enabled,
                     case_results=case_results,
                 )
@@ -115,6 +123,7 @@ class EvalService:
         )
         return EvalRunResult(
             mode=mode,
+            backend=backend,
             suite_name=suite.name,
             suite_path=suite_path.as_posix(),
             workspace_path=self._workspace_path.as_posix(),
@@ -171,16 +180,26 @@ class EvalService:
         suite: EvalSuite,
         *,
         mode: EvalExecutionMode,
+        backend: EvalBackend,
         rerank_enabled: bool,
     ) -> list[EvalCaseResult]:
         if mode == "offline":
-            return self._run_offline_suite(suite, rerank_enabled=rerank_enabled)
-        return self._run_live_suite(suite, rerank_enabled=rerank_enabled)
+            return self._run_offline_suite(
+                suite,
+                backend=backend,
+                rerank_enabled=rerank_enabled,
+            )
+        return self._run_live_suite(
+            suite,
+            backend=backend,
+            rerank_enabled=rerank_enabled,
+        )
 
     def _run_offline_suite(
         self,
         suite: EvalSuite,
         *,
+        backend: EvalBackend,
         rerank_enabled: bool,
     ) -> list[EvalCaseResult]:
         store = _OfflineIndexStore(_OFFLINE_QUERY_CANDIDATES)
@@ -197,21 +216,30 @@ class EvalService:
             generator=_OfflineGenerator(),
             compiler=_OfflinePolicyCompiler(),
         )
+        conformance_service = (
+            PolicyConformanceService(evaluator=_OfflinePolicyConformanceEvaluator())
+            if backend == "nemo"
+            else None
+        )
         try:
             return _score_suite_cases(
                 suite.cases,
                 search_service=search_service,
                 preflight_service=preflight_service,
+                conformance_service=conformance_service,
+                backend=backend,
                 rerank_enabled=rerank_enabled,
             )
         finally:
             search_service.close()
             preflight_service.close()
+            _close_component(conformance_service)
 
     def _run_live_suite(
         self,
         suite: EvalSuite,
         *,
+        backend: EvalBackend,
         rerank_enabled: bool,
     ) -> list[EvalCaseResult]:
         with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
@@ -229,16 +257,22 @@ class EvalService:
                 temp_settings,
                 rerank_enabled=rerank_enabled,
             )
+            conformance_service = (
+                _create_live_conformance_service(temp_settings) if backend == "nemo" else None
+            )
             try:
                 return _score_suite_cases(
                     suite.cases,
                     search_service=search_service,
                     preflight_service=preflight_service,
+                    conformance_service=conformance_service,
+                    backend=backend,
                     rerank_enabled=rerank_enabled,
                 )
             finally:
                 search_service.close()
                 preflight_service.close()
+                _close_component(conformance_service)
 
     def _persist_mode_run(
         self,
@@ -246,6 +280,7 @@ class EvalService:
         suite: EvalSuite,
         suite_path: Path,
         mode: EvalExecutionMode,
+        backend: EvalBackend,
         rerank_enabled: bool,
         case_results: list[EvalCaseResult],
     ) -> EvalModeRunResult:
@@ -260,14 +295,16 @@ class EvalService:
         reports_dir.mkdir(parents=True, exist_ok=True)
 
         result_payload = EvalModeRunResult(
+            backend=backend,
             rerank_enabled=rerank_enabled,
             metrics=metrics,
             result_json_path="",
             report_html_path="",
             case_results=case_results,
         )
-        result_json_path = results_dir / f"{timestamp}-{suite_slug}-{mode_slug}.json"
-        report_html_path = reports_dir / f"{timestamp}-{suite_slug}-{mode_slug}.html"
+        backend_slug = f"{mode_slug}-{backend}"
+        result_json_path = results_dir / f"{timestamp}-{suite_slug}-{backend_slug}.json"
+        report_html_path = reports_dir / f"{timestamp}-{suite_slug}-{backend_slug}.html"
         result_json_path.write_text(
             result_payload.model_copy(
                 update={
@@ -282,6 +319,7 @@ class EvalService:
             suite=suite,
             suite_path=suite_path,
             mode=mode,
+            backend=backend,
             rerank_enabled=rerank_enabled,
             case_results=case_results,
             metrics=metrics,
@@ -290,10 +328,11 @@ class EvalService:
         _add_report_to_workspace(
             self._workspace_path,
             report,
-            run_name=f"{suite.name} | {mode} | {mode_slug}",
+            run_name=f"{suite.name} | {mode} | {backend} | {mode_slug}",
         )
 
         return EvalModeRunResult(
+            backend=backend,
             rerank_enabled=rerank_enabled,
             metrics=metrics,
             result_json_path=result_json_path.as_posix(),
@@ -312,6 +351,8 @@ def _score_suite_cases(
     *,
     search_service: SearchService,
     preflight_service: PreflightService,
+    conformance_service: PolicyConformanceService | None,
+    backend: EvalBackend,
     rerank_enabled: bool,
 ) -> list[EvalCaseResult]:
     results: list[EvalCaseResult] = []
@@ -323,10 +364,31 @@ def _score_suite_cases(
             results.append(_score_search_case(case, result=result, rerank_enabled=rerank_enabled))
             continue
 
-        result = preflight_service.preflight(
-            PreflightRequest(task=case.input, domain=case.domain, top_k=case.top_k)
+        request = PreflightRequest(task=case.input, domain=case.domain, top_k=case.top_k)
+        conformance_result: PolicyConformanceResult | None = None
+        if conformance_service is None:
+            result = preflight_service.preflight(request)
+        else:
+            trace_result = preflight_service.preflight_with_trace(request)
+            result = trace_result.result
+            if not result.insufficient_context:
+                conformance_result = conformance_service.evaluate(
+                    PolicyConformanceRequest(
+                        task=request.task,
+                        result=result,
+                        compiled_packet=trace_result.compiled_packet,
+                        trace_steps=trace_result.trace_steps,
+                    ),
+                    backend=backend,
+                )
+        results.append(
+            _score_preflight_case(
+                case,
+                result=result,
+                conformance_result=conformance_result,
+                rerank_enabled=rerank_enabled,
+            )
         )
-        results.append(_score_preflight_case(case, result=result, rerank_enabled=rerank_enabled))
     return results
 
 
@@ -379,6 +441,7 @@ def _score_preflight_case(
     case: EvalCase,
     *,
     result: PreflightResult,
+    conformance_result: PolicyConformanceResult | None = None,
     rerank_enabled: bool,
 ) -> EvalCaseResult:
     actual_policy_ids = [policy.policy_id for policy in result.applicable_policies]
@@ -396,6 +459,15 @@ def _score_preflight_case(
         matched_ids=matched_policy_ids,
         label="policy_id",
     )
+    if conformance_result is not None and not conformance_result.passed:
+        failure_reasons.append(
+            "policy conformance failed: "
+            + (
+                "; ".join(conformance_result.failure_reasons)
+                if conformance_result.failure_reasons
+                else "score below threshold"
+            )
+        )
     return EvalCaseResult(
         case_id=case.case_id,
         kind=case.kind,
@@ -414,11 +486,18 @@ def _score_preflight_case(
         actual_policy_ids=actual_policy_ids,
         matched_policy_ids=matched_policy_ids,
         actual_summary=result.summary,
+        conformance_result=conformance_result,
         metrics=EvalCaseMetrics(
             expected_chunk_recall=_recall(len(matched_chunk_ids), len(case.expected_chunk_ids)),
             expected_policy_recall=_recall(len(matched_policy_ids), len(case.expected_policy_ids)),
             insufficient_context_correct=(
                 case.expected_insufficient_context == result.insufficient_context
+            ),
+            conformance_score=(
+                conformance_result.overall_score if conformance_result is not None else None
+            ),
+            conformance_passed=(
+                conformance_result.passed if conformance_result is not None else None
             ),
         ),
     )
@@ -447,8 +526,16 @@ def _build_failure_reasons(
 def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateMetrics:
     search_results = [result for result in case_results if result.kind == "search"]
     preflight_results = [result for result in case_results if result.kind == "preflight"]
+    conformance_results = [
+        result for result in preflight_results if result.conformance_result is not None
+    ]
     total_results = list(case_results)
     passed_count = sum(result.passed for result in total_results)
+    conformance_passed_count = sum(
+        result.conformance_result.passed
+        for result in conformance_results
+        if result.conformance_result is not None
+    )
     return EvalAggregateMetrics(
         case_count=len(total_results),
         passed_count=passed_count,
@@ -475,6 +562,16 @@ def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateM
             [
                 1.0 if result.metrics.insufficient_context_correct else 0.0
                 for result in total_results
+            ]
+        ),
+        conformance_case_count=len(conformance_results),
+        conformance_passed_count=conformance_passed_count,
+        conformance_pass_rate=_ratio(conformance_passed_count, len(conformance_results)),
+        conformance_score=_average(
+            [
+                result.conformance_result.overall_score
+                for result in conformance_results
+                if result.conformance_result is not None
             ]
         ),
     )
@@ -588,6 +685,7 @@ def _build_evidently_report(
     suite: EvalSuite,
     suite_path: Path,
     mode: EvalExecutionMode,
+    backend: EvalBackend,
     rerank_enabled: bool,
     case_results: Sequence[EvalCaseResult],
     metrics: EvalAggregateMetrics,
@@ -600,6 +698,7 @@ def _build_evidently_report(
             "suite_name": suite.name,
             "suite_path": suite_path.as_posix(),
             "mode": mode,
+            "backend": backend,
             "rerank_enabled": rerank_enabled,
             "case_id": result.case_id,
             "kind": result.kind,
@@ -617,10 +716,25 @@ def _build_evidently_report(
             "expected_chunk_recall": result.metrics.expected_chunk_recall,
             "expected_policy_recall": result.metrics.expected_policy_recall,
             "insufficient_context_correct": result.metrics.insufficient_context_correct,
+            "conformance_passed": (
+                result.conformance_result.passed if result.conformance_result is not None else None
+            ),
+            "conformance_score": (
+                result.conformance_result.overall_score
+                if result.conformance_result is not None
+                else None
+            ),
+            "conformance_failure_reasons": (
+                " | ".join(result.conformance_result.failure_reasons)
+                if result.conformance_result is not None
+                else ""
+            ),
             "actual_summary": result.actual_summary or "",
             "overall_pass_rate": metrics.overall_pass_rate,
             "expected_policy_recall_run": metrics.expected_policy_recall,
             "expected_chunk_recall_run": metrics.expected_chunk_recall,
+            "conformance_pass_rate_run": metrics.conformance_pass_rate,
+            "conformance_score_run": metrics.conformance_score,
         }
         for result in case_results
     ]
@@ -718,6 +832,20 @@ def _create_live_preflight_service(
         generator=NVIDIAGenerator.from_settings(settings),
         compiler=NVIDIAPolicyCompiler.from_settings(settings),
     )
+
+
+def _create_live_conformance_service(settings: Settings) -> PolicyConformanceService:
+    from policynim.providers import NVIDIAPolicyConformanceEvaluator
+
+    return PolicyConformanceService(
+        evaluator=NVIDIAPolicyConformanceEvaluator.from_settings(settings),
+    )
+
+
+def _close_component(component: object | None) -> None:
+    close = getattr(component, "close", None)
+    if callable(close):
+        close()
 
 
 class _PassThroughReranker(Reranker):
@@ -913,6 +1041,32 @@ class _OfflinePolicyCompiler:
             forbidden_patterns=forbidden_patterns,
             test_expectations=test_expectations,
             insufficient_context=not (required_steps or forbidden_patterns or test_expectations),
+        )
+
+    def close(self) -> None:
+        return None
+
+
+class _OfflinePolicyConformanceEvaluator:
+    """Produce deterministic conformance judgments for offline evals."""
+
+    def evaluate_policy_conformance(
+        self,
+        request: PolicyConformanceRequest,
+    ) -> GeneratedPolicyConformanceDraft:
+        trajectory_score = 1.0 if request.trace_steps else None
+        return GeneratedPolicyConformanceDraft(
+            final_adherence_score=1.0,
+            final_adherence_rationale="Offline preflight output follows compiled policy evidence.",
+            trajectory_adherence_score=trajectory_score,
+            trajectory_adherence_rationale=(
+                "Offline trace steps preserve compile and generation flow."
+                if trajectory_score is not None
+                else None
+            ),
+            constraint_ids=[],
+            chunk_ids=[citation.chunk_id for citation in request.result.citations],
+            failure_reasons=[],
         )
 
     def close(self) -> None:
