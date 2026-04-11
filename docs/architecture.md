@@ -125,6 +125,11 @@ Preflight flow:
 6. materialize public citations and policy guidance
 7. return a JSON-first `PreflightResult`
 
+When the CLI passes `--trace`, `PreflightService.preflight_with_trace()` exposes
+the same compiled packet and retained context to `PolicyEvidenceTraceService`.
+The trace service builds a `PolicyEvidenceTrace` from already-materialized data;
+it does not re-run retrieval, compilation, generation, or conformance.
+
 Fail-closed rules are central here:
 
 - missing configuration remains an explicit error
@@ -147,7 +152,7 @@ Evaluation flow:
 4. optionally add policy-conformance scoring for preflight cases with
    `--backend nemo`
 5. compare rerank-enabled and rerank-disabled runs
-6. persist JSON artifacts and HTML reports
+6. persist JSON artifacts and HTML reports, including preflight evidence traces
 7. optionally start the local Evidently UI
 
 Important evaluation rules:
@@ -158,6 +163,8 @@ Important evaluation rules:
 - the default backend is code-scored and does not use LLM-as-judge behavior
 - the `nemo` backend adds deterministic conformance checks plus final-adherence
   judgment for preflight cases
+- preflight eval cases include `PolicyEvidenceTrace`; search cases keep
+  `evidence_trace=null`
 - expected chunk recall, policy recall, and insufficient-context accuracy are the
   core tracked metrics
 
@@ -301,6 +308,8 @@ Shared interface guarantees:
   in Build 2.
 - CLI `preflight` and MCP `policy_preflight` use the same `PreflightResult`
   shape.
+- CLI `preflight --trace` returns `PreflightEvidenceTraceResult`; there is no
+  MCP trace tool.
 - CLI `runtime decide` and `runtime execute` use the same `RuntimeActionRequest`
   input shape.
 - CLI `evidence report` returns a typed session summary over the SQLite runtime

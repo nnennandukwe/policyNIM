@@ -21,6 +21,7 @@ from policynim.services import (
     create_index_dump_service,
     create_ingest_service,
     create_policy_compiler_service,
+    create_policy_evidence_trace_service,
     create_policy_router_service,
     create_preflight_service,
     create_runtime_decision_service,
@@ -34,6 +35,7 @@ from policynim.types import (
     CompileRequest,
     EvalBackend,
     EvalExecutionMode,
+    PreflightEvidenceTraceResult,
     PreflightRequest,
     RouteRequest,
     RuntimeActionRequest,
@@ -205,6 +207,13 @@ def preflight(
             help="Retrieval depth. Allowed range: 1-20.",
         ),
     ] = None,
+    trace: Annotated[
+        bool,
+        typer.Option(
+            "--trace",
+            help="Include a replay-free evidence trace with the preflight result.",
+        ),
+    ] = False,
 ) -> None:
     """Return policy guidance for a coding task."""
     service = None
@@ -212,7 +221,16 @@ def preflight(
         settings = _load_setup_dependent_settings()
         resolved_top_k = top_k if top_k is not None else settings.default_top_k
         service = create_preflight_service(settings)
-        result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
+        request = PreflightRequest(task=task, domain=domain, top_k=resolved_top_k)
+        if trace:
+            trace_result = service.preflight_with_trace(request)
+            evidence_trace = create_policy_evidence_trace_service().build(trace_result)
+            result = PreflightEvidenceTraceResult(
+                result=trace_result.result,
+                evidence_trace=evidence_trace,
+            )
+        else:
+            result = service.preflight(request)
     except ValidationError as exc:
         _exit_with_error(_format_validation_error("Preflight request", exc))
     except PolicyNIMError as exc:

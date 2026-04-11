@@ -35,11 +35,14 @@ from policynim.types import (
     EvalRunResult,
     IngestResult,
     PolicyChunk,
+    PolicyConformanceTraceStep,
     PolicyGuidance,
     PolicyMetadata,
     PolicySelectionPacket,
+    PreflightEvidenceTraceResult,
     PreflightRequest,
     PreflightResult,
+    PreflightTraceResult,
     RouteRequest,
     RouteResult,
     RuntimeDecision,
@@ -278,8 +281,11 @@ class MockPreflightService:
 
     def __init__(self) -> None:
         self.closed = False
+        self.preflight_calls = 0
+        self.trace_calls = 0
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
+        self.preflight_calls += 1
         return PreflightResult(
             task=request.task,
             domain=request.domain,
@@ -310,6 +316,79 @@ class MockPreflightService:
                 )
             ],
             insufficient_context=False,
+        )
+
+    def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
+        self.trace_calls += 1
+        result = self.preflight(request)
+        chunk = ScoredChunk(
+            chunk_id="AUTH-1",
+            path="policies/security/auth-review.md",
+            section="Cleanup",
+            lines="10-16",
+            text="Retain revocation checks before deleting stale refresh tokens.",
+            policy=PolicyMetadata(
+                policy_id="AUTH-001",
+                title="Auth Reviews",
+                doc_type="guidance",
+                domain="security",
+            ),
+            score=0.98,
+        )
+        return PreflightTraceResult(
+            result=result,
+            compiled_packet=CompiledPolicyPacket(
+                task=request.task,
+                domain=request.domain,
+                top_k=request.top_k,
+                task_type="feature_work",
+                selected_policies=[
+                    SelectedPolicy(
+                        policy_id="AUTH-001",
+                        title="Auth Reviews",
+                        domain="security",
+                        reason="Selected for token cleanup guidance.",
+                        evidence=[
+                            SelectedPolicyEvidence(
+                                chunk_id="AUTH-1",
+                                path="policies/security/auth-review.md",
+                                section="Cleanup",
+                                lines="10-16",
+                                text=(
+                                    "Retain revocation checks before deleting stale refresh tokens."
+                                ),
+                                score=0.98,
+                            )
+                        ],
+                    )
+                ],
+                required_steps=[
+                    CompiledPolicyConstraint(
+                        statement="Retain revocation checks before deleting stale refresh tokens.",
+                        citation_ids=["AUTH-1"],
+                        source_policy_ids=["AUTH-001"],
+                    )
+                ],
+                citations=[
+                    Citation(
+                        policy_id="AUTH-001",
+                        title="Auth Reviews",
+                        path="policies/security/auth-review.md",
+                        section="Cleanup",
+                        lines="10-16",
+                        chunk_id="AUTH-1",
+                    )
+                ],
+            ),
+            retained_context=[chunk],
+            trace_steps=[
+                PolicyConformanceTraceStep(
+                    step_id="compile",
+                    kind="policy_compilation",
+                    summary="Compiled policy packet for generation.",
+                    citation_ids=["AUTH-1"],
+                )
+            ],
         )
 
     def close(self) -> None:
@@ -959,6 +1038,43 @@ def test_preflight_command_prints_json(monkeypatch) -> None:
     assert payload.task == "refresh token cleanup"
     assert payload.domain == "security"
     assert payload.citations[0].chunk_id == "AUTH-1"
+    assert service.preflight_calls == 1
+    assert service.trace_calls == 0
+    assert service.closed is True
+
+
+def test_preflight_trace_command_prints_trace_wrapper(monkeypatch) -> None:
+    service = MockPreflightService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--task",
+            "refresh token cleanup",
+            "--domain",
+            "security",
+            "--top-k",
+            "3",
+            "--trace",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = PreflightEvidenceTraceResult.model_validate(json.loads(result.stdout))
+    assert payload.result.task == "refresh token cleanup"
+    assert payload.evidence_trace.task == "refresh token cleanup"
+    assert payload.evidence_trace.chunks[0].chunk_id == "AUTH-1"
+    assert payload.evidence_trace.selected_policies[0].supporting_chunk_ids == ["AUTH-1"]
+    assert payload.evidence_trace.constraints[0].constraint_id == "required_steps:0"
+    assert payload.evidence_trace.output_links[0].chunk_ids == ["AUTH-1"]
+    assert payload.evidence_trace.trace_steps[0].step_id == "compile"
+    assert service.preflight_calls == 1
+    assert service.trace_calls == 1
     assert service.closed is True
 
 
@@ -1200,6 +1316,7 @@ def test_preflight_help_mentions_current_top_k_behavior() -> None:
     assert result.exit_code == 0
     assert "Retrieval depth." in result.stdout
     assert "1-20." in result.stdout
+    assert "--trace" in result.stdout
     assert "Reserved retrieval depth" not in result.stdout
 
 
@@ -1347,6 +1464,23 @@ def test_preflight_command_closes_service_when_it_errors(monkeypatch) -> None:
     )
 
     result = runner.invoke(app, ["preflight", "--task", "refresh token cleanup"])
+
+    assert result.exit_code == 1
+    assert service.closed is True
+
+
+def test_preflight_trace_command_closes_service_when_it_errors(monkeypatch) -> None:
+    class FailingTracePreflightService(MockPreflightService):
+        def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
+            raise MissingIndexError("Run `policynim ingest` first.")
+
+    service = FailingTracePreflightService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["preflight", "--task", "refresh token cleanup", "--trace"])
 
     assert result.exit_code == 1
     assert service.closed is True

@@ -20,12 +20,14 @@ from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.conformance import PolicyConformanceService
+from policynim.services.evidence_trace import create_policy_evidence_trace_service
 from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import PreflightService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
 from policynim.types import (
+    CompiledPolicyConstraint,
     CompiledPolicyPacket,
     CompileRequest,
     EvalAggregateMetrics,
@@ -46,6 +48,7 @@ from policynim.types import (
     PolicyChunk,
     PolicyConformanceRequest,
     PolicyConformanceResult,
+    PolicyEvidenceTrace,
     PolicyMetadata,
     PolicySelectionPacket,
     PreflightRequest,
@@ -356,6 +359,7 @@ def _score_suite_cases(
     rerank_enabled: bool,
 ) -> list[EvalCaseResult]:
     results: list[EvalCaseResult] = []
+    trace_service = create_policy_evidence_trace_service()
     for case in cases:
         if case.kind == "search":
             result = search_service.search(
@@ -366,26 +370,28 @@ def _score_suite_cases(
 
         request = PreflightRequest(task=case.input, domain=case.domain, top_k=case.top_k)
         conformance_result: PolicyConformanceResult | None = None
-        if conformance_service is None:
-            result = preflight_service.preflight(request)
-        else:
-            trace_result = preflight_service.preflight_with_trace(request)
-            result = trace_result.result
-            if not result.insufficient_context:
-                conformance_result = conformance_service.evaluate(
-                    PolicyConformanceRequest(
-                        task=request.task,
-                        result=result,
-                        compiled_packet=trace_result.compiled_packet,
-                        trace_steps=trace_result.trace_steps,
-                    ),
-                    backend=backend,
-                )
+        trace_result = preflight_service.preflight_with_trace(request)
+        result = trace_result.result
+        if conformance_service is not None and not result.insufficient_context:
+            conformance_result = conformance_service.evaluate(
+                PolicyConformanceRequest(
+                    task=request.task,
+                    result=result,
+                    compiled_packet=trace_result.compiled_packet,
+                    trace_steps=trace_result.trace_steps,
+                ),
+                backend=backend,
+            )
+        evidence_trace = trace_service.build(
+            trace_result,
+            conformance_result=conformance_result,
+        )
         results.append(
             _score_preflight_case(
                 case,
                 result=result,
                 conformance_result=conformance_result,
+                evidence_trace=evidence_trace,
                 rerank_enabled=rerank_enabled,
             )
         )
@@ -442,6 +448,7 @@ def _score_preflight_case(
     *,
     result: PreflightResult,
     conformance_result: PolicyConformanceResult | None = None,
+    evidence_trace: PolicyEvidenceTrace | None = None,
     rerank_enabled: bool,
 ) -> EvalCaseResult:
     actual_policy_ids = [policy.policy_id for policy in result.applicable_policies]
@@ -487,6 +494,7 @@ def _score_preflight_case(
         matched_policy_ids=matched_policy_ids,
         actual_summary=result.summary,
         conformance_result=conformance_result,
+        evidence_trace=evidence_trace,
         metrics=EvalCaseMetrics(
             expected_chunk_recall=_recall(len(matched_chunk_ids), len(case.expected_chunk_ids)),
             expected_policy_recall=_recall(len(matched_policy_ids), len(case.expected_policy_ids)),
@@ -728,6 +736,17 @@ def _build_evidently_report(
                 " | ".join(result.conformance_result.failure_reasons)
                 if result.conformance_result is not None
                 else ""
+            ),
+            "evidence_trace_chunk_count": (
+                len(result.evidence_trace.chunks) if result.evidence_trace is not None else 0
+            ),
+            "evidence_trace_constraint_count": (
+                len(result.evidence_trace.constraints) if result.evidence_trace is not None else 0
+            ),
+            "evidence_trace_conformance_check_count": (
+                len(result.evidence_trace.conformance_checks)
+                if result.evidence_trace is not None
+                else 0
             ),
             "actual_summary": result.actual_summary or "",
             "overall_pass_rate": metrics.overall_pass_rate,
@@ -1064,13 +1083,30 @@ class _OfflinePolicyConformanceEvaluator:
                 if trajectory_score is not None
                 else None
             ),
-            constraint_ids=[],
+            constraint_ids=_offline_policy_conformance_constraint_ids(request.compiled_packet),
             chunk_ids=[citation.chunk_id for citation in request.result.citations],
             failure_reasons=[],
         )
 
     def close(self) -> None:
         return None
+
+
+def _offline_policy_conformance_constraint_ids(
+    compiled_packet: CompiledPolicyPacket,
+) -> list[str]:
+    categories: tuple[tuple[str, Sequence[CompiledPolicyConstraint]], ...] = (
+        ("required_steps", compiled_packet.required_steps),
+        ("forbidden_patterns", compiled_packet.forbidden_patterns),
+        ("architectural_expectations", compiled_packet.architectural_expectations),
+        ("test_expectations", compiled_packet.test_expectations),
+        ("style_constraints", compiled_packet.style_constraints),
+    )
+    return [
+        f"{category_name}:{index}"
+        for category_name, constraints in categories
+        for index, _constraint in enumerate(constraints)
+    ]
 
 
 def _cleanup_job_draft(context_by_id: dict[str, ScoredChunk]) -> GeneratedPreflightDraft:

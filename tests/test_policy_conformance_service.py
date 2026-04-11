@@ -83,6 +83,24 @@ def test_conformance_service_skips_trajectory_metric_when_evaluator_omits_it() -
     assert "trajectory_adherence" not in {metric.name for metric in result.metrics}
 
 
+def test_conformance_service_preserves_judged_constraint_and_chunk_ids() -> None:
+    service = PolicyConformanceService(
+        evaluator=MockConformanceEvaluator(
+            GeneratedPolicyConformanceDraft(
+                final_adherence_score=0.95,
+                final_adherence_rationale="Final output follows the constraints.",
+                constraint_ids=["required_steps:0"],
+                chunk_ids=["BACKEND-1"],
+            )
+        )
+    )
+
+    result = service.evaluate(make_request(), backend="nemo")
+
+    assert result.constraint_ids == ["required_steps:0"]
+    assert result.chunk_ids == ["BACKEND-1"]
+
+
 def test_conformance_service_fails_closed_for_insufficient_compiled_packet() -> None:
     service = PolicyConformanceService(evaluator=None)
     request = make_request(
