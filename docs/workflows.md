@@ -10,6 +10,7 @@ reference that used to live in the root README.
 - `policynim ingest`
 - `policynim dump-index`
 - `policynim search --query "..."`
+- `policynim route --task "..."`
 - `policynim preflight --task "..."`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
@@ -83,7 +84,34 @@ uv run policynim search \
   --top-k 5
 ```
 
-### 4. Run Grounded Preflight
+### 4. Route Task-Aware Policy Selection
+
+```bash
+uv run policynim route \
+  --task "Implement a refresh-token cleanup background job" \
+  --top-k 5
+```
+
+`route` is the inspection path between raw search and grounded preflight. It
+returns a JSON `PolicySelectionPacket` with:
+
+- the inferred or explicitly provided task type
+- selected policies
+- selection reasons
+- supporting chunk IDs, source paths, line spans, and evidence text
+- `insufficient_context`
+
+Use `--task-type` when the task text is intentionally terse or mixed:
+
+```bash
+uv run policynim route \
+  --task "token cleanup" \
+  --task-type refactor \
+  --domain security \
+  --top-k 5
+```
+
+### 5. Run Grounded Preflight
 
 ```bash
 uv run policynim preflight \
@@ -104,7 +132,7 @@ uv run policynim preflight \
 If citation validation fails or the grounded answer is too weak, PolicyNIM
 returns `insufficient_context=true` instead of bluffing.
 
-### 5. Run Evaluations
+### 6. Run Evaluations
 
 ```bash
 uv run policynim eval
@@ -298,8 +326,9 @@ PolicyNIM keeps the retrieval stack explicit:
 2. embed query and document text with NVIDIA-hosted embeddings
 3. retrieve dense candidates from LanceDB
 4. rerank candidates with NVIDIA
-5. generate grounded guidance from retained evidence only
-6. validate every citation against retrieved chunks before returning results
+5. route retained evidence into selected-policy packets
+6. generate grounded guidance from routed evidence only
+7. validate every citation against retrieved chunks before returning results
 
 The system is designed to fail closed:
 
@@ -320,6 +349,15 @@ uv run policynim search \
   --top-k 5 | jq
 ```
 
+Then inspect routed policy selection:
+
+```bash
+uv run policynim route \
+  --task "Implement a refresh-token cleanup background job" \
+  --domain security \
+  --top-k 5 | jq
+```
+
 Then compare that with:
 
 ```bash
@@ -329,9 +367,11 @@ uv run policynim preflight \
   --top-k 5 | jq
 ```
 
-If `search` returns strong hits while `preflight` returns
-`insufficient_context=true`, the failure is in grounded answer validation, not
-indexing.
+If `search` returns strong hits and `route` returns selected policies while
+`preflight` returns `insufficient_context=true`, the failure is in grounded
+answer validation, not indexing. If `route` also returns
+`insufficient_context=true`, inspect the task type, domain filter, and indexed
+policy coverage first.
 
 ### Negative Search Scores
 

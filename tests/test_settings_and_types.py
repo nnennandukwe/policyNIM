@@ -336,7 +336,8 @@ def test_settings_loads_quoted_init_config_values_with_paths_that_contain_spaces
         corpus_dir=custom_corpus,
     )
 
-    settings = Settings(_env_file=config_path)
+    settings_type = cast(Any, Settings)
+    settings = settings_type(_env_file=config_path)
 
     assert settings.nvidia_api_key == "quoted-key"
     assert settings.corpus_dir == custom_corpus.resolve(strict=False)

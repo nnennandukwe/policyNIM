@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from types import TracebackType
 from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, Reranker
-from policynim.errors import MissingIndexError
-from policynim.runtime_paths import resolve_runtime_path
+from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.settings import Settings, get_settings
-from policynim.storage import LanceDBIndexStore
 from policynim.types import (
     Citation,
     GeneratedPolicyGuidance,
@@ -19,13 +16,12 @@ from policynim.types import (
     PolicyGuidance,
     PreflightRequest,
     PreflightResult,
+    RouteRequest,
     ScoredChunk,
 )
 
 DraftPolicyGuidance = GeneratedPolicyGuidance
 
-_DEFAULT_RETRIEVAL_CANDIDATE_POOL = 15
-_MAX_CHUNKS_PER_POLICY = 2
 _INSUFFICIENT_CONTEXT_SUMMARY = (
     "PolicyNIM could not find enough grounded policy evidence for this task."
 )
@@ -37,14 +33,23 @@ class PreflightService:
     def __init__(
         self,
         *,
-        embedder: Embedder,
-        index_store: IndexStore,
-        reranker: Reranker,
         generator: Generator,
+        router: PolicyRouterService | None = None,
+        embedder: Embedder | None = None,
+        index_store: IndexStore | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
-        self._embedder = embedder
-        self._index_store = index_store
-        self._reranker = reranker
+        if router is None:
+            if embedder is None or index_store is None or reranker is None:
+                raise ValueError(
+                    "PreflightService requires either a router or embedder/index_store/reranker."
+                )
+            router = PolicyRouterService(
+                embedder=embedder,
+                index_store=index_store,
+                reranker=reranker,
+            )
+        self._router = router
         self._generator = generator
 
     def __enter__(self) -> PreflightService:
@@ -60,35 +65,18 @@ class PreflightService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._embedder)
-        _close_component(self._reranker)
+        _close_component(self._router)
         _close_component(self._generator)
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
         """Run the grounded preflight pipeline."""
-        _ensure_index_ready(self._index_store)
-
-        task_embedding = self._embedder.embed_query(request.task)
-        dense_candidates = self._index_store.search(
-            task_embedding,
-            top_k=max(request.top_k, _DEFAULT_RETRIEVAL_CANDIDATE_POOL),
-            domain=request.domain,
+        route_result = self._router.route(
+            RouteRequest(task=request.task, domain=request.domain, top_k=request.top_k)
         )
-        if not dense_candidates:
+        if route_result.packet.insufficient_context or not route_result.retained_context:
             return _insufficient_context_result(request)
 
-        reranked_candidates = self._reranker.rerank(
-            request.task,
-            dense_candidates,
-            top_k=max(request.top_k, _DEFAULT_RETRIEVAL_CANDIDATE_POOL),
-        )
-        if not reranked_candidates:
-            return _insufficient_context_result(request)
-
-        retained_context = _retain_diverse_context(reranked_candidates, top_k=request.top_k)
-        if not retained_context:
-            return _insufficient_context_result(request)
-
+        retained_context = route_result.retained_context
         generated = self._generator.generate_preflight(request, retained_context)
         draft = _coerce_generated_draft(generated)
         validated = _validate_and_materialize_result(request, retained_context, draft)
@@ -100,47 +88,18 @@ class PreflightService:
 def create_preflight_service(settings: Settings | None = None) -> PreflightService:
     """Build the default preflight service from application settings."""
     active_settings = settings or get_settings()
-    embedder, reranker, generator = _create_default_preflight_components(active_settings)
+    router = create_policy_router_service(active_settings)
+    generator = _create_default_generator(active_settings)
     return PreflightService(
-        embedder=embedder,
-        index_store=LanceDBIndexStore(
-            uri=resolve_runtime_path(active_settings.lancedb_uri),
-            table_name=active_settings.lancedb_table,
-        ),
-        reranker=reranker,
+        router=router,
         generator=generator,
     )
 
 
-def _create_default_preflight_components(
-    settings: Settings,
-) -> tuple[Embedder, Reranker, Generator]:
-    from policynim.providers import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
+def _create_default_generator(settings: Settings) -> Generator:
+    from policynim.providers import NVIDIAGenerator
 
-    return (
-        NVIDIAEmbedder.from_settings(settings),
-        NVIDIAReranker.from_settings(settings),
-        NVIDIAGenerator.from_settings(settings),
-    )
-
-
-def _ensure_index_ready(index_store: IndexStore) -> None:
-    if not index_store.exists() or index_store.count() == 0:
-        raise MissingIndexError("Run `policynim ingest` before using grounded preflight.")
-
-
-def _retain_diverse_context(chunks: Sequence[ScoredChunk], *, top_k: int) -> list[ScoredChunk]:
-    selected: list[ScoredChunk] = []
-    counts: dict[str, int] = defaultdict(int)
-    for chunk in chunks:
-        policy_id = chunk.policy.policy_id
-        if counts[policy_id] >= _MAX_CHUNKS_PER_POLICY:
-            continue
-        selected.append(chunk)
-        counts[policy_id] += 1
-        if len(selected) >= top_k:
-            break
-    return selected
+    return NVIDIAGenerator.from_settings(settings)
 
 
 def _coerce_generated_draft(generated: Any) -> GeneratedPreflightDraft:

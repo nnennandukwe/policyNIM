@@ -9,6 +9,7 @@ from pathlib import Path
 import policynim.services.eval as eval_module
 import policynim.services.ingest as ingest_module
 import policynim.services.preflight as preflight_module
+import policynim.services.router as router_module
 import policynim.services.runtime_decision as runtime_decision_module
 import policynim.services.runtime_evidence_report as runtime_evidence_report_module
 import policynim.services.runtime_execution as runtime_execution_module
@@ -53,6 +54,7 @@ import policynim.services.ingest
 import policynim.services.eval
 import policynim.services.search
 import policynim.services.preflight
+import policynim.services.router
 import policynim.services.runtime_decision
 import policynim.services.runtime_evidence_report
 import policynim.services.runtime_execution
@@ -113,30 +115,53 @@ def test_create_search_service_builds_default_components(monkeypatch, tmp_path: 
     assert service._index_store.table_name == settings.lancedb_table
 
 
-def test_create_preflight_service_builds_default_components(
+def test_create_policy_router_service_builds_default_components(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     mock_embedder = object()
     mock_reranker = object()
+    monkeypatch.setattr(
+        router_module,
+        "_create_default_router_components",
+        lambda settings: (mock_embedder, mock_reranker),
+    )
+    monkeypatch.setattr(router_module, "LanceDBIndexStore", MockIndexStore)
+
+    settings = Settings(lancedb_uri=tmp_path / "router-index")
+
+    service = router_module.create_policy_router_service(settings)
+
+    assert service._embedder is mock_embedder
+    assert service._reranker is mock_reranker
+    assert isinstance(service._index_store, MockIndexStore)
+    assert service._index_store.uri == (tmp_path / "router-index").resolve(strict=False)
+    assert service._index_store.table_name == settings.lancedb_table
+
+
+def test_create_preflight_service_builds_default_components(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    mock_router = object()
     mock_generator = object()
     monkeypatch.setattr(
         preflight_module,
-        "_create_default_preflight_components",
-        lambda settings: (mock_embedder, mock_reranker, mock_generator),
+        "create_policy_router_service",
+        lambda settings: mock_router,
     )
-    monkeypatch.setattr(preflight_module, "LanceDBIndexStore", MockIndexStore)
+    monkeypatch.setattr(
+        preflight_module,
+        "_create_default_generator",
+        lambda settings: mock_generator,
+    )
 
     settings = Settings(lancedb_uri=tmp_path / "preflight-index")
 
     service = preflight_module.create_preflight_service(settings)
 
-    assert service._embedder is mock_embedder
-    assert service._reranker is mock_reranker
+    assert service._router is mock_router
     assert service._generator is mock_generator
-    assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "preflight-index").resolve(strict=False)
-    assert service._index_store.table_name == settings.lancedb_table
 
 
 def test_create_runtime_decision_service_uses_runtime_paths(

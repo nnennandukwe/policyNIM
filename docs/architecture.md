@@ -10,7 +10,8 @@ The architecture stays intentionally small:
 
 - typed contracts shared by CLI and MCP
 - explicit provider and storage adapters
-- application services for ingest, retrieval, preflight, and evaluation
+- application services for ingest, retrieval, task-aware routing, preflight, and
+  evaluation
 - application services for runtime decisions, runtime execution, and durable
   evidence capture
 - fail-closed grounding rules instead of best-effort freeform answers
@@ -73,14 +74,33 @@ Current retrieval design choices:
 - the same embedding model is used for document and query vectors
 - reranking is part of the normal search path, not a separate experimental mode
 
+### Task-Aware Routing Flow
+
+`PolicyRouterService` is the selection-only layer between raw retrieval and
+grounded synthesis.
+
+Routing flow:
+
+1. validate the route request and optional task-type override
+2. infer a deterministic `TaskProfile` from task text when no override is present
+3. embed the original task through NVIDIA-hosted embeddings
+4. retrieve broad dense candidates from the local LanceDB table
+5. rerank candidates against the task plus task-profile signals
+6. retain bounded policy evidence with source chunk IDs and line spans
+7. return a JSON-first `PolicySelectionPacket`
+
+Build 1 routing intentionally does not compile policies into planning
+constraints. Weak or empty routing evidence becomes `insufficient_context=true`;
+missing configuration or a missing local index remains an explicit error.
+
 ### Grounded Preflight Flow
 
 `PreflightService` is the main orchestration layer for grounded policy guidance.
 
 Preflight flow:
 
-1. retrieve and rerank relevant evidence
-2. send retained evidence to the grounded generator
+1. route the task into a retained `PolicySelectionPacket`
+2. send retained policy evidence to the grounded generator
 3. receive a structured draft that cites retrieved chunk IDs
 4. validate every cited chunk ID against the retained result set
 5. materialize public citations and policy guidance
@@ -167,8 +187,10 @@ Important evaluation rules:
 - Owns application orchestration.
 - `IngestService` handles parse, chunk, embed, and rebuild.
 - `SearchService` handles query embedding, retrieval, and reranking.
-- `PreflightService` handles retrieval, grounded synthesis, and citation
-  validation.
+- `PolicyRouterService` handles deterministic task profiling, broad retrieval,
+  reranking, selected-policy grouping, and citation-preserving route packets.
+- `PreflightService` handles routed evidence selection, grounded synthesis, and
+  citation validation.
 - `RuntimeDecisionService` compiles and matches runtime rules against the local
   index by loading the compiled runtime rules artifact, matching actions
   against it, and linking the matched rules back to indexed evidence.
@@ -214,6 +236,7 @@ Important evaluation rules:
 - `policynim ingest`
 - `policynim dump-index`
 - `policynim search --query ...`
+- `policynim route --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim preflight --task ...`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
@@ -247,6 +270,8 @@ Important evaluation rules:
 Shared interface guarantees:
 
 - CLI `search` and MCP `policy_search` use the same `SearchResult` shape.
+- CLI `route` returns a `PolicySelectionPacket`; there is no MCP route tool in
+  Build 1.
 - CLI `preflight` and MCP `policy_preflight` use the same `PreflightResult`
   shape.
 - CLI `runtime decide` and `runtime execute` use the same `RuntimeActionRequest`
@@ -268,7 +293,7 @@ Shared interface guarantees:
 NVIDIA-hosted APIs are used for:
 
 - document embeddings during ingest
-- query embeddings during search and preflight
+- query embeddings during search, route, and preflight
 - reranking retrieved candidates
 - grounded generation for preflight
 

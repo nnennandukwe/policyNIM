@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from click.utils import strip_ansi
+from click import unstyle
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
@@ -31,21 +32,26 @@ from policynim.types import (
     PolicyChunk,
     PolicyGuidance,
     PolicyMetadata,
+    PolicySelectionPacket,
     PreflightRequest,
     PreflightResult,
+    RouteRequest,
+    RouteResult,
     RuntimeDecision,
     RuntimeDecisionResult,
     RuntimeExecutionResult,
     ScoredChunk,
     SearchRequest,
     SearchResult,
+    SelectedPolicy,
+    SelectedPolicyEvidence,
 )
 
 runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def clear_cached_settings() -> None:
+def clear_cached_settings() -> Generator[None, None, None]:
     """Prevent settings cache from leaking between CLI tests."""
     get_settings.cache_clear()
     yield
@@ -146,6 +152,52 @@ class MockSearchService:
                 )
             ],
         )
+
+
+class MockRouteService:
+    """Static route service for CLI tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.last_request: RouteRequest | None = None
+
+    def route(self, request: RouteRequest) -> RouteResult:
+        self.last_request = request
+        return RouteResult(
+            packet=PolicySelectionPacket(
+                task=request.task,
+                domain=request.domain,
+                top_k=request.top_k,
+                task_type=request.task_type or "bug_fix",
+                explicit_task_type=request.task_type,
+                profile_signals=(
+                    [f"explicit:{request.task_type}"] if request.task_type is not None else ["fix"]
+                ),
+                selected_policies=[
+                    SelectedPolicy(
+                        policy_id="SECURITY-TOKEN-001",
+                        title="Token handling",
+                        domain="security",
+                        reason="Selected for bug fix routing from 1 retained evidence chunk(s).",
+                        evidence=[
+                            SelectedPolicyEvidence(
+                                chunk_id="SECURITY-1",
+                                path="policies/security/tokens.md",
+                                section="Rules",
+                                lines="10-16",
+                                text="Never log token values.",
+                                score=0.99,
+                            )
+                        ],
+                    )
+                ],
+                insufficient_context=False,
+            ),
+            retained_context=[],
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockPreflightService:
@@ -527,6 +579,94 @@ def test_search_command_prints_json(monkeypatch) -> None:
     assert payload.hits[0].chunk_id == "BACKEND-1"
 
 
+def test_route_command_prints_policy_selection_packet(monkeypatch) -> None:
+    service = MockRouteService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_router_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "route",
+            "--task",
+            "fix token logging bug",
+            "--domain",
+            "security",
+            "--top-k",
+            "2",
+            "--task-type",
+            "bug_fix",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = PolicySelectionPacket.model_validate(json.loads(result.stdout))
+    assert payload.task == "fix token logging bug"
+    assert payload.domain == "security"
+    assert payload.top_k == 2
+    assert payload.task_type == "bug_fix"
+    assert payload.explicit_task_type == "bug_fix"
+    assert payload.selected_policies[0].evidence[0].chunk_id == "SECURITY-1"
+    assert service.last_request is not None
+    assert service.last_request.task_type == "bug_fix"
+    assert service.closed is True
+
+
+def test_route_command_rejects_invalid_task_type() -> None:
+    result = runner.invoke(
+        app,
+        ["route", "--task", "fix token logging bug", "--task-type", "not-a-task-type"],
+    )
+
+    assert result.exit_code != 0
+    assert "not-a-task-type" in result.output
+
+
+def test_route_command_surfaces_missing_index_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_router_service",
+        lambda settings: (_ for _ in ()).throw(
+            MissingIndexError("Run `policynim ingest` before routing policy selection.")
+        ),
+    )
+
+    result = runner.invoke(app, ["route", "--task", "fix token logging bug"])
+
+    assert result.exit_code == 1
+    assert "Run `policynim ingest` before routing policy selection." in result.stderr
+
+
+def test_route_command_surfaces_configuration_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_router_service",
+        lambda settings: (_ for _ in ()).throw(ConfigurationError("missing NVIDIA key")),
+    )
+
+    result = runner.invoke(app, ["route", "--task", "fix token logging bug"])
+
+    assert result.exit_code == 1
+    assert "missing NVIDIA key" in result.stderr
+
+
+def test_route_command_closes_service_when_it_errors(monkeypatch) -> None:
+    class FailingRouteService(MockRouteService):
+        def route(self, request: RouteRequest) -> RouteResult:
+            raise MissingIndexError("Run `policynim ingest` before routing policy selection.")
+
+    service = FailingRouteService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_router_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["route", "--task", "fix token logging bug"])
+
+    assert result.exit_code == 1
+    assert service.closed is True
+
+
 def test_eval_command_prints_json(monkeypatch) -> None:
     service = MockEvalService()
     monkeypatch.setattr(
@@ -621,6 +761,44 @@ def test_preflight_command_prints_json(monkeypatch) -> None:
     assert service.closed is True
 
 
+@pytest.mark.parametrize(
+    ("args", "field", "message"),
+    [
+        (["preflight", "--task", "   "], "task", "task must not be empty"),
+        (
+            ["preflight", "--task", "refresh token cleanup", "--domain", "   "],
+            "domain",
+            "domain must not be empty",
+        ),
+    ],
+)
+def test_preflight_command_formats_route_validation_errors(
+    args: list[str],
+    field: str,
+    message: str,
+    monkeypatch,
+) -> None:
+    class FailingPreflightService(MockPreflightService):
+        def preflight(self, request: PreflightRequest) -> PreflightResult:
+            RouteRequest(task=request.task, domain=request.domain, top_k=request.top_k)
+            raise AssertionError("expected RouteRequest validation to fail")
+
+    service = FailingPreflightService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_preflight_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert f"Preflight request is invalid at {field}" in result.stderr
+    assert message in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "RouteRequest" not in result.stderr
+    assert service.closed is True
+
+
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
@@ -656,13 +834,14 @@ def test_help_includes_dump_index_command() -> None:
 
 def test_help_includes_runtime_and_evidence_commands() -> None:
     result = runner.invoke(app, ["--help"])
-    help_output = strip_ansi(result.stdout)
+    help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--version" in help_output
     assert "init" in help_output
     assert "runtime" in help_output
     assert "evidence" in help_output
+    assert "route" in help_output
 
 
 def test_version_flag_prints_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -770,6 +949,15 @@ def test_init_command_surfaces_unwritable_config_destination(
     assert "permission denied" in result.stderr
     assert not target_config.exists()
     assert list(target_config.parent.glob("*.tmp")) == []
+
+
+def test_route_help_mentions_task_type_override() -> None:
+    result = runner.invoke(app, ["route", "--help"])
+    help_output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert "--task-type" in help_output
+    assert "Selected evidence depth." in help_output
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from pydantic import (
     AliasChoices,
@@ -22,6 +22,7 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
@@ -335,7 +336,7 @@ def _clone_filtered_dotenv_source(
     settings_cls: type[BaseSettings],
     template: DotEnvSettingsSource,
     *,
-    env_file: object,
+    env_file: DotenvType | None,
 ) -> DotEnvSettingsSource:
     """Clone the existing dotenv source while keeping config-file override process-env only."""
     return ProcessEnvOnlyConfigDotEnvSettingsSource(
@@ -344,7 +345,7 @@ def _clone_filtered_dotenv_source(
         env_file_encoding=template.env_file_encoding,
         case_sensitive=template.case_sensitive,
         env_prefix=template.env_prefix,
-        env_prefix_target=template.env_prefix_target,
+        env_prefix_target=cast(EnvPrefixTarget | None, template.env_prefix_target),
         env_nested_delimiter=template.env_nested_delimiter,
         env_nested_max_split=template.env_nested_max_split,
         env_ignore_empty=template.env_ignore_empty,

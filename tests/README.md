@@ -15,9 +15,12 @@ Current automated coverage includes:
 - Day 5 runtime docs parity for command forms, env examples, and policy authoring guidance
 - Day 6 eval orchestration, rerank on/off comparison, and isolated live-eval index handling
 - Day 4 grounded preflight orchestration, citation validation, and fallback behavior
+- Build 1 task-aware routing, task-profile inference, selected-policy grouping,
+  and weak-evidence fallback behavior
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation and reranking payloads
-- CLI output for `ingest`, JSON-first `search`, and JSON-first `preflight`
+- CLI output for `ingest`, JSON-first `search`, JSON-first `route`, and JSON-first
+  `preflight`
 - CLI output for `eval`
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`
 - CLI output for `beta-admin` hosted operator commands

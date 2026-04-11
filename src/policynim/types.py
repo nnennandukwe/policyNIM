@@ -12,6 +12,15 @@ MIN_TOP_K = 1
 MAX_TOP_K = 20
 DEFAULT_TOP_K = 5
 TopK = Annotated[int, Field(ge=MIN_TOP_K, le=MAX_TOP_K)]
+TaskType = Literal[
+    "bug_fix",
+    "refactor",
+    "api_change",
+    "migration",
+    "test_change",
+    "feature_work",
+    "unknown",
+]
 RuntimeActionKind = Literal["shell_command", "file_write", "http_request"]
 RuntimeRuleEffect = Literal["confirm", "block"]
 RUNTIME_RULE_MATCHER_FIELDS = ("path_globs", "command_regexes", "url_host_patterns")
@@ -442,6 +451,79 @@ class SearchResult(StrictModel):
     top_k: int
     hits: list[ScoredChunk] = Field(default_factory=list)
     insufficient_context: bool = False
+
+
+class RouteRequest(StrictModel):
+    """Task-aware policy-routing request shared by CLI and services."""
+
+    task: str
+    domain: str | None = None
+    top_k: TopK = DEFAULT_TOP_K
+    task_type: TaskType | None = None
+
+    @field_validator("task", mode="before")
+    @classmethod
+    def validate_task(cls, value: object) -> str:
+        """Reject empty routing tasks before profile inference."""
+        return _validate_non_empty_string(value, field_name="task")
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def validate_domain(cls, value: object) -> str | None:
+        """Reject empty domain filters while preserving omitted filters."""
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, field_name="domain")
+
+
+class TaskProfile(StrictModel):
+    """Deterministic profile inferred from a coding task."""
+
+    task: str
+    task_type: TaskType
+    explicit_task_type: TaskType | None = None
+    signals: list[str] = Field(default_factory=list)
+
+
+class SelectedPolicyEvidence(StrictModel):
+    """One selected chunk that supports a routed policy."""
+
+    chunk_id: str
+    path: str
+    section: str
+    lines: str
+    text: str
+    score: float | None = None
+
+
+class SelectedPolicy(StrictModel):
+    """One policy selected for the task-aware packet."""
+
+    policy_id: str
+    title: str
+    domain: str
+    reason: str
+    evidence: list[SelectedPolicyEvidence] = Field(default_factory=list)
+
+
+class PolicySelectionPacket(StrictModel):
+    """Inspection-friendly packet emitted by task-aware policy routing."""
+
+    task: str
+    domain: str | None = None
+    top_k: int
+    task_type: TaskType
+    explicit_task_type: TaskType | None = None
+    profile_signals: list[str] = Field(default_factory=list)
+    selected_policies: list[SelectedPolicy] = Field(default_factory=list)
+    insufficient_context: bool = False
+
+
+class RouteResult(StrictModel):
+    """Internal route result with packet JSON and generator-ready context."""
+
+    packet: PolicySelectionPacket
+    retained_context: list[ScoredChunk] = Field(default_factory=list)
 
 
 class IngestResult(StrictModel):
