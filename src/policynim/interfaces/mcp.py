@@ -24,6 +24,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
+from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
     create_beta_auth_service,
@@ -542,11 +543,11 @@ def _derive_beta_url(settings: Settings) -> str | None:
 
 
 def _beta_asset_path(filename: str) -> Path:
-    return Path(__file__).resolve().parent.parent / "assets" / "beta" / filename
+    return resolve_asset_path("beta", filename)
 
 
 def _beta_template_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "templates"
+    return resolve_template_root()
 
 
 @lru_cache(maxsize=1)
