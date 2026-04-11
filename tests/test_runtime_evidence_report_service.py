@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from pydantic import AnyHttpUrl
 
 from policynim.errors import PolicyNIMError
 from policynim.services.runtime_evidence_report import RuntimeEvidenceReportService
@@ -373,7 +374,7 @@ def test_runtime_evidence_report_service_summarizes_mixed_action_kinds(
                 cwd=tmp_path,
                 session_id="session-1",
                 method="GET",
-                url="https://example.com/api",
+                url=AnyHttpUrl("https://example.com/api"),
             ),
         )
     )
@@ -390,7 +391,7 @@ def test_runtime_evidence_report_service_summarizes_mixed_action_kinds(
                 cwd=tmp_path,
                 session_id="session-1",
                 method="GET",
-                url="https://example.com/api",
+                url=AnyHttpUrl("https://example.com/api"),
             ),
             result_metadata=HTTPRequestExecutionMetadata(
                 status_code=429,

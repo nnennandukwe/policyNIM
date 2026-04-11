@@ -29,6 +29,7 @@ from policynim.types import (
     PolicyMetadata,
     PreflightRequest,
     PreflightResult,
+    RouteRequest,
     ScoredChunk,
     SearchRequest,
     SearchResult,
@@ -277,6 +278,26 @@ def test_policy_preflight_surfaces_missing_index_errors(monkeypatch) -> None:
 
     with pytest.raises(ToolError, match="Run `policynim ingest` first"):
         _call_tool("policy_preflight", {"task": "refresh token cleanup"})
+
+
+def test_policy_preflight_formats_route_validation_errors(monkeypatch) -> None:
+    class FailingPreflightService(MockPreflightService):
+        def preflight(self, request: PreflightRequest) -> PreflightResult:
+            RouteRequest(task=request.task, domain=request.domain, top_k=request.top_k)
+            raise AssertionError("expected RouteRequest validation to fail")
+
+    service = FailingPreflightService()
+    monkeypatch.setattr(mcp_module, "create_preflight_service", lambda settings: service)
+
+    with pytest.raises(ToolError) as exc_info:
+        _call_tool("policy_preflight", {"task": "   ", "top_k": 1})
+
+    message = str(exc_info.value)
+    assert "Preflight request is invalid at task" in message
+    assert "task must not be empty" in message
+    assert "1 validation error" not in message
+    assert "RouteRequest" not in message
+    assert service.closed is True
 
 
 def test_policy_search_surfaces_configuration_errors(monkeypatch) -> None:

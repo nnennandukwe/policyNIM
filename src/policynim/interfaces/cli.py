@@ -20,6 +20,7 @@ from policynim.services import (
     create_eval_service,
     create_index_dump_service,
     create_ingest_service,
+    create_policy_router_service,
     create_preflight_service,
     create_runtime_decision_service,
     create_runtime_evidence_report_service,
@@ -31,10 +32,12 @@ from policynim.types import (
     MAX_TOP_K,
     EvalExecutionMode,
     PreflightRequest,
+    RouteRequest,
     RuntimeActionRequest,
     RuntimeDecisionResult,
     RuntimeExecutionOutcome,
     SearchRequest,
+    TaskType,
 )
 
 _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
@@ -207,6 +210,8 @@ def preflight(
         resolved_top_k = top_k if top_k is not None else settings.default_top_k
         service = create_preflight_service(settings)
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
+    except ValidationError as exc:
+        _exit_with_error(_format_validation_error("Preflight request", exc))
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
@@ -252,6 +257,61 @@ def search(
         _close_service(service)
 
     typer.echo(result.model_dump_json(indent=2))
+
+
+@app.command()
+def route(
+    task: Annotated[
+        str,
+        typer.Option("--task", help="Describe the coding task that needs policy selection."),
+    ],
+    domain: Annotated[
+        str | None,
+        typer.Option("--domain", help="Optional policy domain such as backend or security."),
+    ] = None,
+    top_k: Annotated[
+        int | None,
+        typer.Option(
+            "--top-k",
+            min=1,
+            max=MAX_TOP_K,
+            help="Selected evidence depth. Allowed range: 1-20.",
+        ),
+    ] = None,
+    task_type: Annotated[
+        TaskType | None,
+        typer.Option(
+            "--task-type",
+            help=(
+                "Optional task-type override. Supported values: bug_fix, refactor, "
+                "api_change, migration, test_change, feature_work, unknown."
+            ),
+        ),
+    ] = None,
+) -> None:
+    """Return task-aware selected policy evidence."""
+    settings = get_settings()
+    resolved_top_k = top_k if top_k is not None else settings.default_top_k
+    service = None
+    try:
+        request = RouteRequest(
+            task=task,
+            domain=domain,
+            top_k=resolved_top_k,
+            task_type=task_type,
+        )
+        service = create_policy_router_service(settings)
+        result = service.route(request)
+    except ValidationError as exc:
+        _exit_with_error(_format_validation_error("Route request", exc))
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(result.packet.model_dump_json(indent=2))
 
 
 @runtime_app.command("decide")
@@ -498,6 +558,12 @@ def _exit_with_error(message: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
+def _format_validation_error(label: str, exc: ValidationError) -> str:
+    error = exc.errors()[0]
+    location = ".".join(str(part) for part in error["loc"]) or "request"
+    return f"{label} is invalid at {location}: {error['msg']}."
+
+
 def _read_json_input(input_value: str) -> object:
     source_label = _describe_runtime_input_source(input_value)
     try:
@@ -532,9 +598,7 @@ def _load_runtime_request_payload(input_value: str) -> RuntimeActionRequest:
     try:
         return _RUNTIME_REQUEST_ADAPTER.validate_python(payload)
     except ValidationError as exc:
-        error = exc.errors()[0]
-        location = ".".join(str(part) for part in error["loc"]) or "request"
-        raise PolicyNIMError(f"Runtime input is invalid at {location}: {error['msg']}.") from exc
+        raise PolicyNIMError(_format_validation_error("Runtime input", exc)) from exc
 
 
 def _build_cli_confirmer():

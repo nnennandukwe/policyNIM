@@ -79,7 +79,7 @@ def _resolve_packaged_resource(*parts: str) -> Path | None:
     resource = resources.files("policynim")
     for part in parts:
         resource = resource.joinpath(part)
-    if not resource.exists():
+    if not resource.is_file() and not resource.is_dir():
         return None
     return _PACKAGED_RESOURCE_STACK.enter_context(resources.as_file(resource))
 

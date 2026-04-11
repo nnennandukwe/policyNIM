@@ -26,6 +26,7 @@ flowchart LR
         direction TB
         IngestSvc["IngestService"]
         SearchSvc["SearchService"]
+        RouterSvc["PolicyRouterService"]
         PreflightSvc["PreflightService"]
         RuntimeDecisionSvc["RuntimeDecisionService"]
         RuntimeExecSvc["RuntimeExecutionService"]
@@ -68,6 +69,7 @@ flowchart LR
 
     CLI --> IngestSvc
     CLI --> SearchSvc
+    CLI --> RouterSvc
     CLI --> PreflightSvc
     CLI --> EvalSvc
     CLI --> DumpSvc
@@ -82,13 +84,16 @@ flowchart LR
 
     IngestSvc --> NvidiaAdapter
     SearchSvc --> NvidiaAdapter
+    RouterSvc --> NvidiaAdapter
     PreflightSvc --> NvidiaAdapter
     RuntimeDecisionSvc --> LanceStore
     RuntimeExecSvc --> RuntimeDecisionSvc
     RuntimeExecSvc --> RuntimeEvidenceStore
     IngestSvc --> LanceStore
     SearchSvc --> LanceStore
+    RouterSvc --> LanceStore
     PreflightSvc --> LanceStore
+    PreflightSvc --> RouterSvc
     DumpSvc --> LanceStore
     HealthSvc --> LanceStore
 
@@ -105,6 +110,7 @@ flowchart LR
 
     IngestSvc -. typed requests and results .-> Types
     SearchSvc -. typed requests and results .-> Types
+    RouterSvc -. typed requests and results .-> Types
     PreflightSvc -. typed requests and results .-> Types
     RuntimeDecisionSvc -. typed requests and results .-> Types
     RuntimeExecSvc -. typed requests and results .-> Types
@@ -112,6 +118,7 @@ flowchart LR
     HealthSvc -. typed requests and results .-> Types
     IngestSvc -. validated settings .-> Settings
     SearchSvc -. validated settings .-> Settings
+    RouterSvc -. validated settings .-> Settings
     PreflightSvc -. validated settings .-> Settings
     RuntimeDecisionSvc -. validated settings .-> Settings
     RuntimeExecSvc -. validated settings .-> Settings
@@ -119,12 +126,13 @@ flowchart LR
     HealthSvc -. validated settings .-> Settings
     IngestSvc -. contracts .-> Contracts
     SearchSvc -. contracts .-> Contracts
+    RouterSvc -. contracts .-> Contracts
     PreflightSvc -. contracts .-> Contracts
     RuntimeDecisionSvc -. contracts .-> Contracts
     RuntimeExecSvc -. contracts .-> Contracts
 
     class CLI,MCP iface
-    class IngestSvc,SearchSvc,PreflightSvc,RuntimeDecisionSvc,RuntimeExecSvc,EvalSvc,DumpSvc,HealthSvc service
+    class IngestSvc,SearchSvc,RouterSvc,PreflightSvc,RuntimeDecisionSvc,RuntimeExecSvc,EvalSvc,DumpSvc,HealthSvc service
     class IngestPkg,NvidiaAdapter,LanceStore,RuntimeEvidenceStore adapter
     class Settings,Types,Contracts shared
     class Policies,EvalSuite,RuntimeRules,RuntimeEvidenceDB local
@@ -162,15 +170,22 @@ flowchart TB
 
     subgraph Preflight["Grounded Preflight"]
         direction LR
-        Task["Coding task"] --> EmbedTask["Embed task"]
-        EmbedTask --> DensePreflight["Dense retrieve from index"]
-        DensePreflight --> PreflightRerank["Rerank candidates"]
-        PreflightRerank --> Retain["Retain diverse context"]
-        Retain --> Generate["Generate grounded draft"]
+        Task["Coding task"] --> PreflightRoute["Route selected evidence"]
+        PreflightRoute --> Generate["Generate grounded draft"]
         Generate --> Validate["Validate cited chunk IDs"]
         Validate --> Enough{"Grounded enough?"}
         Enough -- yes --> PreflightJSON["PreflightResult JSON"]
         Enough -- no --> Insufficient["insufficient_context=true"]
+    end
+
+    subgraph Route["Policy Route Request"]
+        direction LR
+        RouteTask["Coding task"] --> ProfileTask["Infer task profile"]
+        ProfileTask --> EmbedRouteTask["Embed task"]
+        EmbedRouteTask --> DenseRoute["Dense retrieve from index"]
+        DenseRoute --> RouteRerank["Rerank with profile signals"]
+        RouteRerank --> SelectPolicies["Select policy packet"]
+        SelectPolicies --> RouteJSON["PolicySelectionPacket JSON"]
     end
 
     subgraph Runtime["Runtime Decisions"]
@@ -197,20 +212,21 @@ flowchart TB
     end
 
     Index -. vector lookup .-> DenseSearch
-    Index -. vector lookup .-> DensePreflight
+    Index -. vector lookup .-> DenseRoute
+    PreflightRoute -. task-aware selection .-> SelectPolicies
     RuntimeRules -. compiled rules .-> LoadRules
     Index -. indexed evidence .-> MatchRules
     RuntimeEvidenceDB -. persisted evidence .-> Persist
 
     EmbedDocs --> Embeddings["NVIDIA embeddings"]
     EmbedQuery --> Embeddings
-    EmbedTask --> Embeddings
+    EmbedRouteTask --> Embeddings
     SearchRerank --> RerankAPI["NVIDIA reranking"]
-    PreflightRerank --> RerankAPI
+    RouteRerank --> RerankAPI
     Generate --> GroundAPI["NVIDIA grounded generation"]
 
-    class Policies,Query,Task,EvalSuite input
-    class Parse,Chunk,EmbedDocs,EmbedQuery,DenseSearch,DomainFilter,SearchRerank,EmbedTask,DensePreflight,PreflightRerank,Retain,Generate,Validate,EvalRun,Compare,Reports step
+    class Policies,Query,Task,RouteTask,EvalSuite input
+    class Parse,Chunk,EmbedDocs,EmbedQuery,DenseSearch,DomainFilter,SearchRerank,ProfileTask,EmbedRouteTask,DenseRoute,RouteRerank,SelectPolicies,PreflightRoute,Generate,Validate,EvalRun,Compare,Reports step
     class Index store
     class Action input
     class LoadRules,MatchRules,Decision,Execute,Persist step
@@ -219,7 +235,7 @@ flowchart TB
     class HealthRoute input
     class HealthRuntime step
     class HealthJSON result
-    class SearchJSON,PreflightJSON,Insufficient,UI result
+    class SearchJSON,RouteJSON,PreflightJSON,Insufficient,UI result
 ```
 
 ## Reading Notes

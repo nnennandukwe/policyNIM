@@ -10,6 +10,7 @@ from policynim.services.health import (
 )
 from policynim.services.ingest import IngestService, create_ingest_service
 from policynim.services.preflight import PreflightService, create_preflight_service
+from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.services.runtime_decision import (
     RuntimeDecisionService,
     create_runtime_decision_service,
@@ -30,6 +31,7 @@ __all__ = [
     "IndexDumpService",
     "IngestService",
     "PreflightService",
+    "PolicyRouterService",
     "RuntimeDecisionService",
     "RuntimeEvidenceReportService",
     "RuntimeExecutionService",
@@ -45,5 +47,6 @@ __all__ = [
     "create_index_dump_service",
     "create_ingest_service",
     "create_preflight_service",
+    "create_policy_router_service",
     "create_search_service",
 ]

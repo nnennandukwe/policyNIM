@@ -793,7 +793,7 @@ class _OfflineReranker(Reranker):
         *,
         top_k: int,
     ) -> list[ScoredChunk]:
-        order = _OFFLINE_RERANK_ORDERS.get(query, [])
+        order = _OFFLINE_RERANK_ORDERS.get(_offline_rerank_key(query), [])
         positions = {chunk_id: index for index, chunk_id in enumerate(order)}
         ranked = sorted(
             list(candidates),
@@ -803,6 +803,10 @@ class _OfflineReranker(Reranker):
 
     def close(self) -> None:
         return None
+
+
+def _offline_rerank_key(query: str) -> str:
+    return query.split(" Task type:", 1)[0]
 
 
 class _OfflineGenerator(Generator):

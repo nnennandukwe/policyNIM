@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+from pydantic import AnyHttpUrl
+
 from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
     FileWriteExecutionMetadata,
@@ -206,7 +208,7 @@ def test_runtime_evidence_store_round_trips_http_request_payloads(tmp_path: Path
                 cwd=tmp_path,
                 session_id="session-1",
                 method="GET",
-                url="https://example.com/api",
+                url=AnyHttpUrl("https://example.com/api"),
             ),
             result_metadata=HTTPRequestExecutionMetadata(
                 status_code=204,

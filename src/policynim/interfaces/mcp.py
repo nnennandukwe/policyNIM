@@ -17,6 +17,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import ValidationError
 from starlette.datastructures import Headers
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
@@ -111,6 +112,12 @@ def _validate_top_k(top_k: int) -> None:
     """Validate top_k across MCP tools."""
     if not MIN_TOP_K <= top_k <= MAX_TOP_K:
         raise ValueError(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
+
+
+def _format_validation_error(label: str, exc: ValidationError) -> str:
+    error = exc.errors()[0]
+    location = ".".join(str(part) for part in error["loc"]) or "request"
+    return f"{label} is invalid at {location}: {error['msg']}."
 
 
 def _close_service(service: object | None) -> None:
@@ -210,6 +217,8 @@ def _run_policy_preflight(
     try:
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
         return result.model_dump(mode="json")
+    except ValidationError as exc:
+        raise ValueError(_format_validation_error("Preflight request", exc)) from exc
     finally:
         _close_service(service)
 
