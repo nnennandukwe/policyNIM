@@ -227,22 +227,18 @@ def _citation_support_metric(
             failure_reasons=["preflight result has no citations"],
         )
 
-    matched = [chunk_id for chunk_id in expected_chunk_ids if chunk_id in set(actual_chunk_ids)]
-    unsupported = [
-        chunk_id for chunk_id in actual_chunk_ids if chunk_id not in set(expected_chunk_ids)
-    ]
+    actual_chunk_id_set = set(actual_chunk_ids)
+    matched = [chunk_id for chunk_id in expected_chunk_ids if chunk_id in actual_chunk_id_set]
     score = len(matched) / len(expected_chunk_ids)
     failure_reasons = []
     if score < 1.0:
         missing = [chunk_id for chunk_id in expected_chunk_ids if chunk_id not in set(matched)]
         failure_reasons.append(f"missing compiled citation ids: {', '.join(missing)}")
-    if unsupported:
-        failure_reasons.append(f"result cited unsupported chunk ids: {', '.join(unsupported)}")
 
     return PolicyConformanceMetric(
         name="citation_support",
-        score=0.0 if unsupported else score,
-        passed=score == 1.0 and not unsupported,
+        score=score,
+        passed=score == 1.0,
         failure_reasons=failure_reasons,
     )
 

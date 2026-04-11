@@ -9,6 +9,7 @@ from policynim.types import (
     CompiledPolicyPacket,
     GeneratedPolicyConformanceDraft,
     PolicyConformanceRequest,
+    PolicyConformanceResult,
     PolicyConformanceTraceStep,
     PolicyGuidance,
     PreflightResult,
@@ -97,6 +98,24 @@ def test_conformance_service_fails_closed_for_insufficient_compiled_packet() -> 
     assert result.metrics[0].failure_reasons == ["compiled policy packet has insufficient context"]
 
 
+def test_conformance_service_allows_extra_result_citations() -> None:
+    service = PolicyConformanceService(evaluator=None)
+    request = make_request(
+        result=make_result(
+            citations=[
+                make_citation("BACKEND-1", "BACKEND-LOG-001"),
+                make_citation("SECURITY-1", "SECURITY-TOKEN-001"),
+                make_citation("CONTEXT-1", "CONTEXT-EXTRA-001"),
+            ]
+        )
+    )
+
+    result = service.evaluate(request, backend="nemo")
+
+    assert result.passed
+    assert _metric_score(result, "citation_support") == 1.0
+
+
 def test_conformance_service_closes_owned_evaluator() -> None:
     evaluator = MockConformanceEvaluator()
     service = PolicyConformanceService(evaluator=evaluator)
@@ -182,6 +201,7 @@ def make_result(
     plan_steps: list[str] | None = None,
     implementation_guidance: list[str] | None = None,
     review_flags: list[str] | None = None,
+    citations: list[Citation] | None = None,
 ) -> PreflightResult:
     return PreflightResult(
         task="fix backend logging",
@@ -207,11 +227,20 @@ def make_result(
         if review_flags is not None
         else ["Avoid: Never log token values."],
         tests_required=["Add a regression test for token redaction."],
-        citations=[
+        citations=citations
+        if citations is not None
+        else [
             make_citation("BACKEND-1", "BACKEND-LOG-001"),
             make_citation("SECURITY-1", "SECURITY-TOKEN-001"),
         ],
     )
+
+
+def _metric_score(result: PolicyConformanceResult, metric_name: str) -> float:
+    for metric in result.metrics:
+        if metric.name == metric_name:
+            return metric.score
+    raise AssertionError(f"missing metric {metric_name}")
 
 
 def make_citation(chunk_id: str, policy_id: str) -> Citation:
