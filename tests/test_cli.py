@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
@@ -655,12 +656,13 @@ def test_help_includes_dump_index_command() -> None:
 
 def test_help_includes_runtime_and_evidence_commands() -> None:
     result = runner.invoke(app, ["--help"])
+    help_output = strip_ansi(result.stdout)
 
     assert result.exit_code == 0
-    assert "--version" in result.stdout
-    assert "init" in result.stdout
-    assert "runtime" in result.stdout
-    assert "evidence" in result.stdout
+    assert "--version" in help_output
+    assert "init" in help_output
+    assert "runtime" in help_output
+    assert "evidence" in help_output
 
 
 def test_version_flag_prints_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
