@@ -22,6 +22,8 @@ from policynim.types import (
     BetaAuthDecision,
     Citation,
     EmbeddedChunk,
+    GeneratedCompiledPolicyDraft,
+    GeneratedPolicyConstraint,
     GeneratedPreflightDraft,
     HealthCheckResult,
     PolicyChunk,
@@ -648,8 +650,25 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
             self,
             request: PreflightRequest,
             context: Sequence[ScoredChunk],
+            *,
+            compiled_packet=None,
         ) -> GeneratedPreflightDraft:
+            del compiled_packet
             raise ProviderError("upstream timeout", failure_class="timeout")
+
+    class StaticCompiler:
+        def compile_policy_packet(self, request, selection_packet, context):
+            return GeneratedCompiledPolicyDraft(
+                required_steps=[
+                    GeneratedPolicyConstraint(
+                        statement="Use the retained auth policy.",
+                        citation_ids=["AUTH-1"],
+                    )
+                ]
+            )
+
+        def close(self) -> None:
+            return None
 
     monkeypatch.setattr(
         mcp_module,
@@ -659,6 +678,7 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
             index_store=StaticIndexStore(),
             reranker=StaticReranker(),
             generator=TimeoutGenerator(),
+            compiler=StaticCompiler(),
         ),
     )
     monkeypatch.setattr(

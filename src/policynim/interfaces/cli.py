@@ -20,6 +20,7 @@ from policynim.services import (
     create_eval_service,
     create_index_dump_service,
     create_ingest_service,
+    create_policy_compiler_service,
     create_policy_router_service,
     create_preflight_service,
     create_runtime_decision_service,
@@ -30,6 +31,7 @@ from policynim.services import (
 from policynim.settings import Settings, get_settings
 from policynim.types import (
     MAX_TOP_K,
+    CompileRequest,
     EvalExecutionMode,
     PreflightRequest,
     RouteRequest,
@@ -306,6 +308,61 @@ def route(
         _exit_with_error(_format_validation_error("Route request", exc))
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(result.packet.model_dump_json(indent=2))
+
+
+@app.command()
+def compile(
+    task: Annotated[
+        str,
+        typer.Option("--task", help="Describe the coding task that needs policy compilation."),
+    ],
+    domain: Annotated[
+        str | None,
+        typer.Option("--domain", help="Optional policy domain such as backend or security."),
+    ] = None,
+    top_k: Annotated[
+        int | None,
+        typer.Option(
+            "--top-k",
+            min=1,
+            max=MAX_TOP_K,
+            help="Selected evidence depth. Allowed range: 1-20.",
+        ),
+    ] = None,
+    task_type: Annotated[
+        TaskType | None,
+        typer.Option(
+            "--task-type",
+            help=(
+                "Optional task-type override. Supported values: bug_fix, refactor, "
+                "api_change, migration, test_change, feature_work, unknown."
+            ),
+        ),
+    ] = None,
+) -> None:
+    """Return compiled policy constraints for planning and generation."""
+    settings = get_settings()
+    resolved_top_k = top_k if top_k is not None else settings.default_top_k
+    service = None
+    try:
+        request = CompileRequest(
+            task=task,
+            domain=domain,
+            top_k=resolved_top_k,
+            task_type=task_type,
+        )
+        service = create_policy_compiler_service(settings)
+        result = service.compile(request)
+    except ValidationError as exc:
+        _exit_with_error(_format_validation_error("Compile request", exc))
+    except PolicyNIMError as exc:
+        _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:

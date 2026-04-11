@@ -11,6 +11,7 @@ reference that used to live in the root README.
 - `policynim dump-index`
 - `policynim search --query "..."`
 - `policynim route --task "..."`
+- `policynim compile --task "..."`
 - `policynim preflight --task "..."`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
@@ -111,7 +112,30 @@ uv run policynim route \
   --top-k 5
 ```
 
-### 5. Run Grounded Preflight
+### 5. Compile Policy Constraints
+
+```bash
+uv run policynim compile \
+  --task "Implement a refresh-token cleanup background job" \
+  --top-k 5
+```
+
+`compile` is the inspection path between task-aware routing and grounded
+preflight. It returns a JSON `CompiledPolicyPacket` with:
+
+- selected policies
+- required steps
+- forbidden patterns
+- architectural expectations
+- test expectations
+- style constraints
+- citations
+- `insufficient_context`
+
+Build 2 compilation reuses the existing NVIDIA chat model setting and adds no
+new environment variable or artifact directory.
+
+### 6. Run Grounded Preflight
 
 ```bash
 uv run policynim preflight \
@@ -123,6 +147,7 @@ uv run policynim preflight \
 
 - a grounded summary
 - applicable policies
+- plan steps
 - implementation guidance
 - review flags
 - tests required
@@ -132,7 +157,11 @@ uv run policynim preflight \
 If citation validation fails or the grounded answer is too weak, PolicyNIM
 returns `insufficient_context=true` instead of bluffing.
 
-### 6. Run Evaluations
+`preflight` compiles routed policy evidence before generation and uses the
+compiled packet to condition plan steps, implementation guidance, review flags,
+and test expectations.
+
+### 7. Run Evaluations
 
 ```bash
 uv run policynim eval
@@ -327,8 +356,9 @@ PolicyNIM keeps the retrieval stack explicit:
 3. retrieve dense candidates from LanceDB
 4. rerank candidates with NVIDIA
 5. route retained evidence into selected-policy packets
-6. generate grounded guidance from routed evidence only
-7. validate every citation against retrieved chunks before returning results
+6. compile selected policy evidence into constraint packets
+7. generate grounded guidance from routed evidence and compiled constraints
+8. validate every citation against retrieved chunks before returning results
 
 The system is designed to fail closed:
 
@@ -358,6 +388,15 @@ uv run policynim route \
   --top-k 5 | jq
 ```
 
+Then inspect compiled constraints:
+
+```bash
+uv run policynim compile \
+  --task "Implement a refresh-token cleanup background job" \
+  --domain security \
+  --top-k 5 | jq
+```
+
 Then compare that with:
 
 ```bash
@@ -367,11 +406,11 @@ uv run policynim preflight \
   --top-k 5 | jq
 ```
 
-If `search` returns strong hits and `route` returns selected policies while
-`preflight` returns `insufficient_context=true`, the failure is in grounded
-answer validation, not indexing. If `route` also returns
-`insufficient_context=true`, inspect the task type, domain filter, and indexed
-policy coverage first.
+If `search` returns strong hits, `route` returns selected policies, and
+`compile` returns constraints while `preflight` returns
+`insufficient_context=true`, the failure is in grounded answer validation, not
+indexing. If `route` or `compile` also returns `insufficient_context=true`,
+inspect the task type, domain filter, and indexed policy coverage first.
 
 ### Negative Search Scores
 
@@ -381,8 +420,8 @@ higher is better for that query.
 
 ### Missing Index
 
-If `search`, `preflight`, or MCP tool calls fail because the index is missing,
-run:
+If `search`, `route`, `compile`, `preflight`, or MCP tool calls fail because the
+index is missing, run:
 
 ```bash
 uv run policynim ingest
@@ -390,5 +429,5 @@ uv run policynim ingest
 
 ### Missing NVIDIA Credentials
 
-`ingest`, `search`, `preflight`, and live eval mode require `NVIDIA_API_KEY`.
-Offline eval mode does not.
+`ingest`, `search`, `route`, `compile`, `preflight`, and live eval mode require
+`NVIDIA_API_KEY`. Offline eval mode does not.

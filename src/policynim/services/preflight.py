@@ -6,17 +6,20 @@ from collections.abc import Mapping, Sequence
 from types import TracebackType
 from typing import Any
 
-from policynim.contracts import Embedder, Generator, IndexStore, Reranker
-from policynim.services.router import PolicyRouterService, create_policy_router_service
+from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
+from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
+from policynim.services.router import PolicyRouterService
 from policynim.settings import Settings, get_settings
 from policynim.types import (
     Citation,
+    CompiledPolicyConstraint,
+    CompiledPolicyPacket,
+    CompileRequest,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicyGuidance,
     PreflightRequest,
     PreflightResult,
-    RouteRequest,
     ScoredChunk,
 )
 
@@ -34,22 +37,37 @@ class PreflightService:
         self,
         *,
         generator: Generator,
+        compiler_service: PolicyCompilerService | None = None,
+        compiler: PolicyCompiler | None = None,
         router: PolicyRouterService | None = None,
         embedder: Embedder | None = None,
         index_store: IndexStore | None = None,
         reranker: Reranker | None = None,
     ) -> None:
-        if router is None:
-            if embedder is None or index_store is None or reranker is None:
+        if compiler_service is None:
+            if compiler is None:
                 raise ValueError(
-                    "PreflightService requires either a router or embedder/index_store/reranker."
+                    "PreflightService requires either a compiler service or a policy compiler."
                 )
-            router = PolicyRouterService(
-                embedder=embedder,
-                index_store=index_store,
-                reranker=reranker,
+            if router is None and (embedder is None or index_store is None or reranker is None):
+                raise ValueError(
+                    "PreflightService requires either a compiler service or "
+                    "router or embedder/index_store/reranker."
+                )
+            if router is None:
+                assert embedder is not None
+                assert index_store is not None
+                assert reranker is not None
+                router = PolicyRouterService(
+                    embedder=embedder,
+                    index_store=index_store,
+                    reranker=reranker,
+                )
+            compiler_service = PolicyCompilerService(
+                router=router,
+                compiler=compiler,
             )
-        self._router = router
+        self._compiler_service = compiler_service
         self._generator = generator
 
     def __enter__(self) -> PreflightService:
@@ -65,20 +83,26 @@ class PreflightService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._router)
+        _close_component(self._compiler_service)
         _close_component(self._generator)
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
         """Run the grounded preflight pipeline."""
-        route_result = self._router.route(
-            RouteRequest(task=request.task, domain=request.domain, top_k=request.top_k)
+        compile_result = self._compiler_service.compile(
+            CompileRequest(task=request.task, domain=request.domain, top_k=request.top_k)
         )
-        if route_result.packet.insufficient_context or not route_result.retained_context:
+        compiled_packet = compile_result.packet
+        if compiled_packet.insufficient_context or not compile_result.retained_context:
             return _insufficient_context_result(request)
 
-        retained_context = route_result.retained_context
-        generated = self._generator.generate_preflight(request, retained_context)
+        retained_context = compile_result.retained_context
+        generated = self._generator.generate_preflight(
+            request,
+            retained_context,
+            compiled_packet=compiled_packet,
+        )
         draft = _coerce_generated_draft(generated)
+        draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
         validated = _validate_and_materialize_result(request, retained_context, draft)
         if validated is None:
             return _insufficient_context_result(request)
@@ -88,10 +112,10 @@ class PreflightService:
 def create_preflight_service(settings: Settings | None = None) -> PreflightService:
     """Build the default preflight service from application settings."""
     active_settings = settings or get_settings()
-    router = create_policy_router_service(active_settings)
+    compiler_service = create_policy_compiler_service(active_settings)
     generator = _create_default_generator(active_settings)
     return PreflightService(
-        router=router,
+        compiler_service=compiler_service,
         generator=generator,
     )
 
@@ -114,6 +138,7 @@ def _coerce_generated_draft(generated: Any) -> GeneratedPreflightDraft:
             _coerce_generated_policy_guidance(item)
             for item in getattr(generated, "applicable_policies", [])
         ],
+        "plan_steps": list(getattr(generated, "plan_steps", [])),
         "implementation_guidance": list(getattr(generated, "implementation_guidance", [])),
         "review_flags": list(getattr(generated, "review_flags", [])),
         "tests_required": list(getattr(generated, "tests_required", [])),
@@ -201,6 +226,7 @@ def _validate_and_materialize_result(
         domain=request.domain,
         summary=draft.summary,
         applicable_policies=applicable_policies,
+        plan_steps=list(draft.plan_steps),
         implementation_guidance=list(draft.implementation_guidance),
         review_flags=list(draft.review_flags),
         tests_required=list(draft.tests_required),
@@ -215,6 +241,7 @@ def _insufficient_context_result(request: PreflightRequest) -> PreflightResult:
         domain=request.domain,
         summary=_INSUFFICIENT_CONTEXT_SUMMARY,
         applicable_policies=[],
+        plan_steps=[],
         implementation_guidance=[],
         review_flags=[],
         tests_required=[],
@@ -232,6 +259,49 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
+
+
+def _apply_compiled_packet_to_draft(
+    draft: GeneratedPreflightDraft,
+    compiled_packet: CompiledPolicyPacket,
+) -> GeneratedPreflightDraft:
+    if compiled_packet.insufficient_context:
+        return draft
+
+    compiled_plan_steps = _constraint_statements(compiled_packet.required_steps)
+    compiled_guidance = _constraint_statements(
+        [
+            *compiled_packet.architectural_expectations,
+            *compiled_packet.style_constraints,
+        ]
+    )
+    compiled_review_flags = [
+        f"Avoid: {statement}"
+        for statement in _constraint_statements(compiled_packet.forbidden_patterns)
+    ]
+    compiled_tests = _constraint_statements(compiled_packet.test_expectations)
+    compiled_citation_ids = [citation.chunk_id for citation in compiled_packet.citations]
+    draft_citation_ids = draft.citation_ids or [
+        citation_id for policy in draft.applicable_policies for citation_id in policy.citation_ids
+    ]
+
+    return draft.model_copy(
+        update={
+            "plan_steps": _ordered_unique([*compiled_plan_steps, *draft.plan_steps]),
+            "implementation_guidance": _ordered_unique(
+                [*compiled_guidance, *draft.implementation_guidance]
+            ),
+            "review_flags": _ordered_unique([*compiled_review_flags, *draft.review_flags]),
+            "tests_required": _ordered_unique([*compiled_tests, *draft.tests_required]),
+            "citation_ids": _ordered_unique([*draft_citation_ids, *compiled_citation_ids]),
+        }
+    )
+
+
+def _constraint_statements(
+    constraints: Sequence[CompiledPolicyConstraint],
+) -> list[str]:
+    return [constraint.statement for constraint in constraints]
 
 
 def _close_component(component: object | None) -> None:

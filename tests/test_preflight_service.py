@@ -14,7 +14,10 @@ from policynim.services.preflight import (
 )
 from policynim.types import (
     Citation,
+    CompiledPolicyPacket,
     EmbeddedChunk,
+    GeneratedCompiledPolicyDraft,
+    GeneratedPolicyConstraint,
     PolicyChunk,
     PolicyGuidance,
     PolicyMetadata,
@@ -120,13 +123,42 @@ class MockGenerator:
         self._draft = draft
         self.last_request: PreflightRequest | None = None
         self.last_context: list[ScoredChunk] = []
+        self.last_compiled_packet: CompiledPolicyPacket | None = None
         self.closed = False
 
     def generate_preflight(
-        self, request: PreflightRequest, context: Sequence[ScoredChunk]
+        self,
+        request: PreflightRequest,
+        context: Sequence[ScoredChunk],
+        *,
+        compiled_packet: CompiledPolicyPacket | None = None,
     ) -> GeneratedPreflightDraft:
         self.last_request = request
         self.last_context = list(context)
+        self.last_compiled_packet = compiled_packet
+        return self._draft
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class MockPolicyCompiler:
+    """Returns a deterministic compiler draft for preflight tests."""
+
+    def __init__(self, draft: GeneratedCompiledPolicyDraft | None = None) -> None:
+        self._draft = draft or GeneratedCompiledPolicyDraft(
+            required_steps=[
+                GeneratedPolicyConstraint(
+                    statement="Apply Logging to this task.",
+                    citation_ids=["BACKEND-1"],
+                )
+            ]
+        )
+        self.calls = 0
+        self.closed = False
+
+    def compile_policy_packet(self, request, selection_packet, context):
+        self.calls += 1
         return self._draft
 
     def close(self) -> None:
@@ -179,6 +211,7 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
         index_store=store,
         reranker=reranker,
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="refresh token cleanup", top_k=2))
@@ -187,6 +220,7 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
     assert reranker.last_top_k == 15
     assert generator.last_request is not None
     assert generator.last_request.top_k == 2
+    assert generator.last_compiled_packet is not None
     assert result.summary == "Use request ids and avoid token leakage."
     assert result.applicable_policies == [
         PolicyGuidance(
@@ -221,6 +255,80 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
         ),
     ]
     assert not result.insufficient_context
+
+
+def test_preflight_service_merges_compiled_constraints_into_result() -> None:
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-1",
+                policy_id="BACKEND-LOG-001",
+                domain="backend",
+                score=0.99,
+            )
+        ]
+    )
+    draft = GeneratedPreflightDraft(
+        summary="Use request ids in logs.",
+        applicable_policies=[
+            DraftPolicyGuidance(
+                policy_id="BACKEND-LOG-001",
+                title="Logging",
+                rationale="Use the retained backend logging policy.",
+                citation_ids=["BACKEND-1"],
+            )
+        ],
+        implementation_guidance=["Keep existing logging behavior."],
+        review_flags=["Review redaction behavior."],
+        tests_required=["Keep existing tests green."],
+        citation_ids=["BACKEND-1"],
+    )
+    generator = MockGenerator(draft)
+    service = PreflightService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        reranker=MockReranker(order=["BACKEND-1"]),
+        generator=generator,
+        compiler=MockPolicyCompiler(),
+    )
+
+    result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
+
+    assert generator.last_compiled_packet is not None
+    assert generator.last_compiled_packet.required_steps
+    assert result.plan_steps == ["Apply Logging to this task."]
+    assert result.implementation_guidance == ["Keep existing logging behavior."]
+    assert result.review_flags == ["Review redaction behavior."]
+    assert result.tests_required == ["Keep existing tests green."]
+
+
+def test_preflight_service_fails_closed_when_compiler_has_insufficient_context() -> None:
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-1",
+                policy_id="BACKEND-LOG-001",
+                domain="backend",
+                score=0.99,
+            )
+        ]
+    )
+    compiler = MockPolicyCompiler(GeneratedCompiledPolicyDraft(insufficient_context=True))
+    generator = MockGenerator(GeneratedPreflightDraft(summary="Should not be generated."))
+    service = PreflightService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        reranker=MockReranker(order=["BACKEND-1"]),
+        generator=generator,
+        compiler=compiler,
+    )
+
+    result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
+
+    assert compiler.calls == 1
+    assert generator.last_request is None
+    assert result.insufficient_context
+    assert result.plan_steps == []
 
 
 def test_preflight_service_caps_retained_chunks_per_policy() -> None:
@@ -277,6 +385,7 @@ def test_preflight_service_caps_retained_chunks_per_policy() -> None:
         index_store=store,
         reranker=reranker,
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="backend guidance", top_k=4))
@@ -316,6 +425,7 @@ def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids() ->
         index_store=store,
         reranker=MockReranker(),
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
@@ -356,6 +466,7 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
         index_store=store,
         reranker=MockReranker(),
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
@@ -407,6 +518,7 @@ def test_preflight_service_deduplicates_citation_ids_and_preserves_first_seen_or
         index_store=store,
         reranker=MockReranker(order=["BACKEND-1", "SECURITY-1"]),
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="refresh token cleanup", top_k=2))
@@ -447,6 +559,7 @@ def test_preflight_service_invalidates_response_when_policy_citations_disagree_w
         index_store=store,
         reranker=MockReranker(),
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
@@ -486,6 +599,7 @@ def test_preflight_service_uses_policy_citation_ids_when_draft_level_list_is_emp
         index_store=store,
         reranker=MockReranker(),
         generator=generator,
+        compiler=MockPolicyCompiler(),
     )
 
     result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
@@ -501,6 +615,7 @@ def test_preflight_service_requires_existing_index() -> None:
         index_store=store,
         reranker=MockReranker(),
         generator=MockGenerator(GeneratedPreflightDraft(summary="unused")),
+        compiler=MockPolicyCompiler(),
     )
 
     with pytest.raises(MissingIndexError):
@@ -510,6 +625,7 @@ def test_preflight_service_requires_existing_index() -> None:
 def test_preflight_service_close_closes_owned_components() -> None:
     reranker = MockReranker()
     generator = MockGenerator(GeneratedPreflightDraft(summary="unused"))
+    compiler = MockPolicyCompiler()
     service = PreflightService(
         embedder=MockEmbedder(),
         index_store=MockIndexStore(
@@ -517,12 +633,14 @@ def test_preflight_service_close_closes_owned_components() -> None:
         ),
         reranker=reranker,
         generator=generator,
+        compiler=compiler,
     )
 
     service.close()
 
     assert reranker.closed is True
     assert generator.closed is True
+    assert compiler.closed is True
 
 
 def make_chunk(

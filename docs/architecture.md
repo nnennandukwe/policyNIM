@@ -10,8 +10,8 @@ The architecture stays intentionally small:
 
 - typed contracts shared by CLI and MCP
 - explicit provider and storage adapters
-- application services for ingest, retrieval, task-aware routing, preflight, and
-  evaluation
+- application services for ingest, retrieval, task-aware routing, policy
+  compilation, preflight, and evaluation
 - application services for runtime decisions, runtime execution, and durable
   evidence capture
 - fail-closed grounding rules instead of best-effort freeform answers
@@ -89,9 +89,26 @@ Routing flow:
 6. retain bounded policy evidence with source chunk IDs and line spans
 7. return a JSON-first `PolicySelectionPacket`
 
-Build 1 routing intentionally does not compile policies into planning
-constraints. Weak or empty routing evidence becomes `insufficient_context=true`;
-missing configuration or a missing local index remains an explicit error.
+Weak or empty routing evidence becomes `insufficient_context=true`; missing
+configuration or a missing local index remains an explicit error.
+
+### Policy Compiler Flow
+
+`PolicyCompilerService` turns selected policy evidence into a
+citation-backed `CompiledPolicyPacket` for planning and generation.
+
+Compiler flow:
+
+1. route the task into a retained `PolicySelectionPacket`
+2. stop before NVIDIA compilation when routed evidence is weak
+3. send selected policy evidence to the NVIDIA policy compiler
+4. validate every compiled constraint citation against retained chunk IDs
+5. materialize public citations and source policy IDs
+6. return a JSON-first `CompiledPolicyPacket`
+
+Build 2 compilation adds no new environment variable or artifact directory. It
+reuses the existing NVIDIA chat model setting and fails closed when generated
+constraints are malformed, unsupported, or uncited.
 
 ### Grounded Preflight Flow
 
@@ -99,12 +116,14 @@ missing configuration or a missing local index remains an explicit error.
 
 Preflight flow:
 
-1. route the task into a retained `PolicySelectionPacket`
-2. send retained policy evidence to the grounded generator
+1. compile the task into a retained `CompiledPolicyPacket`
+2. pass compiled constraints plus retained policy evidence to the grounded
+   generator
 3. receive a structured draft that cites retrieved chunk IDs
-4. validate every cited chunk ID against the retained result set
-5. materialize public citations and policy guidance
-6. return a JSON-first `PreflightResult`
+4. merge compiled plan steps, guidance, flags, and test expectations
+5. validate every cited chunk ID against the retained result set
+6. materialize public citations and policy guidance
+7. return a JSON-first `PreflightResult`
 
 Fail-closed rules are central here:
 
@@ -189,8 +208,10 @@ Important evaluation rules:
 - `SearchService` handles query embedding, retrieval, and reranking.
 - `PolicyRouterService` handles deterministic task profiling, broad retrieval,
   reranking, selected-policy grouping, and citation-preserving route packets.
-- `PreflightService` handles routed evidence selection, grounded synthesis, and
-  citation validation.
+- `PolicyCompilerService` handles routed evidence selection, constraint
+  compilation, and compiled-packet citation validation.
+- `PreflightService` handles compiled evidence conditioning, grounded synthesis,
+  and citation validation.
 - `RuntimeDecisionService` compiles and matches runtime rules against the local
   index by loading the compiled runtime rules artifact, matching actions
   against it, and linking the matched rules back to indexed evidence.
@@ -237,6 +258,7 @@ Important evaluation rules:
 - `policynim dump-index`
 - `policynim search --query ...`
 - `policynim route --task ... [--domain ...] [--top-k ...] [--task-type ...]`
+- `policynim compile --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim preflight --task ...`
 - `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
@@ -270,8 +292,9 @@ Important evaluation rules:
 Shared interface guarantees:
 
 - CLI `search` and MCP `policy_search` use the same `SearchResult` shape.
-- CLI `route` returns a `PolicySelectionPacket`; there is no MCP route tool in
-  Build 1.
+- CLI `route` returns a `PolicySelectionPacket`; there is no MCP route tool.
+- CLI `compile` returns a `CompiledPolicyPacket`; there is no MCP compile tool
+  in Build 2.
 - CLI `preflight` and MCP `policy_preflight` use the same `PreflightResult`
   shape.
 - CLI `runtime decide` and `runtime execute` use the same `RuntimeActionRequest`
@@ -295,6 +318,7 @@ NVIDIA-hosted APIs are used for:
 - document embeddings during ingest
 - query embeddings during search, route, and preflight
 - reranking retrieved candidates
+- policy compilation for planning and generation constraints
 - grounded generation for preflight
 
 These steps require `NVIDIA_API_KEY`.

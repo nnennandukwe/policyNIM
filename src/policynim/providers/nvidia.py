@@ -24,7 +24,15 @@ from pydantic import ValidationError
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.settings import Settings
-from policynim.types import GeneratedPreflightDraft, PreflightRequest, ScoredChunk
+from policynim.types import (
+    CompiledPolicyPacket,
+    CompileRequest,
+    GeneratedCompiledPolicyDraft,
+    GeneratedPreflightDraft,
+    PolicySelectionPacket,
+    PreflightRequest,
+    ScoredChunk,
+)
 
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("openai._base_client").setLevel(logging.WARNING)
@@ -324,6 +332,7 @@ class NVIDIAGenerator(Generator):
 
         self._model = model
         self._max_retries = max_retries
+        self._owns_client = client is None
         self._client = client or OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -346,76 +355,160 @@ class NVIDIAGenerator(Generator):
         self,
         request: PreflightRequest,
         context: Sequence[ScoredChunk],
+        *,
+        compiled_packet: CompiledPolicyPacket | None = None,
     ) -> GeneratedPreflightDraft:
         """Generate a grounded preflight draft from retrieved context."""
-        messages = _build_generation_messages(request, context)
-        content = self._request_generation(messages)
+        messages = _build_generation_messages(request, context, compiled_packet=compiled_packet)
+        content = _request_chat_completion(
+            self._client,
+            model=self._model,
+            messages=messages,
+            max_retries=self._max_retries,
+            operation="grounded generation",
+        )
         return _parse_generation_draft(content)
 
-    def _request_generation(self, messages: list[ChatCompletionMessageParam]) -> str:
-        for attempt in range(self._max_retries + 1):
-            try:
-                response = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                    temperature=0,
-                    top_p=1,
-                )
-                return _extract_chat_content(response)
-            except AuthenticationError as exc:
-                raise _auth_error("grounded generation") from exc
-            except BadRequestError as exc:
-                raise ProviderError(
-                    f"NVIDIA grounded generation request was rejected: {exc}",
-                    failure_class="bad_request",
-                ) from exc
-            except RateLimitError as exc:
-                if attempt < self._max_retries:
+    def close(self) -> None:
+        """Release the owned OpenAI client when supported by the SDK."""
+        if self._owns_client:
+            _close_client(self._client)
+
+
+class NVIDIAPolicyCompiler:
+    """Compiles routed policy evidence into grounded constraint drafts."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str,
+        timeout_seconds: float,
+        max_retries: int,
+        client: OpenAI | Any | None = None,
+    ) -> None:
+        api_key = api_key.strip()
+        if not api_key:
+            raise ConfigurationError("NVIDIA_API_KEY is required for policy compilation.")
+
+        self._model = model
+        self._max_retries = max_retries
+        self._owns_client = client is None
+        self._client = client or OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout_seconds,
+            max_retries=0,
+        )
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> NVIDIAPolicyCompiler:
+        """Construct a policy compiler from application settings."""
+        return cls(
+            api_key=settings.nvidia_api_key or "",
+            model=settings.nvidia_chat_model,
+            base_url=settings.nvidia_base_url,
+            timeout_seconds=settings.nvidia_timeout_seconds,
+            max_retries=settings.nvidia_max_retries,
+        )
+
+    def compile_policy_packet(
+        self,
+        request: CompileRequest,
+        selection_packet: PolicySelectionPacket,
+        context: Sequence[ScoredChunk],
+    ) -> GeneratedCompiledPolicyDraft:
+        """Compile a routed policy-selection packet into grounded constraints."""
+        messages = _build_policy_compiler_messages(request, selection_packet, context)
+        content = _request_chat_completion(
+            self._client,
+            model=self._model,
+            messages=messages,
+            max_retries=self._max_retries,
+            operation="policy compilation",
+        )
+        return _parse_compiled_policy_draft(content)
+
+    def close(self) -> None:
+        """Release the owned OpenAI client when supported by the SDK."""
+        if self._owns_client:
+            _close_client(self._client)
+
+
+def _request_chat_completion(
+    client: OpenAI | Any,
+    *,
+    model: str,
+    messages: list[ChatCompletionMessageParam],
+    max_retries: int,
+    operation: str,
+) -> str:
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0,
+                top_p=1,
+            )
+            return _extract_chat_content(response, operation=operation)
+        except AuthenticationError as exc:
+            raise _auth_error(operation) from exc
+        except BadRequestError as exc:
+            raise ProviderError(
+                f"NVIDIA {operation} request was rejected: {exc}",
+                failure_class="bad_request",
+            ) from exc
+        except RateLimitError as exc:
+            if attempt < max_retries:
+                continue
+            raise ProviderError(
+                f"NVIDIA {operation} request failed after retries.",
+                failure_class="rate_limit",
+            ) from exc
+        except APIStatusError as exc:
+            if exc.status_code in {401, 403}:
+                raise _auth_error(operation) from exc
+            if exc.status_code == 429:
+                if attempt < max_retries:
                     continue
                 raise ProviderError(
-                    "NVIDIA grounded generation request failed after retries.",
+                    f"NVIDIA {operation} request failed after retries.",
                     failure_class="rate_limit",
                 ) from exc
-            except APIStatusError as exc:
-                if exc.status_code in {401, 403}:
-                    raise _auth_error("grounded generation") from exc
-                if exc.status_code == 429:
-                    if attempt < self._max_retries:
-                        continue
-                    raise ProviderError(
-                        "NVIDIA grounded generation request failed after retries.",
-                        failure_class="rate_limit",
-                    ) from exc
-                if _should_retry_status(exc.status_code) and attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    f"NVIDIA grounded generation request failed with status {exc.status_code}.",
-                    failure_class="http_status",
-                ) from exc
-            except APITimeoutError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA grounded generation request failed after retries.",
-                    failure_class="timeout",
-                ) from exc
-            except APIConnectionError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA grounded generation request failed after retries.",
-                    failure_class="connection",
-                ) from exc
-            except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError(
-                    "Unexpected NVIDIA grounded generation failure.",
-                    failure_class="unexpected",
-                ) from exc
+            if _should_retry_status(exc.status_code) and attempt < max_retries:
+                continue
+            raise ProviderError(
+                f"NVIDIA {operation} request failed with status {exc.status_code}.",
+                failure_class="http_status",
+            ) from exc
+        except APITimeoutError as exc:
+            if attempt < max_retries:
+                continue
+            raise ProviderError(
+                f"NVIDIA {operation} request failed after retries.",
+                failure_class="timeout",
+            ) from exc
+        except APIConnectionError as exc:
+            if attempt < max_retries:
+                continue
+            raise ProviderError(
+                f"NVIDIA {operation} request failed after retries.",
+                failure_class="connection",
+            ) from exc
+        except ProviderError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive guard.
+            raise ProviderError(
+                f"Unexpected NVIDIA {operation} failure.",
+                failure_class="unexpected",
+            ) from exc
 
-        raise ProviderError(
-            "NVIDIA grounded generation request failed after retries.",
-            failure_class="unexpected",
-        )
+    raise ProviderError(
+        f"NVIDIA {operation} request failed after retries.",
+        failure_class="unexpected",
+    )
 
 
 def _auth_error(operation: str) -> ConfigurationError:
@@ -550,6 +643,8 @@ def _extract_row_score(row: dict[str, Any]) -> float:
 def _build_generation_messages(
     request: PreflightRequest,
     context: Sequence[ScoredChunk],
+    *,
+    compiled_packet: CompiledPolicyPacket | None,
 ) -> list[ChatCompletionMessageParam]:
     system_prompt = (
         "You are PolicyNIM's grounded policy synthesis engine.\n"
@@ -565,6 +660,7 @@ def _build_generation_messages(
         '      "citation_ids": ["chunk-id"]\n'
         "    }\n"
         "  ],\n"
+        '  "plan_steps": ["string"],\n'
         '  "implementation_guidance": ["string"],\n'
         '  "review_flags": ["string"],\n'
         '  "tests_required": ["string"],\n'
@@ -576,12 +672,21 @@ def _build_generation_messages(
         "- Do not invent new chunk IDs.\n"
         "- If the evidence is insufficient, set insufficient_context to true and "
         "keep the lists empty.\n"
+        "- When compiled policy constraints are provided, use them as the main "
+        "planning and implementation requirements.\n"
         "- Keep the summary concise and task-specific."
+    )
+    compiled_constraints = (
+        _format_compiled_policy_packet(compiled_packet)
+        if compiled_packet is not None
+        else "(no compiled policy constraints provided)"
     )
     user_prompt = (
         f"Task: {request.task}\n"
         f"Domain: {request.domain or 'none'}\n"
         f"Target top_k: {request.top_k}\n"
+        "Compiled policy constraints:\n"
+        f"{compiled_constraints}\n"
         "Retrieved context:\n"
         f"{_format_generation_context(context)}"
     )
@@ -614,11 +719,76 @@ def _format_generation_context(context: Sequence[ScoredChunk]) -> str:
     return "\n\n".join(blocks)
 
 
-def _extract_chat_content(response: Any) -> str:
+def _build_policy_compiler_messages(
+    request: CompileRequest,
+    selection_packet: PolicySelectionPacket,
+    context: Sequence[ScoredChunk],
+) -> list[ChatCompletionMessageParam]:
+    system_prompt = (
+        "You are PolicyNIM's policy compiler.\n"
+        "Return ONLY valid JSON. Do not use markdown fences or commentary.\n"
+        "The JSON must match this shape exactly:\n"
+        "{\n"
+        '  "required_steps": [{"statement": "string", "citation_ids": ["chunk-id"]}],\n'
+        '  "forbidden_patterns": [{"statement": "string", "citation_ids": ["chunk-id"]}],\n'
+        '  "architectural_expectations": ['
+        '{"statement": "string", "citation_ids": ["chunk-id"]}],\n'
+        '  "test_expectations": [{"statement": "string", "citation_ids": ["chunk-id"]}],\n'
+        '  "style_constraints": [{"statement": "string", "citation_ids": ["chunk-id"]}],\n'
+        '  "insufficient_context": false\n'
+        "}\n"
+        "Rules:\n"
+        "- Cite only by chunk_id values that appear in the provided retained context.\n"
+        "- Do not invent chunk IDs, policy IDs, files, or requirements.\n"
+        "- Include a constraint only when the retained evidence directly supports it.\n"
+        "- If evidence is weak or unsupported, set insufficient_context to true and "
+        "leave every constraint list empty.\n"
+        "- Keep constraint statements concrete and task-specific."
+    )
+    user_prompt = (
+        f"Task: {request.task}\n"
+        f"Domain: {request.domain or 'none'}\n"
+        f"Target top_k: {request.top_k}\n"
+        f"Task type: {selection_packet.task_type}\n"
+        "Selected policy packet:\n"
+        f"{selection_packet.model_dump_json(indent=2)}\n"
+        "Retained context:\n"
+        f"{_format_generation_context(context)}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def _format_compiled_policy_packet(compiled_packet: CompiledPolicyPacket) -> str:
+    if compiled_packet.insufficient_context:
+        return "(compiled policy packet has insufficient context)"
+
+    blocks: list[str] = []
+    categories = (
+        ("required_steps", compiled_packet.required_steps),
+        ("forbidden_patterns", compiled_packet.forbidden_patterns),
+        ("architectural_expectations", compiled_packet.architectural_expectations),
+        ("test_expectations", compiled_packet.test_expectations),
+        ("style_constraints", compiled_packet.style_constraints),
+    )
+    for category_name, constraints in categories:
+        if not constraints:
+            continue
+        blocks.append(f"{category_name}:")
+        for constraint in constraints:
+            blocks.append(
+                f"- {constraint.statement} (citations: {', '.join(constraint.citation_ids)})"
+            )
+    return "\n".join(blocks) if blocks else "(no compiled constraints)"
+
+
+def _extract_chat_content(response: Any, *, operation: str) -> str:
     choices = getattr(response, "choices", [])
     if not choices:
         raise ProviderError(
-            "NVIDIA grounded generation returned no choices.",
+            f"NVIDIA {operation} returned no choices.",
             failure_class="invalid_response",
         )
 
@@ -626,30 +796,51 @@ def _extract_chat_content(response: Any) -> str:
     content = getattr(message, "content", None)
     if not isinstance(content, str) or not content.strip():
         raise ProviderError(
-            "NVIDIA grounded generation returned an empty response.",
+            f"NVIDIA {operation} returned an empty response.",
             failure_class="invalid_response",
         )
     return content
 
 
 def _parse_generation_draft(content: str) -> GeneratedPreflightDraft:
+    json_object = _parse_json_object_response(content, operation="grounded generation")
     try:
-        payload = json.loads(content)
-    except json.JSONDecodeError as exc:
-        payload = _extract_embedded_json_object(content)
-        if payload is None:
-            raise ProviderError(
-                "NVIDIA grounded generation returned invalid JSON.",
-                failure_class="invalid_response",
-            ) from exc
-
-    try:
-        return GeneratedPreflightDraft.model_validate(payload)
+        return GeneratedPreflightDraft.model_validate(json_object)
     except ValidationError as exc:
         raise ProviderError(
             "NVIDIA grounded generation returned malformed JSON.",
             failure_class="invalid_response",
         ) from exc
+
+
+def _parse_compiled_policy_draft(content: str) -> GeneratedCompiledPolicyDraft:
+    json_object = _parse_json_object_response(content, operation="policy compilation")
+    try:
+        return GeneratedCompiledPolicyDraft.model_validate(json_object)
+    except ValidationError as exc:
+        raise ProviderError(
+            "NVIDIA policy compilation returned malformed JSON.",
+            failure_class="invalid_response",
+        ) from exc
+
+
+def _parse_json_object_response(content: str, *, operation: str) -> dict[str, Any]:
+    try:
+        json_object = json.loads(content)
+    except json.JSONDecodeError as exc:
+        json_object = _extract_embedded_json_object(content)
+        if json_object is None:
+            raise ProviderError(
+                f"NVIDIA {operation} returned invalid JSON.",
+                failure_class="invalid_response",
+            ) from exc
+
+    if not isinstance(json_object, dict):
+        raise ProviderError(
+            f"NVIDIA {operation} returned malformed JSON.",
+            failure_class="invalid_response",
+        )
+    return json_object
 
 
 def _extract_embedded_json_object(content: str) -> dict[str, Any] | None:
@@ -664,3 +855,9 @@ def _extract_embedded_json_object(content: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _close_client(client: object) -> None:
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()

@@ -8,9 +8,13 @@ from typing import Protocol
 import httpx
 
 from policynim.types import (
+    CompiledPolicyPacket,
+    CompileRequest,
     EmbeddedChunk,
+    GeneratedCompiledPolicyDraft,
     GeneratedPreflightDraft,
     PolicyChunk,
+    PolicySelectionPacket,
     PreflightRequest,
     RuntimeActionRequest,
     RuntimeDecisionResult,
@@ -52,8 +56,23 @@ class Generator(Protocol):
         self,
         request: PreflightRequest,
         context: Sequence[ScoredChunk],
+        *,
+        compiled_packet: CompiledPolicyPacket | None = None,
     ) -> GeneratedPreflightDraft:
         """Generate a grounded preflight draft."""
+        ...
+
+
+class PolicyCompiler(Protocol):
+    """Compiles routed policy evidence into planning and generation constraints."""
+
+    def compile_policy_packet(
+        self,
+        request: CompileRequest,
+        selection_packet: PolicySelectionPacket,
+        context: Sequence[ScoredChunk],
+    ) -> GeneratedCompiledPolicyDraft:
+        """Compile grounded policy evidence into a draft constraint packet."""
         ...
 
 

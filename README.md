@@ -33,11 +33,13 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - NVIDIA-hosted embeddings and reranking for retrieval.
 - Local LanceDB storage for the retrievable policy index.
 - Task-aware policy routing with citation-preserving selected-policy packets.
-- Grounded preflight synthesis with citation validation and fail-closed fallback.
+- Policy compilation into citation-backed planning and generation constraints.
+- Grounded preflight synthesis with compiled plan steps, citation validation, and
+  fail-closed fallback.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
-- JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `preflight`,
-  `eval`, `mcp`, `runtime`, and `evidence`.
+- JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
+  `preflight`, `eval`, `mcp`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
@@ -96,6 +98,7 @@ After the index is built, the fastest local sanity checks are:
 ```bash
 uv run policynim search --query "refresh token cleanup background job" --top-k 5
 uv run policynim route --task "Implement a refresh-token cleanup background job" --top-k 5
+uv run policynim compile --task "Implement a refresh-token cleanup background job" --top-k 5
 uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5
 ```
 
@@ -112,8 +115,9 @@ Start here when you want the longer version of a specific path:
 - [docs/index.md](docs/index.md): documentation hub by audience and task
 - [docs/contributor-guide.md](docs/contributor-guide.md): local setup, env vars,
   model references, and quality gates
-- [docs/workflows.md](docs/workflows.md): CLI surfaces, ingest/search/route/preflight,
-  eval, MCP, runtime/evidence, and troubleshooting
+- [docs/workflows.md](docs/workflows.md): CLI surfaces,
+  ingest/search/route/compile/preflight, eval, MCP, runtime/evidence, and
+  troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,
