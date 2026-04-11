@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import sys
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as installed_version
 from pathlib import Path
 from typing import Annotated, Literal, NoReturn
 
 import typer
 from pydantic import TypeAdapter, ValidationError
 
-from policynim.errors import PolicyNIMError
+import policynim.config_discovery as config_discovery
+from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.mcp import run_server
 from policynim.services import (
     create_beta_auth_service,
@@ -23,7 +26,7 @@ from policynim.services import (
     create_runtime_execution_service,
     create_search_service,
 )
-from policynim.settings import get_settings
+from policynim.settings import Settings, get_settings
 from policynim.types import (
     MAX_TOP_K,
     EvalExecutionMode,
@@ -35,6 +38,9 @@ from policynim.types import (
 )
 
 _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
+_STANDALONE_MISSING_INDEX_MESSAGE = (
+    "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -61,14 +67,76 @@ app.add_typer(runtime_app, name="runtime")
 app.add_typer(evidence_app, name="evidence")
 
 
+@app.callback()
+def root(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            help="Print the installed PolicyNIM version and exit.",
+            callback=lambda value: _version_option_callback(value),
+            is_eager=True,
+        ),
+    ] = False,
+) -> None:
+    """Run the PolicyNIM CLI."""
+    del version
+
+
+@app.command(
+    help=(
+        "Run interactive standalone setup, prompt for NVIDIA_API_KEY and an optional "
+        "custom corpus directory, and write the local PolicyNIM config file."
+    ),
+)
+def init() -> None:
+    """Prompt for standalone local CLI settings and write them to an env file."""
+    destination = config_discovery.resolve_init_config_file()
+    api_key = typer.prompt(
+        "NVIDIA_API_KEY",
+        default="",
+        show_default=False,
+        hide_input=True,
+    ).strip()
+    if not api_key:
+        _exit_with_error("NVIDIA_API_KEY is required.")
+
+    corpus_input = typer.prompt(
+        "Optional custom corpus directory",
+        default="",
+        show_default=False,
+    )
+    try:
+        resolved_corpus_dir = config_discovery.normalize_init_corpus_dir(corpus_input)
+        config_path = config_discovery.write_init_config_file(
+            destination=destination,
+            api_key=api_key,
+            corpus_dir=resolved_corpus_dir,
+        )
+    except ValueError as exc:
+        _exit_with_error(str(exc))
+    except OSError as exc:
+        _exit_with_error(f"Could not write config file {destination.expanduser()}: {exc}.")
+
+    corpus_message = (
+        resolved_corpus_dir.as_posix()
+        if resolved_corpus_dir is not None
+        else "bundled PolicyNIM corpus"
+    )
+    typer.echo(f"Wrote PolicyNIM config to {config_path}.")
+    typer.echo(f"Corpus: {corpus_message}")
+    typer.echo("Next step: run `policynim ingest`.")
+
+
 @app.command()
 def ingest() -> None:
     """Build the local policy index from the shipped corpus."""
     try:
-        service = create_ingest_service(get_settings())
+        settings = _load_setup_dependent_settings()
+        service = create_ingest_service(settings)
         result = service.run()
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
 
@@ -95,10 +163,11 @@ def dump_index(
 ) -> None:
     """Print all indexed chunks in a terminal-friendly format."""
     try:
-        service = create_index_dump_service(get_settings())
+        settings = _load_setup_dependent_settings()
+        service = create_index_dump_service(settings)
         chunks = service.list_chunks()
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
 
     typer.echo(f"Indexed chunks: {len(chunks)}")
     if count_only:
@@ -132,14 +201,14 @@ def preflight(
     ] = None,
 ) -> None:
     """Return policy guidance for a coding task."""
-    settings = get_settings()
-    resolved_top_k = top_k if top_k is not None else settings.default_top_k
     service = None
     try:
+        settings = _load_setup_dependent_settings()
+        resolved_top_k = top_k if top_k is not None else settings.default_top_k
         service = create_preflight_service(settings)
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
@@ -169,14 +238,14 @@ def search(
     ] = None,
 ) -> None:
     """Search the policy corpus."""
-    settings = get_settings()
-    resolved_top_k = top_k if top_k is not None else settings.default_top_k
     service = None
     try:
+        settings = _load_setup_dependent_settings()
+        resolved_top_k = top_k if top_k is not None else settings.default_top_k
         service = create_search_service(settings)
         result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
@@ -199,10 +268,10 @@ def runtime_decide(
     service = None
     try:
         request = _load_runtime_request_payload(input)
-        service = create_runtime_decision_service(get_settings())
+        service = create_runtime_decision_service(_load_setup_dependent_settings())
         result = service.decide(request)
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     finally:
         _close_service(service)
 
@@ -223,10 +292,13 @@ def runtime_execute(
     service = None
     try:
         request = _load_runtime_request_payload(input)
-        service = create_runtime_execution_service(get_settings(), confirmer=_build_cli_confirmer())
+        service = create_runtime_execution_service(
+            _load_setup_dependent_settings(),
+            confirmer=_build_cli_confirmer(),
+        )
         result = service.execute(request)
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     finally:
         _close_service(service)
 
@@ -249,10 +321,10 @@ def evidence_report(
     """Summarize one runtime evidence session from SQLite-backed storage."""
     service = None
     try:
-        service = create_runtime_evidence_report_service(get_settings())
+        service = create_runtime_evidence_report_service(_load_setup_dependent_settings())
         result = service.report_session(session_id)
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     finally:
         _close_service(service)
 
@@ -283,10 +355,11 @@ def eval(
     """Run the PolicyNIM eval suite and persist local reports."""
     service = None
     try:
-        service = create_eval_service(get_settings())
+        settings = _load_setup_dependent_settings()
+        service = create_eval_service(settings)
         result = service.run(mode=mode, compare_rerank=not no_compare_rerank)
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
@@ -295,10 +368,10 @@ def eval(
     typer.echo(result.model_dump_json(indent=2))
     if not headless:
         try:
-            service = create_eval_service(get_settings())
+            service = create_eval_service(settings)
             service.start_ui()
         except PolicyNIMError as exc:
-            _exit_with_error(str(exc))
+            _exit_with_error(_cli_error_message(exc))
         finally:
             _close_service(service)
     if any(run.metrics.passed_count != run.metrics.case_count for run in result.runs):
@@ -317,9 +390,10 @@ def mcp(
 ) -> None:
     """Run the MCP server."""
     try:
+        _load_setup_dependent_settings()
         run_server(transport=transport)
     except PolicyNIMError as exc:
-        _exit_with_error(str(exc))
+        _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
 
@@ -409,6 +483,13 @@ def main() -> None:
     app()
 
 
+def _version_option_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(_resolve_installed_version())
+    raise typer.Exit()
+
+
 def _exit_with_error(message: str) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
@@ -482,6 +563,51 @@ def _describe_runtime_input_source(input_value: str) -> str:
     if input_value == "-":
         return "stdin"
     return str(Path(input_value))
+
+
+def _resolve_installed_version() -> str:
+    try:
+        return installed_version("policynim")
+    except PackageNotFoundError as exc:
+        raise PolicyNIMError("Installed package metadata for PolicyNIM is unavailable.") from exc
+
+
+def _load_setup_dependent_settings() -> Settings:
+    if config_discovery.standalone_setup_missing():
+        _exit_with_error(_missing_setup_message())
+    try:
+        return get_settings()
+    except PolicyNIMError as exc:
+        _exit_with_error(_cli_error_message(exc))
+
+
+def _missing_setup_message() -> str:
+    config_path = config_discovery.resolve_init_config_file()
+    return f"PolicyNIM is not set up yet. Run `policynim init` to create {config_path}."
+
+
+def _cli_error_message(error: PolicyNIMError) -> str:
+    if config_discovery.standalone_setup_missing() and _looks_like_missing_local_setup_error(error):
+        return _missing_setup_message()
+    if isinstance(error, MissingIndexError) and _is_standalone_local_runtime():
+        return _STANDALONE_MISSING_INDEX_MESSAGE
+    return str(error)
+
+
+def _looks_like_missing_local_setup_error(error: PolicyNIMError) -> bool:
+    if not isinstance(error, ConfigurationError):
+        return False
+
+    message = str(error)
+    lowered = message.lower()
+    return "nvidia_api_key" in lowered or "missing nvidia key" in lowered
+
+
+def _is_standalone_local_runtime() -> bool:
+    return (
+        not config_discovery.is_source_checkout()
+        and not config_discovery.is_hosted_process_environment()
+    )
 
 
 def _close_service(service: object | None) -> None:

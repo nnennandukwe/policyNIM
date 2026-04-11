@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+import policynim.config_discovery as config_discovery
 from policynim.settings import Settings
 from policynim.types import (
     DEFAULT_TOP_K,
@@ -236,6 +237,60 @@ def test_settings_ignores_config_file_from_discovered_user_config(
     assert settings.default_top_k == 8
     assert settings.config_file is None
     assert settings.lancedb_uri == data_root / "lancedb"
+
+
+def test_standalone_setup_missing_when_redirected_config_file_does_not_exist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    clear_day1_env(monkeypatch)
+    workspace, _, _ = configure_standalone_discovery(monkeypatch, tmp_path)
+    redirected_config = tmp_path / "redirected" / "config.env"
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(redirected_config))
+
+    assert (
+        config_discovery.standalone_setup_missing(
+            cwd=workspace,
+            environ=dict(config_discovery.os.environ),
+        )
+        is True
+    )
+
+
+def test_settings_loads_quoted_init_config_values_with_paths_that_contain_spaces(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    clear_day1_env(monkeypatch)
+    config_root = tmp_path / "Application Support" / "PolicyNIM"
+    data_root = tmp_path / "Library" / "Application Support" / "PolicyNIM"
+    custom_corpus = tmp_path / "Custom Policies"
+    custom_corpus.mkdir(parents=True)
+    config_path = config_root / "config.env"
+
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_config_path",
+        lambda *args, **kwargs: config_root,
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_data_path",
+        lambda *args, **kwargs: data_root,
+    )
+
+    config_discovery.write_init_config_file(
+        destination=config_path,
+        api_key="quoted-key",
+        corpus_dir=custom_corpus,
+    )
+
+    settings = Settings(_env_file=config_path)
+
+    assert settings.nvidia_api_key == "quoted-key"
+    assert settings.corpus_dir == custom_corpus.resolve(strict=False)
+    assert settings.lancedb_uri == data_root / "lancedb"
+    assert settings.runtime_rules_artifact_path == data_root / "runtime" / "runtime_rules.json"
+    assert settings.runtime_evidence_db_path == data_root / "runtime" / "runtime_evidence.sqlite3"
+    assert settings.eval_workspace_dir == data_root / "evals" / "workspace"
 
 
 def test_settings_uses_default_runtime_rules_artifact_path() -> None:
