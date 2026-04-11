@@ -679,6 +679,25 @@ def test_version_flag_prints_installed_version(monkeypatch: pytest.MonkeyPatch) 
     assert result.stderr == ""
 
 
+def test_version_flag_surfaces_metadata_errors_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_version_lookup() -> str:
+        raise PolicyNIMError("Installed package metadata for PolicyNIM is unavailable.")
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli._resolve_installed_version",
+        fail_version_lookup,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 1
+    assert "Installed package metadata for PolicyNIM is unavailable." in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_init_help_documents_interactive_setup_flow() -> None:
     result = runner.invoke(app, ["init", "--help"])
 

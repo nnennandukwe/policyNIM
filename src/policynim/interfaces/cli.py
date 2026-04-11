@@ -486,7 +486,10 @@ def main() -> None:
 def _version_option_callback(value: bool) -> None:
     if not value:
         return
-    typer.echo(_resolve_installed_version())
+    try:
+        typer.echo(_resolve_installed_version())
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
     raise typer.Exit()
 
 

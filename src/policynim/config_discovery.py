@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -113,8 +114,12 @@ def standalone_setup_missing(
     if raw_explicit_config is not None and explicit_config_file is None:
         return False
     if explicit_config_file is not None:
-        return not explicit_config_file.is_file()
-    return not discover_config_files(cwd=current_dir, environ=process_env).has_discovered_config
+        return not _env_file_has_nonempty_value(explicit_config_file, "NVIDIA_API_KEY")
+    discovery = discover_config_files(cwd=current_dir, environ=process_env)
+    return not any(
+        _env_file_has_nonempty_value(config_file, "NVIDIA_API_KEY")
+        for config_file in discovery.env_files
+    )
 
 
 def build_init_config_contents(
@@ -173,14 +178,19 @@ def write_init_config_file(
     )
     temp_path = Path(temp_name)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as output:
+        try:
+            output = os.fdopen(handle, "w", encoding="utf-8")
+        except OSError:
+            with suppress(OSError):
+                os.close(handle)
+            raise
+
+        with output:
             output.write(contents)
         os.replace(temp_path, resolved_destination)
     except OSError:
-        try:
+        with suppress(OSError):
             temp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise
     return resolved_destination
 
@@ -219,6 +229,32 @@ def _explicit_config_file(environ: Mapping[str, str]) -> Path | None:
     if not raw_value:
         return None
     return Path(raw_value).expanduser()
+
+
+def _env_file_has_nonempty_value(path: Path, key: str) -> bool:
+    """Return whether an env file defines a non-empty value for a specific key."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped.removeprefix("export ").strip()
+        candidate_key, separator, raw_value = stripped.partition("=")
+        if separator and candidate_key.strip() == key and _env_value_is_nonempty(raw_value):
+            return True
+    return False
+
+
+def _env_value_is_nonempty(raw_value: str) -> bool:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
+    return bool(value)
 
 
 def normalize_init_corpus_dir(value: Path | str | None) -> Path | None:
