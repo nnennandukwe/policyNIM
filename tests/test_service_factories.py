@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import policynim.services.compiler as compiler_module
 import policynim.services.eval as eval_module
 import policynim.services.ingest as ingest_module
 import policynim.services.preflight as preflight_module
@@ -55,6 +56,7 @@ import policynim.services.eval
 import policynim.services.search
 import policynim.services.preflight
 import policynim.services.router
+import policynim.services.compiler
 import policynim.services.runtime_decision
 import policynim.services.runtime_evidence_report
 import policynim.services.runtime_execution
@@ -139,16 +141,41 @@ def test_create_policy_router_service_builds_default_components(
     assert service._index_store.table_name == settings.lancedb_table
 
 
-def test_create_preflight_service_builds_default_components(
+def test_create_policy_compiler_service_builds_default_components(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     mock_router = object()
+    mock_compiler = object()
+    monkeypatch.setattr(
+        compiler_module,
+        "create_policy_router_service",
+        lambda settings: mock_router,
+    )
+    monkeypatch.setattr(
+        compiler_module,
+        "_create_default_policy_compiler",
+        lambda settings: mock_compiler,
+    )
+
+    settings = Settings(lancedb_uri=tmp_path / "compiler-index")
+
+    service = compiler_module.create_policy_compiler_service(settings)
+
+    assert service._router is mock_router
+    assert service._compiler is mock_compiler
+
+
+def test_create_preflight_service_builds_default_components(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    mock_compiler_service = object()
     mock_generator = object()
     monkeypatch.setattr(
         preflight_module,
-        "create_policy_router_service",
-        lambda settings: mock_router,
+        "create_policy_compiler_service",
+        lambda settings: mock_compiler_service,
     )
     monkeypatch.setattr(
         preflight_module,
@@ -160,7 +187,7 @@ def test_create_preflight_service_builds_default_components(
 
     service = preflight_module.create_preflight_service(settings)
 
-    assert service._router is mock_router
+    assert service._compiler_service is mock_compiler_service
     assert service._generator is mock_generator
 
 

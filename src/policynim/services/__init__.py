@@ -1,6 +1,7 @@
 """Application services for PolicyNIM."""
 
 from policynim.services.beta_auth import BetaAuthService, create_beta_auth_service
+from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
 from policynim.services.dump import IndexDumpService, create_index_dump_service
 from policynim.services.eval import EvalService, create_eval_service
 from policynim.services.health import (
@@ -31,6 +32,7 @@ __all__ = [
     "IndexDumpService",
     "IngestService",
     "PreflightService",
+    "PolicyCompilerService",
     "PolicyRouterService",
     "RuntimeDecisionService",
     "RuntimeEvidenceReportService",
@@ -38,6 +40,7 @@ __all__ = [
     "RuntimeHealthService",
     "SearchService",
     "create_beta_auth_service",
+    "create_policy_compiler_service",
     "create_eval_service",
     "create_runtime_decision_service",
     "create_runtime_evidence_report_service",

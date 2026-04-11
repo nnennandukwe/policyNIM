@@ -526,6 +526,81 @@ class RouteResult(StrictModel):
     retained_context: list[ScoredChunk] = Field(default_factory=list)
 
 
+class CompileRequest(StrictModel):
+    """Policy-compiler request shared by CLI and services."""
+
+    task: str
+    domain: str | None = None
+    top_k: TopK = DEFAULT_TOP_K
+    task_type: TaskType | None = None
+
+    @field_validator("task", mode="before")
+    @classmethod
+    def validate_task(cls, value: object) -> str:
+        """Reject empty compiler tasks before routing."""
+        return _validate_non_empty_string(value, field_name="task")
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def validate_domain(cls, value: object) -> str | None:
+        """Reject empty domain filters while preserving omitted filters."""
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, field_name="domain")
+
+
+class GeneratedPolicyConstraint(StrictModel):
+    """One untrusted model-generated policy constraint before local grounding."""
+
+    statement: str
+    citation_ids: list[str] = Field(default_factory=list)
+
+
+class GeneratedCompiledPolicyDraft(StrictModel):
+    """Untrusted compiler draft returned by the NVIDIA policy compiler."""
+
+    required_steps: list[GeneratedPolicyConstraint] = Field(default_factory=list)
+    forbidden_patterns: list[GeneratedPolicyConstraint] = Field(default_factory=list)
+    architectural_expectations: list[GeneratedPolicyConstraint] = Field(default_factory=list)
+    test_expectations: list[GeneratedPolicyConstraint] = Field(default_factory=list)
+    style_constraints: list[GeneratedPolicyConstraint] = Field(default_factory=list)
+    insufficient_context: bool = False
+
+
+class CompiledPolicyConstraint(StrictModel):
+    """One locally validated policy constraint with grounded source policy IDs."""
+
+    statement: str = Field(min_length=1)
+    citation_ids: list[str] = Field(min_length=1)
+    source_policy_ids: list[str] = Field(min_length=1)
+
+
+class CompiledPolicyPacket(StrictModel):
+    """Citation-backed policy constraints for planning and generation."""
+
+    task: str
+    domain: str | None = None
+    top_k: int
+    task_type: TaskType
+    explicit_task_type: TaskType | None = None
+    profile_signals: list[str] = Field(default_factory=list)
+    selected_policies: list[SelectedPolicy] = Field(default_factory=list)
+    required_steps: list[CompiledPolicyConstraint] = Field(default_factory=list)
+    forbidden_patterns: list[CompiledPolicyConstraint] = Field(default_factory=list)
+    architectural_expectations: list[CompiledPolicyConstraint] = Field(default_factory=list)
+    test_expectations: list[CompiledPolicyConstraint] = Field(default_factory=list)
+    style_constraints: list[CompiledPolicyConstraint] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    insufficient_context: bool = False
+
+
+class CompileResult(StrictModel):
+    """Internal compile result with packet JSON and generator-ready context."""
+
+    packet: CompiledPolicyPacket
+    retained_context: list[ScoredChunk] = Field(default_factory=list)
+
+
 class IngestResult(StrictModel):
     """Summary of one completed ingest run."""
 
@@ -640,6 +715,7 @@ class GeneratedPreflightDraft(StrictModel):
 
     summary: str
     applicable_policies: list[GeneratedPolicyGuidance] = Field(default_factory=list)
+    plan_steps: list[str] = Field(default_factory=list)
     implementation_guidance: list[str] = Field(default_factory=list)
     review_flags: list[str] = Field(default_factory=list)
     tests_required: list[str] = Field(default_factory=list)
@@ -654,6 +730,7 @@ class PreflightResult(StrictModel):
     domain: str | None = None
     summary: str
     applicable_policies: list[PolicyGuidance] = Field(default_factory=list)
+    plan_steps: list[str] = Field(default_factory=list)
     implementation_guidance: list[str] = Field(default_factory=list)
     review_flags: list[str] = Field(default_factory=list)
     tests_required: list[str] = Field(default_factory=list)

@@ -22,6 +22,10 @@ from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
     BetaAccount,
     Citation,
+    CompiledPolicyConstraint,
+    CompiledPolicyPacket,
+    CompileRequest,
+    CompileResult,
     EvalAggregateMetrics,
     EvalCaseMetrics,
     EvalCaseResult,
@@ -195,6 +199,74 @@ class MockRouteService:
             ),
             retained_context=[],
         )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class MockCompileService:
+    """Static compile service for CLI tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.last_request: CompileRequest | None = None
+
+    def compile(self, request: CompileRequest) -> CompileResult:
+        self.last_request = request
+        packet = CompiledPolicyPacket(
+            task=request.task,
+            domain=request.domain,
+            top_k=request.top_k,
+            task_type=request.task_type or "bug_fix",
+            explicit_task_type=request.task_type,
+            profile_signals=(
+                [f"explicit:{request.task_type}"] if request.task_type is not None else ["fix"]
+            ),
+            selected_policies=[
+                SelectedPolicy(
+                    policy_id="SECURITY-TOKEN-001",
+                    title="Token handling",
+                    domain="security",
+                    reason="Selected for bug fix routing from 1 retained evidence chunk(s).",
+                    evidence=[
+                        SelectedPolicyEvidence(
+                            chunk_id="SECURITY-1",
+                            path="policies/security/tokens.md",
+                            section="Rules",
+                            lines="10-16",
+                            text="Never log token values.",
+                            score=0.99,
+                        )
+                    ],
+                )
+            ],
+            required_steps=[
+                CompiledPolicyConstraint(
+                    statement="Preserve token revocation checks.",
+                    citation_ids=["SECURITY-1"],
+                    source_policy_ids=["SECURITY-TOKEN-001"],
+                )
+            ],
+            forbidden_patterns=[
+                CompiledPolicyConstraint(
+                    statement="Do not log raw token values.",
+                    citation_ids=["SECURITY-1"],
+                    source_policy_ids=["SECURITY-TOKEN-001"],
+                )
+            ],
+            citations=[
+                Citation(
+                    policy_id="SECURITY-TOKEN-001",
+                    title="Token handling",
+                    path="policies/security/tokens.md",
+                    section="Rules",
+                    lines="10-16",
+                    chunk_id="SECURITY-1",
+                )
+            ],
+            insufficient_context=False,
+        )
+        return CompileResult(packet=packet, retained_context=[])
 
     def close(self) -> None:
         self.closed = True
@@ -667,6 +739,103 @@ def test_route_command_closes_service_when_it_errors(monkeypatch) -> None:
     assert service.closed is True
 
 
+def test_compile_command_prints_compiled_policy_packet(monkeypatch) -> None:
+    service = MockCompileService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_compiler_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "compile",
+            "--task",
+            "fix token logging bug",
+            "--domain",
+            "security",
+            "--top-k",
+            "2",
+            "--task-type",
+            "bug_fix",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = CompiledPolicyPacket.model_validate(json.loads(result.stdout))
+    assert payload.task == "fix token logging bug"
+    assert payload.domain == "security"
+    assert payload.top_k == 2
+    assert payload.task_type == "bug_fix"
+    assert payload.required_steps[0].statement == "Preserve token revocation checks."
+    assert payload.citations[0].chunk_id == "SECURITY-1"
+    assert service.last_request is not None
+    assert service.last_request.task_type == "bug_fix"
+    assert service.closed is True
+
+
+def test_compile_command_rejects_invalid_task_type() -> None:
+    result = runner.invoke(
+        app,
+        ["compile", "--task", "fix token logging bug", "--task-type", "not-a-task-type"],
+    )
+
+    assert result.exit_code != 0
+    assert "not-a-task-type" in result.output
+
+
+def test_compile_command_formats_request_validation_errors() -> None:
+    result = runner.invoke(app, ["compile", "--task", "   "])
+
+    assert result.exit_code == 1
+    assert "Compile request is invalid at task" in result.stderr
+    assert "task must not be empty" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_compile_command_surfaces_missing_index_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_compiler_service",
+        lambda settings: (_ for _ in ()).throw(
+            MissingIndexError("Run `policynim ingest` before compiling policy constraints.")
+        ),
+    )
+
+    result = runner.invoke(app, ["compile", "--task", "fix token logging bug"])
+
+    assert result.exit_code == 1
+    assert "Run `policynim ingest` before compiling policy constraints." in result.stderr
+
+
+def test_compile_command_surfaces_configuration_errors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_compiler_service",
+        lambda settings: (_ for _ in ()).throw(ConfigurationError("missing NVIDIA key")),
+    )
+
+    result = runner.invoke(app, ["compile", "--task", "fix token logging bug"])
+
+    assert result.exit_code == 1
+    assert "missing NVIDIA key" in result.stderr
+
+
+def test_compile_command_closes_service_when_it_errors(monkeypatch) -> None:
+    class FailingCompileService(MockCompileService):
+        def compile(self, request: CompileRequest) -> CompileResult:
+            raise MissingIndexError("Run `policynim ingest` before compiling policy constraints.")
+
+    service = FailingCompileService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_compiler_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["compile", "--task", "fix token logging bug"])
+
+    assert result.exit_code == 1
+    assert service.closed is True
+
+
 def test_eval_command_prints_json(monkeypatch) -> None:
     service = MockEvalService()
     monkeypatch.setattr(
@@ -842,6 +1011,7 @@ def test_help_includes_runtime_and_evidence_commands() -> None:
     assert "runtime" in help_output
     assert "evidence" in help_output
     assert "route" in help_output
+    assert "compile" in help_output
 
 
 def test_version_flag_prints_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -960,6 +1130,15 @@ def test_route_help_mentions_task_type_override() -> None:
     assert "Selected evidence depth." in help_output
 
 
+def test_compile_help_mentions_task_type_override() -> None:
+    result = runner.invoke(app, ["compile", "--help"])
+    help_output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert "--task-type" in help_output
+    assert "Selected evidence depth." in help_output
+
+
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:
     result = runner.invoke(app, ["runtime", "--help"])
 
@@ -1049,6 +1228,7 @@ def test_search_command_points_to_ingest_when_config_exists_but_index_is_missing
         (["ingest"], None),
         (["search", "--query", "backend logs"], None),
         (["preflight", "--task", "refresh token cleanup"], None),
+        (["compile", "--task", "refresh token cleanup"], None),
         (["dump-index"], None),
         (["eval", "--headless"], None),
         (

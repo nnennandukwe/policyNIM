@@ -25,6 +25,8 @@ from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
 from policynim.types import (
+    CompiledPolicyPacket,
+    CompileRequest,
     EvalAggregateMetrics,
     EvalCase,
     EvalCaseMetrics,
@@ -34,10 +36,13 @@ from policynim.types import (
     EvalModeRunResult,
     EvalRunResult,
     EvalSuite,
+    GeneratedCompiledPolicyDraft,
+    GeneratedPolicyConstraint,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicyChunk,
     PolicyMetadata,
+    PolicySelectionPacket,
     PreflightRequest,
     PreflightResult,
     ScoredChunk,
@@ -190,6 +195,7 @@ class EvalService:
             index_store=store,
             reranker=_OfflineReranker() if rerank_enabled else _PassThroughReranker(),
             generator=_OfflineGenerator(),
+            compiler=_OfflinePolicyCompiler(),
         )
         try:
             return _score_suite_cases(
@@ -693,7 +699,12 @@ def _create_live_preflight_service(
     *,
     rerank_enabled: bool,
 ) -> PreflightService:
-    from policynim.providers import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
+    from policynim.providers import (
+        NVIDIAEmbedder,
+        NVIDIAGenerator,
+        NVIDIAPolicyCompiler,
+        NVIDIAReranker,
+    )
 
     return PreflightService(
         embedder=NVIDIAEmbedder.from_settings(settings),
@@ -705,6 +716,7 @@ def _create_live_preflight_service(
             NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
         ),
         generator=NVIDIAGenerator.from_settings(settings),
+        compiler=NVIDIAPolicyCompiler.from_settings(settings),
     )
 
 
@@ -816,7 +828,10 @@ class _OfflineGenerator(Generator):
         self,
         request: PreflightRequest,
         context: Sequence[ScoredChunk],
+        *,
+        compiled_packet: CompiledPolicyPacket | None = None,
     ) -> GeneratedPreflightDraft:
+        del compiled_packet
         context_by_id = {chunk.chunk_id: chunk for chunk in context}
         if request.task == "Implement a refresh-token cleanup background job":
             return _cleanup_job_draft(context_by_id)
@@ -839,6 +854,66 @@ class _OfflineGenerator(Generator):
                 citation_ids=["BACKEND-LOG-1"],
             )
         return _insufficient_draft()
+
+    def close(self) -> None:
+        return None
+
+
+class _OfflinePolicyCompiler:
+    """Produce deterministic compiled constraints from retained offline context."""
+
+    def compile_policy_packet(
+        self,
+        request: CompileRequest,
+        selection_packet: PolicySelectionPacket,
+        context: Sequence[ScoredChunk],
+    ) -> GeneratedCompiledPolicyDraft:
+        del request, selection_packet
+        context_by_id = {chunk.chunk_id: chunk for chunk in context}
+        required_steps: list[GeneratedPolicyConstraint] = []
+        test_expectations: list[GeneratedPolicyConstraint] = []
+        forbidden_patterns: list[GeneratedPolicyConstraint] = []
+
+        if "BACKGROUND-JOB-1" in context_by_id:
+            required_steps.append(
+                GeneratedPolicyConstraint(
+                    statement="Make the cleanup job idempotent and observable.",
+                    citation_ids=["BACKGROUND-JOB-1"],
+                )
+            )
+            test_expectations.append(
+                GeneratedPolicyConstraint(
+                    statement="Add coverage for repeated cleanup runs.",
+                    citation_ids=["BACKGROUND-JOB-1"],
+                )
+            )
+        if "SECURITY-TOKEN-1" in context_by_id:
+            forbidden_patterns.append(
+                GeneratedPolicyConstraint(
+                    statement="Do not log raw refresh-token values.",
+                    citation_ids=["SECURITY-TOKEN-1"],
+                )
+            )
+            test_expectations.append(
+                GeneratedPolicyConstraint(
+                    statement="Add a test that active tokens are preserved.",
+                    citation_ids=["SECURITY-TOKEN-1"],
+                )
+            )
+        if "BACKEND-LOG-1" in context_by_id:
+            required_steps.append(
+                GeneratedPolicyConstraint(
+                    statement="Thread request ids through log context.",
+                    citation_ids=["BACKEND-LOG-1"],
+                )
+            )
+
+        return GeneratedCompiledPolicyDraft(
+            required_steps=required_steps,
+            forbidden_patterns=forbidden_patterns,
+            test_expectations=test_expectations,
+            insufficient_context=not (required_steps or forbidden_patterns or test_expectations),
+        )
 
     def close(self) -> None:
         return None
