@@ -27,6 +27,7 @@ from policynim.types import (
     CompileRequest,
     CompileResult,
     EvalAggregateMetrics,
+    EvalBackend,
     EvalCaseMetrics,
     EvalCaseResult,
     EvalComparisonDelta,
@@ -415,10 +416,17 @@ class MockEvalService:
         self.launch_port: int | None = None
         self.started_ui = False
 
-    def run(self, *, mode, compare_rerank) -> EvalRunResult:
+    def run(
+        self,
+        *,
+        mode,
+        backend: EvalBackend = "default",
+        compare_rerank,
+    ) -> EvalRunResult:
         passed_count = 2 if self.passed else 1
         return EvalRunResult(
             mode=mode,
+            backend=backend,
             suite_name="day-6-default",
             suite_path="evals/default_cases.json",
             workspace_path="data/evals/workspace",
@@ -850,6 +858,30 @@ def test_eval_command_prints_json(monkeypatch) -> None:
     assert payload.mode == "offline"
     assert payload.runs[0].metrics.case_count == 2
     assert "--cases" not in runner.invoke(app, ["eval", "--help"]).stdout
+
+
+def test_eval_command_accepts_nemo_backend(monkeypatch) -> None:
+    service = MockEvalService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_eval_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        ["eval", "--mode", "offline", "--backend", "nemo", "--headless"],
+    )
+
+    assert result.exit_code == 0
+    payload = EvalRunResult.model_validate(json.loads(result.stdout))
+    assert payload.backend == "nemo"
+
+
+def test_eval_command_rejects_invalid_backend() -> None:
+    result = runner.invoke(app, ["eval", "--backend", "not-a-backend", "--headless"])
+
+    assert result.exit_code != 0
+    assert "not-a-backend" in result.output
 
 
 def test_eval_command_starts_ui_by_default(monkeypatch) -> None:

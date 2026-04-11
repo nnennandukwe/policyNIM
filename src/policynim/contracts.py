@@ -12,8 +12,10 @@ from policynim.types import (
     CompileRequest,
     EmbeddedChunk,
     GeneratedCompiledPolicyDraft,
+    GeneratedPolicyConformanceDraft,
     GeneratedPreflightDraft,
     PolicyChunk,
+    PolicyConformanceRequest,
     PolicySelectionPacket,
     PreflightRequest,
     RuntimeActionRequest,
@@ -73,6 +75,17 @@ class PolicyCompiler(Protocol):
         context: Sequence[ScoredChunk],
     ) -> GeneratedCompiledPolicyDraft:
         """Compile grounded policy evidence into a draft constraint packet."""
+        ...
+
+
+class PolicyConformanceEvaluator(Protocol):
+    """Judges policy conformance for a traced preflight result."""
+
+    def evaluate_policy_conformance(
+        self,
+        request: PolicyConformanceRequest,
+    ) -> GeneratedPolicyConformanceDraft:
+        """Evaluate final and optional trajectory adherence."""
         ...
 
 

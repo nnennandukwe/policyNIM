@@ -11,8 +11,10 @@ from policynim.errors import PolicyNIMError
 from policynim.services.eval import EvalService
 from policynim.settings import Settings
 from policynim.types import (
+    CompiledPolicyPacket,
     PolicyMetadata,
     PreflightResult,
+    PreflightTraceResult,
     ScoredChunk,
     SearchResult,
 )
@@ -88,6 +90,21 @@ class FakePreflightService:
             insufficient_context=True,
         )
 
+    def preflight_with_trace(self, request) -> PreflightTraceResult:
+        result = self.preflight(request)
+        return PreflightTraceResult(
+            result=result,
+            compiled_packet=CompiledPolicyPacket(
+                task=request.task,
+                domain=request.domain,
+                top_k=request.top_k,
+                task_type="unknown",
+                insufficient_context=True,
+            ),
+            retained_context=[],
+            trace_steps=[],
+        )
+
     def close(self) -> None:
         return None
 
@@ -124,7 +141,13 @@ def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_pat
     result = EvalService(settings=settings).run(mode="offline")
 
     assert result.mode == "offline"
+    assert result.backend == "default"
     assert len(result.runs) == 2
+    assert all(
+        case_result.conformance_result is None
+        for run in result.runs
+        for case_result in run.case_results
+    )
     assert result.comparison is not None
     assert "preflight-refresh-token-cleanup" in result.comparison.improved_case_ids
     assert "search-refresh-token-cleanup" in result.comparison.improved_case_ids
@@ -181,6 +204,37 @@ def test_eval_service_uses_original_suite_name_and_safe_artifact_slug(
     assert "\\" not in Path(result.runs[0].result_json_path).name
 
 
+def test_eval_service_nemo_backend_adds_preflight_conformance_results(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(eval_workspace_dir=tmp_path / "workspace")
+    monkeypatch.setattr(
+        "policynim.services.eval._build_evidently_report",
+        lambda **kwargs: FakeReport(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._add_report_to_workspace",
+        lambda workspace_path, report, run_name: None,
+    )
+
+    result = EvalService(settings=settings).run(
+        mode="offline",
+        backend="nemo",
+        compare_rerank=False,
+    )
+
+    assert result.backend == "nemo"
+    assert len(result.runs) == 1
+    run = result.runs[0]
+    search_cases = [case for case in run.case_results if case.kind == "search"]
+    preflight_cases = [case for case in run.case_results if case.kind == "preflight"]
+    assert all(case.conformance_result is None for case in search_cases)
+    assert any(case.conformance_result is not None for case in preflight_cases)
+    assert run.metrics.conformance_case_count == 2
+    assert run.metrics.conformance_passed_count == 2
+    assert run.metrics.conformance_score == 1.0
+
+
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
         lancedb_uri=tmp_path / "caller-index",
@@ -218,6 +272,57 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
     assert seen_paths
     assert seen_paths[0] != settings.lancedb_uri
     assert settings.lancedb_uri == tmp_path / "caller-index"
+
+
+def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        lancedb_uri=tmp_path / "caller-index",
+        eval_workspace_dir=tmp_path / "workspace",
+    )
+    seen_paths: list[Path] = []
+    closed: list[bool] = []
+
+    class FakeConformanceService:
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(
+        "policynim.services.eval.create_ingest_service",
+        lambda active_settings: FakeIngestService(active_settings, seen_paths),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._create_live_search_service",
+        lambda active_settings, rerank_enabled: FakeSearchService(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._create_live_preflight_service",
+        lambda active_settings, rerank_enabled: FakePreflightService(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._create_live_conformance_service",
+        lambda active_settings: FakeConformanceService(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._build_evidently_report",
+        lambda **kwargs: FakeReport(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._add_report_to_workspace",
+        lambda workspace_path, report, run_name: None,
+    )
+
+    result = EvalService(settings=settings).run(
+        mode="live",
+        backend="nemo",
+        compare_rerank=False,
+    )
+
+    assert result.backend == "nemo"
+    assert seen_paths
+    assert seen_paths[0] != settings.lancedb_uri
+    assert closed == [True]
 
 
 def test_eval_service_start_ui_fails_when_process_exits_early(monkeypatch, tmp_path: Path) -> None:

@@ -738,8 +738,71 @@ class PreflightResult(StrictModel):
     insufficient_context: bool = False
 
 
+EvalBackend = Literal["default", "nemo"]
 EvalKind = Literal["search", "preflight"]
 EvalExecutionMode = Literal["offline", "live"]
+
+
+class PolicyConformanceMetric(StrictModel):
+    """One policy-conformance metric for a preflight result."""
+
+    name: str = Field(min_length=1)
+    score: float = Field(ge=0.0, le=1.0)
+    passed: bool
+    failure_reasons: list[str] = Field(default_factory=list)
+
+
+class PolicyConformanceTraceStep(StrictModel):
+    """One optional intermediate step available for trajectory-aware judging."""
+
+    step_id: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    citation_ids: list[str] = Field(default_factory=list)
+
+
+class GeneratedPolicyConformanceDraft(StrictModel):
+    """Untrusted conformance judgment returned by an external evaluator."""
+
+    final_adherence_score: float = Field(ge=0.0, le=1.0)
+    final_adherence_rationale: str = ""
+    trajectory_adherence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    trajectory_adherence_rationale: str | None = None
+    constraint_ids: list[str] = Field(default_factory=list)
+    chunk_ids: list[str] = Field(default_factory=list)
+    failure_reasons: list[str] = Field(default_factory=list)
+
+
+class PolicyConformanceResult(StrictModel):
+    """Typed policy-conformance result for one preflight eval case."""
+
+    backend: EvalBackend
+    passed: bool
+    overall_score: float = Field(ge=0.0, le=1.0)
+    metrics: list[PolicyConformanceMetric] = Field(default_factory=list)
+    final_adherence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    final_adherence_rationale: str | None = None
+    trajectory_adherence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    trajectory_adherence_rationale: str | None = None
+    failure_reasons: list[str] = Field(default_factory=list)
+
+
+class PolicyConformanceRequest(StrictModel):
+    """Conformance request assembled from a preflight trace."""
+
+    task: str
+    result: PreflightResult
+    compiled_packet: CompiledPolicyPacket
+    trace_steps: list[PolicyConformanceTraceStep] = Field(default_factory=list)
+
+
+class PreflightTraceResult(StrictModel):
+    """Internal preflight result plus trace data for eval scoring."""
+
+    result: PreflightResult
+    compiled_packet: CompiledPolicyPacket
+    retained_context: list[ScoredChunk] = Field(default_factory=list)
+    trace_steps: list[PolicyConformanceTraceStep] = Field(default_factory=list)
 
 
 class EvalCase(StrictModel):
@@ -768,6 +831,8 @@ class EvalCaseMetrics(StrictModel):
     expected_chunk_recall: float = Field(default=0.0, ge=0.0, le=1.0)
     expected_policy_recall: float = Field(default=0.0, ge=0.0, le=1.0)
     insufficient_context_correct: bool = False
+    conformance_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    conformance_passed: bool | None = None
 
 
 class EvalCaseResult(StrictModel):
@@ -790,6 +855,7 @@ class EvalCaseResult(StrictModel):
     actual_policy_ids: list[str] = Field(default_factory=list)
     matched_policy_ids: list[str] = Field(default_factory=list)
     actual_summary: str | None = None
+    conformance_result: PolicyConformanceResult | None = None
     metrics: EvalCaseMetrics
 
 
@@ -808,11 +874,16 @@ class EvalAggregateMetrics(StrictModel):
     expected_chunk_recall: float = Field(default=0.0, ge=0.0, le=1.0)
     expected_policy_recall: float = Field(default=0.0, ge=0.0, le=1.0)
     insufficient_context_accuracy: float = Field(default=0.0, ge=0.0, le=1.0)
+    conformance_case_count: int = Field(default=0, ge=0)
+    conformance_passed_count: int = Field(default=0, ge=0)
+    conformance_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    conformance_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class EvalModeRunResult(StrictModel):
     """All eval results for one rerank mode."""
 
+    backend: EvalBackend = "default"
     rerank_enabled: bool
     metrics: EvalAggregateMetrics
     result_json_path: str
@@ -836,6 +907,7 @@ class EvalRunResult(StrictModel):
     """Top-level eval command result."""
 
     mode: EvalExecutionMode
+    backend: EvalBackend = "default"
     suite_name: str
     suite_path: str
     workspace_path: str

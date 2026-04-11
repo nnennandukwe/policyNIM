@@ -25,10 +25,13 @@ from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.settings import Settings
 from policynim.types import (
+    CompiledPolicyConstraint,
     CompiledPolicyPacket,
     CompileRequest,
     GeneratedCompiledPolicyDraft,
+    GeneratedPolicyConformanceDraft,
     GeneratedPreflightDraft,
+    PolicyConformanceRequest,
     PolicySelectionPacket,
     PreflightRequest,
     ScoredChunk,
@@ -436,6 +439,67 @@ class NVIDIAPolicyCompiler:
             _close_client(self._client)
 
 
+class NVIDIAPolicyConformanceEvaluator:
+    """Judges policy conformance through NVIDIA chat completions."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str,
+        timeout_seconds: float,
+        max_retries: int,
+        client: OpenAI | Any | None = None,
+    ) -> None:
+        api_key = api_key.strip()
+        if not api_key:
+            raise ConfigurationError(
+                "NVIDIA_API_KEY is required for policy conformance evaluation."
+            )
+
+        self._model = model
+        self._max_retries = max_retries
+        self._owns_client = client is None
+        self._client = client or OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout_seconds,
+            max_retries=0,
+        )
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> NVIDIAPolicyConformanceEvaluator:
+        """Construct a conformance evaluator from application settings."""
+        return cls(
+            api_key=settings.nvidia_api_key or "",
+            model=settings.nvidia_chat_model,
+            base_url=settings.nvidia_base_url,
+            timeout_seconds=settings.nvidia_timeout_seconds,
+            max_retries=settings.nvidia_max_retries,
+        )
+
+    def evaluate_policy_conformance(
+        self,
+        request: PolicyConformanceRequest,
+    ) -> GeneratedPolicyConformanceDraft:
+        """Judge final and optional trajectory adherence for a preflight trace."""
+        messages = _build_policy_conformance_messages(request)
+        content = _request_chat_completion(
+            self._client,
+            model=self._model,
+            messages=messages,
+            max_retries=self._max_retries,
+            operation="policy conformance evaluation",
+        )
+        return _parse_policy_conformance_draft(content, request)
+
+    def close(self) -> None:
+        """Release the owned OpenAI client when supported by the SDK."""
+        if self._owns_client:
+            _close_client(self._client)
+
+
 def _request_chat_completion(
     client: OpenAI | Any,
     *,
@@ -761,6 +825,76 @@ def _build_policy_compiler_messages(
     ]
 
 
+def _build_policy_conformance_messages(
+    request: PolicyConformanceRequest,
+) -> list[ChatCompletionMessageParam]:
+    system_prompt = (
+        "You are PolicyNIM's policy conformance evaluator.\n"
+        "Return ONLY valid JSON. Do not use markdown fences or commentary.\n"
+        "The JSON must match this shape exactly:\n"
+        "{\n"
+        '  "final_adherence_score": 0.0,\n'
+        '  "final_adherence_rationale": "string",\n'
+        '  "trajectory_adherence_score": null,\n'
+        '  "trajectory_adherence_rationale": null,\n'
+        '  "constraint_ids": ["required_steps:0"],\n'
+        '  "chunk_ids": ["chunk-id"],\n'
+        '  "failure_reasons": ["string"]\n'
+        "}\n"
+        "Rules:\n"
+        "- Score final_adherence_score from 0 to 1 against the supplied compiled "
+        "policy constraints and final preflight result.\n"
+        "- If trace steps are absent or insufficient for trajectory judgment, set "
+        "trajectory_adherence_score and trajectory_adherence_rationale to null.\n"
+        "- Cite only constraint_ids and chunk_ids that appear in the supplied request.\n"
+        "- Do not invent constraints, chunks, files, or policy requirements.\n"
+        "- Add failure_reasons only for material conformance gaps."
+    )
+    user_prompt = f"Policy conformance request:\n{_format_policy_conformance_request(request)}"
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def _format_policy_conformance_request(request: PolicyConformanceRequest) -> str:
+    return json.dumps(
+        {
+            "task": request.task,
+            "compiled_constraints": _format_policy_conformance_constraints(request.compiled_packet),
+            "allowed_chunk_ids": _allowed_policy_conformance_chunk_ids(request),
+            "final_result": request.result.model_dump(mode="json"),
+            "trace_steps": [step.model_dump(mode="json") for step in request.trace_steps],
+        },
+        indent=2,
+    )
+
+
+def _format_policy_conformance_constraints(
+    compiled_packet: CompiledPolicyPacket,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    categories: tuple[tuple[str, Sequence[CompiledPolicyConstraint]], ...] = (
+        ("required_steps", compiled_packet.required_steps),
+        ("forbidden_patterns", compiled_packet.forbidden_patterns),
+        ("architectural_expectations", compiled_packet.architectural_expectations),
+        ("test_expectations", compiled_packet.test_expectations),
+        ("style_constraints", compiled_packet.style_constraints),
+    )
+    for category_name, constraints in categories:
+        for index, constraint in enumerate(constraints):
+            rows.append(
+                {
+                    "constraint_id": f"{category_name}:{index}",
+                    "category": category_name,
+                    "statement": constraint.statement,
+                    "citation_ids": list(constraint.citation_ids),
+                    "source_policy_ids": list(constraint.source_policy_ids),
+                }
+            )
+    return rows
+
+
 def _format_compiled_policy_packet(compiled_packet: CompiledPolicyPacket) -> str:
     if compiled_packet.insufficient_context:
         return "(compiled policy packet has insufficient context)"
@@ -822,6 +956,97 @@ def _parse_compiled_policy_draft(content: str) -> GeneratedCompiledPolicyDraft:
             "NVIDIA policy compilation returned malformed JSON.",
             failure_class="invalid_response",
         ) from exc
+
+
+def _parse_policy_conformance_draft(
+    content: str,
+    request: PolicyConformanceRequest,
+) -> GeneratedPolicyConformanceDraft:
+    json_object = _parse_json_object_response(
+        content,
+        operation="policy conformance evaluation",
+    )
+    try:
+        draft = GeneratedPolicyConformanceDraft.model_validate(json_object)
+    except ValidationError as exc:
+        raise ProviderError(
+            "NVIDIA policy conformance evaluation returned malformed JSON.",
+            failure_class="invalid_response",
+        ) from exc
+
+    _validate_policy_conformance_draft(draft, request)
+    return draft
+
+
+def _validate_policy_conformance_draft(
+    draft: GeneratedPolicyConformanceDraft,
+    request: PolicyConformanceRequest,
+) -> None:
+    allowed_constraint_ids = set(_allowed_policy_conformance_constraint_ids(request))
+    unsupported_constraint_ids = [
+        constraint_id
+        for constraint_id in draft.constraint_ids
+        if constraint_id not in allowed_constraint_ids
+    ]
+    if unsupported_constraint_ids:
+        raise ProviderError(
+            "NVIDIA policy conformance evaluation returned unsupported constraint ids: "
+            f"{', '.join(unsupported_constraint_ids)}.",
+            failure_class="invalid_response",
+        )
+
+    allowed_chunk_ids = set(_allowed_policy_conformance_chunk_ids(request))
+    unsupported_chunk_ids = [
+        chunk_id for chunk_id in draft.chunk_ids if chunk_id not in allowed_chunk_ids
+    ]
+    if unsupported_chunk_ids:
+        raise ProviderError(
+            "NVIDIA policy conformance evaluation returned unsupported chunk ids: "
+            f"{', '.join(unsupported_chunk_ids)}.",
+            failure_class="invalid_response",
+        )
+
+
+def _allowed_policy_conformance_constraint_ids(
+    request: PolicyConformanceRequest,
+) -> list[str]:
+    return [
+        str(row["constraint_id"])
+        for row in _format_policy_conformance_constraints(request.compiled_packet)
+    ]
+
+
+def _allowed_policy_conformance_chunk_ids(
+    request: PolicyConformanceRequest,
+) -> list[str]:
+    constraint_chunk_ids = [
+        citation_id
+        for constraints in (
+            request.compiled_packet.required_steps,
+            request.compiled_packet.forbidden_patterns,
+            request.compiled_packet.architectural_expectations,
+            request.compiled_packet.test_expectations,
+            request.compiled_packet.style_constraints,
+        )
+        for constraint in constraints
+        for citation_id in constraint.citation_ids
+    ]
+    result_chunk_ids = [citation.chunk_id for citation in request.result.citations]
+    trace_chunk_ids = [
+        citation_id for step in request.trace_steps for citation_id in step.citation_ids
+    ]
+    return _ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
+
+
+def _ordered_unique(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
 
 
 def _parse_json_object_response(content: str, *, operation: str) -> dict[str, Any]:

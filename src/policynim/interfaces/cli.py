@@ -32,6 +32,7 @@ from policynim.settings import Settings, get_settings
 from policynim.types import (
     MAX_TOP_K,
     CompileRequest,
+    EvalBackend,
     EvalExecutionMode,
     PreflightRequest,
     RouteRequest,
@@ -454,6 +455,13 @@ def eval(
         EvalExecutionMode,
         typer.Option("--mode", help="Eval execution mode. Supported values: offline, live."),
     ] = "offline",
+    backend: Annotated[
+        EvalBackend,
+        typer.Option(
+            "--backend",
+            help="Eval backend. Supported values: default, nemo.",
+        ),
+    ] = "default",
     no_compare_rerank: Annotated[
         bool,
         typer.Option(
@@ -474,7 +482,7 @@ def eval(
     try:
         settings = _load_setup_dependent_settings()
         service = create_eval_service(settings)
-        result = service.run(mode=mode, compare_rerank=not no_compare_rerank)
+        result = service.run(mode=mode, backend=backend, compare_rerank=not no_compare_rerank)
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:

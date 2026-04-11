@@ -144,16 +144,20 @@ Evaluation flow:
 1. load the bundled eval suite
 2. run cases against `search` and `preflight`
 3. score results with deterministic checks
-4. compare rerank-enabled and rerank-disabled runs
-5. persist JSON artifacts and HTML reports
-6. optionally start the local Evidently UI
+4. optionally add policy-conformance scoring for preflight cases with
+   `--backend nemo`
+5. compare rerank-enabled and rerank-disabled runs
+6. persist JSON artifacts and HTML reports
+7. optionally start the local Evidently UI
 
 Important evaluation rules:
 
 - offline mode is the default contributor path
 - live mode is opt-in and requires `NVIDIA_API_KEY`
 - live mode uses an isolated temporary LanceDB path
-- scoring is code-based, not LLM-as-judge
+- the default backend is code-scored and does not use LLM-as-judge behavior
+- the `nemo` backend adds deterministic conformance checks plus final-adherence
+  judgment for preflight cases
 - expected chunk recall, policy recall, and insufficient-context accuracy are the
   core tracked metrics
 
@@ -219,8 +223,8 @@ Important evaluation rules:
   sanitized action, and persists immutable evidence events.
 - `RuntimeEvidenceReportService` reads persisted runtime evidence rows and
   returns a typed session summary for the CLI `evidence report` flow.
-- `EvalService` handles gold-case execution, scoring, comparison, and report
-  persistence.
+- `EvalService` handles gold-case execution, backend-aware scoring, conformance
+  scoring, comparison, and report persistence.
 - `IndexDumpService` handles terminal-friendly inspection of stored chunks.
 - `RuntimeHealthService` handles hosted HTTP readiness checks for the local index.
 - `BetaAuthService` handles hosted beta GitHub login, API-key issuance, and
@@ -260,7 +264,7 @@ Important evaluation rules:
 - `policynim route --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim compile --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim preflight --task ...`
-- `policynim eval --mode offline|live [--headless] [--no-compare-rerank]`
+- `policynim eval --mode offline|live [--backend default|nemo] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
@@ -320,6 +324,7 @@ NVIDIA-hosted APIs are used for:
 - reranking retrieved candidates
 - policy compilation for planning and generation constraints
 - grounded generation for preflight
+- live `eval --backend nemo` final-adherence judging
 
 These steps require `NVIDIA_API_KEY`.
 
