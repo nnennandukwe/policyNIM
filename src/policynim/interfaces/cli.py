@@ -347,10 +347,10 @@ def compile(
     ] = None,
 ) -> None:
     """Return compiled policy constraints for planning and generation."""
-    settings = get_settings()
-    resolved_top_k = top_k if top_k is not None else settings.default_top_k
     service = None
     try:
+        settings = _load_setup_dependent_settings()
+        resolved_top_k = top_k if top_k is not None else settings.default_top_k
         request = CompileRequest(
             task=task,
             domain=domain,

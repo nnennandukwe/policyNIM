@@ -1228,6 +1228,7 @@ def test_search_command_points_to_ingest_when_config_exists_but_index_is_missing
         (["ingest"], None),
         (["search", "--query", "backend logs"], None),
         (["preflight", "--task", "refresh token cleanup"], None),
+        (["compile", "--task", "refresh token cleanup"], None),
         (["dump-index"], None),
         (["eval", "--headless"], None),
         (
