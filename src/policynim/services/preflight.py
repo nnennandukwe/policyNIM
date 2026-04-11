@@ -90,28 +90,42 @@ class PreflightService:
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
         """Run the grounded preflight pipeline."""
-        return self.preflight_with_trace(request).result
+        output = self._run_preflight(request, with_trace=False)
+        assert isinstance(output, PreflightResult)
+        return output
 
     def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
         """Run preflight and retain internal data needed for eval scoring."""
+        output = self._run_preflight(request, with_trace=True)
+        assert isinstance(output, PreflightTraceResult)
+        return output
+
+    def _run_preflight(
+        self,
+        request: PreflightRequest,
+        *,
+        with_trace: bool,
+    ) -> PreflightResult | PreflightTraceResult:
         compile_result = self._compiler_service.compile(
             CompileRequest(task=request.task, domain=request.domain, top_k=request.top_k)
         )
         compiled_packet = compile_result.packet
-        trace_steps = [
-            _trace_step(
-                step_id="compile",
-                kind="policy_compilation",
-                summary=(
-                    "Compiled policy packet had insufficient context."
-                    if compiled_packet.insufficient_context
-                    else "Compiled policy packet for generation."
-                ),
-                citation_ids=[citation.chunk_id for citation in compiled_packet.citations],
+        trace_steps: list[PolicyConformanceTraceStep] | None = [] if with_trace else None
+        if trace_steps is not None:
+            trace_steps.append(
+                _trace_step(
+                    step_id="compile",
+                    kind="policy_compilation",
+                    summary=(
+                        "Compiled policy packet had insufficient context."
+                        if compiled_packet.insufficient_context
+                        else "Compiled policy packet for generation."
+                    ),
+                    citation_ids=[citation.chunk_id for citation in compiled_packet.citations],
+                )
             )
-        ]
         if compiled_packet.insufficient_context or not compile_result.retained_context:
-            return PreflightTraceResult(
+            return _preflight_output(
                 result=_insufficient_context_result(request),
                 compiled_packet=compiled_packet,
                 retained_context=compile_result.retained_context,
@@ -126,28 +140,46 @@ class PreflightService:
         )
         draft = _coerce_generated_draft(generated)
         draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
-        trace_steps.append(
-            _trace_step(
-                step_id="generate",
-                kind="grounded_generation",
-                summary=draft.summary or "Generated preflight draft.",
-                citation_ids=draft.citation_ids,
+        if trace_steps is not None:
+            trace_steps.append(
+                _trace_step(
+                    step_id="generate",
+                    kind="grounded_generation",
+                    summary=draft.summary or "Generated preflight draft.",
+                    citation_ids=draft.citation_ids,
+                )
             )
-        )
         validated = _validate_and_materialize_result(request, retained_context, draft)
         if validated is None:
-            return PreflightTraceResult(
+            return _preflight_output(
                 result=_insufficient_context_result(request),
                 compiled_packet=compiled_packet,
                 retained_context=retained_context,
                 trace_steps=trace_steps,
             )
-        return PreflightTraceResult(
+        return _preflight_output(
             result=validated,
             compiled_packet=compiled_packet,
             retained_context=retained_context,
             trace_steps=trace_steps,
         )
+
+
+def _preflight_output(
+    *,
+    result: PreflightResult,
+    compiled_packet: CompiledPolicyPacket,
+    retained_context: list[ScoredChunk],
+    trace_steps: list[PolicyConformanceTraceStep] | None,
+) -> PreflightResult | PreflightTraceResult:
+    if trace_steps is None:
+        return result
+    return PreflightTraceResult(
+        result=result,
+        compiled_packet=compiled_packet,
+        retained_context=retained_context,
+        trace_steps=trace_steps,
+    )
 
 
 def create_preflight_service(settings: Settings | None = None) -> PreflightService:

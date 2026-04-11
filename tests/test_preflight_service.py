@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 import pytest
 
+import policynim.services.preflight as preflight_module
 from policynim.errors import MissingIndexError
 from policynim.services.preflight import (
     DraftPolicyGuidance,
@@ -342,6 +343,48 @@ def test_preflight_service_trace_exposes_internal_compiled_packet_without_changi
     assert trace_result.compiled_packet.required_steps
     assert [chunk.chunk_id for chunk in trace_result.retained_context] == ["BACKEND-1"]
     assert [step.step_id for step in trace_result.trace_steps] == ["compile", "generate"]
+
+
+def test_preflight_service_preflight_keeps_trace_creation_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_trace_step(**_: object) -> object:
+        raise AssertionError("preflight() should not build trace steps")
+
+    monkeypatch.setattr(preflight_module, "_trace_step", fail_trace_step)
+    store = MockIndexStore(
+        [
+            make_chunk(
+                chunk_id="BACKEND-1",
+                policy_id="BACKEND-LOG-001",
+                domain="backend",
+                score=0.99,
+            )
+        ]
+    )
+    draft = GeneratedPreflightDraft(
+        summary="Use request ids in logs.",
+        applicable_policies=[
+            DraftPolicyGuidance(
+                policy_id="BACKEND-LOG-001",
+                title="Logging",
+                rationale="Use the retained backend logging policy.",
+                citation_ids=["BACKEND-1"],
+            )
+        ],
+        citation_ids=["BACKEND-1"],
+    )
+    service = PreflightService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        reranker=MockReranker(order=["BACKEND-1"]),
+        generator=MockGenerator(draft),
+        compiler=MockPolicyCompiler(),
+    )
+
+    result = service.preflight(PreflightRequest(task="backend guidance", top_k=1))
+
+    assert not result.insufficient_context
 
 
 def test_preflight_service_fails_closed_when_compiler_has_insufficient_context() -> None:
