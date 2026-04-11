@@ -8,13 +8,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.cli import app
 from policynim.services.runtime_evidence_report import RuntimeEvidenceReportService
 from policynim.services.runtime_execution import RuntimeExecutionService
-from policynim.settings import Settings
+from policynim.settings import Settings, get_settings
 from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
     BetaAccount,
@@ -40,6 +42,68 @@ from policynim.types import (
 )
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def clear_cached_settings() -> None:
+    """Prevent settings cache from leaking between CLI tests."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def write_env_file(path: Path, **values: str) -> None:
+    """Write a small env-style config file for CLI setup tests."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{key}={value}" for key, value in values.items()]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def clear_installer_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear env that would interfere with standalone installer-style tests."""
+    for key in (
+        "NVIDIA_API_KEY",
+        "POLICYNIM_CONFIG_FILE",
+        "POLICYNIM_CORPUS_DIR",
+        "POLICYNIM_LANCEDB_URI",
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
+        "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
+        "POLICYNIM_EVAL_WORKSPACE_DIR",
+        "PORT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+def configure_standalone_cli_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Path, Path, Path]:
+    """Simulate an installed standalone runtime outside a contributor checkout."""
+    clear_installer_env(monkeypatch)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+
+    config_root = tmp_path / "user-config"
+    data_root = tmp_path / "user-data"
+    package_root = tmp_path / "site-packages" / "policynim"
+    package_root.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_config_path",
+        lambda *args, **kwargs: config_root,
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_data_path",
+        lambda *args, **kwargs: data_root,
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.__file__",
+        str(package_root / "config_discovery.py"),
+    )
+
+    return workspace, config_root, data_root
 
 
 class MockIngestService:
@@ -592,10 +656,120 @@ def test_help_includes_dump_index_command() -> None:
 
 def test_help_includes_runtime_and_evidence_commands() -> None:
     result = runner.invoke(app, ["--help"])
+    help_output = strip_ansi(result.stdout)
 
     assert result.exit_code == 0
-    assert "runtime" in result.stdout
-    assert "evidence" in result.stdout
+    assert "--version" in help_output
+    assert "init" in help_output
+    assert "runtime" in help_output
+    assert "evidence" in help_output
+
+
+def test_version_flag_prints_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli._resolve_installed_version",
+        lambda: "1.2.3",
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "1.2.3\n"
+    assert result.stderr == ""
+
+
+def test_version_flag_surfaces_metadata_errors_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_version_lookup() -> str:
+        raise PolicyNIMError("Installed package metadata for PolicyNIM is unavailable.")
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli._resolve_installed_version",
+        fail_version_lookup,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 1
+    assert "Installed package metadata for PolicyNIM is unavailable." in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_init_help_documents_interactive_setup_flow() -> None:
+    result = runner.invoke(app, ["init", "--help"])
+
+    assert result.exit_code == 0
+    assert "interactive" in result.stdout.lower()
+    assert "NVIDIA_API_KEY" in result.stdout
+    assert "--non-interactive" not in result.stdout
+
+
+def test_init_command_writes_config_and_prints_next_step(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, config_root, data_root = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    custom_corpus = tmp_path / "custom-corpus"
+    custom_corpus.mkdir()
+
+    result = runner.invoke(
+        app,
+        ["init"],
+        input=f"nvapi-test-key\n{custom_corpus}\n",
+    )
+
+    config_path = config_root / "config.env"
+    assert result.exit_code == 0
+    assert str(config_path) in result.stdout
+    assert str(custom_corpus) in result.stdout
+    assert "policynim ingest" in result.stdout
+    assert config_path.read_text(encoding="utf-8") == (
+        "NVIDIA_API_KEY='nvapi-test-key'\n"
+        f"POLICYNIM_CORPUS_DIR='{custom_corpus}'\n"
+        f"POLICYNIM_LANCEDB_URI='{data_root / 'lancedb'}'\n"
+        f"POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH='{data_root / 'runtime' / 'runtime_rules.json'}'\n"
+        "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH="
+        f"'{data_root / 'runtime' / 'runtime_evidence.sqlite3'}'\n"
+        f"POLICYNIM_EVAL_WORKSPACE_DIR='{data_root / 'evals' / 'workspace'}'\n"
+    )
+
+
+def test_init_command_rejects_blank_required_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["init"], input="\n")
+
+    assert result.exit_code == 1
+    assert "NVIDIA_API_KEY is required." in result.stderr
+    assert not (config_root / "config.env").exists()
+
+
+def test_init_command_surfaces_unwritable_config_destination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    target_config = tmp_path / "blocked" / "config.env"
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(target_config))
+
+    def fail_replace(src: str, dst: str) -> None:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr("policynim.config_discovery.os.replace", fail_replace)
+
+    result = runner.invoke(app, ["init"], input="nvapi-test-key\n\n")
+
+    assert result.exit_code == 1
+    assert str(target_config) in result.stderr
+    assert "permission denied" in result.stderr
+    assert not target_config.exists()
+    assert list(target_config.parent.glob("*.tmp")) == []
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:
@@ -640,6 +814,101 @@ def test_search_command_surfaces_configuration_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "missing NVIDIA key" in result.stderr
+
+
+def test_search_command_points_to_init_when_standalone_setup_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_search_service",
+        lambda settings: (_ for _ in ()).throw(
+            ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
+        ),
+    )
+
+    result = runner.invoke(app, ["search", "--query", "backend logs"])
+
+    assert result.exit_code == 1
+    assert "PolicyNIM is not set up yet." in result.stderr
+    assert "policynim init" in result.stderr
+    assert str(config_root / "config.env") in result.stderr
+    assert "policynim ingest" not in result.stderr
+
+
+def test_search_command_points_to_ingest_when_config_exists_but_index_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", NVIDIA_API_KEY="nvapi-test-key")
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_search_service",
+        lambda settings: (_ for _ in ()).throw(MissingIndexError("Local index is missing.")),
+    )
+
+    result = runner.invoke(app, ["search", "--query", "backend logs"])
+
+    assert result.exit_code == 1
+    assert "policynim ingest" in result.stderr
+    assert "policynim init" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("argv", "stdin_text"),
+    [
+        (["ingest"], None),
+        (["search", "--query", "backend logs"], None),
+        (["preflight", "--task", "refresh token cleanup"], None),
+        (["dump-index"], None),
+        (["eval", "--headless"], None),
+        (
+            ["runtime", "decide", "--input", "-"],
+            json.dumps(
+                {
+                    "kind": "shell_command",
+                    "task": "Run tests.",
+                    "cwd": "/tmp",
+                    "command": ["make", "test"],
+                }
+            ),
+        ),
+        (
+            ["runtime", "execute", "--input", "-"],
+            json.dumps(
+                {
+                    "kind": "shell_command",
+                    "task": "Run tests.",
+                    "cwd": "/tmp",
+                    "command": ["make", "test"],
+                }
+            ),
+        ),
+        (["evidence", "report", "--session-id", "session-123"], None),
+        (["mcp"], None),
+    ],
+)
+def test_setup_dependent_commands_point_to_init_when_redirected_config_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    argv: list[str],
+    stdin_text: str | None,
+) -> None:
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    redirected_config = tmp_path / "redirected" / "config.env"
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(redirected_config))
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.run_server",
+        lambda transport: (_ for _ in ()).throw(AssertionError("run_server should not be called")),
+    )
+
+    result = runner.invoke(app, argv, input=stdin_text)
+
+    assert result.exit_code == 1
+    assert "PolicyNIM is not set up yet." in result.stderr
+    assert "policynim init" in result.stderr
+    assert str(redirected_config) in result.stderr
 
 
 def test_preflight_command_surfaces_missing_index_errors(monkeypatch) -> None:
