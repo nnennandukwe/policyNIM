@@ -8,9 +8,11 @@ import pytest
 
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.runtime_paths import (
+    resolve_asset_path,
     resolve_corpus_root,
     resolve_eval_suite_path,
     resolve_runtime_path,
+    resolve_template_root,
 )
 
 
@@ -203,3 +205,52 @@ def test_resolve_eval_suite_path_error_no_longer_references_cases_flag(
         resolve_eval_suite_path()
 
     assert "--cases" not in str(exc.value)
+
+
+def test_resolve_template_root_finds_bundled_package_templates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "site-packages" / "policynim"
+    bundled_templates = package_root / "templates"
+    bundled_templates.mkdir(parents=True)
+    monkeypatch.setattr(
+        "policynim.runtime_paths._resolve_packaged_resource",
+        lambda *parts: package_root.joinpath(*parts),
+    )
+
+    assert resolve_template_root() == bundled_templates
+
+
+def test_resolve_asset_path_finds_bundled_package_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "site-packages" / "policynim"
+    bundled_asset = package_root / "assets" / "beta" / "beta.css"
+    bundled_asset.parent.mkdir(parents=True)
+    bundled_asset.write_text("body { color: black; }", encoding="utf-8")
+    monkeypatch.setattr(
+        "policynim.runtime_paths._resolve_packaged_resource",
+        lambda *parts: package_root.joinpath(*parts),
+    )
+
+    assert resolve_asset_path("beta", "beta.css") == bundled_asset
+
+
+def test_resolve_asset_path_raises_with_reinstall_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    isolated_package = tmp_path / "isolated" / "policynim"
+    isolated_package.mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "policynim.runtime_paths.__file__", str(isolated_package / "runtime_paths.py")
+    )
+
+    with pytest.raises(InvalidPolicyDocumentError) as exc:
+        resolve_asset_path("beta", "missing.css")
+
+    message = str(exc.value)
+    assert "assets/beta/missing.css" in message
+    assert "Reinstall PolicyNIM" in message
