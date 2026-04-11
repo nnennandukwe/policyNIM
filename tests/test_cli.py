@@ -1312,12 +1312,13 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
 
 def test_preflight_help_mentions_current_top_k_behavior() -> None:
     result = runner.invoke(app, ["preflight", "--help"])
+    help_text = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "Retrieval depth." in result.stdout
-    assert "1-20." in result.stdout
-    assert "--trace" in result.stdout
-    assert "Reserved retrieval depth" not in result.stdout
+    assert "Retrieval depth." in help_text
+    assert "1-20." in help_text
+    assert "--trace" in help_text
+    assert "Reserved retrieval depth" not in help_text
 
 
 def test_search_command_surfaces_configuration_errors(monkeypatch) -> None:
