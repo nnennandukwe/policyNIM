@@ -1269,6 +1269,7 @@ def test_preflight_regenerate_command_prints_regeneration_result(monkeypatch) ->
     assert payload.evidence_trace.compiled_packet_id == "packet-1"
     assert service.last_request is not None
     assert service.last_request.backend == "nat"
+    assert service.last_request.include_chunk_text is False
     assert service.closed is True
 
 
@@ -1287,6 +1288,8 @@ def test_preflight_trace_regenerate_uses_regeneration_output(monkeypatch) -> Non
     assert result.exit_code == 0
     payload = PreflightRegenerationResult.model_validate(json.loads(result.stdout))
     assert payload.evidence_trace.compiled_packet_id == "packet-1"
+    assert service.last_request is not None
+    assert service.last_request.include_chunk_text is True
     assert service.closed is True
 
 

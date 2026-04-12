@@ -265,6 +265,19 @@ def test_eval_service_regeneration_runs_for_preflight_cases_only(tmp_path: Path)
         == case.regeneration_result.evidence_trace.compiled_packet_id
         for case in preflight_cases
     )
+    assert all(
+        chunk.text is None
+        for case in preflight_cases
+        if case.regeneration_result is not None
+        for chunk in case.regeneration_result.evidence_trace.chunks
+    )
+    assert all(
+        chunk.text is None
+        for case in preflight_cases
+        if case.regeneration_result is not None
+        for attempt in case.regeneration_result.attempts
+        for chunk in attempt.evidence_trace.chunks
+    )
 
 
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:

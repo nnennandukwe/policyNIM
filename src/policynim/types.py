@@ -962,6 +962,7 @@ class PreflightRegenerationRequest(StrictModel):
     top_k: TopK = DEFAULT_TOP_K
     backend: RegenerationBackend = "nemo"
     max_regenerations: int = Field(default=1, ge=1, le=3)
+    include_chunk_text: bool = False
 
 
 class PreflightRegenerationResult(StrictModel):

@@ -90,7 +90,26 @@ def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
         expected_packet_id,
     ]
     assert result.evidence_trace.compiled_packet_id == expected_packet_id
+    assert result.evidence_trace.chunks[0].text is None
     assert conformance.backends == ["nemo", "nemo"]
+
+
+def test_regeneration_can_include_chunk_text_for_debug_traces() -> None:
+    service = PolicyRegenerationService(
+        compiler_service=FakeCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
+        generator=FakeGenerator([make_draft()]),
+        conformance_service=FakeConformanceService([make_conformance_result(passed=True)]),
+    )
+
+    result = service.regenerate(
+        PreflightRegenerationRequest(
+            task="fix backend logging",
+            top_k=2,
+            include_chunk_text=True,
+        )
+    )
+
+    assert result.evidence_trace.chunks[0].text == "Thread request ids through log context."
 
 
 def test_regeneration_stops_at_max_regenerations() -> None:

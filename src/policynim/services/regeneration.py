@@ -133,7 +133,10 @@ class PolicyRegenerationService:
                 retained_context=retained_context,
                 trace_steps=trace_steps,
             )
-            evidence_trace = self._evidence_trace_service.build(trace_result)
+            evidence_trace = self._evidence_trace_service.build(
+                trace_result,
+                include_chunk_text=request.include_chunk_text,
+            )
             attempt = _attempt(
                 attempt_index=0,
                 compiled_packet_id=packet_id,
@@ -181,7 +184,10 @@ class PolicyRegenerationService:
                 trace_steps=trace_steps,
             )
             if result.insufficient_context:
-                evidence_trace = self._evidence_trace_service.build(trace_result)
+                evidence_trace = self._evidence_trace_service.build(
+                    trace_result,
+                    include_chunk_text=request.include_chunk_text,
+                )
                 attempts.append(
                     _attempt(
                         attempt_index=attempt_index,
@@ -212,6 +218,7 @@ class PolicyRegenerationService:
             evidence_trace = self._evidence_trace_service.build(
                 trace_result,
                 conformance_result=conformance_result,
+                include_chunk_text=request.include_chunk_text,
             )
             attempts.append(
                 _attempt(

@@ -256,6 +256,7 @@ def preflight(
                     top_k=resolved_top_k,
                     backend=backend,
                     max_regenerations=max_regenerations,
+                    include_chunk_text=trace,
                 )
             )
         else:
