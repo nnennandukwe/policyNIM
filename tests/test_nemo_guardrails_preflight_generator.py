@@ -100,13 +100,12 @@ def test_guardrails_from_settings_checks_optional_package_before_base_generator(
 
 
 def test_guardrails_assets_are_packaged_and_model_scoped() -> None:
-    colang_content, yaml_content = guardrails_module._load_guardrails_assets(
-        model="nvidia/test-model"
-    )
+    model = 'nvidia/test#model-"\\variant'
+    colang_content, yaml_content = guardrails_module._load_guardrails_assets(model=model)
 
     assert "refuse to respond" in colang_content
     assert "self check output" in yaml_content
-    assert "nvidia/test-model" in yaml_content
+    assert f"model: {json.dumps(model)}" in yaml_content
     assert "POLICYNIM_NVIDIA_CHAT_MODEL" not in yaml_content
 
 

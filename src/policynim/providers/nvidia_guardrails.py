@@ -223,7 +223,7 @@ def _load_guardrails_assets(*, model: str) -> tuple[str, str]:
             failure_class="missing_guardrails_assets",
         ) from exc
 
-    return colang_content, yaml_content.replace(_MODEL_PLACEHOLDER, model)
+    return colang_content, yaml_content.replace(_MODEL_PLACEHOLDER, json.dumps(model))
 
 
 def _coerce_generated_draft(generated: Any) -> GeneratedPreflightDraft:
