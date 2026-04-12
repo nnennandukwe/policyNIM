@@ -23,7 +23,7 @@ from policynim.types import (
 )
 
 
-class FakeIngestService:
+class MockIngestService:
     """Capture the isolated live eval index path."""
 
     def __init__(self, settings: Settings, seen_paths: list[Path]) -> None:
@@ -35,7 +35,7 @@ class FakeIngestService:
         return None
 
 
-class FakeSearchService:
+class MockSearchService:
     """Static search service used for live-eval isolation tests."""
 
     def search(self, request) -> SearchResult:
@@ -66,7 +66,7 @@ class FakeSearchService:
         return None
 
 
-class FakePreflightService:
+class MockPreflightService:
     """Static preflight service used for live-eval isolation tests."""
 
     def preflight(self, request) -> PreflightResult:
@@ -101,7 +101,7 @@ class FakePreflightService:
         return None
 
 
-class FakeProcess:
+class MockProcess:
     """Subprocess stub with controllable lifecycle."""
 
     def __init__(self, returncodes: list[int | None] | None = None) -> None:
@@ -289,15 +289,15 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
 
     monkeypatch.setattr(
         "policynim.services.eval.create_ingest_service",
-        lambda active_settings: FakeIngestService(active_settings, seen_paths),
+        lambda active_settings: MockIngestService(active_settings, seen_paths),
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: FakeSearchService(),
+        lambda active_settings, rerank_enabled: MockSearchService(),
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: FakePreflightService(),
+        lambda active_settings, rerank_enabled: MockPreflightService(),
     )
 
     result = EvalService(settings=settings).run(
@@ -321,25 +321,25 @@ def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
     seen_paths: list[Path] = []
     closed: list[bool] = []
 
-    class FakeConformanceService:
+    class MockConformanceService:
         def close(self) -> None:
             closed.append(True)
 
     monkeypatch.setattr(
         "policynim.services.eval.create_ingest_service",
-        lambda active_settings: FakeIngestService(active_settings, seen_paths),
+        lambda active_settings: MockIngestService(active_settings, seen_paths),
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: FakeSearchService(),
+        lambda active_settings, rerank_enabled: MockSearchService(),
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: FakePreflightService(),
+        lambda active_settings, rerank_enabled: MockPreflightService(),
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_conformance_service",
-        lambda active_settings, *, backend: FakeConformanceService(),
+        lambda active_settings, *, backend: MockConformanceService(),
     )
 
     result = EvalService(settings=settings).run(
@@ -356,7 +356,7 @@ def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
 
 def test_eval_service_start_ui_fails_when_process_exits_early(monkeypatch, tmp_path: Path) -> None:
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
-    process = FakeProcess(returncodes=[1])
+    process = MockProcess(returncodes=[1])
     monkeypatch.setattr(
         "policynim.services.eval.subprocess.Popen",
         lambda *args, **kwargs: process,
@@ -372,16 +372,16 @@ def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
     monkeypatch, tmp_path: Path
 ) -> None:
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
-    process = FakeProcess(returncodes=[None, None])
+    process = MockProcess(returncodes=[None, None])
     port_checks = iter([False, True])
     popen_call: dict[str, object] = {}
 
-    def fake_popen(command, **kwargs):
+    def mock_popen(command, **kwargs):
         popen_call["command"] = command
         popen_call["env"] = kwargs["env"]
         return process
 
-    monkeypatch.setattr("policynim.services.eval.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("policynim.services.eval.subprocess.Popen", mock_popen)
     monkeypatch.setattr(
         "policynim.services.eval._is_local_port_reachable",
         lambda port: next(port_checks),
@@ -404,7 +404,7 @@ def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
     monkeypatch, tmp_path: Path
 ) -> None:
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
-    process = FakeProcess(returncodes=[None, None, None])
+    process = MockProcess(returncodes=[None, None, None])
     monotonic_values = iter([0.0, 1.0, 2.0, 6.0])
     monkeypatch.setattr(
         "policynim.services.eval.subprocess.Popen",
@@ -427,21 +427,21 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
     result = service.run(mode="offline", compare_rerank=False)
 
-    class FakePhoenixClient:
+    class MockPhoenixClient:
         def __init__(self, *, base_url: str) -> None:
             self.base_url = base_url
-            self.projects = FakePhoenixProjects()
-            self.spans = FakePhoenixSpans()
+            self.projects = MockPhoenixProjects()
+            self.spans = MockPhoenixSpans()
             clients.append(self)
 
-    class FakePhoenixProjects:
+    class MockPhoenixProjects:
         def get(self, *, project_name: str) -> None:
             raise RuntimeError(f"missing project {project_name}")
 
         def create(self, *, name: str) -> dict[str, str]:
             return {"name": name}
 
-    class FakePhoenixSpans:
+    class MockPhoenixSpans:
         def __init__(self) -> None:
             self.logged_spans: list[dict[str, object]] = []
             self.logged_annotations: list[dict[str, object]] = []
@@ -455,10 +455,10 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
             self.sync = sync
             self.logged_annotations.extend(span_annotations)
 
-    clients: list[FakePhoenixClient] = []
-    fake_client_module = types.ModuleType("phoenix.client")
-    setattr(fake_client_module, "Client", FakePhoenixClient)
-    monkeypatch.setitem(sys.modules, "phoenix.client", fake_client_module)
+    clients: list[MockPhoenixClient] = []
+    mock_client_module = types.ModuleType("phoenix.client")
+    setattr(mock_client_module, "Client", MockPhoenixClient)
+    monkeypatch.setitem(sys.modules, "phoenix.client", mock_client_module)
 
     service.publish_to_ui(result, port=8123)
 

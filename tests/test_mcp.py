@@ -832,11 +832,11 @@ def test_healthz_constructs_service_once_and_runs_check_off_thread(monkeypatch) 
         factory_calls += 1
         return CountingHealthService()
 
-    async def fake_to_thread(func, /, *args, **kwargs):
+    async def mock_to_thread(func, /, *args, **kwargs):
         return func(*args, **kwargs)
 
     monkeypatch.setattr(mcp_module, "create_runtime_health_service", build_service)
-    monkeypatch.setattr(mcp_module.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(mcp_module.asyncio, "to_thread", mock_to_thread)
 
     app = mcp_module._build_streamable_http_app(Settings())
 

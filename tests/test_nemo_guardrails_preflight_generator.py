@@ -67,7 +67,7 @@ def test_guardrails_generator_requires_optional_package(monkeypatch) -> None:
         raise PackageNotFoundError(distribution_name)
 
     monkeypatch.setattr(guardrails_module, "installed_version", missing_distribution)
-    base_generator = FakeGenerator([make_draft()])
+    base_generator = MockGenerator([make_draft()])
 
     with pytest.raises(ConfigurationError, match="nvidia-guardrails") as excinfo:
         NeMoGuardrailsPreflightGenerator(base_generator=base_generator)
@@ -84,15 +84,15 @@ def test_guardrails_from_settings_checks_optional_package_before_base_generator(
     def missing_distribution(distribution_name: str) -> str:
         raise PackageNotFoundError(distribution_name)
 
-    def fake_from_settings(settings: Settings) -> FakeGenerator:
+    def mock_from_settings(settings: Settings) -> MockGenerator:
         constructed.append(True)
-        return FakeGenerator([make_draft()])
+        return MockGenerator([make_draft()])
 
     monkeypatch.setattr(guardrails_module, "installed_version", missing_distribution)
     monkeypatch.setattr(
         guardrails_module.NVIDIAGenerator,
         "from_settings",
-        fake_from_settings,
+        mock_from_settings,
     )
 
     with pytest.raises(ConfigurationError, match="nvidia-guardrails"):
@@ -113,9 +113,9 @@ def test_guardrails_assets_are_packaged_and_model_scoped() -> None:
 
 def test_guardrails_generator_returns_valid_checked_draft() -> None:
     checked_draft = make_draft(summary="Checked preflight.")
-    rails = FakeRails([rail_result(status="passed", content=draft_json(checked_draft))])
+    rails = MockRails([rail_result(status="passed", content=draft_json(checked_draft))])
     generator = NeMoGuardrailsPreflightGenerator(
-        base_generator=FakeGenerator([make_draft()]),
+        base_generator=MockGenerator([make_draft()]),
         rails=rails,
         rail_type_output="output",
     )
@@ -129,9 +129,9 @@ def test_guardrails_generator_returns_valid_checked_draft() -> None:
 
 
 def test_guardrails_generator_rejects_missing_required_fields() -> None:
-    rails = FakeRails([rail_result(status="passed", content='{"citation_ids":["BACKEND-1"]}')])
+    rails = MockRails([rail_result(status="passed", content='{"citation_ids":["BACKEND-1"]}')])
     generator = NeMoGuardrailsPreflightGenerator(
-        base_generator=FakeGenerator([make_draft()]),
+        base_generator=MockGenerator([make_draft()]),
         rails=rails,
     )
 
@@ -142,9 +142,9 @@ def test_guardrails_generator_rejects_missing_required_fields() -> None:
 
 
 def test_guardrails_generator_rejects_invalid_json() -> None:
-    rails = FakeRails([rail_result(status="passed", content="not json")])
+    rails = MockRails([rail_result(status="passed", content="not json")])
     generator = NeMoGuardrailsPreflightGenerator(
-        base_generator=FakeGenerator([make_draft()]),
+        base_generator=MockGenerator([make_draft()]),
         rails=rails,
     )
 
@@ -155,11 +155,11 @@ def test_guardrails_generator_rejects_invalid_json() -> None:
 
 
 def test_guardrails_generator_rejects_unsupported_citations() -> None:
-    rails = FakeRails(
+    rails = MockRails(
         [rail_result(status="modified", content=draft_json(make_draft(citation_ids=["UNKNOWN-1"])))]
     )
     generator = NeMoGuardrailsPreflightGenerator(
-        base_generator=FakeGenerator([make_draft()]),
+        base_generator=MockGenerator([make_draft()]),
         rails=rails,
     )
 
@@ -170,8 +170,8 @@ def test_guardrails_generator_rejects_unsupported_citations() -> None:
 
 
 def test_guardrails_generator_fails_closed_when_rails_block() -> None:
-    rails = FakeRails([rail_result(status="blocked", content=draft_json(make_draft()))])
-    base_generator = FakeGenerator([make_draft()])
+    rails = MockRails([rail_result(status="blocked", content=draft_json(make_draft()))])
+    base_generator = MockGenerator([make_draft()])
     generator = NeMoGuardrailsPreflightGenerator(
         base_generator=base_generator,
         rails=rails,
@@ -187,7 +187,7 @@ def test_guardrails_generator_fails_closed_when_rails_block() -> None:
 def test_guardrails_generator_preserves_rails_exception_chain() -> None:
     raised = RuntimeError("rail runtime failed")
     generator = NeMoGuardrailsPreflightGenerator(
-        base_generator=FakeGenerator([make_draft()]),
+        base_generator=MockGenerator([make_draft()]),
         rails=RaisingRails(raised),
     )
 
@@ -199,8 +199,8 @@ def test_guardrails_generator_preserves_rails_exception_chain() -> None:
 
 
 def test_guardrails_generator_passes_regeneration_context_unchanged() -> None:
-    base_generator = FakeGenerator([make_draft()])
-    rails = FakeRails([rail_result(status="passed", content=draft_json(make_draft()))])
+    base_generator = MockGenerator([make_draft()])
+    rails = MockRails([rail_result(status="passed", content=draft_json(make_draft()))])
     generator = NeMoGuardrailsPreflightGenerator(
         base_generator=base_generator,
         rails=rails,
@@ -235,7 +235,7 @@ class GenerateCall:
         self.regeneration_context = regeneration_context
 
 
-class FakeGenerator:
+class MockGenerator:
     """Static generator double."""
 
     def __init__(self, drafts: list[GeneratedPreflightDraft]) -> None:
@@ -278,7 +278,7 @@ class RailCall:
         self.rail_types = list(rail_types) if rail_types is not None else None
 
 
-class FakeRails:
+class MockRails:
     """Static Guardrails double."""
 
     def __init__(self, results: list[object]) -> None:

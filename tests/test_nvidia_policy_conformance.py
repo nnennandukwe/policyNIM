@@ -49,7 +49,7 @@ class MockOpenAIClient:
         self.closed = True
 
 
-class FakeRateLimitError(RateLimitError):
+class MockRateLimitError(RateLimitError):
     """Minimal rate-limit error subclass for provider classification tests."""
 
     def __init__(self) -> None:
@@ -173,7 +173,7 @@ def test_policy_conformance_rejects_unsupported_chunk_ids() -> None:
 
 
 def test_policy_conformance_classifies_upstream_rate_limits() -> None:
-    evaluator = make_evaluator(RaisingOpenAIClient(FakeRateLimitError()))
+    evaluator = make_evaluator(RaisingOpenAIClient(MockRateLimitError()))
 
     with pytest.raises(ProviderError, match="failed after retries") as excinfo:
         evaluator.evaluate_policy_conformance(make_request())

@@ -22,7 +22,7 @@ def test_nemo_evaluator_adapter_requires_optional_packages(monkeypatch) -> None:
         raise PackageNotFoundError(distribution_name)
 
     monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", missing_distribution)
-    evaluator = FakeEvaluator()
+    evaluator = MockEvaluator()
 
     with pytest.raises(ConfigurationError, match="uv sync --extra nvidia-eval"):
         NeMoEvaluatorPolicyConformanceEvaluator(evaluator=evaluator)
@@ -36,14 +36,14 @@ def test_nemo_evaluator_from_settings_checks_optional_packages_first(monkeypatch
     def missing_distribution(distribution_name: str) -> str:
         raise PackageNotFoundError(distribution_name)
 
-    def fake_from_settings(settings: Settings) -> FakeEvaluator:
+    def mock_from_settings(settings: Settings) -> MockEvaluator:
         constructed.append(True)
-        return FakeEvaluator()
+        return MockEvaluator()
 
     monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", missing_distribution)
     monkeypatch.setattr(
         "policynim.providers.nvidia_eval.NVIDIAPolicyConformanceEvaluator.from_settings",
-        fake_from_settings,
+        mock_from_settings,
     )
 
     with pytest.raises(ConfigurationError, match="uv sync --extra nvidia-eval"):
@@ -55,12 +55,12 @@ def test_nemo_evaluator_from_settings_checks_optional_packages_first(monkeypatch
 def test_nemo_evaluator_adapter_delegates_to_configured_judge(monkeypatch) -> None:
     checked: list[str] = []
 
-    def fake_installed_version(distribution_name: str) -> str:
+    def mock_installed_version(distribution_name: str) -> str:
         checked.append(distribution_name)
         return "1.0"
 
-    monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", fake_installed_version)
-    evaluator = FakeEvaluator()
+    monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", mock_installed_version)
+    evaluator = MockEvaluator()
     adapter = NeMoEvaluatorPolicyConformanceEvaluator(evaluator=evaluator)
 
     result = adapter.evaluate_policy_conformance(make_request())
@@ -72,7 +72,7 @@ def test_nemo_evaluator_adapter_delegates_to_configured_judge(monkeypatch) -> No
     assert evaluator.closed is True
 
 
-class FakeEvaluator:
+class MockEvaluator:
     """Static NVIDIA judge double."""
 
     def __init__(self) -> None:
