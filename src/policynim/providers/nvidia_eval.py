@@ -11,6 +11,12 @@ from policynim.providers.nvidia import NVIDIAPolicyConformanceEvaluator
 from policynim.settings import Settings
 from policynim.types import GeneratedPolicyConformanceDraft, PolicyConformanceRequest
 
+_NEMO_EVALUATOR_DISTRIBUTIONS = ["nemo-evaluator", "nvidia-simple-evals"]
+_NEMO_EVALUATOR_BACKEND = "nemo_evaluator"
+_NAT_DISTRIBUTIONS = ["nvidia-nat-eval"]
+_NAT_BACKEND = "nat"
+_NVIDIA_EVAL_INSTALL_HINT = "uv sync --extra nvidia-eval"
+
 
 class _ClosablePolicyConformanceEvaluator(Protocol):
     def evaluate_policy_conformance(
@@ -30,15 +36,20 @@ class NeMoEvaluatorPolicyConformanceEvaluator:
 
     def __init__(self, *, evaluator: _ClosablePolicyConformanceEvaluator) -> None:
         _require_optional_distributions(
-            ["nemo-evaluator", "nvidia-simple-evals"],
-            install_hint="uv sync --extra nvidia-eval",
-            backend="nemo_evaluator",
+            _NEMO_EVALUATOR_DISTRIBUTIONS,
+            install_hint=_NVIDIA_EVAL_INSTALL_HINT,
+            backend=_NEMO_EVALUATOR_BACKEND,
         )
         self._evaluator = evaluator
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NeMoEvaluatorPolicyConformanceEvaluator:
         """Construct a NeMo Evaluator backed conformance evaluator from settings."""
+        _require_optional_distributions(
+            _NEMO_EVALUATOR_DISTRIBUTIONS,
+            install_hint=_NVIDIA_EVAL_INSTALL_HINT,
+            backend=_NEMO_EVALUATOR_BACKEND,
+        )
         evaluator = NVIDIAPolicyConformanceEvaluator.from_settings(settings)
         try:
             return cls(evaluator=evaluator)
@@ -63,15 +74,20 @@ class NeMoAgentToolkitPolicyConformanceEvaluator:
 
     def __init__(self, *, evaluator: _ClosablePolicyConformanceEvaluator) -> None:
         _require_optional_distributions(
-            ["nvidia-nat-eval"],
-            install_hint="uv sync --extra nvidia-eval",
-            backend="nat",
+            _NAT_DISTRIBUTIONS,
+            install_hint=_NVIDIA_EVAL_INSTALL_HINT,
+            backend=_NAT_BACKEND,
         )
         self._evaluator = evaluator
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NeMoAgentToolkitPolicyConformanceEvaluator:
         """Construct a NeMo Agent Toolkit backed conformance evaluator from settings."""
+        _require_optional_distributions(
+            _NAT_DISTRIBUTIONS,
+            install_hint=_NVIDIA_EVAL_INSTALL_HINT,
+            backend=_NAT_BACKEND,
+        )
         evaluator = NVIDIAPolicyConformanceEvaluator.from_settings(settings)
         try:
             return cls(evaluator=evaluator)

@@ -8,6 +8,7 @@ import pytest
 
 from policynim.errors import ConfigurationError
 from policynim.providers.nvidia_eval import NeMoEvaluatorPolicyConformanceEvaluator
+from policynim.settings import Settings
 from policynim.types import (
     CompiledPolicyPacket,
     GeneratedPolicyConformanceDraft,
@@ -24,6 +25,28 @@ def test_nemo_evaluator_adapter_requires_optional_packages(monkeypatch) -> None:
 
     with pytest.raises(ConfigurationError, match="uv sync --extra nvidia-eval"):
         NeMoEvaluatorPolicyConformanceEvaluator(evaluator=FakeEvaluator())
+
+
+def test_nemo_evaluator_from_settings_checks_optional_packages_first(monkeypatch) -> None:
+    constructed: list[bool] = []
+
+    def missing_distribution(distribution_name: str) -> str:
+        raise PackageNotFoundError(distribution_name)
+
+    def fake_from_settings(settings: Settings) -> FakeEvaluator:
+        constructed.append(True)
+        return FakeEvaluator()
+
+    monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", missing_distribution)
+    monkeypatch.setattr(
+        "policynim.providers.nvidia_eval.NVIDIAPolicyConformanceEvaluator.from_settings",
+        fake_from_settings,
+    )
+
+    with pytest.raises(ConfigurationError, match="uv sync --extra nvidia-eval"):
+        NeMoEvaluatorPolicyConformanceEvaluator.from_settings(Settings())
+
+    assert constructed == []
 
 
 def test_nemo_evaluator_adapter_delegates_to_configured_judge(monkeypatch) -> None:
