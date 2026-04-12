@@ -1122,6 +1122,7 @@ def test_eval_command_surfaces_ui_startup_failures(monkeypatch) -> None:
     result = runner.invoke(app, ["eval"])
 
     assert result.exit_code == 1
+    assert result.stdout == ""
     assert "Phoenix UI exited before startup completed." in result.stderr
 
 
@@ -1140,6 +1141,7 @@ def test_eval_command_surfaces_ui_publishing_failures(monkeypatch) -> None:
     result = runner.invoke(app, ["eval"])
 
     assert result.exit_code == 1
+    assert result.stdout == ""
     assert "Could not publish eval traces to Phoenix." in result.stderr
 
 

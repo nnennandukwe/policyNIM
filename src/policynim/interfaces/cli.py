@@ -562,10 +562,10 @@ def eval(
             regenerate=regenerate,
             max_regenerations=max_regenerations,
         )
-        typer.echo(result.model_dump_json(indent=2))
         if not headless:
             service.start_ui()
             service.publish_to_ui(result)
+        typer.echo(result.model_dump_json(indent=2))
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
