@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import html
 import json
+import os
 import re
 import socket
 import subprocess
@@ -12,9 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import TracebackType
-from typing import Any
-
-import pandas as pd
+from typing import Any, cast
 
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
@@ -65,7 +66,6 @@ from policynim.types import (
 )
 
 _PROJECT_NAME = "PolicyNIM Eval"
-_PROJECT_ID_FILENAME = ".policynim-eval-project-id"
 _SAFE_SUITE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _DEFAULT_UI_START_TIMEOUT_SECONDS = 5.0
 _UI_START_POLL_INTERVAL_SECONDS = 0.1
@@ -77,6 +77,7 @@ class EvalService:
     def __init__(self, *, settings: Settings) -> None:
         self._settings = settings
         self._workspace_path = resolve_runtime_path(settings.eval_workspace_dir)
+        self._ui_port: int | None = None
 
     def __enter__(self) -> EvalService:
         return self
@@ -150,34 +151,52 @@ class EvalService:
         )
 
     def start_ui(self, *, port: int | None = None) -> None:
-        """Start the Evidently local UI in the background and verify startup."""
+        """Start the Phoenix local UI in the background and verify startup."""
         self._run_ui(port=port)
 
+    def publish_to_ui(self, result: EvalRunResult, *, port: int | None = None) -> None:
+        """Publish a completed eval result to the local Phoenix UI."""
+        resolved_port = port if port is not None else self._ui_port or self._settings.eval_ui_port
+        endpoint = f"http://127.0.0.1:{resolved_port}"
+        log_path = _phoenix_log_path(self._workspace_path)
+        try:
+            _publish_eval_result_to_phoenix(result, endpoint=endpoint)
+        except Exception as exc:
+            raise PolicyNIMError(
+                "Could not publish eval traces to Phoenix at "
+                f"{endpoint}. See {log_path.as_posix()} for Phoenix logs."
+            ) from exc
+
     def _run_ui(self, *, port: int | None) -> None:
-        """Start the Evidently local UI against the PolicyNIM workspace."""
+        """Start the Phoenix local UI against the PolicyNIM workspace."""
         resolved_port = port if port is not None else self._settings.eval_ui_port
         self._workspace_path.mkdir(parents=True, exist_ok=True)
         ui_dir = self._workspace_path / "ui"
+        phoenix_dir = self._workspace_path / "phoenix"
         ui_dir.mkdir(parents=True, exist_ok=True)
-        log_path = ui_dir / "evidently.log"
-        command = [
-            "evidently",
-            "ui",
-            "--workspace",
-            self._workspace_path.as_posix(),
-            "--port",
-            str(resolved_port),
-        ]
+        phoenix_dir.mkdir(parents=True, exist_ok=True)
+        log_path = _phoenix_log_path(self._workspace_path)
+        command = ["phoenix", "serve"]
+        env = os.environ.copy()
+        env.update(
+            {
+                "PHOENIX_WORKING_DIR": phoenix_dir.as_posix(),
+                "PHOENIX_HOST": "127.0.0.1",
+                "PHOENIX_PORT": str(resolved_port),
+                "PHOENIX_PROJECT_NAME": _PROJECT_NAME,
+            }
+        )
         try:
             with log_path.open("ab") as log_file:
                 process = subprocess.Popen(
                     command,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
+                    env=env,
                 )
         except OSError as exc:
             raise PolicyNIMError(
-                f"Could not start Evidently UI. See {log_path.as_posix()} for details."
+                f"Could not start Phoenix UI. See {log_path.as_posix()} for details."
             ) from exc
 
         try:
@@ -191,6 +210,7 @@ class EvalService:
             if process.poll() is None:
                 process.terminate()
             raise
+        self._ui_port = resolved_port
 
     def _run_suite_cases(
         self,
@@ -375,7 +395,7 @@ class EvalService:
             encoding="utf-8",
         )
 
-        report = _build_evidently_report(
+        report_rows = _build_eval_report_rows(
             suite=suite,
             suite_path=suite_path,
             mode=mode,
@@ -384,11 +404,15 @@ class EvalService:
             case_results=case_results,
             metrics=metrics,
         )
-        report.save_html(report_html_path.as_posix())
-        _add_report_to_workspace(
-            self._workspace_path,
-            report,
-            run_name=f"{suite.name} | {mode} | {backend} | {mode_slug}",
+        _write_eval_html_report(
+            report_html_path,
+            suite=suite,
+            suite_path=suite_path,
+            mode=mode,
+            backend=backend,
+            rerank_enabled=rerank_enabled,
+            metrics=metrics,
+            rows=report_rows,
         )
 
         return EvalModeRunResult(
@@ -757,7 +781,7 @@ def _wait_for_ui_start(
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise PolicyNIMError(
-                "Evidently UI exited before startup completed. "
+                "Phoenix UI exited before startup completed. "
                 f"See {log_path.as_posix()} for details."
             )
         if _is_local_port_reachable(port):
@@ -766,11 +790,15 @@ def _wait_for_ui_start(
 
     if process.poll() is None:
         raise PolicyNIMError(
-            f"Evidently UI did not become reachable in time. See {log_path.as_posix()} for details."
+            f"Phoenix UI did not become reachable in time. See {log_path.as_posix()} for details."
         )
     raise PolicyNIMError(
-        f"Evidently UI exited before startup completed. See {log_path.as_posix()} for details."
+        f"Phoenix UI exited before startup completed. See {log_path.as_posix()} for details."
     )
+
+
+def _phoenix_log_path(workspace_path: Path) -> Path:
+    return workspace_path / "ui" / "phoenix.log"
 
 
 def _is_local_port_reachable(port: int) -> bool:
@@ -779,7 +807,7 @@ def _is_local_port_reachable(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _build_evidently_report(
+def _build_eval_report_rows(
     *,
     suite: EvalSuite,
     suite_path: Path,
@@ -788,11 +816,8 @@ def _build_evidently_report(
     rerank_enabled: bool,
     case_results: Sequence[EvalCaseResult],
     metrics: EvalAggregateMetrics,
-) -> Any:
-    from evidently import DataDefinition, Dataset, Report
-    from evidently.presets import DataSummaryPreset
-
-    rows = [
+) -> list[dict[str, object]]:
+    return [
         {
             "suite_name": suite.name,
             "suite_path": suite_path.as_posix(),
@@ -809,8 +834,10 @@ def _build_evidently_report(
             "actual_insufficient_context": result.actual_insufficient_context,
             "expected_chunk_ids": ",".join(result.expected_chunk_ids),
             "actual_chunk_ids": ",".join(result.actual_chunk_ids),
+            "matched_chunk_ids": ",".join(result.matched_chunk_ids),
             "expected_policy_ids": ",".join(result.expected_policy_ids),
             "actual_policy_ids": ",".join(result.actual_policy_ids),
+            "matched_policy_ids": ",".join(result.matched_policy_ids),
             "failure_reasons": " | ".join(result.failure_reasons),
             "expected_chunk_recall": result.metrics.expected_chunk_recall,
             "expected_policy_recall": result.metrics.expected_policy_recall,
@@ -856,68 +883,371 @@ def _build_evidently_report(
             ),
             "actual_summary": result.actual_summary or "",
             "overall_pass_rate": metrics.overall_pass_rate,
+            "case_count": metrics.case_count,
+            "passed_count": metrics.passed_count,
+            "search_case_count": metrics.search_case_count,
+            "search_passed_count": metrics.search_passed_count,
+            "preflight_case_count": metrics.preflight_case_count,
+            "preflight_passed_count": metrics.preflight_passed_count,
             "expected_policy_recall_run": metrics.expected_policy_recall,
             "expected_chunk_recall_run": metrics.expected_chunk_recall,
+            "insufficient_context_accuracy_run": metrics.insufficient_context_accuracy,
+            "conformance_case_count": metrics.conformance_case_count,
+            "conformance_passed_count": metrics.conformance_passed_count,
             "conformance_pass_rate_run": metrics.conformance_pass_rate,
             "conformance_score_run": metrics.conformance_score,
         }
         for result in case_results
     ]
-    frame = pd.DataFrame(rows)
-    dataset = Dataset.from_pandas(frame, data_definition=DataDefinition())
-    report = Report([DataSummaryPreset()])
-    return report.run(dataset, None)
 
 
-def _add_report_to_workspace(workspace_path: Path, report: Any, *, run_name: str) -> None:
-    from evidently.ui.workspace import Workspace
+def _write_eval_html_report(
+    path: Path,
+    *,
+    suite: EvalSuite,
+    suite_path: Path,
+    mode: EvalExecutionMode,
+    backend: EvalBackend,
+    rerank_enabled: bool,
+    metrics: EvalAggregateMetrics,
+    rows: Sequence[dict[str, object]],
+) -> None:
+    summary_rows: list[tuple[str, object]] = [
+        ("Suite", suite.name),
+        ("Suite path", suite_path.as_posix()),
+        ("Mode", mode),
+        ("Backend", backend),
+        ("Rerank mode", "rerank-on" if rerank_enabled else "rerank-off"),
+        ("Case count", metrics.case_count),
+        ("Passed count", metrics.passed_count),
+        ("Overall pass rate", _format_metric(metrics.overall_pass_rate)),
+        ("Search pass rate", _format_metric(metrics.search_pass_rate)),
+        ("Preflight pass rate", _format_metric(metrics.preflight_pass_rate)),
+        ("Expected chunk recall", _format_metric(metrics.expected_chunk_recall)),
+        ("Expected policy recall", _format_metric(metrics.expected_policy_recall)),
+        (
+            "Insufficient context accuracy",
+            _format_metric(metrics.insufficient_context_accuracy),
+        ),
+        ("Conformance case count", metrics.conformance_case_count),
+        ("Conformance passed count", metrics.conformance_passed_count),
+        ("Conformance pass rate", _format_metric(metrics.conformance_pass_rate)),
+        ("Conformance score", _format_metric(metrics.conformance_score)),
+    ]
+    case_columns = [
+        "case_id",
+        "kind",
+        "domain",
+        "top_k",
+        "passed",
+        "expected_insufficient_context",
+        "actual_insufficient_context",
+        "expected_chunk_ids",
+        "actual_chunk_ids",
+        "matched_chunk_ids",
+        "expected_policy_ids",
+        "actual_policy_ids",
+        "matched_policy_ids",
+        "failure_reasons",
+        "expected_chunk_recall",
+        "expected_policy_recall",
+        "insufficient_context_correct",
+        "conformance_passed",
+        "conformance_score",
+        "regeneration_attempt_count",
+        "regeneration_stop_reason",
+        "regeneration_passed",
+    ]
+    document = "\n".join(
+        [
+            "<!doctype html>",
+            '<html lang="en">',
+            "<head>",
+            '<meta charset="utf-8">',
+            "<title>PolicyNIM Eval Report</title>",
+            "<style>",
+            "body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.45;}",
+            "table{border-collapse:collapse;width:100%;margin:1rem 0;}",
+            "th,td{border:1px solid #d0d7de;padding:0.4rem;text-align:left;vertical-align:top;}",
+            "th{background:#f6f8fa;}",
+            "code{white-space:pre-wrap;}",
+            "</style>",
+            "</head>",
+            "<body>",
+            "<h1>PolicyNIM Eval Report</h1>",
+            "<h2>Run Summary</h2>",
+            _html_key_value_table(summary_rows),
+            "<h2>Eval Cases</h2>",
+            _html_row_table(case_columns, rows),
+            "</body>",
+            "</html>",
+        ]
+    )
+    path.write_text(document, encoding="utf-8")
 
-    workspace_path.mkdir(parents=True, exist_ok=True)
-    workspace = _create_workspace(workspace_path, workspace_class=Workspace)
-    project = _get_or_create_project(workspace_path, workspace)
-    workspace.add_run(project.id, report, include_data=True, name=run_name)
+
+def _html_key_value_table(rows: Sequence[tuple[str, object]]) -> str:
+    body = "\n".join(
+        f"<tr><th>{html.escape(label)}</th><td>{html.escape(_format_report_value(value))}</td></tr>"
+        for label, value in rows
+    )
+    return f"<table><tbody>{body}</tbody></table>"
 
 
-def _create_workspace(workspace_path: Path, *, workspace_class: Any) -> Any:
-    return workspace_class.create(workspace_path.as_posix())
+def _html_row_table(columns: Sequence[str], rows: Sequence[dict[str, object]]) -> str:
+    header = "".join(f"<th>{html.escape(column)}</th>" for column in columns)
+    body = "\n".join(
+        "<tr>"
+        + "".join(
+            f"<td>{html.escape(_format_report_value(row.get(column, '')))}</td>"
+            for column in columns
+        )
+        + "</tr>"
+        for row in rows
+    )
+    return f"<table><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def _get_or_create_project(workspace_path: Path, workspace: Any) -> Any:
-    project_id_path = workspace_path / _PROJECT_ID_FILENAME
-    if project_id_path.is_file():
-        project_id = project_id_path.read_text(encoding="utf-8").strip()
-        if project_id:
-            project = _workspace_get_project(workspace, project_id)
-            if project is not None:
-                return project
-
-    project = _workspace_create_project(workspace, _PROJECT_NAME)
-    project_id_path.write_text(str(project.id), encoding="utf-8")
-    return project
+def _format_report_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return _format_metric(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
-def _workspace_get_project(workspace: Any, project_id: str) -> Any | None:
-    getter = getattr(workspace, "get_project", None)
-    if getter is None:
-        return None
+def _format_metric(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:.4f}"
 
+
+def _publish_eval_result_to_phoenix(result: EvalRunResult, *, endpoint: str) -> None:
+    from phoenix.client import Client
+
+    client = Client(base_url=endpoint)
+    _ensure_phoenix_project(client, _PROJECT_NAME)
+    for run in result.runs:
+        spans = cast(Any, _build_phoenix_spans(result, run))
+        if spans:
+            client.spans.log_spans(project_identifier=_PROJECT_NAME, spans=spans)
+        annotations = cast(Any, _build_phoenix_span_annotations(result, run))
+        if annotations:
+            client.spans.log_span_annotations(span_annotations=annotations, sync=True)
+
+
+def _ensure_phoenix_project(client: Any, project_name: str) -> None:
     try:
-        return getter(project_id)
-    except TypeError:
-        try:
-            return getter(project_id=project_id)
-        except Exception:
-            return None
+        client.projects.get(project_name=project_name)
     except Exception:
-        return None
+        client.projects.create(name=project_name)
 
 
-def _workspace_create_project(workspace: Any, project_name: str) -> Any:
-    creator = getattr(workspace, "create_project")
-    try:
-        return creator(project_name)
-    except TypeError:
-        return creator(name=project_name)
+def _build_phoenix_spans(
+    result: EvalRunResult,
+    run: EvalModeRunResult,
+) -> list[dict[str, Any]]:
+    timestamp = _phoenix_timestamp()
+    run_identity = _phoenix_run_identity(result, run)
+    return [
+        {
+            "name": f"policynim eval case {case.case_id}",
+            "context": _phoenix_span_context(run_identity, case.case_id),
+            "span_kind": "CHAIN",
+            "start_time": timestamp,
+            "end_time": timestamp,
+            "status_code": "OK" if case.passed else "ERROR",
+            "status_message": "" if case.passed else " | ".join(case.failure_reasons),
+            "attributes": _phoenix_span_attributes(result, run, case),
+        }
+        for case in run.case_results
+    ]
+
+
+def _build_phoenix_span_annotations(
+    result: EvalRunResult,
+    run: EvalModeRunResult,
+) -> list[dict[str, Any]]:
+    run_identity = _phoenix_run_identity(result, run)
+    annotations: list[dict[str, Any]] = []
+    for case in run.case_results:
+        span_id = _phoenix_span_context(run_identity, case.case_id)["span_id"]
+        annotations.extend(
+            [
+                _phoenix_span_annotation(
+                    span_id=span_id,
+                    name="case_passed",
+                    label="passed" if case.passed else "failed",
+                    score=1.0 if case.passed else 0.0,
+                    explanation=" | ".join(case.failure_reasons),
+                ),
+                _phoenix_span_annotation(
+                    span_id=span_id,
+                    name="expected_chunk_recall",
+                    score=case.metrics.expected_chunk_recall,
+                ),
+                _phoenix_span_annotation(
+                    span_id=span_id,
+                    name="expected_policy_recall",
+                    score=case.metrics.expected_policy_recall,
+                ),
+                _phoenix_span_annotation(
+                    span_id=span_id,
+                    name="insufficient_context_correct",
+                    label=("correct" if case.metrics.insufficient_context_correct else "incorrect"),
+                    score=1.0 if case.metrics.insufficient_context_correct else 0.0,
+                ),
+            ]
+        )
+        if case.metrics.conformance_score is not None:
+            annotations.append(
+                _phoenix_span_annotation(
+                    span_id=span_id,
+                    name="conformance_score",
+                    score=case.metrics.conformance_score,
+                    label=(
+                        "passed"
+                        if case.metrics.conformance_passed
+                        else "failed"
+                        if case.metrics.conformance_passed is False
+                        else None
+                    ),
+                )
+            )
+        if case.regeneration_result is not None:
+            annotations.append(
+                _phoenix_span_annotation(
+                    span_id=span_id,
+                    name="regeneration_passed",
+                    label="passed" if case.regeneration_result.passed else "failed",
+                    score=1.0 if case.regeneration_result.passed else 0.0,
+                    explanation=case.regeneration_result.stop_reason,
+                )
+            )
+    return annotations
+
+
+def _phoenix_span_annotation(
+    *,
+    span_id: str,
+    name: str,
+    label: str | None = None,
+    score: float | None = None,
+    explanation: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    if label is not None:
+        result["label"] = label
+    if score is not None:
+        result["score"] = score
+    if explanation:
+        result["explanation"] = explanation
+    return {
+        "name": name,
+        "annotator_kind": "CODE",
+        "span_id": span_id,
+        "result": result,
+    }
+
+
+def _phoenix_span_attributes(
+    result: EvalRunResult,
+    run: EvalModeRunResult,
+    case: EvalCaseResult,
+) -> dict[str, object]:
+    conformance_result = case.conformance_result
+    regeneration_result = case.regeneration_result
+    evidence_trace = case.evidence_trace
+    attributes: dict[str, object | None] = {
+        "policynim.eval.suite_name": result.suite_name,
+        "policynim.eval.suite_path": result.suite_path,
+        "policynim.eval.workspace_path": result.workspace_path,
+        "policynim.eval.mode": result.mode,
+        "policynim.eval.backend": result.backend,
+        "policynim.eval.rerank_enabled": run.rerank_enabled,
+        "policynim.eval.rerank_mode": "rerank-on" if run.rerank_enabled else "rerank-off",
+        "policynim.eval.result_json_path": run.result_json_path,
+        "policynim.eval.report_html_path": run.report_html_path,
+        "policynim.eval.case_id": case.case_id,
+        "policynim.eval.case_kind": case.kind,
+        "policynim.eval.domain": case.domain or "",
+        "policynim.eval.top_k": case.top_k,
+        "policynim.eval.passed": case.passed,
+        "policynim.eval.failure_reasons": list(case.failure_reasons),
+        "policynim.eval.expected_insufficient_context": case.expected_insufficient_context,
+        "policynim.eval.actual_insufficient_context": case.actual_insufficient_context,
+        "policynim.eval.expected_chunk_ids": list(case.expected_chunk_ids),
+        "policynim.eval.actual_chunk_ids": list(case.actual_chunk_ids),
+        "policynim.eval.matched_chunk_ids": list(case.matched_chunk_ids),
+        "policynim.eval.expected_policy_ids": list(case.expected_policy_ids),
+        "policynim.eval.actual_policy_ids": list(case.actual_policy_ids),
+        "policynim.eval.matched_policy_ids": list(case.matched_policy_ids),
+        "policynim.eval.expected_chunk_recall": case.metrics.expected_chunk_recall,
+        "policynim.eval.expected_policy_recall": case.metrics.expected_policy_recall,
+        "policynim.eval.insufficient_context_correct": (case.metrics.insufficient_context_correct),
+        "policynim.eval.evidence_trace_chunk_count": (
+            len(evidence_trace.chunks) if evidence_trace is not None else 0
+        ),
+        "policynim.eval.evidence_trace_constraint_count": (
+            len(evidence_trace.constraints) if evidence_trace is not None else 0
+        ),
+        "policynim.eval.evidence_trace_conformance_check_count": (
+            len(evidence_trace.conformance_checks) if evidence_trace is not None else 0
+        ),
+        "policynim.eval.conformance_passed": (
+            conformance_result.passed if conformance_result is not None else None
+        ),
+        "policynim.eval.conformance_score": (
+            conformance_result.overall_score if conformance_result is not None else None
+        ),
+        "policynim.eval.conformance_failure_reasons": (
+            list(conformance_result.failure_reasons) if conformance_result is not None else []
+        ),
+        "policynim.eval.regeneration_attempt_count": (
+            len(regeneration_result.attempts) if regeneration_result is not None else 0
+        ),
+        "policynim.eval.regeneration_stop_reason": (
+            regeneration_result.stop_reason if regeneration_result is not None else ""
+        ),
+        "policynim.eval.regeneration_passed": (
+            regeneration_result.passed if regeneration_result is not None else None
+        ),
+    }
+    return {key: value for key, value in attributes.items() if value is not None}
+
+
+def _phoenix_run_identity(result: EvalRunResult, run: EvalModeRunResult) -> str:
+    rerank_mode = "rerank-on" if run.rerank_enabled else "rerank-off"
+    result_filename = Path(run.result_json_path).name
+    return "|".join(
+        [
+            result.suite_name,
+            result.mode,
+            result.backend,
+            rerank_mode,
+            result_filename,
+        ]
+    )
+
+
+def _phoenix_span_context(run_identity: str, case_id: str) -> dict[str, str]:
+    digest = hashlib.sha256(f"{run_identity}|{case_id}".encode()).hexdigest()
+    return {
+        "trace_id": _nonzero_otel_id(digest[:32]),
+        "span_id": _nonzero_otel_id(digest[32:48]),
+    }
+
+
+def _nonzero_otel_id(value: str) -> str:
+    if set(value) == {"0"}:
+        return "1" + value[1:]
+    return value
+
+
+def _phoenix_timestamp() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> SearchService:

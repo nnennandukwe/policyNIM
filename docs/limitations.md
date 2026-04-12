@@ -44,6 +44,8 @@ constraints, not setup mistakes.
   backend: `nemo`, `nemo_evaluator`, or `nat`.
 - `nemo_evaluator` and `nat` are lazy optional package-gated paths. Install the
   pinned project extra with `uv sync --extra nvidia-eval` before using them.
+- The NeMo Evaluator Launcher path requires the additional
+  `nvidia-eval-launcher` extra and the project `httpx==0.27.2` pin.
 - There is no offline fallback model path for those live retrieval workflows.
 - Runtime failures related to missing credentials or provider access remain
   explicit operator errors.
@@ -100,6 +102,9 @@ constraints, not setup mistakes.
 - Eval JSON artifacts include evidence traces for preflight cases only. They are
   compact by default, omit retained chunk text, and are not a persistent tracing
   backend, database, or generic workflow replay system.
+- Non-headless eval publishes synthetic root spans and code annotations to local
+  Phoenix, but Phoenix is not an always-on production trace database for
+  PolicyNIM.
 - `eval --regenerate` writes `regeneration_result` only for preflight cases.
   Search cases keep `regeneration_result=null`.
 

@@ -181,7 +181,8 @@ Evaluation flow:
 6. optionally run policy-backed regeneration for preflight cases
 7. persist JSON artifacts and HTML reports, including compact preflight evidence
    traces and regeneration results
-8. optionally start the local Evidently UI
+8. optionally start the local Phoenix UI and publish one synthetic root span per
+   eval case with code annotations for eval metrics
 
 Important evaluation rules:
 
@@ -195,6 +196,9 @@ Important evaluation rules:
   paths
 - preflight eval cases include compact `PolicyEvidenceTrace`; search cases keep
   `evidence_trace=null`
+- `--headless` writes JSON and local HTML artifacts without starting Phoenix or
+  publishing traces
+- Phoenix stores local UI state under the resolved eval workspace
 - `eval --regenerate` records `PreflightRegenerationResult` for preflight cases
   and leaves search cases with `regeneration_result=null`
 - expected chunk recall, policy recall, and insufficient-context accuracy are the
@@ -427,7 +431,7 @@ Setup and runtime failures should remain actionable errors.
 - No default CI path for live NVIDIA end-to-end verification.
 - No multi-user or shared remote index model.
 - No hybrid lexical plus vector retrieval layer.
-- No custom evaluation dashboard beyond Evidently OSS.
+- No custom evaluation dashboard beyond Phoenix OSS.
 - No MCP regeneration tool, generic workflow runner, or persistent trace
   database.
 

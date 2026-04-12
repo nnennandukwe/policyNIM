@@ -575,6 +575,7 @@ class MockEvalService:
         self.passed = passed
         self.launch_port: int | None = None
         self.started_ui = False
+        self.published_result: EvalRunResult | None = None
         self.last_regenerate: bool | None = None
         self.last_max_regenerations: int | None = None
 
@@ -682,6 +683,10 @@ class MockEvalService:
     def start_ui(self, *, port: int | None = None) -> None:
         self.launch_port = port
         self.started_ui = True
+
+    def publish_to_ui(self, result: EvalRunResult, *, port: int | None = None) -> None:
+        self.launch_port = port
+        self.published_result = result
 
 
 class MockBetaAuthService:
@@ -1024,6 +1029,10 @@ def test_eval_command_prints_json(monkeypatch) -> None:
     assert payload.mode == "offline"
     assert payload.runs[0].metrics.case_count == 2
     assert "--cases" not in runner.invoke(app, ["eval", "--help"]).stdout
+    assert "Phoenix" in runner.invoke(app, ["eval", "--help"]).stdout
+    assert "Evidently" not in runner.invoke(app, ["eval", "--help"]).stdout
+    assert service.started_ui is False
+    assert service.published_result is None
 
 
 def test_eval_command_accepts_nemo_backend(monkeypatch) -> None:
@@ -1079,15 +1088,23 @@ def test_eval_command_rejects_invalid_backend() -> None:
 
 def test_eval_command_starts_ui_by_default(monkeypatch) -> None:
     service = MockEvalService()
+    factory_calls: list[bool] = []
+
+    def create_service(settings):
+        factory_calls.append(True)
+        return service
+
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_eval_service",
-        lambda settings: service,
+        create_service,
     )
 
     result = runner.invoke(app, ["eval"])
 
     assert result.exit_code == 0
     assert service.started_ui is True
+    assert service.published_result is not None
+    assert len(factory_calls) == 1
 
 
 def test_eval_command_surfaces_ui_startup_failures(monkeypatch) -> None:
@@ -1095,7 +1112,7 @@ def test_eval_command_surfaces_ui_startup_failures(monkeypatch) -> None:
 
     class FailingEvalService(MockEvalService):
         def start_ui(self, *, port: int | None = None) -> None:
-            raise error_cls("Evidently UI exited before startup completed.")
+            raise error_cls("Phoenix UI exited before startup completed.")
 
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_eval_service",
@@ -1105,7 +1122,27 @@ def test_eval_command_surfaces_ui_startup_failures(monkeypatch) -> None:
     result = runner.invoke(app, ["eval"])
 
     assert result.exit_code == 1
-    assert "Evidently UI exited before startup completed." in result.stderr
+    assert result.stdout == ""
+    assert "Phoenix UI exited before startup completed." in result.stderr
+
+
+def test_eval_command_surfaces_ui_publishing_failures(monkeypatch) -> None:
+    error_cls = PolicyNIMError
+
+    class FailingEvalService(MockEvalService):
+        def publish_to_ui(self, result: EvalRunResult, *, port: int | None = None) -> None:
+            raise error_cls("Could not publish eval traces to Phoenix.")
+
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_eval_service",
+        lambda settings: FailingEvalService(),
+    )
+
+    result = runner.invoke(app, ["eval"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Could not publish eval traces to Phoenix." in result.stderr
 
 
 def test_eval_command_returns_non_zero_when_cases_fail(monkeypatch) -> None:

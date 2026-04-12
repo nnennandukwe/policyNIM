@@ -43,7 +43,7 @@ PolicyNIM currently ships with two main user-facing surfaces:
   triggers.
 - Eval backend selection with optional policy-conformance scoring for compiled
   plans and preflight outputs, with compact traces embedded in eval result
-  artifacts.
+  artifacts and local Phoenix reporting for non-headless runs.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
@@ -113,7 +113,9 @@ uv run policynim preflight --task "Implement a refresh-token cleanup background 
 ```
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
-templates, runtime settings, and contributor quality gates.
+templates, runtime settings, optional NVIDIA eval extras, and contributor quality
+gates. The launcher path is installable in-project with
+`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`.
 
 Use [docs/workflows.md](docs/workflows.md) for the CLI, MCP, runtime, eval, and
 troubleshooting handbook.
