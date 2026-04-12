@@ -1,4 +1,4 @@
-"""Tests for the Day 2 ingest foundation."""
+"""Tests for the ingest foundation."""
 
 from __future__ import annotations
 

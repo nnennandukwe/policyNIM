@@ -1,4 +1,4 @@
-"""Core external seams for later PolicyNIM implementation."""
+"""Core external seams for PolicyNIM services and providers."""
 
 from __future__ import annotations
 

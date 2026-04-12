@@ -35,11 +35,15 @@ class NeMoEvaluatorPolicyConformanceEvaluator:
     """Policy conformance adapter gated on NeMo Evaluator SDK packages."""
 
     def __init__(self, *, evaluator: _ClosablePolicyConformanceEvaluator) -> None:
-        _require_optional_distributions(
-            _NEMO_EVALUATOR_DISTRIBUTIONS,
-            install_hint=_NVIDIA_EVAL_INSTALL_HINT,
-            backend=_NEMO_EVALUATOR_BACKEND,
-        )
+        try:
+            _require_optional_distributions(
+                _NEMO_EVALUATOR_DISTRIBUTIONS,
+                install_hint=_NVIDIA_EVAL_INSTALL_HINT,
+                backend=_NEMO_EVALUATOR_BACKEND,
+            )
+        except ConfigurationError:
+            evaluator.close()
+            raise
         self._evaluator = evaluator
 
     @classmethod
@@ -73,11 +77,15 @@ class NeMoAgentToolkitPolicyConformanceEvaluator:
     """Policy conformance adapter gated on NeMo Agent Toolkit eval packages."""
 
     def __init__(self, *, evaluator: _ClosablePolicyConformanceEvaluator) -> None:
-        _require_optional_distributions(
-            _NAT_DISTRIBUTIONS,
-            install_hint=_NVIDIA_EVAL_INSTALL_HINT,
-            backend=_NAT_BACKEND,
-        )
+        try:
+            _require_optional_distributions(
+                _NAT_DISTRIBUTIONS,
+                install_hint=_NVIDIA_EVAL_INSTALL_HINT,
+                backend=_NAT_BACKEND,
+            )
+        except ConfigurationError:
+            evaluator.close()
+            raise
         self._evaluator = evaluator
 
     @classmethod

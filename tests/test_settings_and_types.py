@@ -39,8 +39,8 @@ def write_env_file(path: Path, **values: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def clear_day1_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear env variables that would interfere with Day 1 precedence tests."""
+def clear_config_precedence_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear env variables that would interfere with config precedence tests."""
     for key in (
         "POLICYNIM_CONFIG_FILE",
         "POLICYNIM_DEFAULT_TOP_K",
@@ -172,7 +172,7 @@ def test_settings_parses_csv_bearer_tokens(monkeypatch: pytest.MonkeyPatch) -> N
 def test_settings_uses_user_config_and_standalone_defaults_when_no_local_dotenv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     _, config_root, data_root = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="8")
 
@@ -186,7 +186,7 @@ def test_settings_uses_user_config_and_standalone_defaults_when_no_local_dotenv(
 def test_settings_prefers_explicit_config_file_over_cwd_dotenv_and_user_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
     write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
@@ -202,7 +202,7 @@ def test_settings_prefers_explicit_config_file_over_cwd_dotenv_and_user_config(
 def test_settings_prefers_cwd_dotenv_over_user_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
     write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
@@ -215,7 +215,7 @@ def test_settings_prefers_cwd_dotenv_over_user_config(
 def test_settings_prefers_process_env_over_all_discovered_config_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
     write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
@@ -232,7 +232,7 @@ def test_settings_prefers_process_env_over_all_discovered_config_files(
 def test_settings_fails_closed_when_explicit_config_file_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     configure_standalone_discovery(monkeypatch, tmp_path)
     missing_config = tmp_path / "missing.env"
     monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(missing_config))
@@ -244,7 +244,7 @@ def test_settings_fails_closed_when_explicit_config_file_is_missing(
 def test_settings_ignores_config_file_from_discovered_user_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     _, config_root, data_root = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(
         config_root / "config.env",
@@ -263,7 +263,7 @@ def test_standalone_setup_missing_when_redirected_config_file_does_not_exist(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, _, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     redirected_config = tmp_path / "redirected" / "config.env"
     monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(redirected_config))
@@ -281,7 +281,7 @@ def test_standalone_setup_missing_ignores_unrelated_cwd_dotenv(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, _, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(workspace / ".env", POLICYNIM_DEFAULT_TOP_K="4")
 
@@ -298,7 +298,7 @@ def test_standalone_setup_present_when_cwd_dotenv_has_nvidia_api_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, _, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(workspace / ".env", NVIDIA_API_KEY="'nvapi-test-key'")
 
@@ -315,7 +315,7 @@ def test_standalone_setup_missing_when_existing_explicit_config_lacks_api_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     workspace, _, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     explicit_config = tmp_path / "explicit.env"
     write_env_file(explicit_config, POLICYNIM_DEFAULT_TOP_K="4")
@@ -334,7 +334,7 @@ def test_settings_loads_quoted_init_config_values_with_paths_that_contain_spaces
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     config_root = tmp_path / "Application Support" / "PolicyNIM"
     data_root = tmp_path / "Library" / "Application Support" / "PolicyNIM"
     custom_corpus = tmp_path / "Custom Policies"
@@ -498,7 +498,7 @@ def test_settings_keeps_loopback_host_outside_production_even_with_port(
 def test_settings_ignores_user_config_when_platform_port_is_present(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     _, config_root, _ = configure_standalone_discovery(monkeypatch, tmp_path)
     write_env_file(
         config_root / "config.env",
@@ -519,7 +519,7 @@ def test_settings_ignores_user_config_when_platform_port_is_present(
 def test_settings_keeps_checkout_defaults_when_running_from_source_checkout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     checkout_root, config_root, _ = configure_checkout_discovery(monkeypatch, tmp_path)
     write_env_file(config_root / "config.env", POLICYNIM_DEFAULT_TOP_K="3")
     write_env_file(checkout_root / ".env", POLICYNIM_DEFAULT_TOP_K="11")
@@ -534,7 +534,7 @@ def test_settings_keeps_checkout_defaults_when_running_from_source_checkout(
 def test_settings_keeps_hosted_defaults_out_of_standalone_platformdirs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clear_day1_env(monkeypatch)
+    clear_config_precedence_env(monkeypatch)
     configure_standalone_discovery(monkeypatch, tmp_path)
     monkeypatch.setenv("POLICYNIM_ENV", "production")
     monkeypatch.setenv("PORT", "8123")

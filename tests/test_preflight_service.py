@@ -1,4 +1,4 @@
-"""Tests for the Day 4 grounded preflight service."""
+"""Tests for the grounded preflight service."""
 
 from __future__ import annotations
 

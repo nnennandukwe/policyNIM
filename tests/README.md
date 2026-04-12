@@ -3,31 +3,31 @@
 Current automated coverage includes:
 
 - Markdown policy parsing, metadata normalization, and deterministic chunking
-- Additional Day 6 chunking edge cases around blank sections and repeated nested headings
-- Day 3 ingest orchestration with local LanceDB rebuild behavior
-- Day 3 search orchestration with domain filters and missing-index handling
-- Day 2 runtime decision orchestration with compiled runtime rules and evidence-linked citations
-- Day 3 runtime execution orchestration with confirmation handling, redaction, and durable evidence persistence
-- Day 4 runtime evidence session-summary reporting over the SQLite evidence store
+- Additional chunking edge cases around blank sections and repeated nested headings
+- Ingest orchestration with local LanceDB rebuild behavior
+- Search orchestration with domain filters and missing-index handling
+- Runtime decision orchestration with compiled runtime rules and evidence-linked citations
+- Runtime execution orchestration with confirmation handling, redaction, and durable evidence persistence
+- Runtime evidence session-summary reporting over the SQLite evidence store
 - Runtime execution SQLite store schema, ordering, reopen, and concurrency behavior
-- Day 5 runtime hardening for file-write and HTTP execution paths plus confirmation-callback failures
-- Day 5 real SQLite-backed CLI runtime execution plus `evidence report` coverage
-- Day 5 runtime docs parity for command forms, env examples, and policy authoring guidance
-- Day 6 eval orchestration, rerank on/off comparison, and isolated live-eval index handling
-- Day 4 grounded preflight orchestration, citation validation, and fallback behavior
-- Build 1 task-aware routing, task-profile inference, selected-policy grouping,
+- Runtime hardening for file-write and HTTP execution paths plus confirmation-callback failures
+- Real SQLite-backed CLI runtime execution plus `evidence report` coverage
+- Runtime docs parity for command forms, env examples, and policy authoring guidance
+- Eval orchestration, rerank on/off comparison, and isolated live-eval index handling
+- Grounded preflight orchestration, citation validation, and fallback behavior
+- Task-aware routing, task-profile inference, selected-policy grouping,
   and weak-evidence fallback behavior
-- Build 2 policy compilation, compiled constraint citation validation,
+- Policy compilation, compiled constraint citation validation,
   fail-closed handling, and preflight conditioning
-- Build 3 policy conformance scoring, eval backend selection, preflight trace
+- Policy conformance scoring, eval backend selection, preflight trace
   handling, and NVIDIA conformance-response validation
-- Build 4 policy evidence trace materialization, `preflight --trace` CLI output,
+- Policy evidence trace materialization, `preflight --trace` CLI output,
   compact eval artifact trace attachment, and conformance ID preservation
-- Build 5 policy-backed regeneration, compile-once packet identity, typed retry
+- Policy-backed regeneration, compile-once packet identity, typed retry
   triggers, max-regeneration and insufficient-context stops, provider fail-closed
   behavior, citation-drift rejection, `preflight --regenerate`, and
   `eval --regenerate`
-- Build 5 follow-up Phoenix eval reporting, headless UI skipping, workspace-local
+- Phoenix eval reporting, headless UI skipping, workspace-local
   Phoenix startup, deterministic span publishing, and synchronous code
   annotations
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with fake
@@ -35,10 +35,10 @@ Current automated coverage includes:
   NVIDIA eval packages
 - Optional NVIDIA Eval Launcher dependency resolution through
   `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
-- Build 6 internal NeMo Guardrails output-rail wrapper coverage for lazy package
+- Internal NeMo Guardrails output-rail wrapper coverage for lazy package
   gating, packaged assets, malformed rail output, blocked output, citation drift,
   regeneration context pass-through, and default factory isolation
-- Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
+- Citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads
 - CLI output for `ingest`, JSON-first `search`, JSON-first `route`, JSON-first

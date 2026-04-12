@@ -22,9 +22,12 @@ def test_nat_adapter_requires_optional_eval_package(monkeypatch) -> None:
         raise PackageNotFoundError(distribution_name)
 
     monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", missing_distribution)
+    evaluator = FakeEvaluator()
 
     with pytest.raises(ConfigurationError, match="uv sync --extra nvidia-eval"):
-        NeMoAgentToolkitPolicyConformanceEvaluator(evaluator=FakeEvaluator())
+        NeMoAgentToolkitPolicyConformanceEvaluator(evaluator=evaluator)
+
+    assert evaluator.closed is True
 
 
 def test_nat_from_settings_checks_optional_package_first(monkeypatch) -> None:

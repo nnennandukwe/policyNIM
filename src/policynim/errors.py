@@ -41,11 +41,3 @@ class RuntimeCitationLinkError(PolicyNIMError):
 
 class RuntimeEvidencePersistenceError(PolicyNIMError):
     """Raised when runtime execution evidence cannot be persisted durably."""
-
-
-class WeakEvidenceError(PolicyNIMError):
-    """Raised when retrieval evidence is too weak to support synthesis."""
-
-
-class NotImplementedYetError(PolicyNIMError):
-    """Raised for Day 1 command surfaces that are intentionally scaffold-only."""

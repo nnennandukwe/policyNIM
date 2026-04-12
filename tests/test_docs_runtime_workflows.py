@@ -79,11 +79,11 @@ def test_policy_template_includes_runtime_rules_authoring_guidance() -> None:
         assert token in text
 
 
-def test_tests_readme_mentions_day5_runtime_and_docs_parity_coverage() -> None:
+def test_tests_readme_mentions_runtime_and_docs_parity_coverage() -> None:
     text = _read_text(TESTS_README)
 
     for token in (
-        "real SQLite-backed CLI runtime execution plus `evidence report` coverage",
-        "runtime docs parity",
+        "Real SQLite-backed CLI runtime execution plus `evidence report` coverage",
+        "Runtime docs parity",
     ):
         assert token in text
