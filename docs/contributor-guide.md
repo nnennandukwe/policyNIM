@@ -111,6 +111,21 @@ The `nvidia-eval-launcher` extra pins `nemo-evaluator-launcher==0.2.4` and
 `nvidia-nat[eval]==1.6.0`. The project keeps `httpx==0.27.2` because that is the
 compatible launcher stack version; default CI does not sync this extra.
 
+## Optional NVIDIA Guardrails Package
+
+The default development install does not include NeMo Guardrails. Build 6 adds an
+internal output-rail wrapper for generated preflight drafts, but it does not add a
+CLI flag, MCP tool, eval backend, or default factory switch. Install the package
+only when directly constructing the internal Guardrails-backed generator:
+
+```bash
+uv sync --extra nvidia-guardrails --group test --group dev
+```
+
+The `nvidia-guardrails` extra pins `nemoguardrails[nvidia]==0.21.0`. The adapter
+imports Guardrails lazily, so offline CI and the default local workflow do not
+need the package.
+
 ## Default Model References
 
 The default example configs use:
