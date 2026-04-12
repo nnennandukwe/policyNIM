@@ -173,8 +173,8 @@ uv run policynim preflight \
 `preflight --trace` returns a JSON `PreflightEvidenceTraceResult` with the public
 `PreflightResult` plus a `PolicyEvidenceTrace` containing retained chunks,
 selected policies, compiled constraints, generated output links, and trace steps.
-It does not add a new artifact directory or call NVIDIA beyond the normal
-preflight route.
+Interactive preflight traces include retained chunk text. They do not add a new
+artifact directory or call NVIDIA beyond the normal preflight route.
 
 ### 7. Run Evaluations
 
@@ -188,7 +188,8 @@ Default behavior:
 - uses the `default` eval backend unless `--backend nemo` is provided
 - executes rerank-enabled and rerank-disabled runs
 - writes JSON artifacts and HTML reports under `data/evals/workspace`
-- embeds `PolicyEvidenceTrace` records in preflight eval case JSON artifacts
+- embeds compact `PolicyEvidenceTrace` records in preflight eval case JSON
+  artifacts
 - starts the local Evidently UI on `http://localhost:8001`
 
 Useful variants:
@@ -209,7 +210,9 @@ offline mode it uses deterministic local fixtures; in live mode it reuses the
 configured NVIDIA chat model for final-adherence judgment.
 
 Search eval cases keep `evidence_trace=null`; preflight eval cases include the
-trace used for conformance and debugging.
+trace used for conformance and debugging. Eval traces keep chunk IDs, paths,
+sections, line spans, scores, selected policies, constraints, and output links,
+but omit retained chunk text to keep artifacts compact by default.
 
 ### 6. Run The MCP Server
 

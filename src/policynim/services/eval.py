@@ -385,6 +385,7 @@ def _score_suite_cases(
         evidence_trace = trace_service.build(
             trace_result,
             conformance_result=conformance_result,
+            include_chunk_text=False,
         )
         results.append(
             _score_preflight_case(

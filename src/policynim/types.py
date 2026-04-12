@@ -833,7 +833,7 @@ class PolicyEvidenceTraceChunk(StrictModel):
     path: str
     section: str
     lines: str
-    text: str
+    text: str | None = None
     score: float | None = None
 
 

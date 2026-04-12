@@ -39,7 +39,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Opt-in preflight evidence traces that link chunks, selected policies, compiled
   constraints, generated guidance, and conformance checks.
 - Eval backend selection with optional policy-conformance scoring for compiled
-  plans and preflight outputs, with traces embedded in eval result artifacts.
+  plans and preflight outputs, with compact traces embedded in eval result
+  artifacts.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,

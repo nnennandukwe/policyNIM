@@ -174,6 +174,13 @@ def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_pat
         for case in persisted.case_results
         if case.kind == "preflight"
     )
+    persisted_preflight_trace = next(
+        case.evidence_trace
+        for case in persisted.case_results
+        if case.kind == "preflight" and case.evidence_trace is not None
+    )
+    assert persisted_preflight_trace.chunks
+    assert persisted_preflight_trace.chunks[0].text is None
     assert len(run_names) == 2
 
 

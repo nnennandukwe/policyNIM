@@ -73,8 +73,8 @@ constraints, not setup mistakes.
   retained evidence is too weak for a trustworthy result.
 - The system intentionally prefers no grounded answer over a fabricated one.
 - `preflight --trace` can show which chunks, selected policies, and compiled
-  constraints were retained before the fail-closed result, but it does not retry
-  or regenerate the answer.
+  constraints were retained before the fail-closed result, including retained
+  chunk text, but it does not retry or regenerate the answer.
 
 ### Evaluation Is Gold-Case Driven
 
@@ -86,7 +86,8 @@ constraints, not setup mistakes.
   it remains a narrow conformance signal rather than a broad benchmark of prose
   quality or policy nuance.
 - Eval JSON artifacts include evidence traces for preflight cases only. They are
-  not a persistent tracing backend, database, or generic workflow replay system.
+  compact by default, omit retained chunk text, and are not a persistent tracing
+  backend, database, or generic workflow replay system.
 
 ### No Separate Review Or Approval Layer
 

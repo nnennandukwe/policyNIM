@@ -55,6 +55,18 @@ def test_evidence_trace_links_chunks_constraints_outputs_and_conformance() -> No
     assert trace.conformance_checks[-1].chunk_ids == ["BACKEND-1"]
 
 
+def test_evidence_trace_can_strip_chunk_text_for_compact_artifacts() -> None:
+    service = PolicyEvidenceTraceService()
+
+    trace = service.build(make_trace_result(), include_chunk_text=False)
+
+    assert [chunk.chunk_id for chunk in trace.chunks] == ["BACKEND-1", "SECURITY-1"]
+    assert trace.chunks[0].path == "policies/backend/logging.md"
+    assert trace.chunks[0].lines == "1-4"
+    assert trace.chunks[0].text is None
+    assert trace.output_links[0].chunk_ids == ["BACKEND-1"]
+
+
 def test_evidence_trace_preserves_insufficient_context_without_output_links() -> None:
     service = PolicyEvidenceTraceService()
     result = PreflightResult(

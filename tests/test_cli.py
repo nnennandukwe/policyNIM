@@ -1069,6 +1069,10 @@ def test_preflight_trace_command_prints_trace_wrapper(monkeypatch) -> None:
     assert payload.result.task == "refresh token cleanup"
     assert payload.evidence_trace.task == "refresh token cleanup"
     assert payload.evidence_trace.chunks[0].chunk_id == "AUTH-1"
+    assert (
+        payload.evidence_trace.chunks[0].text
+        == "Retain revocation checks before deleting stale refresh tokens."
+    )
     assert payload.evidence_trace.selected_policies[0].supporting_chunk_ids == ["AUTH-1"]
     assert payload.evidence_trace.constraints[0].constraint_id == "required_steps:0"
     assert payload.evidence_trace.output_links[0].chunk_ids == ["AUTH-1"]

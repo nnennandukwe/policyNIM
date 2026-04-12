@@ -30,6 +30,7 @@ class PolicyEvidenceTraceService:
         trace_result: PreflightTraceResult,
         *,
         conformance_result: PolicyConformanceResult | None = None,
+        include_chunk_text: bool = True,
     ) -> PolicyEvidenceTrace:
         """Materialize a policy evidence trace without re-running the pipeline."""
         compiled_packet = trace_result.compiled_packet
@@ -43,7 +44,10 @@ class PolicyEvidenceTraceService:
             profile_signals=list(compiled_packet.profile_signals),
             insufficient_context=trace_result.result.insufficient_context,
             compiled_insufficient_context=compiled_packet.insufficient_context,
-            chunks=_trace_chunks(trace_result.retained_context),
+            chunks=_trace_chunks(
+                trace_result.retained_context,
+                include_chunk_text=include_chunk_text,
+            ),
             selected_policies=_trace_policies(compiled_packet),
             constraints=constraints,
             output_links=_trace_output_links(trace_result.result, constraints),
@@ -57,7 +61,11 @@ def create_policy_evidence_trace_service() -> PolicyEvidenceTraceService:
     return PolicyEvidenceTraceService()
 
 
-def _trace_chunks(chunks: Sequence[ScoredChunk]) -> list[PolicyEvidenceTraceChunk]:
+def _trace_chunks(
+    chunks: Sequence[ScoredChunk],
+    *,
+    include_chunk_text: bool,
+) -> list[PolicyEvidenceTraceChunk]:
     seen_chunk_ids: set[str] = set()
     trace_chunks: list[PolicyEvidenceTraceChunk] = []
     for chunk in chunks:
@@ -73,7 +81,7 @@ def _trace_chunks(chunks: Sequence[ScoredChunk]) -> list[PolicyEvidenceTraceChun
                 path=chunk.path,
                 section=chunk.section,
                 lines=chunk.lines,
-                text=chunk.text,
+                text=chunk.text if include_chunk_text else None,
                 score=chunk.score,
             )
         )

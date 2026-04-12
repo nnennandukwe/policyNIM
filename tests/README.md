@@ -22,7 +22,7 @@ Current automated coverage includes:
 - Build 3 policy conformance scoring, eval backend selection, preflight trace
   handling, and NVIDIA conformance-response validation
 - Build 4 policy evidence trace materialization, `preflight --trace` CLI output,
-  eval artifact trace attachment, and conformance ID preservation
+  compact eval artifact trace attachment, and conformance ID preservation
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads
