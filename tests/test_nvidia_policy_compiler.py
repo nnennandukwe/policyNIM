@@ -48,7 +48,7 @@ class MockOpenAIClient:
         self.closed = True
 
 
-class FakeRateLimitError(RateLimitError):
+class MockRateLimitError(RateLimitError):
     """Minimal rate-limit error subclass for provider classification tests."""
 
     def __init__(self) -> None:
@@ -178,7 +178,7 @@ def test_policy_compiler_rejects_invalid_constraint_shape() -> None:
 
 
 def test_policy_compiler_classifies_upstream_rate_limits() -> None:
-    compiler = make_compiler(RaisingOpenAIClient(FakeRateLimitError()))
+    compiler = make_compiler(RaisingOpenAIClient(MockRateLimitError()))
 
     with pytest.raises(ProviderError, match="failed after retries") as excinfo:
         compiler.compile_policy_packet(

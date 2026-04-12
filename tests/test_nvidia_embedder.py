@@ -9,14 +9,14 @@ from policynim.errors import ConfigurationError, ProviderError
 from policynim.providers.nvidia import NVIDIAEmbedder
 
 
-class FakeAuthenticationError(AuthenticationError):
+class MockAuthenticationError(AuthenticationError):
     """Minimal auth error subclass for provider classification tests."""
 
     def __init__(self) -> None:
         Exception.__init__(self, "bad API key")
 
 
-class FakeRateLimitError(RateLimitError):
+class MockRateLimitError(RateLimitError):
     """Minimal rate-limit error subclass for provider classification tests."""
 
     def __init__(self) -> None:
@@ -44,7 +44,7 @@ def test_embedder_classifies_upstream_auth_failures() -> None:
         timeout_seconds=1,
         max_retries=0,
     )
-    embedder._client = RaisingEmbeddingsClient(FakeAuthenticationError())  # type: ignore[assignment]
+    embedder._client = RaisingEmbeddingsClient(MockAuthenticationError())  # type: ignore[assignment]
 
     with pytest.raises(ConfigurationError, match="authentication failed") as excinfo:
         embedder.embed_query("backend logging")
@@ -61,7 +61,7 @@ def test_embedder_classifies_upstream_rate_limits() -> None:
         timeout_seconds=1,
         max_retries=0,
     )
-    embedder._client = RaisingEmbeddingsClient(FakeRateLimitError())  # type: ignore[assignment]
+    embedder._client = RaisingEmbeddingsClient(MockRateLimitError())  # type: ignore[assignment]
 
     with pytest.raises(ProviderError, match="failed after retries") as excinfo:
         embedder.embed_query("backend logging")

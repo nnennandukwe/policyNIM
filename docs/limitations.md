@@ -58,8 +58,8 @@ constraints, not setup mistakes.
 - CI does not exercise live NVIDIA embeddings, reranking, grounded generation, or
   end-to-end MCP flows against hosted services.
 - CI does not require NeMo Evaluator SDK or NeMo Agent Toolkit packages; optional
-  package paths use fake/import-injected tests.
-- CI does not require NeMo Guardrails; output-rail tests use fakes and verify the
+  package paths use mock-backed import-injected tests.
+- CI does not require NeMo Guardrails; output-rail tests use mocks and verify the
   default factory does not import the optional package.
 - Live-provider and Railway-hosted verification remain manual or opt-in local workflows.
 

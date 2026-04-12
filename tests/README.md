@@ -30,8 +30,8 @@ Current automated coverage includes:
 - Phoenix eval reporting, headless UI skipping, workspace-local
   Phoenix startup, deterministic span publishing, and synchronous code
   annotations
-- Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with fake
-  import-injected package modules; default CI does not import live optional
+- Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with
+  mock-backed import-injected package modules; default CI does not import live optional
   NVIDIA eval packages
 - Optional NVIDIA Eval Launcher dependency resolution through
   `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`

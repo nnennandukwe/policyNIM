@@ -34,14 +34,14 @@ from policynim.types import (
 
 def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
     packet = make_compiled_packet()
-    compiler = FakeCompilerService(packet=packet, context=[make_chunk()])
-    generator = FakeGenerator(
+    compiler = MockCompilerService(packet=packet, context=[make_chunk()])
+    generator = MockGenerator(
         [
             make_draft(summary="Initial preflight."),
             make_draft(summary="Regenerated preflight."),
         ]
     )
-    conformance = FakeConformanceService(
+    conformance = MockConformanceService(
         [
             make_conformance_result(
                 passed=False,
@@ -97,7 +97,7 @@ def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
 
 def test_regeneration_guardrails_wrapper_preserves_retry_context() -> None:
     packet = make_compiled_packet()
-    base_generator = FakeGenerator(
+    base_generator = MockGenerator(
         [
             make_draft(summary="Initial preflight."),
             make_draft(summary="Regenerated preflight."),
@@ -109,9 +109,9 @@ def test_regeneration_guardrails_wrapper_preserves_retry_context() -> None:
         rails=rails,
     )
     service = PolicyRegenerationService(
-        compiler_service=FakeCompilerService(packet=packet, context=[make_chunk()]),
+        compiler_service=MockCompilerService(packet=packet, context=[make_chunk()]),
         generator=guardrails_generator,
-        conformance_service=FakeConformanceService(
+        conformance_service=MockConformanceService(
             [
                 make_conformance_result(
                     passed=False,
@@ -150,9 +150,9 @@ def test_regeneration_guardrails_wrapper_preserves_retry_context() -> None:
 
 def test_regeneration_can_include_chunk_text_for_debug_traces() -> None:
     service = PolicyRegenerationService(
-        compiler_service=FakeCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
-        generator=FakeGenerator([make_draft()]),
-        conformance_service=FakeConformanceService([make_conformance_result(passed=True)]),
+        compiler_service=MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
+        generator=MockGenerator([make_draft()]),
+        conformance_service=MockConformanceService([make_conformance_result(passed=True)]),
     )
 
     result = service.regenerate(
@@ -168,9 +168,9 @@ def test_regeneration_can_include_chunk_text_for_debug_traces() -> None:
 
 def test_regeneration_stops_at_max_regenerations() -> None:
     service = PolicyRegenerationService(
-        compiler_service=FakeCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
-        generator=FakeGenerator([make_draft(), make_draft(summary="Retry still failing.")]),
-        conformance_service=FakeConformanceService(
+        compiler_service=MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
+        generator=MockGenerator([make_draft(), make_draft(summary="Retry still failing.")]),
+        conformance_service=MockConformanceService(
             [
                 make_conformance_result(
                     passed=False,
@@ -214,9 +214,9 @@ def test_regeneration_stops_at_max_regenerations() -> None:
 
 def test_regeneration_stops_when_failed_metrics_have_no_material_trigger() -> None:
     service = PolicyRegenerationService(
-        compiler_service=FakeCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
-        generator=FakeGenerator([make_draft()]),
-        conformance_service=FakeConformanceService(
+        compiler_service=MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
+        generator=MockGenerator([make_draft()]),
+        conformance_service=MockConformanceService(
             [
                 make_conformance_result(
                     passed=False,
@@ -241,12 +241,12 @@ def test_regeneration_stops_when_failed_metrics_have_no_material_trigger() -> No
 
 
 def test_regeneration_treats_insufficient_compiled_context_as_terminal() -> None:
-    compiler = FakeCompilerService(
+    compiler = MockCompilerService(
         packet=make_compiled_packet(insufficient_context=True),
         context=[],
     )
-    generator = FakeGenerator([make_draft()])
-    conformance = FakeConformanceService([make_conformance_result(passed=True)])
+    generator = MockGenerator([make_draft()])
+    conformance = MockConformanceService([make_conformance_result(passed=True)])
     service = PolicyRegenerationService(
         compiler_service=compiler,
         generator=generator,
@@ -263,9 +263,9 @@ def test_regeneration_treats_insufficient_compiled_context_as_terminal() -> None
 
 
 def test_regeneration_fails_closed_for_provider_errors_without_retry() -> None:
-    compiler = FakeCompilerService(packet=make_compiled_packet(), context=[make_chunk()])
-    generator = FakeGenerator([make_draft(), make_draft(summary="Should not run.")])
-    conformance = FakeConformanceService([ProviderError("judge failed", failure_class="timeout")])
+    compiler = MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()])
+    generator = MockGenerator([make_draft(), make_draft(summary="Should not run.")])
+    conformance = MockConformanceService([ProviderError("judge failed", failure_class="timeout")])
     service = PolicyRegenerationService(
         compiler_service=compiler,
         generator=generator,
@@ -281,10 +281,10 @@ def test_regeneration_fails_closed_for_provider_errors_without_retry() -> None:
 
 
 def test_regeneration_rejects_citation_drift_as_insufficient_context() -> None:
-    conformance = FakeConformanceService([make_conformance_result(passed=True)])
+    conformance = MockConformanceService([make_conformance_result(passed=True)])
     service = PolicyRegenerationService(
-        compiler_service=FakeCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
-        generator=FakeGenerator([make_draft(citation_ids=["UNKNOWN-1"])]),
+        compiler_service=MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
+        generator=MockGenerator([make_draft(citation_ids=["UNKNOWN-1"])]),
         conformance_service=conformance,
     )
 
@@ -319,7 +319,7 @@ def test_trigger_mapping_preserves_judged_final_adherence_ids() -> None:
     assert triggers[0].chunk_ids == ["BACKEND-1"]
 
 
-class FakeCompilerService:
+class MockCompilerService:
     """Static compiler service double."""
 
     def __init__(self, *, packet: CompiledPolicyPacket, context: list[ScoredChunk]) -> None:
@@ -353,7 +353,7 @@ class GenerateCall:
         self.regeneration_context = regeneration_context
 
 
-class FakeGenerator:
+class MockGenerator:
     """Static generator double."""
 
     def __init__(self, drafts: list[GeneratedPreflightDraft]) -> None:
@@ -384,7 +384,7 @@ class FakeGenerator:
         self.closed = True
 
 
-class FakeConformanceService:
+class MockConformanceService:
     """Static conformance service double."""
 
     def __init__(self, outcomes: list[PolicyConformanceResult | ProviderError]) -> None:

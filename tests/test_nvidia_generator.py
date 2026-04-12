@@ -37,7 +37,7 @@ class MockOpenAIClient:
         self.chat = SimpleNamespace(completions=MockChatCompletions(content))
 
 
-class FakeRateLimitError(RateLimitError):
+class MockRateLimitError(RateLimitError):
     """Minimal rate-limit error subclass for provider classification tests."""
 
     def __init__(self) -> None:
@@ -176,7 +176,7 @@ def test_generator_classifies_upstream_rate_limits() -> None:
         base_url="https://example.invalid/v1",
         timeout_seconds=1,
         max_retries=0,
-        client=RaisingOpenAIClient(FakeRateLimitError()),  # type: ignore[arg-type]
+        client=RaisingOpenAIClient(MockRateLimitError()),  # type: ignore[arg-type]
     )
 
     with pytest.raises(ProviderError, match="failed after retries") as excinfo:
