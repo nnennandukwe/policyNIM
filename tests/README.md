@@ -23,13 +23,20 @@ Current automated coverage includes:
   handling, and NVIDIA conformance-response validation
 - Build 4 policy evidence trace materialization, `preflight --trace` CLI output,
   compact eval artifact trace attachment, and conformance ID preservation
+- Build 5 policy-backed regeneration, compile-once packet identity, typed retry
+  triggers, max-regeneration and insufficient-context stops, provider fail-closed
+  behavior, citation-drift rejection, `preflight --regenerate`, and
+  `eval --regenerate`
+- Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with fake
+  import-injected package modules; default CI does not import live optional
+  NVIDIA eval packages
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads
 - CLI output for `ingest`, JSON-first `search`, JSON-first `route`, JSON-first
   `compile`, and JSON-first `preflight`
 - CLI output for `eval`
-- CLI output for `eval --backend default|nemo`
+- CLI output for `eval --backend default|nemo|nemo_evaluator|nat`
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`
 - CLI output for `beta-admin` hosted operator commands
 - MCP tool parity for `policy_preflight` and `policy_search`

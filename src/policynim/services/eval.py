@@ -19,10 +19,12 @@ import pandas as pd
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
+from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
 from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import PreflightService
+from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
 from policynim.storage import LanceDBIndexStore
@@ -51,8 +53,12 @@ from policynim.types import (
     PolicyEvidenceTrace,
     PolicyMetadata,
     PolicySelectionPacket,
+    PreflightRegenerationRequest,
+    PreflightRegenerationResult,
     PreflightRequest,
     PreflightResult,
+    RegenerationBackend,
+    RegenerationContext,
     ScoredChunk,
     SearchRequest,
     SearchResult,
@@ -94,8 +100,14 @@ class EvalService:
         mode: EvalExecutionMode = "offline",
         backend: EvalBackend = "default",
         compare_rerank: bool = True,
+        regenerate: bool = False,
+        max_regenerations: int = 1,
     ) -> EvalRunResult:
         """Run the requested eval suite and persist the resulting reports."""
+        if regenerate and backend == "default":
+            raise ValueError("eval --regenerate requires backend nemo, nemo_evaluator, or nat.")
+        if max_regenerations < 1 or max_regenerations > 3:
+            raise ValueError("max_regenerations must be between 1 and 3.")
         suite_path = resolve_eval_suite_path()
         suite = _load_eval_suite(suite_path)
         rerank_modes = [True, False] if compare_rerank else [True]
@@ -107,6 +119,8 @@ class EvalService:
                 mode=mode,
                 backend=backend,
                 rerank_enabled=rerank_enabled,
+                regenerate=regenerate,
+                max_regenerations=max_regenerations,
             )
             mode_results.append(
                 self._persist_mode_run(
@@ -185,17 +199,23 @@ class EvalService:
         mode: EvalExecutionMode,
         backend: EvalBackend,
         rerank_enabled: bool,
+        regenerate: bool,
+        max_regenerations: int,
     ) -> list[EvalCaseResult]:
         if mode == "offline":
             return self._run_offline_suite(
                 suite,
                 backend=backend,
                 rerank_enabled=rerank_enabled,
+                regenerate=regenerate,
+                max_regenerations=max_regenerations,
             )
         return self._run_live_suite(
             suite,
             backend=backend,
             rerank_enabled=rerank_enabled,
+            regenerate=regenerate,
+            max_regenerations=max_regenerations,
         )
 
     def _run_offline_suite(
@@ -204,6 +224,8 @@ class EvalService:
         *,
         backend: EvalBackend,
         rerank_enabled: bool,
+        regenerate: bool,
+        max_regenerations: int,
     ) -> list[EvalCaseResult]:
         store = _OfflineIndexStore(_OFFLINE_QUERY_CANDIDATES)
         embedder = _OfflineEmbedder()
@@ -221,7 +243,23 @@ class EvalService:
         )
         conformance_service = (
             PolicyConformanceService(evaluator=_OfflinePolicyConformanceEvaluator())
-            if backend == "nemo"
+            if backend != "default" and not regenerate
+            else None
+        )
+        regeneration_service = (
+            PolicyRegenerationService(
+                compiler_service=PolicyCompilerService(
+                    embedder=embedder,
+                    index_store=store,
+                    reranker=_OfflineReranker() if rerank_enabled else _PassThroughReranker(),
+                    compiler=_OfflinePolicyCompiler(),
+                ),
+                generator=_OfflineGenerator(),
+                conformance_service=PolicyConformanceService(
+                    evaluator=_OfflinePolicyConformanceEvaluator()
+                ),
+            )
+            if regenerate
             else None
         )
         try:
@@ -230,12 +268,15 @@ class EvalService:
                 search_service=search_service,
                 preflight_service=preflight_service,
                 conformance_service=conformance_service,
+                regeneration_service=regeneration_service,
                 backend=backend,
                 rerank_enabled=rerank_enabled,
+                max_regenerations=max_regenerations,
             )
         finally:
             search_service.close()
             preflight_service.close()
+            _close_component(regeneration_service)
             _close_component(conformance_service)
 
     def _run_live_suite(
@@ -244,6 +285,8 @@ class EvalService:
         *,
         backend: EvalBackend,
         rerank_enabled: bool,
+        regenerate: bool,
+        max_regenerations: int,
     ) -> list[EvalCaseResult]:
         with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
             temp_settings = self._settings.model_copy(
@@ -261,7 +304,18 @@ class EvalService:
                 rerank_enabled=rerank_enabled,
             )
             conformance_service = (
-                _create_live_conformance_service(temp_settings) if backend == "nemo" else None
+                _create_live_conformance_service(temp_settings, backend=backend)
+                if backend != "default" and not regenerate
+                else None
+            )
+            regeneration_service = (
+                _create_live_regeneration_service(
+                    temp_settings,
+                    backend=backend,
+                    rerank_enabled=rerank_enabled,
+                )
+                if regenerate
+                else None
             )
             try:
                 return _score_suite_cases(
@@ -269,13 +323,16 @@ class EvalService:
                     search_service=search_service,
                     preflight_service=preflight_service,
                     conformance_service=conformance_service,
+                    regeneration_service=regeneration_service,
                     backend=backend,
                     rerank_enabled=rerank_enabled,
+                    max_regenerations=max_regenerations,
                 )
             finally:
                 search_service.close()
                 preflight_service.close()
                 _close_component(conformance_service)
+                _close_component(regeneration_service)
 
     def _persist_mode_run(
         self,
@@ -355,8 +412,10 @@ def _score_suite_cases(
     search_service: SearchService,
     preflight_service: PreflightService,
     conformance_service: PolicyConformanceService | None,
+    regeneration_service: PolicyRegenerationService | None,
     backend: EvalBackend,
     rerank_enabled: bool,
+    max_regenerations: int,
 ) -> list[EvalCaseResult]:
     results: list[EvalCaseResult] = []
     trace_service = create_policy_evidence_trace_service()
@@ -366,6 +425,28 @@ def _score_suite_cases(
                 SearchRequest(query=case.input, domain=case.domain, top_k=case.top_k)
             )
             results.append(_score_search_case(case, result=result, rerank_enabled=rerank_enabled))
+            continue
+
+        if regeneration_service is not None:
+            regeneration_result = regeneration_service.regenerate(
+                PreflightRegenerationRequest(
+                    task=case.input,
+                    domain=case.domain,
+                    top_k=case.top_k,
+                    backend=_regeneration_backend(backend),
+                    max_regenerations=max_regenerations,
+                )
+            )
+            results.append(
+                _score_preflight_case(
+                    case,
+                    result=regeneration_result.final_result,
+                    conformance_result=regeneration_result.final_conformance_result,
+                    evidence_trace=regeneration_result.evidence_trace,
+                    regeneration_result=regeneration_result,
+                    rerank_enabled=rerank_enabled,
+                )
+            )
             continue
 
         request = PreflightRequest(task=case.input, domain=case.domain, top_k=case.top_k)
@@ -393,6 +474,7 @@ def _score_suite_cases(
                 result=result,
                 conformance_result=conformance_result,
                 evidence_trace=evidence_trace,
+                regeneration_result=None,
                 rerank_enabled=rerank_enabled,
             )
         )
@@ -444,12 +526,19 @@ def _score_search_case(
     )
 
 
+def _regeneration_backend(backend: EvalBackend) -> RegenerationBackend:
+    if backend == "default":
+        raise ValueError("regeneration requires a conformance-capable backend.")
+    return backend
+
+
 def _score_preflight_case(
     case: EvalCase,
     *,
     result: PreflightResult,
     conformance_result: PolicyConformanceResult | None = None,
     evidence_trace: PolicyEvidenceTrace | None = None,
+    regeneration_result: PreflightRegenerationResult | None = None,
     rerank_enabled: bool,
 ) -> EvalCaseResult:
     actual_policy_ids = [policy.policy_id for policy in result.applicable_policies]
@@ -496,6 +585,7 @@ def _score_preflight_case(
         actual_summary=result.summary,
         conformance_result=conformance_result,
         evidence_trace=evidence_trace,
+        regeneration_result=regeneration_result,
         metrics=EvalCaseMetrics(
             expected_chunk_recall=_recall(len(matched_chunk_ids), len(case.expected_chunk_ids)),
             expected_policy_recall=_recall(len(matched_policy_ids), len(case.expected_policy_ids)),
@@ -698,7 +788,7 @@ def _build_evidently_report(
     rerank_enabled: bool,
     case_results: Sequence[EvalCaseResult],
     metrics: EvalAggregateMetrics,
-):
+) -> Any:
     from evidently import DataDefinition, Dataset, Report
     from evidently.presets import DataSummaryPreset
 
@@ -748,6 +838,21 @@ def _build_evidently_report(
                 len(result.evidence_trace.conformance_checks)
                 if result.evidence_trace is not None
                 else 0
+            ),
+            "regeneration_attempt_count": (
+                len(result.regeneration_result.attempts)
+                if result.regeneration_result is not None
+                else 0
+            ),
+            "regeneration_stop_reason": (
+                result.regeneration_result.stop_reason
+                if result.regeneration_result is not None
+                else ""
+            ),
+            "regeneration_passed": (
+                result.regeneration_result.passed
+                if result.regeneration_result is not None
+                else None
             ),
             "actual_summary": result.actual_summary or "",
             "overall_pass_rate": metrics.overall_pass_rate,
@@ -854,12 +959,73 @@ def _create_live_preflight_service(
     )
 
 
-def _create_live_conformance_service(settings: Settings) -> PolicyConformanceService:
-    from policynim.providers import NVIDIAPolicyConformanceEvaluator
-
-    return PolicyConformanceService(
-        evaluator=NVIDIAPolicyConformanceEvaluator.from_settings(settings),
+def _create_live_conformance_service(
+    settings: Settings,
+    *,
+    backend: EvalBackend,
+) -> PolicyConformanceService:
+    from policynim.providers import (
+        NeMoAgentToolkitPolicyConformanceEvaluator,
+        NeMoEvaluatorPolicyConformanceEvaluator,
+        NVIDIAPolicyConformanceEvaluator,
     )
+
+    if backend == "nemo":
+        evaluator = NVIDIAPolicyConformanceEvaluator.from_settings(settings)
+    elif backend == "nemo_evaluator":
+        evaluator = NeMoEvaluatorPolicyConformanceEvaluator.from_settings(settings)
+    elif backend == "nat":
+        evaluator = NeMoAgentToolkitPolicyConformanceEvaluator.from_settings(settings)
+    else:
+        raise ValueError("default backend does not create a conformance service.")
+    return PolicyConformanceService(
+        evaluator=evaluator,
+    )
+
+
+def _create_live_regeneration_service(
+    settings: Settings,
+    *,
+    backend: EvalBackend,
+    rerank_enabled: bool,
+) -> PolicyRegenerationService:
+    from policynim.providers import (
+        NVIDIAEmbedder,
+        NVIDIAGenerator,
+        NVIDIAPolicyCompiler,
+        NVIDIAReranker,
+    )
+
+    compiler_service: PolicyCompilerService | None = None
+    generator: Generator | None = None
+    conformance_service: PolicyConformanceService | None = None
+    try:
+        compiler_service = PolicyCompilerService(
+            embedder=NVIDIAEmbedder.from_settings(settings),
+            index_store=LanceDBIndexStore(
+                uri=resolve_runtime_path(settings.lancedb_uri),
+                table_name=settings.lancedb_table,
+            ),
+            reranker=(
+                NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
+            ),
+            compiler=NVIDIAPolicyCompiler.from_settings(settings),
+        )
+        generator = NVIDIAGenerator.from_settings(settings)
+        conformance_service = _create_live_conformance_service(
+            settings,
+            backend=backend,
+        )
+        return PolicyRegenerationService(
+            compiler_service=compiler_service,
+            generator=generator,
+            conformance_service=conformance_service,
+        )
+    except Exception:
+        _close_component(conformance_service)
+        _close_component(generator)
+        _close_component(compiler_service)
+        raise
 
 
 def _close_component(component: object | None) -> None:
@@ -978,8 +1144,10 @@ class _OfflineGenerator(Generator):
         context: Sequence[ScoredChunk],
         *,
         compiled_packet: CompiledPolicyPacket | None = None,
+        regeneration_context: RegenerationContext | None = None,
     ) -> GeneratedPreflightDraft:
         del compiled_packet
+        del regeneration_context
         context_by_id = {chunk.chunk_id: chunk for chunk in context}
         if request.task == "Implement a refresh-token cleanup background job":
             return _cleanup_job_draft(context_by_id)

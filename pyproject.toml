@@ -20,6 +20,16 @@ dependencies = [
   "typer==0.24.1",
 ]
 
+[project.optional-dependencies]
+nvidia-eval = [
+  "nemo-evaluator==0.2.5",
+  "nvidia-nat-eval==1.6.0",
+  "nvidia-simple-evals==26.3",
+]
+# NeMo Evaluator Launcher is documented as a separate-environment path because
+# the checked launcher stack conflicts with this project's pinned httpx/evidently
+# requirements.
+
 [project.scripts]
 policynim = "policynim.interfaces.cli:main"
 

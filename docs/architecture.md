@@ -11,7 +11,7 @@ The architecture stays intentionally small:
 - typed contracts shared by CLI and MCP
 - explicit provider and storage adapters
 - application services for ingest, retrieval, task-aware routing, policy
-  compilation, preflight, and evaluation
+  compilation, preflight, policy-backed regeneration, and evaluation
 - application services for runtime decisions, runtime execution, and durable
   evidence capture
 - fail-closed grounding rules instead of best-effort freeform answers
@@ -142,6 +142,30 @@ Fail-closed rules are central here:
 
 PolicyNIM intentionally prefers no answer over fabricated guidance.
 
+### Policy-Backed Regeneration Flow
+
+`PolicyRegenerationService` owns the opt-in retry loop used by
+`preflight --regenerate` and preflight eval cases.
+
+Regeneration flow:
+
+1. compile the task once into a retained `CompiledPolicyPacket`
+2. compute a deterministic `compiled_packet_id`
+3. run normal grounded generation for attempt 0
+4. evaluate conformance with `nemo`, `nemo_evaluator`, or `nat`
+5. convert failed conformance metrics into typed `RegenerationTrigger` records
+6. retry at most three times while reusing the same compiled packet, retained
+   chunk set, and citation IDs
+7. stop on pass, max retry, no material trigger, or insufficient context
+
+The regeneration prompt receives the previous validated `PreflightResult`, typed
+triggers, the unchanged compiled packet, and the retained chunks. It does not use
+loose prose feedback as control flow. Provider and configuration failures remain
+explicit errors and do not trigger retries.
+
+Regeneration is intentionally not exposed through MCP. It is a CLI and eval
+quality workflow, not a generic agent runner or persistent trace database.
+
 ### Evaluation Flow
 
 `EvalService` provides the local quality workflow.
@@ -152,11 +176,12 @@ Evaluation flow:
 2. run cases against `search` and `preflight`
 3. score results with deterministic checks
 4. optionally add policy-conformance scoring for preflight cases with
-   `--backend nemo`
+   `--backend nemo|nemo_evaluator|nat`
 5. compare rerank-enabled and rerank-disabled runs
-6. persist JSON artifacts and HTML reports, including compact preflight evidence
-   traces
-7. optionally start the local Evidently UI
+6. optionally run policy-backed regeneration for preflight cases
+7. persist JSON artifacts and HTML reports, including compact preflight evidence
+   traces and regeneration results
+8. optionally start the local Evidently UI
 
 Important evaluation rules:
 
@@ -166,8 +191,12 @@ Important evaluation rules:
 - the default backend is code-scored and does not use LLM-as-judge behavior
 - the `nemo` backend adds deterministic conformance checks plus final-adherence
   judgment for preflight cases
+- the `nemo_evaluator` and `nat` backends are lazy optional package-gated adapter
+  paths
 - preflight eval cases include compact `PolicyEvidenceTrace`; search cases keep
   `evidence_trace=null`
+- `eval --regenerate` records `PreflightRegenerationResult` for preflight cases
+  and leaves search cases with `regeneration_result=null`
 - expected chunk recall, policy recall, and insufficient-context accuracy are the
   core tracked metrics
 
@@ -226,6 +255,8 @@ Important evaluation rules:
   compilation, and compiled-packet citation validation.
 - `PreflightService` handles compiled evidence conditioning, grounded synthesis,
   and citation validation.
+- `PolicyRegenerationService` handles the bounded compile-once,
+  generate/evaluate/regenerate loop for CLI and eval preflight cases.
 - `RuntimeDecisionService` compiles and matches runtime rules against the local
   index by loading the compiled runtime rules artifact, matching actions
   against it, and linking the matched rules back to indexed evidence.
@@ -274,7 +305,8 @@ Important evaluation rules:
 - `policynim route --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim compile --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim preflight --task ...`
-- `policynim eval --mode offline|live [--backend default|nemo] [--headless] [--no-compare-rerank]`
+- `policynim preflight --task ... [--trace] [--regenerate] [--max-regenerations 1] [--backend nemo|nemo_evaluator|nat]`
+- `policynim eval --mode offline|live [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
@@ -313,6 +345,8 @@ Shared interface guarantees:
   shape.
 - CLI `preflight --trace` returns `PreflightEvidenceTraceResult`; there is no
   MCP trace tool.
+- CLI `preflight --regenerate` returns `PreflightRegenerationResult`; there is no
+  MCP regeneration tool.
 - CLI `runtime decide` and `runtime execute` use the same `RuntimeActionRequest`
   input shape.
 - CLI `evidence report` returns a typed session summary over the SQLite runtime
@@ -337,6 +371,8 @@ NVIDIA-hosted APIs are used for:
 - policy compilation for planning and generation constraints
 - grounded generation for preflight
 - live `eval --backend nemo` final-adherence judging
+- live `eval --backend nemo_evaluator|nat` and `preflight --regenerate` package
+  adapter paths when the optional packages are installed
 
 These steps require `NVIDIA_API_KEY`.
 
@@ -381,6 +417,7 @@ Local runtime components own:
 - malformed provider responses
 - invalid grounded citation references
 - CLI and MCP payload drift
+- regeneration packet or citation drift between attempts
 
 Only weak or invalid grounded evidence should become `insufficient_context=true`.
 Setup and runtime failures should remain actionable errors.
@@ -391,5 +428,7 @@ Setup and runtime failures should remain actionable errors.
 - No multi-user or shared remote index model.
 - No hybrid lexical plus vector retrieval layer.
 - No custom evaluation dashboard beyond Evidently OSS.
+- No MCP regeneration tool, generic workflow runner, or persistent trace
+  database.
 
 Those are deferred to keep the repo tutorial-friendly, explicit, and easy to audit.

@@ -133,7 +133,9 @@ class MockGenerator:
         context: Sequence[ScoredChunk],
         *,
         compiled_packet: CompiledPolicyPacket | None = None,
+        regeneration_context=None,
     ) -> GeneratedPreflightDraft:
+        del regeneration_context
         self.last_request = request
         self.last_context = list(context)
         self.last_compiled_packet = compiled_packet

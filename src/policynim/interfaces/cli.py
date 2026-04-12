@@ -22,6 +22,7 @@ from policynim.services import (
     create_ingest_service,
     create_policy_compiler_service,
     create_policy_evidence_trace_service,
+    create_policy_regeneration_service,
     create_policy_router_service,
     create_preflight_service,
     create_runtime_decision_service,
@@ -36,7 +37,9 @@ from policynim.types import (
     EvalBackend,
     EvalExecutionMode,
     PreflightEvidenceTraceResult,
+    PreflightRegenerationRequest,
     PreflightRequest,
+    RegenerationBackend,
     RouteRequest,
     RuntimeActionRequest,
     RuntimeDecisionResult,
@@ -214,23 +217,59 @@ def preflight(
             help="Include a replay-free evidence trace with the preflight result.",
         ),
     ] = False,
+    regenerate: Annotated[
+        bool,
+        typer.Option(
+            "--regenerate",
+            help="Run the opt-in policy-backed regeneration loop.",
+        ),
+    ] = False,
+    max_regenerations: Annotated[
+        int,
+        typer.Option(
+            "--max-regenerations",
+            min=1,
+            max=3,
+            help="Maximum regeneration attempts after the initial generation. Allowed range: 1-3.",
+        ),
+    ] = 1,
+    backend: Annotated[
+        RegenerationBackend,
+        typer.Option(
+            "--backend",
+            help="Regeneration backend. Supported values: nemo, nemo_evaluator, nat.",
+        ),
+    ] = "nemo",
 ) -> None:
     """Return policy guidance for a coding task."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
         resolved_top_k = top_k if top_k is not None else settings.default_top_k
-        service = create_preflight_service(settings)
         request = PreflightRequest(task=task, domain=domain, top_k=resolved_top_k)
-        if trace:
-            trace_result = service.preflight_with_trace(request)
-            evidence_trace = create_policy_evidence_trace_service().build(trace_result)
-            result = PreflightEvidenceTraceResult(
-                result=trace_result.result,
-                evidence_trace=evidence_trace,
+        if regenerate:
+            service = create_policy_regeneration_service(settings, backend=backend)
+            result = service.regenerate(
+                PreflightRegenerationRequest(
+                    task=task,
+                    domain=domain,
+                    top_k=resolved_top_k,
+                    backend=backend,
+                    max_regenerations=max_regenerations,
+                )
             )
         else:
-            result = service.preflight(request)
+            preflight_service = create_preflight_service(settings)
+            service = preflight_service
+            if trace:
+                trace_result = preflight_service.preflight_with_trace(request)
+                evidence_trace = create_policy_evidence_trace_service().build(trace_result)
+                result = PreflightEvidenceTraceResult(
+                    result=trace_result.result,
+                    evidence_trace=evidence_trace,
+                )
+            else:
+                result = preflight_service.preflight(request)
     except ValidationError as exc:
         _exit_with_error(_format_validation_error("Preflight request", exc))
     except PolicyNIMError as exc:
@@ -477,7 +516,7 @@ def eval(
         EvalBackend,
         typer.Option(
             "--backend",
-            help="Eval backend. Supported values: default, nemo.",
+            help="Eval backend. Supported values: default, nemo, nemo_evaluator, nat.",
         ),
     ] = "default",
     no_compare_rerank: Annotated[
@@ -494,13 +533,35 @@ def eval(
             help="Run evals without starting the local Evidently UI automatically.",
         ),
     ] = False,
+    regenerate: Annotated[
+        bool,
+        typer.Option(
+            "--regenerate",
+            help="Run policy-backed regeneration for preflight eval cases.",
+        ),
+    ] = False,
+    max_regenerations: Annotated[
+        int,
+        typer.Option(
+            "--max-regenerations",
+            min=1,
+            max=3,
+            help="Maximum regeneration attempts after the initial generation. Allowed range: 1-3.",
+        ),
+    ] = 1,
 ) -> None:
     """Run the PolicyNIM eval suite and persist local reports."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
         service = create_eval_service(settings)
-        result = service.run(mode=mode, backend=backend, compare_rerank=not no_compare_rerank)
+        result = service.run(
+            mode=mode,
+            backend=backend,
+            compare_rerank=not no_compare_rerank,
+            regenerate=regenerate,
+            max_regenerations=max_regenerations,
+        )
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:

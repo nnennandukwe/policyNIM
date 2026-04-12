@@ -16,6 +16,10 @@ from policynim.services.health import (
 )
 from policynim.services.ingest import IngestService, create_ingest_service
 from policynim.services.preflight import PreflightService, create_preflight_service
+from policynim.services.regeneration import (
+    PolicyRegenerationService,
+    create_policy_regeneration_service,
+)
 from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.services.runtime_decision import (
     RuntimeDecisionService,
@@ -40,6 +44,7 @@ __all__ = [
     "PolicyCompilerService",
     "PolicyConformanceService",
     "PolicyEvidenceTraceService",
+    "PolicyRegenerationService",
     "PolicyRouterService",
     "RuntimeDecisionService",
     "RuntimeEvidenceReportService",
@@ -48,6 +53,7 @@ __all__ = [
     "SearchService",
     "create_beta_auth_service",
     "create_policy_evidence_trace_service",
+    "create_policy_regeneration_service",
     "create_policy_compiler_service",
     "create_eval_service",
     "create_runtime_decision_service",

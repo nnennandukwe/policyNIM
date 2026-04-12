@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
 
 from policynim.types import (
@@ -39,6 +41,7 @@ class PolicyEvidenceTraceService:
             task=trace_result.result.task,
             domain=trace_result.result.domain,
             top_k=compiled_packet.top_k,
+            compiled_packet_id=compiled_policy_packet_id(compiled_packet),
             task_type=compiled_packet.task_type,
             explicit_task_type=compiled_packet.explicit_task_type,
             profile_signals=list(compiled_packet.profile_signals),
@@ -59,6 +62,16 @@ class PolicyEvidenceTraceService:
 def create_policy_evidence_trace_service() -> PolicyEvidenceTraceService:
     """Build the default policy evidence trace service."""
     return PolicyEvidenceTraceService()
+
+
+def compiled_policy_packet_id(compiled_packet: CompiledPolicyPacket) -> str:
+    """Return a deterministic identity for a compiled policy packet."""
+    payload = json.dumps(
+        compiled_packet.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _trace_chunks(
@@ -333,4 +346,8 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
     return ordered
 
 
-__all__ = ["PolicyEvidenceTraceService", "create_policy_evidence_trace_service"]
+__all__ = [
+    "PolicyEvidenceTraceService",
+    "compiled_policy_packet_id",
+    "create_policy_evidence_trace_service",
+]

@@ -35,14 +35,20 @@ from policynim.types import (
     EvalRunResult,
     IngestResult,
     PolicyChunk,
+    PolicyConformanceMetric,
+    PolicyConformanceResult,
     PolicyConformanceTraceStep,
+    PolicyEvidenceTrace,
     PolicyGuidance,
     PolicyMetadata,
     PolicySelectionPacket,
     PreflightEvidenceTraceResult,
+    PreflightRegenerationRequest,
+    PreflightRegenerationResult,
     PreflightRequest,
     PreflightResult,
     PreflightTraceResult,
+    RegenerationAttempt,
     RouteRequest,
     RouteResult,
     RuntimeDecision,
@@ -461,6 +467,81 @@ class StubRuntimeEvidenceStore:
         self.closed = True
 
 
+class MockPolicyRegenerationService:
+    """Static regeneration service for CLI tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.last_request: PreflightRegenerationRequest | None = None
+
+    def regenerate(self, request: PreflightRegenerationRequest) -> PreflightRegenerationResult:
+        self.last_request = request
+        final_result = PreflightResult(
+            task=request.task,
+            domain=request.domain,
+            summary="Regenerated policy guidance.",
+            applicable_policies=[
+                PolicyGuidance(
+                    policy_id="AUTH-001",
+                    title="Auth Reviews",
+                    rationale="Cleanup logic must preserve revocation behavior.",
+                    citation_ids=["AUTH-1"],
+                )
+            ],
+            citations=[
+                Citation(
+                    policy_id="AUTH-001",
+                    title="Auth Reviews",
+                    path="policies/security/auth-review.md",
+                    section="Cleanup",
+                    lines="10-16",
+                    chunk_id="AUTH-1",
+                )
+            ],
+        )
+        conformance_result = PolicyConformanceResult(
+            backend=request.backend,
+            passed=True,
+            overall_score=1.0,
+            metrics=[
+                PolicyConformanceMetric(
+                    name="plan_completeness",
+                    score=1.0,
+                    passed=True,
+                )
+            ],
+        )
+        evidence_trace = PolicyEvidenceTrace(
+            task=request.task,
+            domain=request.domain,
+            top_k=request.top_k,
+            compiled_packet_id="packet-1",
+            task_type="feature_work",
+        )
+        return PreflightRegenerationResult(
+            request=request,
+            passed=True,
+            stop_reason="passed",
+            compiled_packet_id="packet-1",
+            final_result=final_result,
+            final_conformance_result=conformance_result,
+            evidence_trace=evidence_trace,
+            attempts=[
+                RegenerationAttempt(
+                    attempt_index=0,
+                    compiled_packet_id="packet-1",
+                    triggers=[],
+                    result=final_result,
+                    conformance_result=conformance_result,
+                    evidence_trace=evidence_trace,
+                )
+            ],
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _MockJSONModel:
     """Tiny JSON-emitting model used by CLI report tests."""
 
@@ -494,6 +575,8 @@ class MockEvalService:
         self.passed = passed
         self.launch_port: int | None = None
         self.started_ui = False
+        self.last_regenerate: bool | None = None
+        self.last_max_regenerations: int | None = None
 
     def run(
         self,
@@ -501,7 +584,11 @@ class MockEvalService:
         mode,
         backend: EvalBackend = "default",
         compare_rerank,
+        regenerate: bool = False,
+        max_regenerations: int = 1,
     ) -> EvalRunResult:
+        self.last_regenerate = regenerate
+        self.last_max_regenerations = max_regenerations
         passed_count = 2 if self.passed else 1
         return EvalRunResult(
             mode=mode,
@@ -956,6 +1043,33 @@ def test_eval_command_accepts_nemo_backend(monkeypatch) -> None:
     assert payload.backend == "nemo"
 
 
+def test_eval_command_passes_regeneration_options(monkeypatch) -> None:
+    service = MockEvalService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_eval_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "eval",
+            "--mode",
+            "offline",
+            "--backend",
+            "nemo",
+            "--regenerate",
+            "--max-regenerations",
+            "2",
+            "--headless",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.last_regenerate is True
+    assert service.last_max_regenerations == 2
+
+
 def test_eval_command_rejects_invalid_backend() -> None:
     result = runner.invoke(app, ["eval", "--backend", "not-a-backend", "--headless"])
 
@@ -1080,6 +1194,80 @@ def test_preflight_trace_command_prints_trace_wrapper(monkeypatch) -> None:
     assert service.preflight_calls == 1
     assert service.trace_calls == 1
     assert service.closed is True
+
+
+def test_preflight_regenerate_command_prints_regeneration_result(monkeypatch) -> None:
+    service = MockPolicyRegenerationService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_regeneration_service",
+        lambda settings, *, backend: service,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--task",
+            "refresh token cleanup",
+            "--domain",
+            "security",
+            "--top-k",
+            "3",
+            "--regenerate",
+            "--max-regenerations",
+            "2",
+            "--backend",
+            "nat",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = PreflightRegenerationResult.model_validate(json.loads(result.stdout))
+    assert payload.request.task == "refresh token cleanup"
+    assert payload.request.domain == "security"
+    assert payload.request.top_k == 3
+    assert payload.request.backend == "nat"
+    assert payload.request.max_regenerations == 2
+    assert payload.final_result.summary == "Regenerated policy guidance."
+    assert payload.evidence_trace.compiled_packet_id == "packet-1"
+    assert service.last_request is not None
+    assert service.last_request.backend == "nat"
+    assert service.closed is True
+
+
+def test_preflight_trace_regenerate_uses_regeneration_output(monkeypatch) -> None:
+    service = MockPolicyRegenerationService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_policy_regeneration_service",
+        lambda settings, *, backend: service,
+    )
+
+    result = runner.invoke(
+        app,
+        ["preflight", "--task", "refresh token cleanup", "--trace", "--regenerate"],
+    )
+
+    assert result.exit_code == 0
+    payload = PreflightRegenerationResult.model_validate(json.loads(result.stdout))
+    assert payload.evidence_trace.compiled_packet_id == "packet-1"
+    assert service.closed is True
+
+
+def test_preflight_regenerate_rejects_invalid_max_regenerations() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--task",
+            "refresh token cleanup",
+            "--regenerate",
+            "--max-regenerations",
+            "4",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "4" in result.output
 
 
 @pytest.mark.parametrize(

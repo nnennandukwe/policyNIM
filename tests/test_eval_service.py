@@ -272,6 +272,45 @@ def test_eval_service_nemo_backend_adds_preflight_conformance_results(
     assert run.metrics.conformance_score == 1.0
 
 
+def test_eval_service_regeneration_runs_for_preflight_cases_only(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(eval_workspace_dir=tmp_path / "workspace")
+    monkeypatch.setattr(
+        "policynim.services.eval._build_evidently_report",
+        lambda **kwargs: FakeReport(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._add_report_to_workspace",
+        lambda workspace_path, report, run_name: None,
+    )
+
+    result = EvalService(settings=settings).run(
+        mode="offline",
+        backend="nemo",
+        regenerate=True,
+        max_regenerations=1,
+        compare_rerank=False,
+    )
+
+    run = result.runs[0]
+    search_cases = [case for case in run.case_results if case.kind == "search"]
+    preflight_cases = [case for case in run.case_results if case.kind == "preflight"]
+    assert all(case.regeneration_result is None for case in search_cases)
+    assert all(case.conformance_result is None for case in search_cases)
+    assert all(case.regeneration_result is not None for case in preflight_cases)
+    assert all(
+        case.conformance_result is not None or case.actual_insufficient_context
+        for case in preflight_cases
+    )
+    assert all(
+        case.regeneration_result is not None
+        and case.regeneration_result.compiled_packet_id
+        == case.regeneration_result.evidence_trace.compiled_packet_id
+        for case in preflight_cases
+    )
+
+
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
         lancedb_uri=tmp_path / "caller-index",
@@ -339,7 +378,7 @@ def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_conformance_service",
-        lambda active_settings: FakeConformanceService(),
+        lambda active_settings, *, backend: FakeConformanceService(),
     )
     monkeypatch.setattr(
         "policynim.services.eval._build_evidently_report",

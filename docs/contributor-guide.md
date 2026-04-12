@@ -51,6 +51,10 @@ Core retrieval and grounding:
 - `POLICYNIM_LANCEDB_URI`
 - `POLICYNIM_LANCEDB_TABLE`
 - `POLICYNIM_DEFAULT_TOP_K`
+- `POLICYNIM_NVIDIA_CHAT_MODEL`
+- `POLICYNIM_NVIDIA_BASE_URL`
+- `POLICYNIM_NVIDIA_TIMEOUT_SECONDS`
+- `POLICYNIM_NVIDIA_MAX_RETRIES`
 
 Hosted MCP and beta portal:
 
@@ -76,6 +80,31 @@ Runtime rules, evidence, and eval UI:
 - `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS`
   default: `300`
 - `POLICYNIM_EVAL_UI_PORT`
+- `POLICYNIM_EVAL_WORKSPACE_DIR`
+
+Policy-backed regeneration reuses the same NVIDIA chat settings and eval
+workspace setting. It does not add a regeneration-specific environment variable
+or artifact directory.
+
+## Optional NVIDIA Eval Packages
+
+The default development install does not include NeMo Evaluator or NeMo Agent
+Toolkit evaluation packages. Install them only when you need the optional
+`nemo_evaluator` or `nat` backend paths:
+
+```bash
+uv sync --extra nvidia-eval --group test --group dev
+```
+
+The `nvidia-eval` extra pins `nemo-evaluator==0.2.5`,
+`nvidia-simple-evals==26.3`, and `nvidia-nat-eval==1.6.0`. The adapters import
+those packages lazily, so offline CI and the default local workflow do not need
+them.
+
+NeMo Evaluator Launcher is documented as a separate-environment orchestration
+path, not a project extra. The checked launcher versions pull transitive
+requirements that conflict with this repo's locked `httpx` and `evidently`
+versions.
 
 ## Default Model References
 
