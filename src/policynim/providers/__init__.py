@@ -7,6 +7,10 @@ from policynim.providers.nvidia import (
     NVIDIAPolicyConformanceEvaluator,
     NVIDIAReranker,
 )
+from policynim.providers.nvidia_eval import (
+    NeMoAgentToolkitPolicyConformanceEvaluator,
+    NeMoEvaluatorPolicyConformanceEvaluator,
+)
 
 __all__ = [
     "NVIDIAEmbedder",
@@ -14,4 +18,6 @@ __all__ = [
     "NVIDIAPolicyConformanceEvaluator",
     "NVIDIAPolicyCompiler",
     "NVIDIAReranker",
+    "NeMoAgentToolkitPolicyConformanceEvaluator",
+    "NeMoEvaluatorPolicyConformanceEvaluator",
 ]

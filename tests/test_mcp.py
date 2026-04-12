@@ -652,8 +652,10 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
             context: Sequence[ScoredChunk],
             *,
             compiled_packet=None,
+            regeneration_context=None,
         ) -> GeneratedPreflightDraft:
             del compiled_packet
+            del regeneration_context
             raise ProviderError("upstream timeout", failure_class="timeout")
 
     class StaticCompiler:

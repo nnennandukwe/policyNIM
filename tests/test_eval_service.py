@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -19,17 +21,6 @@ from policynim.types import (
     ScoredChunk,
     SearchResult,
 )
-
-
-class FakeReport:
-    """Minimal Evidently-like report stub."""
-
-    def __init__(self) -> None:
-        self.saved_paths: list[str] = []
-
-    def save_html(self, path: str) -> None:
-        Path(path).write_text("<html>report</html>", encoding="utf-8")
-        self.saved_paths.append(path)
 
 
 class FakeIngestService:
@@ -126,18 +117,8 @@ class FakeProcess:
         self.terminate_called = True
 
 
-def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_path: Path) -> None:
+def test_eval_service_offline_run_persists_two_rerank_modes(tmp_path: Path) -> None:
     settings = Settings(eval_workspace_dir=tmp_path / "workspace")
-    run_names: list[str] = []
-
-    monkeypatch.setattr(
-        "policynim.services.eval._build_evidently_report",
-        lambda **kwargs: FakeReport(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: run_names.append(run_name),
-    )
 
     result = EvalService(settings=settings).run(mode="offline")
 
@@ -181,7 +162,10 @@ def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_pat
     )
     assert persisted_preflight_trace.chunks
     assert persisted_preflight_trace.chunks[0].text is None
-    assert len(run_names) == 2
+    assert all(
+        "PolicyNIM Eval Report" in Path(run.report_html_path).read_text(encoding="utf-8")
+        for run in result.runs
+    )
 
 
 def test_eval_service_uses_original_suite_name_and_safe_artifact_slug(
@@ -208,15 +192,6 @@ def test_eval_service_uses_original_suite_name_and_safe_artifact_slug(
         encoding="utf-8",
     )
     monkeypatch.setattr("policynim.services.eval.resolve_eval_suite_path", lambda: suite_path)
-    run_names: list[str] = []
-    monkeypatch.setattr(
-        "policynim.services.eval._build_evidently_report",
-        lambda **kwargs: FakeReport(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: run_names.append(run_name),
-    )
 
     result = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace")).run(
         mode="offline",
@@ -226,24 +201,15 @@ def test_eval_service_uses_original_suite_name_and_safe_artifact_slug(
     assert result.suite_name == "../alt suite\\2026?"
     assert len(result.runs) == 1
     assert result.runs[0].metrics.case_count == 1
-    assert "../alt suite\\2026?" in run_names[0]
+    report_text = Path(result.runs[0].report_html_path).read_text(encoding="utf-8")
+    assert "../alt suite\\2026?" in report_text
     assert ".." not in Path(result.runs[0].result_json_path).name
     assert "/" not in Path(result.runs[0].result_json_path).name
     assert "\\" not in Path(result.runs[0].result_json_path).name
 
 
-def test_eval_service_nemo_backend_adds_preflight_conformance_results(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_eval_service_nemo_backend_adds_preflight_conformance_results(tmp_path: Path) -> None:
     settings = Settings(eval_workspace_dir=tmp_path / "workspace")
-    monkeypatch.setattr(
-        "policynim.services.eval._build_evidently_report",
-        lambda **kwargs: FakeReport(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: None,
-    )
 
     result = EvalService(settings=settings).run(
         mode="offline",
@@ -272,6 +238,48 @@ def test_eval_service_nemo_backend_adds_preflight_conformance_results(
     assert run.metrics.conformance_score == 1.0
 
 
+def test_eval_service_regeneration_runs_for_preflight_cases_only(tmp_path: Path) -> None:
+    settings = Settings(eval_workspace_dir=tmp_path / "workspace")
+
+    result = EvalService(settings=settings).run(
+        mode="offline",
+        backend="nemo",
+        regenerate=True,
+        max_regenerations=1,
+        compare_rerank=False,
+    )
+
+    run = result.runs[0]
+    search_cases = [case for case in run.case_results if case.kind == "search"]
+    preflight_cases = [case for case in run.case_results if case.kind == "preflight"]
+    assert all(case.regeneration_result is None for case in search_cases)
+    assert all(case.conformance_result is None for case in search_cases)
+    assert all(case.regeneration_result is not None for case in preflight_cases)
+    assert all(
+        case.conformance_result is not None or case.actual_insufficient_context
+        for case in preflight_cases
+    )
+    assert all(
+        case.regeneration_result is not None
+        and case.regeneration_result.compiled_packet_id
+        == case.regeneration_result.evidence_trace.compiled_packet_id
+        for case in preflight_cases
+    )
+    assert all(
+        chunk.text is None
+        for case in preflight_cases
+        if case.regeneration_result is not None
+        for chunk in case.regeneration_result.evidence_trace.chunks
+    )
+    assert all(
+        chunk.text is None
+        for case in preflight_cases
+        if case.regeneration_result is not None
+        for attempt in case.regeneration_result.attempts
+        for chunk in attempt.evidence_trace.chunks
+    )
+
+
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
         lancedb_uri=tmp_path / "caller-index",
@@ -290,14 +298,6 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         "policynim.services.eval._create_live_preflight_service",
         lambda active_settings, rerank_enabled: FakePreflightService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._build_evidently_report",
-        lambda **kwargs: FakeReport(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: None,
     )
 
     result = EvalService(settings=settings).run(
@@ -339,15 +339,7 @@ def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_conformance_service",
-        lambda active_settings: FakeConformanceService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._build_evidently_report",
-        lambda **kwargs: FakeReport(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._add_report_to_workspace",
-        lambda workspace_path, report, run_name: None,
+        lambda active_settings, *, backend: FakeConformanceService(),
     )
 
     result = EvalService(settings=settings).run(
@@ -373,7 +365,7 @@ def test_eval_service_start_ui_fails_when_process_exits_early(monkeypatch, tmp_p
     with pytest.raises(PolicyNIMError, match="exited before startup completed"):
         service.start_ui(port=8015)
 
-    assert (tmp_path / "workspace" / "ui" / "evidently.log").is_file()
+    assert (tmp_path / "workspace" / "ui" / "phoenix.log").is_file()
 
 
 def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
@@ -382,10 +374,14 @@ def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
     process = FakeProcess(returncodes=[None, None])
     port_checks = iter([False, True])
-    monkeypatch.setattr(
-        "policynim.services.eval.subprocess.Popen",
-        lambda *args, **kwargs: process,
-    )
+    popen_call: dict[str, object] = {}
+
+    def fake_popen(command, **kwargs):
+        popen_call["command"] = command
+        popen_call["env"] = kwargs["env"]
+        return process
+
+    monkeypatch.setattr("policynim.services.eval.subprocess.Popen", fake_popen)
     monkeypatch.setattr(
         "policynim.services.eval._is_local_port_reachable",
         lambda port: next(port_checks),
@@ -395,6 +391,13 @@ def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
     service.start_ui(port=8016)
 
     assert process.terminate_called is False
+    assert popen_call["command"] == ["phoenix", "serve"]
+    env = popen_call["env"]
+    assert isinstance(env, dict)
+    assert env["PHOENIX_WORKING_DIR"] == (tmp_path / "workspace" / "phoenix").as_posix()
+    assert env["PHOENIX_HOST"] == "127.0.0.1"
+    assert env["PHOENIX_PORT"] == "8016"
+    assert env["PHOENIX_PROJECT_NAME"] == "PolicyNIM Eval"
 
 
 def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
@@ -415,3 +418,82 @@ def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
         service.start_ui(port=8017)
 
     assert process.terminate_called is True
+
+
+def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
+    result = service.run(mode="offline", compare_rerank=False)
+
+    class FakePhoenixClient:
+        def __init__(self, *, base_url: str) -> None:
+            self.base_url = base_url
+            self.projects = FakePhoenixProjects()
+            self.spans = FakePhoenixSpans()
+            clients.append(self)
+
+    class FakePhoenixProjects:
+        def get(self, *, project_name: str) -> None:
+            raise RuntimeError(f"missing project {project_name}")
+
+        def create(self, *, name: str) -> dict[str, str]:
+            return {"name": name}
+
+    class FakePhoenixSpans:
+        def __init__(self) -> None:
+            self.logged_spans: list[dict[str, object]] = []
+            self.logged_annotations: list[dict[str, object]] = []
+            self.sync: bool | None = None
+
+        def log_spans(self, *, project_identifier: str, spans) -> None:
+            assert project_identifier == "PolicyNIM Eval"
+            self.logged_spans.extend(spans)
+
+        def log_span_annotations(self, *, span_annotations, sync: bool) -> None:
+            self.sync = sync
+            self.logged_annotations.extend(span_annotations)
+
+    clients: list[FakePhoenixClient] = []
+    fake_client_module = types.ModuleType("phoenix.client")
+    setattr(fake_client_module, "Client", FakePhoenixClient)
+    monkeypatch.setitem(sys.modules, "phoenix.client", fake_client_module)
+
+    service.publish_to_ui(result, port=8123)
+
+    assert clients[0].base_url == "http://127.0.0.1:8123"
+    spans = clients[0].spans.logged_spans
+    annotations = clients[0].spans.logged_annotations
+    assert len(spans) == len(result.runs[0].case_results)
+    assert clients[0].spans.sync is True
+    assert {span["span_kind"] for span in spans} == {"CHAIN"}
+    assert {annotation["name"] for annotation in annotations} >= {
+        "case_passed",
+        "expected_chunk_recall",
+        "expected_policy_recall",
+        "insufficient_context_correct",
+    }
+    first_contexts = [span["context"] for span in spans]
+
+    service.publish_to_ui(result, port=8123)
+
+    assert [span["context"] for span in clients[1].spans.logged_spans] == first_contexts
+
+
+def test_eval_service_publish_to_ui_surfaces_phoenix_endpoint_and_log_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
+    result = service.run(mode="offline", compare_rerank=False)
+
+    def fail_publish(result, *, endpoint: str) -> None:
+        raise RuntimeError(endpoint)
+
+    monkeypatch.setattr("policynim.services.eval._publish_eval_result_to_phoenix", fail_publish)
+
+    with pytest.raises(PolicyNIMError, match="http://127.0.0.1:8124") as exc_info:
+        service.publish_to_ui(result, port=8124)
+
+    assert "phoenix.log" in str(exc_info.value)

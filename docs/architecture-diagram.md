@@ -27,10 +27,13 @@ flowchart LR
         IngestSvc["IngestService"]
         SearchSvc["SearchService"]
         RouterSvc["PolicyRouterService"]
+        CompilerSvc["PolicyCompilerService"]
         PreflightSvc["PreflightService"]
+        RegenSvc["PolicyRegenerationService"]
         RuntimeDecisionSvc["RuntimeDecisionService"]
         RuntimeExecSvc["RuntimeExecutionService"]
         EvalSvc["EvalService"]
+        EvidenceTraceSvc["PolicyEvidenceTraceService"]
         DumpSvc["IndexDumpService"]
         HealthSvc["RuntimeHealthService"]
     end
@@ -57,7 +60,7 @@ flowchart LR
         RuntimeRules["runtime_rules.json"]
         RuntimeEvidenceDB["runtime_evidence.sqlite3"]
         Artifacts["data/ artifacts"]
-        UI["Evidently UI"]
+        UI["Phoenix UI"]
     end
 
     subgraph External["NVIDIA-hosted APIs"]
@@ -70,7 +73,9 @@ flowchart LR
     CLI --> IngestSvc
     CLI --> SearchSvc
     CLI --> RouterSvc
+    CLI --> CompilerSvc
     CLI --> PreflightSvc
+    CLI --> RegenSvc
     CLI --> EvalSvc
     CLI --> DumpSvc
     MCP --> SearchSvc
@@ -85,21 +90,28 @@ flowchart LR
     IngestSvc --> NvidiaAdapter
     SearchSvc --> NvidiaAdapter
     RouterSvc --> NvidiaAdapter
+    CompilerSvc --> NvidiaAdapter
     PreflightSvc --> NvidiaAdapter
+    RegenSvc --> NvidiaAdapter
     RuntimeDecisionSvc --> LanceStore
     RuntimeExecSvc --> RuntimeDecisionSvc
     RuntimeExecSvc --> RuntimeEvidenceStore
     IngestSvc --> LanceStore
     SearchSvc --> LanceStore
     RouterSvc --> LanceStore
+    CompilerSvc --> LanceStore
     PreflightSvc --> LanceStore
     PreflightSvc --> RouterSvc
+    PreflightSvc --> CompilerSvc
+    RegenSvc --> CompilerSvc
+    RegenSvc --> EvidenceTraceSvc
     DumpSvc --> LanceStore
     HealthSvc --> LanceStore
 
     EvalSvc --> IngestSvc
     EvalSvc --> SearchSvc
     EvalSvc --> PreflightSvc
+    EvalSvc --> RegenSvc
     EvalSvc --> Artifacts
     EvalSvc --> UI
     RuntimeExecSvc --> RuntimeEvidenceDB
@@ -111,7 +123,9 @@ flowchart LR
     IngestSvc -. typed requests and results .-> Types
     SearchSvc -. typed requests and results .-> Types
     RouterSvc -. typed requests and results .-> Types
+    CompilerSvc -. typed requests and results .-> Types
     PreflightSvc -. typed requests and results .-> Types
+    RegenSvc -. typed requests and results .-> Types
     RuntimeDecisionSvc -. typed requests and results .-> Types
     RuntimeExecSvc -. typed requests and results .-> Types
     EvalSvc -. typed requests and results .-> Types
@@ -119,7 +133,9 @@ flowchart LR
     IngestSvc -. validated settings .-> Settings
     SearchSvc -. validated settings .-> Settings
     RouterSvc -. validated settings .-> Settings
+    CompilerSvc -. validated settings .-> Settings
     PreflightSvc -. validated settings .-> Settings
+    RegenSvc -. validated settings .-> Settings
     RuntimeDecisionSvc -. validated settings .-> Settings
     RuntimeExecSvc -. validated settings .-> Settings
     EvalSvc -. validated settings .-> Settings
@@ -127,12 +143,14 @@ flowchart LR
     IngestSvc -. contracts .-> Contracts
     SearchSvc -. contracts .-> Contracts
     RouterSvc -. contracts .-> Contracts
+    CompilerSvc -. contracts .-> Contracts
     PreflightSvc -. contracts .-> Contracts
+    RegenSvc -. contracts .-> Contracts
     RuntimeDecisionSvc -. contracts .-> Contracts
     RuntimeExecSvc -. contracts .-> Contracts
 
     class CLI,MCP iface
-    class IngestSvc,SearchSvc,RouterSvc,PreflightSvc,RuntimeDecisionSvc,RuntimeExecSvc,EvalSvc,DumpSvc,HealthSvc service
+    class IngestSvc,SearchSvc,RouterSvc,CompilerSvc,PreflightSvc,RegenSvc,RuntimeDecisionSvc,RuntimeExecSvc,EvalSvc,EvidenceTraceSvc,DumpSvc,HealthSvc service
     class IngestPkg,NvidiaAdapter,LanceStore,RuntimeEvidenceStore adapter
     class Settings,Types,Contracts shared
     class Policies,EvalSuite,RuntimeRules,RuntimeEvidenceDB local
@@ -171,11 +189,22 @@ flowchart TB
     subgraph Preflight["Grounded Preflight"]
         direction LR
         Task["Coding task"] --> PreflightRoute["Route selected evidence"]
-        PreflightRoute --> Generate["Generate grounded draft"]
+        PreflightRoute --> CompilePacket["Compile policy packet"]
+        CompilePacket --> Generate["Generate grounded draft"]
         Generate --> Validate["Validate cited chunk IDs"]
         Validate --> Enough{"Grounded enough?"}
         Enough -- yes --> PreflightJSON["PreflightResult JSON"]
         Enough -- no --> Insufficient["insufficient_context=true"]
+    end
+
+    subgraph Regeneration["Opt-In Policy Regeneration"]
+        direction LR
+        RegenStart["PreflightRegenerationRequest"] --> CompileOnce["Compile once"]
+        CompileOnce --> Attempt["Generate attempt"]
+        Attempt --> Judge["Evaluate conformance"]
+        Judge --> RetryDecision{"Retry?"}
+        RetryDecision -- typed triggers --> Attempt
+        RetryDecision -- stop --> RegenJSON["PreflightRegenerationResult JSON"]
     end
 
     subgraph Route["Policy Route Request"]
@@ -206,14 +235,17 @@ flowchart TB
     subgraph Eval["Evaluation"]
         direction LR
         EvalSuite["Bundled eval suite"] --> EvalRun["Run offline or live evals"]
+        EvalRun --> EvalRegen["Regenerate preflight cases when requested"]
         EvalRun --> Compare["Compare rerank on and off"]
         Compare --> Reports["JSON artifacts and HTML reports"]
-        Reports --> UI["Optional Evidently UI"]
+        Reports --> UI["Optional Phoenix UI"]
     end
 
     Index -. vector lookup .-> DenseSearch
     Index -. vector lookup .-> DenseRoute
     PreflightRoute -. task-aware selection .-> SelectPolicies
+    CompilePacket -. selected evidence .-> SelectPolicies
+    RegenStart -. reuse preflight contract .-> Task
     RuntimeRules -. compiled rules .-> LoadRules
     Index -. indexed evidence .-> MatchRules
     RuntimeEvidenceDB -. persisted evidence .-> Persist
@@ -224,18 +256,20 @@ flowchart TB
     SearchRerank --> RerankAPI["NVIDIA reranking"]
     RouteRerank --> RerankAPI
     Generate --> GroundAPI["NVIDIA grounded generation"]
+    Attempt --> GroundAPI
+    Judge --> JudgeAPI["NVIDIA or optional package-gated judging"]
 
-    class Policies,Query,Task,RouteTask,EvalSuite input
-    class Parse,Chunk,EmbedDocs,EmbedQuery,DenseSearch,DomainFilter,SearchRerank,ProfileTask,EmbedRouteTask,DenseRoute,RouteRerank,SelectPolicies,PreflightRoute,Generate,Validate,EvalRun,Compare,Reports step
+    class Policies,Query,Task,RouteTask,EvalSuite,RegenStart input
+    class Parse,Chunk,EmbedDocs,EmbedQuery,DenseSearch,DomainFilter,SearchRerank,ProfileTask,EmbedRouteTask,DenseRoute,RouteRerank,SelectPolicies,PreflightRoute,CompilePacket,Generate,Validate,CompileOnce,Attempt,Judge,EvalRun,EvalRegen,Compare,Reports step
     class Index store
     class Action input
     class LoadRules,MatchRules,Decision,Execute,Persist step
-    class Embeddings,RerankAPI,GroundAPI nvidia
-    class Enough decision
+    class Embeddings,RerankAPI,GroundAPI,JudgeAPI nvidia
+    class Enough,RetryDecision decision
     class HealthRoute input
     class HealthRuntime step
     class HealthJSON result
-    class SearchJSON,RouteJSON,PreflightJSON,Insufficient,UI result
+    class SearchJSON,RouteJSON,PreflightJSON,RegenJSON,Insufficient,UI result
 ```
 
 ## Reading Notes

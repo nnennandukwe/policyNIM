@@ -738,9 +738,47 @@ class PreflightResult(StrictModel):
     insufficient_context: bool = False
 
 
-EvalBackend = Literal["default", "nemo"]
+EvalBackend = Literal["default", "nemo", "nemo_evaluator", "nat"]
+RegenerationBackend = Literal["nemo", "nemo_evaluator", "nat"]
 EvalKind = Literal["search", "preflight"]
 EvalExecutionMode = Literal["offline", "live"]
+RegenerationTriggerKind = Literal[
+    "required_steps",
+    "forbidden_patterns",
+    "architectural_expectations",
+    "test_expectations",
+    "style_constraints",
+    "citation_support",
+    "final_adherence",
+    "trajectory_adherence",
+    "insufficient_context",
+]
+RegenerationStopReason = Literal[
+    "passed",
+    "max_regenerations",
+    "no_material_trigger",
+    "insufficient_context",
+]
+
+
+class RegenerationTrigger(StrictModel):
+    """One typed reason for a regeneration attempt."""
+
+    kind: RegenerationTriggerKind
+    metric_name: str = Field(min_length=1)
+    failure_reasons: list[str] = Field(default_factory=list)
+    constraint_ids: list[str] = Field(default_factory=list)
+    chunk_ids: list[str] = Field(default_factory=list)
+
+
+class RegenerationContext(StrictModel):
+    """Generator context for one retry attempt."""
+
+    attempt_index: int = Field(ge=1)
+    max_regenerations: int = Field(ge=1, le=3)
+    compiled_packet_id: str = Field(min_length=1)
+    previous_result: PreflightResult
+    triggers: list[RegenerationTrigger] = Field(default_factory=list)
 
 
 class PolicyConformanceMetric(StrictModel):
@@ -884,6 +922,7 @@ class PolicyEvidenceTrace(StrictModel):
     task: str
     domain: str | None = None
     top_k: int
+    compiled_packet_id: str = Field(min_length=1)
     task_type: TaskType
     explicit_task_type: TaskType | None = None
     profile_signals: list[str] = Field(default_factory=list)
@@ -902,6 +941,41 @@ class PreflightEvidenceTraceResult(StrictModel):
 
     result: PreflightResult
     evidence_trace: PolicyEvidenceTrace
+
+
+class RegenerationAttempt(StrictModel):
+    """One generation and conformance pass inside a bounded regeneration loop."""
+
+    attempt_index: int = Field(ge=0)
+    compiled_packet_id: str = Field(min_length=1)
+    triggers: list[RegenerationTrigger] = Field(default_factory=list)
+    result: PreflightResult
+    conformance_result: PolicyConformanceResult | None = None
+    evidence_trace: PolicyEvidenceTrace
+
+
+class PreflightRegenerationRequest(StrictModel):
+    """Request for opt-in policy-backed preflight regeneration."""
+
+    task: str = Field(min_length=1)
+    domain: str | None = None
+    top_k: TopK = DEFAULT_TOP_K
+    backend: RegenerationBackend = "nemo"
+    max_regenerations: int = Field(default=1, ge=1, le=3)
+    include_chunk_text: bool = False
+
+
+class PreflightRegenerationResult(StrictModel):
+    """Typed result for a bounded policy-backed regeneration loop."""
+
+    request: PreflightRegenerationRequest
+    passed: bool
+    stop_reason: RegenerationStopReason
+    compiled_packet_id: str = Field(min_length=1)
+    final_result: PreflightResult
+    final_conformance_result: PolicyConformanceResult | None = None
+    evidence_trace: PolicyEvidenceTrace
+    attempts: list[RegenerationAttempt] = Field(default_factory=list)
 
 
 class EvalCase(StrictModel):
@@ -956,6 +1030,7 @@ class EvalCaseResult(StrictModel):
     actual_summary: str | None = None
     conformance_result: PolicyConformanceResult | None = None
     evidence_trace: PolicyEvidenceTrace | None = None
+    regeneration_result: PreflightRegenerationResult | None = None
     metrics: EvalCaseMetrics
 
 

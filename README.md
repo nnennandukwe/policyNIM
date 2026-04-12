@@ -38,9 +38,12 @@ PolicyNIM currently ships with two main user-facing surfaces:
   fail-closed fallback.
 - Opt-in preflight evidence traces that link chunks, selected policies, compiled
   constraints, generated guidance, and conformance checks.
+- Opt-in policy-backed regeneration for preflight and eval preflight cases,
+  reusing the same compiled packet and typed conformance failures as retry
+  triggers.
 - Eval backend selection with optional policy-conformance scoring for compiled
   plans and preflight outputs, with compact traces embedded in eval result
-  artifacts.
+  artifacts and local Phoenix reporting for non-headless runs.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
@@ -106,10 +109,13 @@ uv run policynim route --task "Implement a refresh-token cleanup background job"
 uv run policynim compile --task "Implement a refresh-token cleanup background job" --top-k 5
 uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5
 uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5 --trace
+uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5 --regenerate --backend nemo
 ```
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
-templates, runtime settings, and contributor quality gates.
+templates, runtime settings, optional NVIDIA eval extras, and contributor quality
+gates. The launcher path is installable in-project with
+`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`.
 
 Use [docs/workflows.md](docs/workflows.md) for the CLI, MCP, runtime, eval, and
 troubleshooting handbook.

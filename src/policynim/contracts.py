@@ -18,6 +18,7 @@ from policynim.types import (
     PolicyConformanceRequest,
     PolicySelectionPacket,
     PreflightRequest,
+    RegenerationContext,
     RuntimeActionRequest,
     RuntimeDecisionResult,
     RuntimeExecutionEvidenceRecord,
@@ -60,6 +61,7 @@ class Generator(Protocol):
         context: Sequence[ScoredChunk],
         *,
         compiled_packet: CompiledPolicyPacket | None = None,
+        regeneration_context: RegenerationContext | None = None,
     ) -> GeneratedPreflightDraft:
         """Generate a grounded preflight draft."""
         ...

@@ -36,10 +36,16 @@ constraints, not setup mistakes.
   JSON logs for auth rejects and MCP tool calls, but there is no tracing or
   metrics pipeline yet.
 
-### NVIDIA Dependency For Live Retrieval And Live Conformance
+### NVIDIA Dependency For Live Retrieval, Conformance, And Regeneration
 
 - `ingest`, `search`, `route`, `compile`, `preflight`, live eval mode, and live
   `eval --backend nemo` depend on NVIDIA-hosted APIs.
+- `preflight --regenerate` and `eval --regenerate` require a conformance-capable
+  backend: `nemo`, `nemo_evaluator`, or `nat`.
+- `nemo_evaluator` and `nat` are lazy optional package-gated paths. Install the
+  pinned project extra with `uv sync --extra nvidia-eval` before using them.
+- The NeMo Evaluator Launcher path requires the additional
+  `nvidia-eval-launcher` extra and the project `httpx==0.27.2` pin.
 - There is no offline fallback model path for those live retrieval workflows.
 - Runtime failures related to missing credentials or provider access remain
   explicit operator errors.
@@ -49,6 +55,8 @@ constraints, not setup mistakes.
 - Default CI runs lint and offline-safe tests only.
 - CI does not exercise live NVIDIA embeddings, reranking, grounded generation, or
   end-to-end MCP flows against hosted services.
+- CI does not require NeMo Evaluator SDK or NeMo Agent Toolkit packages; optional
+  package paths use fake/import-injected tests.
 - Live-provider and Railway-hosted verification remain manual or opt-in local workflows.
 
 ### Retrieval Is Still Narrow
@@ -74,7 +82,13 @@ constraints, not setup mistakes.
 - The system intentionally prefers no grounded answer over a fabricated one.
 - `preflight --trace` can show which chunks, selected policies, and compiled
   constraints were retained before the fail-closed result, including retained
-  chunk text, but it does not retry or regenerate the answer.
+  chunk text.
+- `preflight --regenerate` can retry from typed conformance failures, but it is
+  bounded to at most three regenerations and preserves the same compiled packet,
+  retained chunks, and citation IDs across attempts.
+- Regeneration is not a generic repair agent. It does not add new retrieval,
+  change policy selection, call MCP tools, or use loose prose feedback as retry
+  control flow.
 
 ### Evaluation Is Gold-Case Driven
 
@@ -82,12 +96,17 @@ constraints, not setup mistakes.
 - It is useful for regression detection, not for benchmarking broad model quality.
 - The default eval backend checks recall and insufficient-context behavior without
   LLM-as-judge scoring.
-- The `nemo` eval backend adds policy-conformance checks for preflight cases, but
-  it remains a narrow conformance signal rather than a broad benchmark of prose
-  quality or policy nuance.
+- The `nemo`, `nemo_evaluator`, and `nat` eval backends add policy-conformance
+  checks for preflight cases, but they remain narrow conformance signals rather
+  than broad benchmarks of prose quality or policy nuance.
 - Eval JSON artifacts include evidence traces for preflight cases only. They are
   compact by default, omit retained chunk text, and are not a persistent tracing
   backend, database, or generic workflow replay system.
+- Non-headless eval publishes synthetic root spans and code annotations to local
+  Phoenix, but Phoenix is not an always-on production trace database for
+  PolicyNIM.
+- `eval --regenerate` writes `regeneration_result` only for preflight cases.
+  Search cases keep `regeneration_result=null`.
 
 ### No Separate Review Or Approval Layer
 

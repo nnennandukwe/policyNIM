@@ -13,7 +13,8 @@ reference that used to live in the root README.
 - `policynim route --task "..."`
 - `policynim compile --task "..."`
 - `policynim preflight --task "..."`
-- `policynim eval --mode offline|live [--backend default|nemo] [--headless] [--no-compare-rerank]`
+- `policynim preflight --task "..." [--trace] [--regenerate] [--max-regenerations 1] [--backend nemo|nemo_evaluator|nat]`
+- `policynim eval --mode offline|live [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
@@ -176,6 +177,47 @@ selected policies, compiled constraints, generated output links, and trace steps
 Interactive preflight traces include retained chunk text. They do not add a new
 artifact directory or call NVIDIA beyond the normal preflight route.
 
+Add `--regenerate` when you want a bounded policy-backed retry loop:
+
+```bash
+uv run policynim preflight \
+  --task "Implement a refresh-token cleanup background job" \
+  --top-k 5 \
+  --regenerate \
+  --max-regenerations 1 \
+  --backend nemo
+```
+
+`preflight --regenerate` returns a `PreflightRegenerationResult`. The loop
+compiles policy evidence once, keeps the same retained chunk set and
+`compiled_packet_id`, evaluates conformance, and retries only from typed failed
+metrics such as `required_steps`, `test_expectations`, or `citation_support`.
+`--max-regenerations` accepts `1..3`; the default is one retry after the initial
+generation.
+
+`--backend nemo` uses the existing direct NVIDIA/Nemotron conformance path.
+`--backend nemo_evaluator` and `--backend nat` are optional package-gated paths:
+
+```bash
+uv sync --extra nvidia-eval
+```
+
+The optional `nvidia-eval` extra installs the pinned NeMo Evaluator SDK,
+`nvidia-simple-evals`, and `nvidia-nat-eval` packages used to gate those adapter
+paths. If the packages are not installed, the command fails with a
+`ConfigurationError` that names the missing extra.
+
+Install the in-project launcher stack only when you need launcher-managed
+evaluator runs:
+
+```bash
+uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev
+```
+
+The launcher extra pins `nemo-evaluator-launcher==0.2.4` and
+`nvidia-nat[eval]==1.6.0`. PolicyNIM keeps `httpx==0.27.2` to match that stack,
+and default CI does not sync the launcher extra.
+
 ### 7. Run Evaluations
 
 ```bash
@@ -185,12 +227,18 @@ uv run policynim eval
 Default behavior:
 
 - runs the bundled eval suite in `offline` mode
-- uses the `default` eval backend unless `--backend nemo` is provided
+- uses the `default` eval backend unless another backend is provided
 - executes rerank-enabled and rerank-disabled runs
 - writes JSON artifacts and HTML reports under `data/evals/workspace`
 - embeds compact `PolicyEvidenceTrace` records in preflight eval case JSON
   artifacts
-- starts the local Evidently UI on `http://localhost:8001`
+- starts the local Phoenix UI on `http://localhost:8001` and publishes one
+  synthetic root span per eval case with code annotations
+
+Phoenix stores its working data under `data/evals/workspace/phoenix` by default.
+Startup logs go to `data/evals/workspace/ui/phoenix.log`. Set
+`POLICYNIM_EVAL_WORKSPACE_DIR` or `POLICYNIM_EVAL_UI_PORT` to change those
+locations without adding Phoenix-specific settings.
 
 Useful variants:
 
@@ -198,6 +246,7 @@ Useful variants:
 uv run policynim eval --headless
 uv run policynim eval --no-compare-rerank
 uv run policynim eval --backend nemo --headless
+uv run policynim eval --backend nemo --regenerate --headless
 uv run policynim eval --mode live
 uv run policynim eval --mode live --backend nemo --headless
 ```
@@ -207,14 +256,22 @@ it does not overwrite the normal runtime index.
 
 `--backend nemo` adds policy-conformance scoring for preflight eval cases. In
 offline mode it uses deterministic local fixtures; in live mode it reuses the
-configured NVIDIA chat model for final-adherence judgment.
+configured NVIDIA chat model for final-adherence judgment. `nemo_evaluator` and
+`nat` are accepted backend values for package-gated evaluator paths; offline eval
+keeps those paths deterministic and does not import or call live NVIDIA
+evaluation packages.
 
 Search eval cases keep `evidence_trace=null`; preflight eval cases include the
 trace used for conformance and debugging. Eval traces keep chunk IDs, paths,
 sections, line spans, scores, selected policies, constraints, and output links,
 but omit retained chunk text to keep artifacts compact by default.
 
-### 6. Run The MCP Server
+`eval --regenerate` applies only to preflight cases. Search cases keep
+`regeneration_result=null`; preflight cases record the full
+`PreflightRegenerationResult` with attempts, stop reason, final result,
+conformance result, and evidence traces.
+
+### 8. Run The MCP Server
 
 ```bash
 uv run policynim mcp --transport stdio
@@ -389,6 +446,7 @@ PolicyNIM keeps the retrieval stack explicit:
 7. generate grounded guidance from routed evidence and compiled constraints
 8. validate every citation against retrieved chunks before returning results
 9. optionally score policy conformance during `eval --backend nemo`
+10. optionally regenerate preflight output from typed conformance failures
 
 The system is designed to fail closed:
 

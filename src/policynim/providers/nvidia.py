@@ -34,6 +34,7 @@ from policynim.types import (
     PolicyConformanceRequest,
     PolicySelectionPacket,
     PreflightRequest,
+    RegenerationContext,
     ScoredChunk,
 )
 
@@ -360,9 +361,15 @@ class NVIDIAGenerator(Generator):
         context: Sequence[ScoredChunk],
         *,
         compiled_packet: CompiledPolicyPacket | None = None,
+        regeneration_context: RegenerationContext | None = None,
     ) -> GeneratedPreflightDraft:
         """Generate a grounded preflight draft from retrieved context."""
-        messages = _build_generation_messages(request, context, compiled_packet=compiled_packet)
+        messages = _build_generation_messages(
+            request,
+            context,
+            compiled_packet=compiled_packet,
+            regeneration_context=regeneration_context,
+        )
         content = _request_chat_completion(
             self._client,
             model=self._model,
@@ -709,6 +716,7 @@ def _build_generation_messages(
     context: Sequence[ScoredChunk],
     *,
     compiled_packet: CompiledPolicyPacket | None,
+    regeneration_context: RegenerationContext | None = None,
 ) -> list[ChatCompletionMessageParam]:
     system_prompt = (
         "You are PolicyNIM's grounded policy synthesis engine.\n"
@@ -738,6 +746,9 @@ def _build_generation_messages(
         "keep the lists empty.\n"
         "- When compiled policy constraints are provided, use them as the main "
         "planning and implementation requirements.\n"
+        "- When regeneration context is provided, revise only the fields implicated "
+        "by the typed triggers and keep all citations grounded in the provided "
+        "chunk IDs.\n"
         "- Keep the summary concise and task-specific."
     )
     compiled_constraints = (
@@ -751,6 +762,8 @@ def _build_generation_messages(
         f"Target top_k: {request.top_k}\n"
         "Compiled policy constraints:\n"
         f"{compiled_constraints}\n"
+        "Regeneration context:\n"
+        f"{_format_regeneration_context(regeneration_context)}\n"
         "Retrieved context:\n"
         f"{_format_generation_context(context)}"
     )
@@ -758,6 +771,13 @@ def _build_generation_messages(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+
+
+def _format_regeneration_context(regeneration_context: RegenerationContext | None) -> str:
+    if regeneration_context is None:
+        return "(no regeneration context provided)"
+
+    return regeneration_context.model_dump_json(indent=2)
 
 
 def _format_generation_context(context: Sequence[ScoredChunk]) -> str:
