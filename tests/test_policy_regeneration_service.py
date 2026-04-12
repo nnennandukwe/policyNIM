@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import pytest
 
 from policynim.errors import ProviderError
+from policynim.providers.nvidia_guardrails import NeMoGuardrailsPreflightGenerator
 from policynim.services.evidence_trace import compiled_policy_packet_id
 from policynim.services.regeneration import (
     PolicyRegenerationService,
@@ -92,6 +93,59 @@ def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
     assert result.evidence_trace.compiled_packet_id == expected_packet_id
     assert result.evidence_trace.chunks[0].text is None
     assert conformance.backends == ["nemo", "nemo"]
+
+
+def test_regeneration_guardrails_wrapper_preserves_retry_context() -> None:
+    packet = make_compiled_packet()
+    base_generator = FakeGenerator(
+        [
+            make_draft(summary="Initial preflight."),
+            make_draft(summary="Regenerated preflight."),
+        ]
+    )
+    rails = PassingRails()
+    guardrails_generator = NeMoGuardrailsPreflightGenerator(
+        base_generator=base_generator,
+        rails=rails,
+    )
+    service = PolicyRegenerationService(
+        compiler_service=FakeCompilerService(packet=packet, context=[make_chunk()]),
+        generator=guardrails_generator,
+        conformance_service=FakeConformanceService(
+            [
+                make_conformance_result(
+                    passed=False,
+                    metrics=[
+                        PolicyConformanceMetric(
+                            name="plan_completeness",
+                            score=0.0,
+                            passed=False,
+                            failure_reasons=["required step was missing"],
+                        )
+                    ],
+                ),
+                make_conformance_result(passed=True),
+            ]
+        ),
+    )
+
+    result = service.regenerate(
+        PreflightRegenerationRequest(
+            task="fix backend logging",
+            top_k=2,
+            max_regenerations=1,
+        )
+    )
+
+    expected_packet_id = compiled_policy_packet_id(packet)
+    assert result.passed is True
+    assert len(base_generator.calls) == 2
+    retry_context = base_generator.calls[1].regeneration_context
+    assert retry_context is not None
+    assert retry_context.compiled_packet_id == expected_packet_id
+    assert retry_context.triggers[0].chunk_ids == ["BACKEND-1"]
+    assert base_generator.calls[1].compiled_packet is packet
+    assert len(rails.calls) == 2
 
 
 def test_regeneration_can_include_chunk_text_for_debug_traces() -> None:
@@ -355,6 +409,25 @@ class FakeConformanceService:
 
     def close(self) -> None:
         self.closed = True
+
+
+class PassingRails:
+    """Guardrails double that returns the draft content unchanged."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[dict[str, str]]] = []
+
+    def check(
+        self,
+        messages: list[dict[str, str]],
+        rail_types: Sequence[object] | None = None,
+    ) -> object:
+        self.calls.append(messages)
+        return type(
+            "RailResult",
+            (),
+            {"status": "passed", "content": messages[0]["content"]},
+        )()
 
 
 def make_chunk(chunk_id: str = "BACKEND-1") -> ScoredChunk:
