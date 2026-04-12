@@ -12,6 +12,7 @@ from policynim.services.eval import EvalService
 from policynim.settings import Settings
 from policynim.types import (
     CompiledPolicyPacket,
+    EvalModeRunResult,
     PolicyMetadata,
     PreflightResult,
     PreflightTraceResult,
@@ -148,11 +149,38 @@ def test_eval_service_offline_run_persists_two_rerank_modes(monkeypatch, tmp_pat
         for run in result.runs
         for case_result in run.case_results
     )
+    assert all(
+        case_result.evidence_trace is None
+        for run in result.runs
+        for case_result in run.case_results
+        if case_result.kind == "search"
+    )
+    assert any(
+        case_result.evidence_trace is not None
+        for run in result.runs
+        for case_result in run.case_results
+        if case_result.kind == "preflight"
+    )
     assert result.comparison is not None
     assert "preflight-refresh-token-cleanup" in result.comparison.improved_case_ids
     assert "search-refresh-token-cleanup" in result.comparison.improved_case_ids
     assert all(Path(run.result_json_path).is_file() for run in result.runs)
     assert all(Path(run.report_html_path).is_file() for run in result.runs)
+    persisted = EvalModeRunResult.model_validate(
+        json.loads(Path(result.runs[0].result_json_path).read_text(encoding="utf-8"))
+    )
+    assert any(
+        case.evidence_trace is not None
+        for case in persisted.case_results
+        if case.kind == "preflight"
+    )
+    persisted_preflight_trace = next(
+        case.evidence_trace
+        for case in persisted.case_results
+        if case.kind == "preflight" and case.evidence_trace is not None
+    )
+    assert persisted_preflight_trace.chunks
+    assert persisted_preflight_trace.chunks[0].text is None
     assert len(run_names) == 2
 
 
@@ -229,7 +257,16 @@ def test_eval_service_nemo_backend_adds_preflight_conformance_results(
     search_cases = [case for case in run.case_results if case.kind == "search"]
     preflight_cases = [case for case in run.case_results if case.kind == "preflight"]
     assert all(case.conformance_result is None for case in search_cases)
+    assert all(case.evidence_trace is None for case in search_cases)
     assert any(case.conformance_result is not None for case in preflight_cases)
+    assert all(case.evidence_trace is not None for case in preflight_cases)
+    conformance_trace = next(
+        case.evidence_trace
+        for case in preflight_cases
+        if case.evidence_trace is not None and case.evidence_trace.conformance_checks
+    )
+    assert conformance_trace.conformance_checks[-1].constraint_ids
+    assert conformance_trace.conformance_checks[-1].chunk_ids
     assert run.metrics.conformance_case_count == 2
     assert run.metrics.conformance_passed_count == 2
     assert run.metrics.conformance_score == 1.0

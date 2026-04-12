@@ -784,6 +784,8 @@ class PolicyConformanceResult(StrictModel):
     final_adherence_rationale: str | None = None
     trajectory_adherence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     trajectory_adherence_rationale: str | None = None
+    constraint_ids: list[str] = Field(default_factory=list)
+    chunk_ids: list[str] = Field(default_factory=list)
     failure_reasons: list[str] = Field(default_factory=list)
 
 
@@ -803,6 +805,103 @@ class PreflightTraceResult(StrictModel):
     compiled_packet: CompiledPolicyPacket
     retained_context: list[ScoredChunk] = Field(default_factory=list)
     trace_steps: list[PolicyConformanceTraceStep] = Field(default_factory=list)
+
+
+PolicyEvidenceTraceConstraintCategory = Literal[
+    "required_steps",
+    "forbidden_patterns",
+    "architectural_expectations",
+    "test_expectations",
+    "style_constraints",
+]
+PolicyEvidenceTraceOutputField = Literal[
+    "plan_steps",
+    "implementation_guidance",
+    "review_flags",
+    "tests_required",
+    "citations",
+]
+
+
+class PolicyEvidenceTraceChunk(StrictModel):
+    """One retained policy chunk available to the traced preflight run."""
+
+    chunk_id: str
+    policy_id: str
+    policy_title: str
+    domain: str
+    path: str
+    section: str
+    lines: str
+    text: str | None = None
+    score: float | None = None
+
+
+class PolicyEvidenceTracePolicy(StrictModel):
+    """One selected policy and the chunk IDs supporting its selection."""
+
+    policy_id: str
+    title: str
+    reason: str
+    supporting_chunk_ids: list[str] = Field(default_factory=list)
+
+
+class PolicyEvidenceTraceConstraint(StrictModel):
+    """One compiled constraint linked to policy and chunk evidence."""
+
+    constraint_id: str
+    category: PolicyEvidenceTraceConstraintCategory
+    statement: str
+    citation_ids: list[str] = Field(default_factory=list)
+    source_policy_ids: list[str] = Field(default_factory=list)
+
+
+class PolicyEvidenceTraceOutputLink(StrictModel):
+    """One generated output field linked back to constraints and chunks."""
+
+    field: PolicyEvidenceTraceOutputField
+    index: int = Field(ge=0)
+    text: str
+    constraint_ids: list[str] = Field(default_factory=list)
+    chunk_ids: list[str] = Field(default_factory=list)
+
+
+class PolicyEvidenceTraceConformanceCheck(StrictModel):
+    """One conformance check linked back to judged constraints and chunks."""
+
+    backend: EvalBackend
+    name: str
+    passed: bool
+    score: float = Field(ge=0.0, le=1.0)
+    failure_reasons: list[str] = Field(default_factory=list)
+    constraint_ids: list[str] = Field(default_factory=list)
+    chunk_ids: list[str] = Field(default_factory=list)
+
+
+class PolicyEvidenceTrace(StrictModel):
+    """Replay-free evidence trace for one policy-conditioned preflight run."""
+
+    task: str
+    domain: str | None = None
+    top_k: int
+    task_type: TaskType
+    explicit_task_type: TaskType | None = None
+    profile_signals: list[str] = Field(default_factory=list)
+    insufficient_context: bool = False
+    compiled_insufficient_context: bool = False
+    chunks: list[PolicyEvidenceTraceChunk] = Field(default_factory=list)
+    selected_policies: list[PolicyEvidenceTracePolicy] = Field(default_factory=list)
+    constraints: list[PolicyEvidenceTraceConstraint] = Field(default_factory=list)
+    output_links: list[PolicyEvidenceTraceOutputLink] = Field(default_factory=list)
+    trace_steps: list[PolicyConformanceTraceStep] = Field(default_factory=list)
+    conformance_checks: list[PolicyEvidenceTraceConformanceCheck] = Field(default_factory=list)
+
+
+class PreflightEvidenceTraceResult(StrictModel):
+    """CLI result containing public preflight output and evidence trace."""
+
+    result: PreflightResult
+    evidence_trace: PolicyEvidenceTrace
 
 
 class EvalCase(StrictModel):
@@ -856,6 +955,7 @@ class EvalCaseResult(StrictModel):
     matched_policy_ids: list[str] = Field(default_factory=list)
     actual_summary: str | None = None
     conformance_result: PolicyConformanceResult | None = None
+    evidence_trace: PolicyEvidenceTrace | None = None
     metrics: EvalCaseMetrics
 
 

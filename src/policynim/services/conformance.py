@@ -80,6 +80,10 @@ class PolicyConformanceService:
                 if evaluator_draft is not None
                 else None
             ),
+            constraint_ids=(
+                list(evaluator_draft.constraint_ids) if evaluator_draft is not None else []
+            ),
+            chunk_ids=list(evaluator_draft.chunk_ids) if evaluator_draft is not None else [],
             failure_reasons=failure_reasons,
         )
 

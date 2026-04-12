@@ -5,6 +5,10 @@ from policynim.services.compiler import PolicyCompilerService, create_policy_com
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.dump import IndexDumpService, create_index_dump_service
 from policynim.services.eval import EvalService, create_eval_service
+from policynim.services.evidence_trace import (
+    PolicyEvidenceTraceService,
+    create_policy_evidence_trace_service,
+)
 from policynim.services.health import (
     RuntimeHealthService,
     create_runtime_health_service,
@@ -35,6 +39,7 @@ __all__ = [
     "PreflightService",
     "PolicyCompilerService",
     "PolicyConformanceService",
+    "PolicyEvidenceTraceService",
     "PolicyRouterService",
     "RuntimeDecisionService",
     "RuntimeEvidenceReportService",
@@ -42,6 +47,7 @@ __all__ = [
     "RuntimeHealthService",
     "SearchService",
     "create_beta_auth_service",
+    "create_policy_evidence_trace_service",
     "create_policy_compiler_service",
     "create_eval_service",
     "create_runtime_decision_service",

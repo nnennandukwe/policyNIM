@@ -72,6 +72,9 @@ constraints, not setup mistakes.
 - This happens when the grounded answer does not survive citation validation or the
   retained evidence is too weak for a trustworthy result.
 - The system intentionally prefers no grounded answer over a fabricated one.
+- `preflight --trace` can show which chunks, selected policies, and compiled
+  constraints were retained before the fail-closed result, including retained
+  chunk text, but it does not retry or regenerate the answer.
 
 ### Evaluation Is Gold-Case Driven
 
@@ -82,6 +85,9 @@ constraints, not setup mistakes.
 - The `nemo` eval backend adds policy-conformance checks for preflight cases, but
   it remains a narrow conformance signal rather than a broad benchmark of prose
   quality or policy nuance.
+- Eval JSON artifacts include evidence traces for preflight cases only. They are
+  compact by default, omit retained chunk text, and are not a persistent tracing
+  backend, database, or generic workflow replay system.
 
 ### No Separate Review Or Approval Layer
 

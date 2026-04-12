@@ -36,8 +36,11 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Policy compilation into citation-backed planning and generation constraints.
 - Grounded preflight synthesis with compiled plan steps, citation validation, and
   fail-closed fallback.
+- Opt-in preflight evidence traces that link chunks, selected policies, compiled
+  constraints, generated guidance, and conformance checks.
 - Eval backend selection with optional policy-conformance scoring for compiled
-  plans and preflight outputs.
+  plans and preflight outputs, with compact traces embedded in eval result
+  artifacts.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
 - JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
@@ -102,6 +105,7 @@ uv run policynim search --query "refresh token cleanup background job" --top-k 5
 uv run policynim route --task "Implement a refresh-token cleanup background job" --top-k 5
 uv run policynim compile --task "Implement a refresh-token cleanup background job" --top-k 5
 uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5
+uv run policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5 --trace
 ```
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
