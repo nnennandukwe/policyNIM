@@ -22,6 +22,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+nvidia-guardrails = [
+  "nemoguardrails[nvidia]==0.21.0",
+]
 nvidia-eval = [
   "nemo-evaluator==0.2.5",
   "nvidia-nat-eval==1.6.0",

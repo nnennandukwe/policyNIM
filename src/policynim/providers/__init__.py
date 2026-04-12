@@ -11,8 +11,10 @@ from policynim.providers.nvidia_eval import (
     NeMoAgentToolkitPolicyConformanceEvaluator,
     NeMoEvaluatorPolicyConformanceEvaluator,
 )
+from policynim.providers.nvidia_guardrails import NeMoGuardrailsPreflightGenerator
 
 __all__ = [
+    "NeMoGuardrailsPreflightGenerator",
     "NVIDIAEmbedder",
     "NVIDIAGenerator",
     "NVIDIAPolicyConformanceEvaluator",
