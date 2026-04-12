@@ -153,6 +153,19 @@ class Settings(BaseSettings):
                 raise ValueError("POLICYNIM_CONFIG_FILE must point to an existing env file.")
         return value
 
+    @field_validator("nvidia_chat_model", mode="before")
+    @classmethod
+    def validate_nvidia_chat_model(cls, value: Any) -> Any:
+        """Reject chat model names that cannot safely identify one provider model."""
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("POLICYNIM_NVIDIA_CHAT_MODEL must not be empty.")
+            if any(character in normalized for character in "\r\n"):
+                raise ValueError("POLICYNIM_NVIDIA_CHAT_MODEL must not contain line breaks.")
+            return normalized
+        return value
+
     @field_validator("corpus_dir", mode="before")
     @classmethod
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:

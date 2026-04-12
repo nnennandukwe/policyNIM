@@ -133,6 +133,26 @@ def test_settings_still_allows_constructor_field_names() -> None:
     assert settings.mcp_port == 9001
 
 
+def test_settings_normalizes_nvidia_chat_model_names() -> None:
+    settings = load_settings_without_env_file(nvidia_chat_model=" nvidia/model#variant ")
+
+    assert settings.nvidia_chat_model == "nvidia/model#variant"
+
+
+def test_settings_rejects_nvidia_chat_model_line_breaks() -> None:
+    with pytest.raises(ValidationError, match="POLICYNIM_NVIDIA_CHAT_MODEL"):
+        load_settings_without_env_file(nvidia_chat_model="nvidia/model\nmalformed")
+
+
+def test_settings_rejects_nvidia_chat_model_env_line_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POLICYNIM_NVIDIA_CHAT_MODEL", "nvidia/model\rmalformed")
+
+    with pytest.raises(ValidationError, match="POLICYNIM_NVIDIA_CHAT_MODEL"):
+        load_settings_without_env_file()
+
+
 def test_settings_treats_empty_corpus_env_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICYNIM_CORPUS_DIR", "")
 

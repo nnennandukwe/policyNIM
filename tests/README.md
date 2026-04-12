@@ -35,6 +35,9 @@ Current automated coverage includes:
   NVIDIA eval packages
 - Optional NVIDIA Eval Launcher dependency resolution through
   `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
+- Build 6 internal NeMo Guardrails output-rail wrapper coverage for lazy package
+  gating, packaged assets, malformed rail output, blocked output, citation drift,
+  regeneration context pass-through, and default factory isolation
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads

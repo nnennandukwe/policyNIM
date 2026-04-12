@@ -218,6 +218,19 @@ The launcher extra pins `nemo-evaluator-launcher==0.2.4` and
 `nvidia-nat[eval]==1.6.0`. PolicyNIM keeps `httpx==0.27.2` to match that stack,
 and default CI does not sync the launcher extra.
 
+Internal Guardrails-backed preflight generation is package-gated separately:
+
+```bash
+uv sync --extra nvidia-guardrails
+```
+
+The `nvidia-guardrails` extra installs the pinned NeMo Guardrails NVIDIA-hosted
+model integration for the internal `NeMoGuardrailsPreflightGenerator` wrapper.
+There is no CLI flag, MCP tool, eval backend, or default-on switch for this path.
+When selected by tests or internal factory code, it wraps the normal generator,
+runs output rails over the generated draft JSON, and fails closed on blocked,
+malformed, or unsupported-citation output.
+
 ### 7. Run Evaluations
 
 ```bash

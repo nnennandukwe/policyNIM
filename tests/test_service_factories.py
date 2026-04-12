@@ -191,6 +191,40 @@ def test_create_preflight_service_builds_default_components(
     assert service._generator is mock_generator
 
 
+def test_default_preflight_generator_factory_does_not_import_guardrails_package() -> None:
+    script = f"""
+import importlib.abc
+import sys
+
+sys.path.insert(0, {str(PROJECT_ROOT / "src")!r})
+
+class BlockGuardrails(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "nemoguardrails" or fullname.startswith("nemoguardrails."):
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockGuardrails())
+
+from policynim.services.preflight import _create_default_generator
+from policynim.settings import Settings
+
+generator = _create_default_generator(Settings(nvidia_api_key="test-key"))
+try:
+    assert generator.__class__.__name__ == "NVIDIAGenerator"
+finally:
+    generator.close()
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_create_runtime_decision_service_uses_runtime_paths(
     monkeypatch,
     tmp_path: Path,

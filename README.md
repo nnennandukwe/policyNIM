@@ -113,9 +113,10 @@ uv run policynim preflight --task "Implement a refresh-token cleanup background 
 ```
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
-templates, runtime settings, optional NVIDIA eval extras, and contributor quality
-gates. The launcher path is installable in-project with
-`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`.
+templates, runtime settings, optional NVIDIA eval and Guardrails extras, and
+contributor quality gates. The launcher path is installable in-project with
+`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`;
+the internal Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
 
 Use [docs/workflows.md](docs/workflows.md) for the CLI, MCP, runtime, eval, and
 troubleshooting handbook.
