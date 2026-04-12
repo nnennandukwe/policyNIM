@@ -1,4 +1,4 @@
-"""Tests for the Build 2 policy compiler service."""
+"""Tests for the policy compiler service."""
 
 from __future__ import annotations
 

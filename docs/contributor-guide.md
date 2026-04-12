@@ -113,8 +113,8 @@ compatible launcher stack version; default CI does not sync this extra.
 
 ## Optional NVIDIA Guardrails Package
 
-The default development install does not include NeMo Guardrails. Build 6 adds an
-internal output-rail wrapper for generated preflight drafts, but it does not add a
+The default development install does not include NeMo Guardrails. PolicyNIM has
+an internal output-rail wrapper for generated preflight drafts, but it does not add a
 CLI flag, MCP tool, eval backend, or default factory switch. Install the package
 only when directly constructing the internal Guardrails-backed generator:
 

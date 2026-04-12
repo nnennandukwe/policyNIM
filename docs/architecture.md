@@ -106,7 +106,7 @@ Compiler flow:
 5. materialize public citations and source policy IDs
 6. return a JSON-first `CompiledPolicyPacket`
 
-Build 2 compilation adds no new environment variable or artifact directory. It
+Policy compilation adds no new environment variable or artifact directory. It
 reuses the existing NVIDIA chat model setting and fails closed when generated
 constraints are malformed, unsupported, or uncited.
 
@@ -209,8 +209,8 @@ Important evaluation rules:
 ### Repo Root
 
 - `Dockerfile` builds the hosted image and bakes the LanceDB index into it.
-- `railway.toml` pins the Day 3 Railway deploy contract to Dockerfile build plus
-  `/healthz` health checks.
+- `railway.toml` pins the hosted Railway deploy contract to Dockerfile build
+  plus `/healthz` health checks.
 
 ### `src/policynim/settings.py`
 
@@ -343,8 +343,7 @@ Shared interface guarantees:
 
 - CLI `search` and MCP `policy_search` use the same `SearchResult` shape.
 - CLI `route` returns a `PolicySelectionPacket`; there is no MCP route tool.
-- CLI `compile` returns a `CompiledPolicyPacket`; there is no MCP compile tool
-  in Build 2.
+- CLI `compile` returns a `CompiledPolicyPacket`; there is no MCP compile tool.
 - CLI `preflight` and MCP `policy_preflight` use the same `PreflightResult`
   shape.
 - CLI `preflight --trace` returns `PreflightEvidenceTraceResult`; there is no

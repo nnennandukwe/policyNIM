@@ -1,4 +1,4 @@
-"""Tests for the Day 2 runtime decision service."""
+"""Tests for the runtime decision service."""
 
 from __future__ import annotations
 

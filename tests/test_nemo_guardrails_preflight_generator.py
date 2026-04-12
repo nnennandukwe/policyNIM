@@ -67,11 +67,13 @@ def test_guardrails_generator_requires_optional_package(monkeypatch) -> None:
         raise PackageNotFoundError(distribution_name)
 
     monkeypatch.setattr(guardrails_module, "installed_version", missing_distribution)
+    base_generator = FakeGenerator([make_draft()])
 
     with pytest.raises(ConfigurationError, match="nvidia-guardrails") as excinfo:
-        NeMoGuardrailsPreflightGenerator(base_generator=FakeGenerator([make_draft()]))
+        NeMoGuardrailsPreflightGenerator(base_generator=base_generator)
 
     assert excinfo.value.failure_class == "missing_optional_dependency"
+    assert base_generator.closed is True
 
 
 def test_guardrails_from_settings_checks_optional_package_before_base_generator(

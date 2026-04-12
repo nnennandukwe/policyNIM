@@ -58,9 +58,13 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         model: str | None = None,
     ) -> None:
         if rails is None:
-            rails, rail_type_output = _create_default_output_rails(
-                model=model or _DEFAULT_GUARDRAILS_MODEL
-            )
+            try:
+                rails, rail_type_output = _create_default_output_rails(
+                    model=model or _DEFAULT_GUARDRAILS_MODEL
+                )
+            except ConfigurationError:
+                _close_component(base_generator)
+                raise
             owns_rails = True
 
         self._base_generator = base_generator

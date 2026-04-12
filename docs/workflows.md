@@ -133,7 +133,7 @@ preflight. It returns a JSON `CompiledPolicyPacket` with:
 - citations
 - `insufficient_context`
 
-Build 2 compilation reuses the existing NVIDIA chat model setting and adds no
+Policy compilation reuses the existing NVIDIA chat model setting and adds no
 new environment variable or artifact directory.
 
 ### 6. Run Grounded Preflight
@@ -369,7 +369,7 @@ That compiled artifact powers the runtime decision and execution services:
 - `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS` sets the default shell timeout for
   runtime execution
 
-The Day 4 runtime CLI flow is JSON-first and file- or stdin-driven:
+The runtime CLI flow is JSON-first and file- or stdin-driven:
 
 ```bash
 # Decide without side effects.

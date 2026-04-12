@@ -32,9 +32,8 @@ constraints, not setup mistakes.
 - Hosted startup now validates the configured local index before serving traffic
   and attempts one rebuild with the runtime `NVIDIA_API_KEY` when the baked index
   is missing or empty.
-- Hosted observability is still request-log level only. Day 3 adds structured
-  JSON logs for auth rejects and MCP tool calls, but there is no tracing or
-  metrics pipeline yet.
+- Hosted observability is structured JSON request logging for auth rejects and
+  MCP tool calls only. There is no tracing or metrics pipeline yet.
 
 ### NVIDIA Dependency For Live Retrieval, Conformance, And Regeneration
 

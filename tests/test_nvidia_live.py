@@ -20,7 +20,7 @@ pytestmark = [
 def test_nvidia_embed_query_live() -> None:
     embedder = nvidia_module.NVIDIAEmbedder.from_settings(get_settings())
 
-    vector = embedder.embed_query("PolicyNIM live Day 3 smoke test")
+    vector = embedder.embed_query("PolicyNIM live embedding smoke test")
 
     assert vector
     assert all(isinstance(value, float) for value in vector)

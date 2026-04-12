@@ -22,9 +22,12 @@ def test_nemo_evaluator_adapter_requires_optional_packages(monkeypatch) -> None:
         raise PackageNotFoundError(distribution_name)
 
     monkeypatch.setattr("policynim.providers.nvidia_eval.installed_version", missing_distribution)
+    evaluator = FakeEvaluator()
 
     with pytest.raises(ConfigurationError, match="uv sync --extra nvidia-eval"):
-        NeMoEvaluatorPolicyConformanceEvaluator(evaluator=FakeEvaluator())
+        NeMoEvaluatorPolicyConformanceEvaluator(evaluator=evaluator)
+
+    assert evaluator.closed is True
 
 
 def test_nemo_evaluator_from_settings_checks_optional_packages_first(monkeypatch) -> None:

@@ -1,4 +1,4 @@
-"""Tests for the Day 4 reranked search service."""
+"""Tests for the reranked search service."""
 
 from __future__ import annotations
 

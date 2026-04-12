@@ -1,4 +1,4 @@
-"""Tests for the Day 3 runtime execution service."""
+"""Tests for the runtime execution service."""
 
 from __future__ import annotations
 

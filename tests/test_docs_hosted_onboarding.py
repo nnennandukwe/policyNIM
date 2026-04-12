@@ -1,4 +1,4 @@
-"""Docs parity checks for hosted Day 4 onboarding."""
+"""Docs parity checks for hosted onboarding."""
 
 from __future__ import annotations
 

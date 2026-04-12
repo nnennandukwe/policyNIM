@@ -1,4 +1,4 @@
-"""Tests for the Day 3 CLI surface."""
+"""Tests for the CLI surface."""
 
 from __future__ import annotations
 

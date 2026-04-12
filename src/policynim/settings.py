@@ -336,7 +336,7 @@ def _build_discovered_dotenv_source(
     settings_cls: type[BaseSettings],
     template: DotEnvSettingsSource,
 ) -> DotEnvSettingsSource:
-    """Replace the static `.env` source with Day 1 discovery precedence."""
+    """Replace the static `.env` source with discovered config precedence."""
     discovery = config_discovery.discover_config_files()
     return _clone_filtered_dotenv_source(
         settings_cls,

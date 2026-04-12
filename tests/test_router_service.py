@@ -1,4 +1,4 @@
-"""Tests for the Build 1 task-aware policy router."""
+"""Tests for the task-aware policy router."""
 
 from __future__ import annotations
 
