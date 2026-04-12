@@ -60,7 +60,7 @@ flowchart LR
         RuntimeRules["runtime_rules.json"]
         RuntimeEvidenceDB["runtime_evidence.sqlite3"]
         Artifacts["data/ artifacts"]
-        UI["Evidently UI"]
+        UI["Phoenix UI"]
     end
 
     subgraph External["NVIDIA-hosted APIs"]
@@ -238,7 +238,7 @@ flowchart TB
         EvalRun --> EvalRegen["Regenerate preflight cases when requested"]
         EvalRun --> Compare["Compare rerank on and off"]
         Compare --> Reports["JSON artifacts and HTML reports"]
-        Reports --> UI["Optional Evidently UI"]
+        Reports --> UI["Optional Phoenix UI"]
     end
 
     Index -. vector lookup .-> DenseSearch

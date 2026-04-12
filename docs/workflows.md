@@ -207,9 +207,16 @@ The optional `nvidia-eval` extra installs the pinned NeMo Evaluator SDK,
 paths. If the packages are not installed, the command fails with a
 `ConfigurationError` that names the missing extra.
 
-NeMo Evaluator Launcher is not part of the project lock because its pinned
-launcher stack conflicts with the repo's locked `httpx` and `evidently`
-requirements; use a separate environment for launcher-managed evaluator runs.
+Install the in-project launcher stack only when you need launcher-managed
+evaluator runs:
+
+```bash
+uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev
+```
+
+The launcher extra pins `nemo-evaluator-launcher==0.2.4` and
+`nvidia-nat[eval]==1.6.0`. PolicyNIM keeps `httpx==0.27.2` to match that stack,
+and default CI does not sync the launcher extra.
 
 ### 7. Run Evaluations
 
@@ -225,7 +232,13 @@ Default behavior:
 - writes JSON artifacts and HTML reports under `data/evals/workspace`
 - embeds compact `PolicyEvidenceTrace` records in preflight eval case JSON
   artifacts
-- starts the local Evidently UI on `http://localhost:8001`
+- starts the local Phoenix UI on `http://localhost:8001` and publishes one
+  synthetic root span per eval case with code annotations
+
+Phoenix stores its working data under `data/evals/workspace/phoenix` by default.
+Startup logs go to `data/evals/workspace/ui/phoenix.log`. Set
+`POLICYNIM_EVAL_WORKSPACE_DIR` or `POLICYNIM_EVAL_UI_PORT` to change those
+locations without adding Phoenix-specific settings.
 
 Useful variants:
 

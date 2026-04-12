@@ -27,9 +27,14 @@ Current automated coverage includes:
   triggers, max-regeneration and insufficient-context stops, provider fail-closed
   behavior, citation-drift rejection, `preflight --regenerate`, and
   `eval --regenerate`
+- Build 5 follow-up Phoenix eval reporting, headless UI skipping, workspace-local
+  Phoenix startup, deterministic span publishing, and synchronous code
+  annotations
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with fake
   import-injected package modules; default CI does not import live optional
   NVIDIA eval packages
+- Optional NVIDIA Eval Launcher dependency resolution through
+  `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
 - Day 6 citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads

@@ -101,10 +101,15 @@ The `nvidia-eval` extra pins `nemo-evaluator==0.2.5`,
 those packages lazily, so offline CI and the default local workflow do not need
 them.
 
-NeMo Evaluator Launcher is documented as a separate-environment orchestration
-path, not a project extra. The checked launcher versions pull transitive
-requirements that conflict with this repo's locked `httpx` and `evidently`
-versions.
+NeMo Evaluator Launcher is available as a second project extra:
+
+```bash
+uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev
+```
+
+The `nvidia-eval-launcher` extra pins `nemo-evaluator-launcher==0.2.4` and
+`nvidia-nat[eval]==1.6.0`. The project keeps `httpx==0.27.2` because that is the
+compatible launcher stack version; default CI does not sync this extra.
 
 ## Default Model References
 

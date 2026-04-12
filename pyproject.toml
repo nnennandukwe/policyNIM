@@ -5,8 +5,9 @@ description = "A policy-aware NVIDIA NIM engineering preflight layer for AI codi
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-  "evidently==0.7.16",
-  "httpx==0.28.1",
+  "arize-phoenix==13.21.0",
+  "arize-phoenix-evals==2.12.0",
+  "httpx==0.27.2",
   "itsdangerous==2.2.0",
   "jinja2==3.1.6",
   "lancedb==0.27.1",
@@ -26,9 +27,10 @@ nvidia-eval = [
   "nvidia-nat-eval==1.6.0",
   "nvidia-simple-evals==26.3",
 ]
-# NeMo Evaluator Launcher is documented as a separate-environment path because
-# the checked launcher stack conflicts with this project's pinned httpx/evidently
-# requirements.
+nvidia-eval-launcher = [
+  "nemo-evaluator-launcher==0.2.4",
+  "nvidia-nat[eval]==1.6.0",
+]
 
 [project.scripts]
 policynim = "policynim.interfaces.cli:main"
