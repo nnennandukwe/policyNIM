@@ -7,8 +7,8 @@ operations into separate pages so the root README can stay short.
 
 - [../README.md](../README.md): concise project overview, current capabilities,
   quickstart, and links outward
-- [contributor-guide.md](contributor-guide.md): local setup, env templates,
-  important settings, model references, and quality gates
+- [contributor-guide.md](contributor-guide.md): local setup, standalone init,
+  env templates, important settings, model references, and quality gates
 - [workflows.md](workflows.md): CLI, route/preflight, MCP, runtime/evidence, eval, and
   troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,

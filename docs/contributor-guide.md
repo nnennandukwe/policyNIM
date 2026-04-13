@@ -32,6 +32,24 @@ server:
 uv run policynim ingest
 ```
 
+## Standalone Install
+
+If you are using an installed copy instead of a source checkout, initialize the
+user-owned config once:
+
+```bash
+uv run policynim init
+```
+
+That command prompts for `NVIDIA_API_KEY` and an optional custom corpus
+directory, then writes the standalone `config.env` file under your platform
+config directory with user-owned defaults for `POLICYNIM_LANCEDB_URI`,
+`POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH`, `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH`,
+and `POLICYNIM_EVAL_WORKSPACE_DIR`.
+
+After that, run `policynim ingest` as usual. Source checkouts can keep using the
+`.env.development.example` flow above.
+
 ## Environment Templates
 
 The repo ships three related templates:

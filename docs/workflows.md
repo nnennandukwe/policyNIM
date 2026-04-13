@@ -7,6 +7,7 @@ reference that used to live in the root README.
 
 ### CLI
 
+- `policynim init`
 - `policynim ingest`
 - `policynim dump-index`
 - `policynim search --query "..."`
@@ -42,6 +43,19 @@ reference that used to live in the root README.
   missing or empty
 
 ## Core Workflows
+
+### 0. Initialize A Standalone Install
+
+```bash
+uv run policynim init
+```
+
+Use this when you installed PolicyNIM instead of running from a source
+checkout. It prompts for `NVIDIA_API_KEY` and an optional custom corpus
+directory, then writes the standalone config file with user-owned data-path
+defaults.
+
+Source checkouts can keep using `.env.development.example` and skip this step.
 
 ### 1. Build The Local Index
 

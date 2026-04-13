@@ -43,6 +43,8 @@ Current automated coverage includes:
   policy-compilation, and reranking payloads
 - CLI output for `ingest`, JSON-first `search`, JSON-first `route`, JSON-first
   `compile`, and JSON-first `preflight`
+- Interactive `init` standalone setup, config file writing, and missing-setup
+  guidance
 - CLI output for `eval`
 - CLI output for `eval --backend default|nemo|nemo_evaluator|nat`
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`
