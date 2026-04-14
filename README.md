@@ -119,8 +119,9 @@ contributor quality gates. The launcher path is installable in-project with
 the internal Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
 
 If you are using an installed copy instead of a source checkout, run
-`uv run policynim init` once first so PolicyNIM can write the standalone config
-file and data-path defaults before `policynim ingest`.
+`policynim init` once first so PolicyNIM can write the standalone config file
+and data-path defaults before `policynim ingest`. Use `uv run` only when running
+commands from the source checkout's uv-managed project environment.
 
 Use [docs/workflows.md](docs/workflows.md) for the CLI, MCP, runtime, eval, and
 troubleshooting handbook.

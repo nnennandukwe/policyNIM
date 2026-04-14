@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+README = REPO_ROOT / "README.md"
 WORKFLOWS_GUIDE = REPO_ROOT / "docs" / "workflows.md"
 CONTRIBUTOR_GUIDE = REPO_ROOT / "docs" / "contributor-guide.md"
 POLICY_TEMPLATE = REPO_ROOT / "policies" / "TEMPLATE.md"
 TESTS_README = REPO_ROOT / "tests" / "README.md"
+STANDALONE_SETUP_DOCS = (README, WORKFLOWS_GUIDE, CONTRIBUTOR_GUIDE)
 ENV_EXAMPLES = (
     REPO_ROOT / ".env.example",
     REPO_ROOT / ".env.development.example",
@@ -54,6 +56,16 @@ def test_contributor_guide_and_env_examples_include_runtime_settings() -> None:
             "POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS",
         ):
             assert token in text, f"{path.name} is missing {token}"
+
+
+def test_standalone_setup_docs_use_installed_cli_entrypoint() -> None:
+    for path in STANDALONE_SETUP_DOCS:
+        text = _read_text(path)
+        assert "uv run policynim init" not in text, f"{path.name} should not require uv for init"
+        assert "policynim init" in text, f"{path.name} should document standalone init"
+
+    workflows_text = _read_text(WORKFLOWS_GUIDE)
+    assert "policynim init\npolicynim ingest" in workflows_text
 
 
 def test_production_env_example_uses_absolute_runtime_paths() -> None:

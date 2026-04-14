@@ -38,7 +38,7 @@ If you are using an installed copy instead of a source checkout, initialize the
 user-owned config once:
 
 ```bash
-uv run policynim init
+policynim init
 ```
 
 That command prompts for `NVIDIA_API_KEY` and an optional custom corpus
@@ -48,7 +48,7 @@ config directory with user-owned defaults for `POLICYNIM_LANCEDB_URI`,
 and `POLICYNIM_EVAL_WORKSPACE_DIR`.
 
 After that, run `policynim ingest` as usual. Source checkouts can keep using the
-`.env.development.example` flow above.
+`.env.development.example` flow above and `uv run` for in-project commands.
 
 ## Environment Templates
 
