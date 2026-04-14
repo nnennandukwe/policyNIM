@@ -46,8 +46,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
   artifacts and local Phoenix reporting for non-headless runs.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
-- JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
-  `preflight`, `eval`, `mcp`, `runtime`, and `evidence`.
+- JSON-first CLI commands for `init`, `ingest`, `dump-index`, `search`, `route`,
+  `compile`, `preflight`, `eval`, `mcp`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
@@ -117,6 +117,11 @@ templates, runtime settings, optional NVIDIA eval and Guardrails extras, and
 contributor quality gates. The launcher path is installable in-project with
 `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`;
 the internal Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
+
+If you are using an installed copy instead of a source checkout, run
+`policynim init` once first so PolicyNIM can write the standalone config file
+and data-path defaults before `policynim ingest`. Use `uv run` only when running
+commands from the source checkout's uv-managed project environment.
 
 Use [docs/workflows.md](docs/workflows.md) for the CLI, MCP, runtime, eval, and
 troubleshooting handbook.

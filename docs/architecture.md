@@ -303,6 +303,7 @@ Important evaluation rules:
 
 ### CLI
 
+- `policynim init`
 - `policynim ingest`
 - `policynim dump-index`
 - `policynim search --query ...`
