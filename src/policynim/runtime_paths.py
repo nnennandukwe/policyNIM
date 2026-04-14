@@ -21,6 +21,34 @@ def resolve_runtime_path(path: Path) -> Path:
     return (Path.cwd() / path).resolve(strict=False)
 
 
+def resolve_template_root() -> Path:
+    """Resolve the bundled Jinja template root from package data or a source checkout."""
+    return _resolve_required_resource(
+        "templates",
+        predicate=Path.is_dir,
+        description="PolicyNIM templates",
+        recovery_hint=(
+            "Reinstall PolicyNIM or run from a source checkout that contains "
+            "`src/policynim/templates`."
+        ),
+    )
+
+
+def resolve_asset_path(*parts: str) -> Path:
+    """Resolve one bundled asset path from package data or a source checkout."""
+    normalized_parts = _normalize_resource_parts(parts)
+    return _resolve_required_resource(
+        "assets",
+        *normalized_parts,
+        predicate=Path.is_file,
+        description=f"PolicyNIM asset assets/{'/'.join(normalized_parts)}",
+        recovery_hint=(
+            "Reinstall PolicyNIM or run from a source checkout that contains "
+            "`src/policynim/assets`."
+        ),
+    )
+
+
 def _normalize_optional_path(value: Path | str | None) -> Path | None:
     """Normalize optional path-like input and discard empty-string overrides."""
     if value is None:
@@ -95,3 +123,41 @@ def _resolve_checkout_resource(
         if predicate(candidate):
             return candidate
     return None
+
+
+def _resolve_required_resource(
+    *parts: str,
+    predicate: Callable[[Path], bool],
+    description: str,
+    recovery_hint: str,
+) -> Path:
+    """Resolve a required packaged resource and raise with recovery guidance."""
+    bundled_resource = _resolve_packaged_resource(*parts)
+    if bundled_resource is not None and predicate(bundled_resource):
+        return bundled_resource
+
+    checkout_resource = _resolve_checkout_resource(*parts, predicate=predicate)
+    if checkout_resource is not None:
+        return checkout_resource
+
+    raise InvalidPolicyDocumentError(
+        f"Could not locate {description} at {'/'.join(parts)}. {recovery_hint}"
+    )
+
+
+def _normalize_resource_parts(parts: tuple[str, ...]) -> tuple[str, ...]:
+    """Reject package resource paths that escape their resource root."""
+    normalized: list[str] = []
+    for part in parts:
+        raw_part = str(part).strip()
+        if not raw_part:
+            raise InvalidPolicyDocumentError("Packaged resource path parts must not be empty.")
+        candidate = Path(raw_part)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise InvalidPolicyDocumentError(
+                "Packaged resource paths must stay within the package."
+            )
+        normalized.extend(candidate.parts)
+    if not normalized:
+        raise InvalidPolicyDocumentError("Packaged resource path parts must not be empty.")
+    return tuple(normalized)

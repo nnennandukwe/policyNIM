@@ -59,6 +59,9 @@ dev = [
   "pre-commit==4.3.0",
   "ruff==0.15.7",
 ]
+release = [
+  "pyinstaller==6.19.0",
+]
 
 [tool.ruff]
 line-length = 100
