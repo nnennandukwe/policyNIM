@@ -9,8 +9,8 @@ operations into separate pages so the root README can stay short.
   quickstart, and links outward
 - [contributor-guide.md](contributor-guide.md): local setup, standalone init,
   env templates, important settings, model references, and quality gates
-- [workflows.md](workflows.md): CLI, route/preflight, MCP, runtime/evidence, eval, and
-  troubleshooting handbook
+- [workflows.md](workflows.md): CLI, standalone init, route/preflight, eval,
+  MCP, runtime/evidence, hosted HTTP, and troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,
   recovery, container build flow, and Railway deployment notes
 

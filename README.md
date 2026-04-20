@@ -113,18 +113,19 @@ uv run policynim preflight --task "Implement a refresh-token cleanup background 
 ```
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
-templates, runtime settings, optional NVIDIA eval and Guardrails extras, and
-contributor quality gates. The launcher path is installable in-project with
-`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`;
-the internal Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
+templates, standalone init, runtime settings, optional NVIDIA eval and
+Guardrails extras, model references, and contributor quality gates. The
+launcher path is installable in-project with `uv sync --extra nvidia-eval
+--extra nvidia-eval-launcher --group test --group dev`; the internal
+Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
 
 If you are using an installed copy instead of a source checkout, run
 `policynim init` once first so PolicyNIM can write the standalone config file
 and data-path defaults before `policynim ingest`. Use `uv run` only when running
 commands from the source checkout's uv-managed project environment.
 
-Use [docs/workflows.md](docs/workflows.md) for the CLI, MCP, runtime, eval, and
-troubleshooting handbook.
+Use [docs/workflows.md](docs/workflows.md) for the CLI, standalone init, MCP,
+runtime, eval, hosted HTTP, and troubleshooting handbook.
 
 ## Docs Map
 
@@ -133,9 +134,9 @@ Start here when you want the longer version of a specific path:
 - [docs/index.md](docs/index.md): documentation hub by audience and task
 - [docs/contributor-guide.md](docs/contributor-guide.md): local setup, env vars,
   model references, and quality gates
-- [docs/workflows.md](docs/workflows.md): CLI surfaces,
-  ingest/search/route/compile/preflight, eval, MCP, runtime/evidence, and
-  troubleshooting
+- [docs/workflows.md](docs/workflows.md): CLI surfaces, standalone init,
+  ingest/search/route/compile/preflight, eval, MCP, runtime/evidence,
+  hosted HTTP, and troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,

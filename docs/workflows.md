@@ -1,7 +1,8 @@
 # PolicyNIM Workflow Handbook
 
-Use this page for the detailed CLI, MCP, runtime, eval, and troubleshooting
-reference that used to live in the root README.
+Use this page for the detailed CLI, standalone init, MCP, runtime, eval,
+hosted HTTP, and troubleshooting reference that used to live in the root
+README.
 
 ## Public Surface
 
