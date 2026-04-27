@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -353,7 +354,8 @@ def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:
         staged_path.replace(target_path)
     except OSError:
         if staged_path is not None:
-            staged_path.unlink(missing_ok=True)
+            with suppress(OSError):
+                staged_path.unlink(missing_ok=True)
         return _ActionExecutionResult(
             succeeded=False,
             metadata=FileWriteExecutionMetadata(path=target_path, bytes_written=0),

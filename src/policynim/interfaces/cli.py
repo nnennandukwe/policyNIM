@@ -432,7 +432,7 @@ def compile(
 
 @runtime_app.command("decide")
 def runtime_decide(
-    input: Annotated[
+    input_value: Annotated[
         str,
         typer.Option(
             "--input",
@@ -443,7 +443,7 @@ def runtime_decide(
     """Return a deterministic runtime decision for one action request."""
     service = None
     try:
-        request = _load_runtime_request_payload(input)
+        request = _load_runtime_request_payload(input_value)
         service = create_runtime_decision_service(_load_setup_dependent_settings())
         result = service.decide(request)
     except PolicyNIMError as exc:
@@ -456,7 +456,7 @@ def runtime_decide(
 
 @runtime_app.command("execute")
 def runtime_execute(
-    input: Annotated[
+    input_value: Annotated[
         str,
         typer.Option(
             "--input",
@@ -467,7 +467,7 @@ def runtime_execute(
     """Enforce runtime policy, optionally confirm, and execute one action."""
     service = None
     try:
-        request = _load_runtime_request_payload(input)
+        request = _load_runtime_request_payload(input_value)
         service = create_runtime_execution_service(
             _load_setup_dependent_settings(),
             confirmer=_build_cli_confirmer(),

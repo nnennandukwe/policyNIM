@@ -623,6 +623,18 @@ class HealthCheckResult(StrictModel):
     mcp_url: str | None = None
     reason: str | None = None
 
+    @model_validator(mode="after")
+    def validate_ready_state(self) -> Self:
+        """Keep readiness booleans and status labels in sync."""
+        expected_status: Literal["ok", "error"] = "ok" if self.ready else "error"
+        if self.status != expected_status:
+            raise ValueError(
+                "status must be 'ok' when ready is true and 'error' when ready is false."
+            )
+        if self.ready and self.reason is not None:
+            raise ValueError("reason must be omitted when ready is true.")
+        return self
+
 
 BetaAccountStatus = Literal["active", "suspended"]
 

@@ -950,7 +950,11 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
     server = _create_mcp_server(settings, beta_auth_service=beta_auth_service)
     app = server.streamable_http_app()
     if settings.beta_signup_enabled:
-        assert settings.beta_session_secret is not None
+        if settings.beta_session_secret is None:
+            raise ConfigurationError(
+                "POLICYNIM_BETA_SESSION_SECRET must be set when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
+            )
         app = SessionMiddleware(
             app,
             secret_key=settings.beta_session_secret,

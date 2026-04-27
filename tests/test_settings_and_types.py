@@ -13,6 +13,7 @@ from policynim.settings import Settings
 from policynim.types import (
     DEFAULT_TOP_K,
     DocumentSection,
+    HealthCheckResult,
     HTTPRequestActionRequest,
     ParsedRuntimeRule,
     RuntimeActionRequest,
@@ -635,6 +636,27 @@ def test_document_section_rejects_inverted_line_ranges() -> None:
             content="Impossible line range.",
             start_line=8,
             end_line=7,
+        )
+
+
+def test_health_check_result_requires_ready_status_alignment() -> None:
+    with pytest.raises(ValidationError, match="status must be 'ok' when ready is true"):
+        HealthCheckResult(
+            status="error",
+            ready=True,
+            table_name="policy_chunks",
+            row_count=1,
+        )
+
+
+def test_health_check_result_rejects_ready_reason_text() -> None:
+    with pytest.raises(ValidationError, match="reason must be omitted when ready is true"):
+        HealthCheckResult(
+            status="ok",
+            ready=True,
+            table_name="policy_chunks",
+            row_count=1,
+            reason="still booting",
         )
 
 

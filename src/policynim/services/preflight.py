@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal, overload
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
 from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
@@ -51,15 +51,12 @@ class PreflightService:
                 raise ValueError(
                     "PreflightService requires either a compiler service or a policy compiler."
                 )
-            if router is None and (embedder is None or index_store is None or reranker is None):
-                raise ValueError(
-                    "PreflightService requires either a compiler service or "
-                    "router or embedder/index_store/reranker."
-                )
             if router is None:
-                assert embedder is not None
-                assert index_store is not None
-                assert reranker is not None
+                if embedder is None or index_store is None or reranker is None:
+                    raise ValueError(
+                        "PreflightService requires either a compiler service or "
+                        "router or embedder/index_store/reranker."
+                    )
                 router = PolicyRouterService(
                     embedder=embedder,
                     index_store=index_store,
@@ -90,15 +87,27 @@ class PreflightService:
 
     def preflight(self, request: PreflightRequest) -> PreflightResult:
         """Run the grounded preflight pipeline."""
-        output = self._run_preflight(request, with_trace=False)
-        assert isinstance(output, PreflightResult)
-        return output
+        return self._run_preflight(request, with_trace=False)
 
     def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
         """Run preflight and retain internal data needed for eval scoring."""
-        output = self._run_preflight(request, with_trace=True)
-        assert isinstance(output, PreflightTraceResult)
-        return output
+        return self._run_preflight(request, with_trace=True)
+
+    @overload
+    def _run_preflight(
+        self,
+        request: PreflightRequest,
+        *,
+        with_trace: Literal[False],
+    ) -> PreflightResult: ...
+
+    @overload
+    def _run_preflight(
+        self,
+        request: PreflightRequest,
+        *,
+        with_trace: Literal[True],
+    ) -> PreflightTraceResult: ...
 
     def _run_preflight(
         self,
