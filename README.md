@@ -30,6 +30,7 @@ PolicyNIM currently ships with two main user-facing surfaces:
 ## What Works Today
 
 - Deterministic Markdown ingest with heading-aware chunking and source line spans.
+- Ingest-time compilation of `runtime_rules` frontmatter into the persisted runtime rules artifact.
 - NVIDIA-hosted embeddings and reranking for retrieval.
 - Local LanceDB storage for the retrievable policy index.
 - Task-aware policy routing with citation-preserving selected-policy packets.
@@ -46,8 +47,9 @@ PolicyNIM currently ships with two main user-facing surfaces:
   artifacts and local Phoenix reporting for non-headless runs.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
-- JSON-first CLI commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
-  `preflight`, `eval`, `mcp`, `runtime`, and `evidence`.
+- Interactive `init` setup plus JSON-first CLI commands for `ingest`,
+  `dump-index`, `search`, `route`, `compile`, `preflight`, `eval`, `mcp`,
+  `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
@@ -95,10 +97,22 @@ Use this path only if you want to run PolicyNIM from a local checkout.
 
 ```bash
 uv sync --group test --group dev
-cp .env.development.example .env
 export NVIDIA_API_KEY=<your-nvidia-api-key>
 uv run policynim ingest
 uv run pytest -q
+```
+
+If you want the CLI to prompt for the required values and write the local config
+file for you, run:
+
+```bash
+uv run policynim init
+```
+
+If you prefer to manage `.env` manually, copy the template first:
+
+```bash
+cp .env.development.example .env
 ```
 
 After the index is built, the fastest local sanity checks are:
@@ -145,6 +159,11 @@ Start here when you want the longer version of a specific path:
 - [examples/codex/README.md](examples/codex/README.md): Codex MCP setup example
 - [examples/claude-code/README.md](examples/claude-code/README.md): Claude Code
   MCP setup example
+
+## Talks And Workflow Notes
+
+- [docs/ai-engineer-miami-context-plane.md](docs/ai-engineer-miami-context-plane.md): centralized context-plane talk notes and project framing
+- [docs/extreme-programming-with-agents.md](docs/extreme-programming-with-agents.md): XP, TDD, and agent workflow notes
 
 ## Limits And Scope
 

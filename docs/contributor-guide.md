@@ -11,7 +11,14 @@ Install the runtime, test, and dev dependencies:
 uv sync --group test --group dev
 ```
 
-Copy the development example environment file:
+If you want the CLI to prompt for the required values and write the local config
+file for you, run:
+
+```bash
+uv run policynim init
+```
+
+Otherwise, copy the development example environment file:
 
 ```bash
 cp .env.development.example .env

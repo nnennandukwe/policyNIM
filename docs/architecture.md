@@ -42,9 +42,10 @@ Ingest flow:
 2. parse Markdown into normalized documents
 3. infer missing metadata when possible
 4. extract heading-aware sections with stable line spans
-5. build deterministic chunk IDs
-6. embed chunk text through NVIDIA-hosted embeddings
-7. replace the local LanceDB table with the new embedded rows
+5. compile any `runtime_rules` frontmatter into the persisted runtime rules artifact
+6. build deterministic chunk IDs
+7. embed chunk text through NVIDIA-hosted embeddings
+8. replace the local LanceDB table with the new embedded rows
 
 Important ingest rules:
 
@@ -303,8 +304,9 @@ Important evaluation rules:
 
 ### CLI
 
+- `policynim init`
 - `policynim ingest`
-- `policynim dump-index`
+- `policynim dump-index [--count-only]`
 - `policynim search --query ...`
 - `policynim route --task ... [--domain ...] [--top-k ...] [--task-type ...]`
 - `policynim compile --task ... [--domain ...] [--top-k ...] [--task-type ...]`

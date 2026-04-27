@@ -7,8 +7,9 @@ reference that used to live in the root README.
 
 ### CLI
 
+- `policynim init`
 - `policynim ingest`
-- `policynim dump-index`
+- `policynim dump-index [--count-only]`
 - `policynim search --query "..."`
 - `policynim route --task "..."`
 - `policynim compile --task "..."`
@@ -41,7 +42,19 @@ reference that used to live in the root README.
   `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
   missing or empty
 
+`policynim init` writes the local config file interactively when you want the
+CLI to prompt for `NVIDIA_API_KEY` and an optional custom corpus directory.
+
 ## Core Workflows
+
+### 0. Initialize The Local Config
+
+```bash
+uv run policynim init
+```
+
+Use this when you want the CLI to write the local env file for you instead of
+copying `.env.development.example` by hand.
 
 ### 1. Build The Local Index
 
@@ -53,6 +66,7 @@ What this does:
 
 - loads the bundled policy corpus, or the directory from `POLICYNIM_CORPUS_DIR`
 - chunks the documents into stable, citeable sections
+- compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
 - rebuilds the local LanceDB table
 
@@ -67,6 +81,12 @@ uv run policynim dump-index
 
 This is the fastest way to inspect stored chunk IDs, section labels, line spans,
 and raw chunk text. Add `| less` if the output is long.
+
+If you only need the row count, use:
+
+```bash
+uv run policynim dump-index --count-only
+```
 
 ### 3. Search The Corpus
 

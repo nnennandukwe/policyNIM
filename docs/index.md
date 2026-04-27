@@ -30,6 +30,13 @@ operations into separate pages so the root README can stay short.
 - [public-source-grounding.md](public-source-grounding.md): provenance notes for
   the shipped sample corpus
 
+## Talks And Workflow Notes
+
+- [ai-engineer-miami-context-plane.md](ai-engineer-miami-context-plane.md):
+  centralized context-plane talk notes and project framing
+- [extreme-programming-with-agents.md](extreme-programming-with-agents.md):
+  XP, TDD, and agent workflow notes
+
 ## Testing And Coverage
 
 - [../tests/README.md](../tests/README.md): current automated coverage and the
