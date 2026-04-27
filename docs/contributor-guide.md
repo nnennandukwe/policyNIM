@@ -12,7 +12,7 @@ uv sync --group test --group dev
 ```
 
 If you want the CLI to prompt for the required values and write the local config
-for you, run:
+file for you, run:
 
 ```bash
 uv run policynim init

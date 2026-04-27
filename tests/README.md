@@ -41,8 +41,8 @@ Current automated coverage includes:
 - Citation-deduplication and policy-vs-draft citation validation edge cases
 - NVIDIA response-validation coverage for malformed grounded-generation,
   policy-compilation, and reranking payloads
-- CLI output for `ingest`, JSON-first `search`, JSON-first `route`, JSON-first
-  `compile`, and JSON-first `preflight`
+- CLI output for `ingest`, JSON-first `search`, JSON-first `route`,
+  JSON-first `compile`, JSON-first `preflight`, and `dump-index --count-only`
 - Interactive `init` standalone setup, config file writing, and missing-setup
   guidance
 - CLI output for `eval`

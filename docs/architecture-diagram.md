@@ -172,6 +172,8 @@ flowchart TB
     subgraph Ingest["Corpus to Index"]
         direction LR
         Policies["Policy Markdown corpus"] --> Parse["Parse and normalize"]
+        Parse --> CompileRules["Compile runtime_rules frontmatter"]
+        CompileRules --> RuntimeRules
         Parse --> Chunk["Chunk by section and line span"]
         Chunk --> EmbedDocs["Embed documents"]
         EmbedDocs --> Index["Local LanceDB index"]
