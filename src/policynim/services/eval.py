@@ -10,7 +10,7 @@ import re
 import socket
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -74,9 +74,15 @@ _UI_START_POLL_INTERVAL_SECONDS = 0.1
 class EvalService:
     """Run PolicyNIM eval suites and persist comparable reports."""
 
-    def __init__(self, *, settings: Settings) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        base_environment: Mapping[str, str] | None = None,
+    ) -> None:
         self._settings = settings
         self._workspace_path = resolve_runtime_path(settings.eval_workspace_dir)
+        self._base_environment = dict(os.environ if base_environment is None else base_environment)
         self._ui_port: int | None = None
 
     def __enter__(self) -> EvalService:
@@ -177,7 +183,7 @@ class EvalService:
         phoenix_dir.mkdir(parents=True, exist_ok=True)
         log_path = _phoenix_log_path(self._workspace_path)
         command = ["phoenix", "serve"]
-        env = os.environ.copy()
+        env = dict(self._base_environment)
         env.update(
             {
                 "PHOENIX_WORKING_DIR": phoenix_dir.as_posix(),
@@ -425,9 +431,13 @@ class EvalService:
         )
 
 
-def create_eval_service(settings: Settings | None = None) -> EvalService:
+def create_eval_service(
+    settings: Settings | None = None,
+    *,
+    base_environment: Mapping[str, str] | None = None,
+) -> EvalService:
     """Build the default eval service from application settings."""
-    return EvalService(settings=settings or get_settings())
+    return EvalService(settings=settings or get_settings(), base_environment=base_environment)
 
 
 def _score_suite_cases(

@@ -400,6 +400,40 @@ def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
     assert env["PHOENIX_PROJECT_NAME"] == "PolicyNIM Eval"
 
 
+def test_eval_service_start_ui_uses_injected_base_environment(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SHOULD_NOT_LEAK", "process-value")
+    service = EvalService(
+        settings=Settings(eval_workspace_dir=tmp_path / "workspace"),
+        base_environment={"ONLY_THIS": "injected-value"},
+    )
+    process = FakeProcess(returncodes=[None, None])
+    port_checks = iter([False, True])
+    popen_call: dict[str, object] = {}
+
+    def fake_popen(command, **kwargs):
+        popen_call["command"] = command
+        popen_call["env"] = kwargs["env"]
+        return process
+
+    monkeypatch.setattr("policynim.services.eval.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "policynim.services.eval._is_local_port_reachable",
+        lambda port: next(port_checks),
+    )
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda seconds: None)
+
+    service.start_ui(port=8018)
+
+    env = popen_call["env"]
+    assert isinstance(env, dict)
+    assert env["ONLY_THIS"] == "injected-value"
+    assert "SHOULD_NOT_LEAK" not in env
+    assert env["PHOENIX_PORT"] == "8018"
+
+
 def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
     monkeypatch, tmp_path: Path
 ) -> None:

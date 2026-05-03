@@ -50,9 +50,9 @@ class RuntimeHealthService:
                 mcp_url=self._mcp_url,
                 reason=None,
             )
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("Runtime health check failed.")
-            return self._not_ready("Local index readiness could not be inspected.")
+            return self._not_ready(_inspection_failure_reason(exc))
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
         return HealthCheckResult(
@@ -171,6 +171,10 @@ def _derive_mcp_url(settings: Settings) -> str | None:
     if settings.mcp_public_base_url is None:
         return None
     return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+
+
+def _inspection_failure_reason(exc: Exception) -> str:
+    return f"Local index readiness could not be inspected: {type(exc).__name__}: {exc}."
 
 
 def _format_hosted_runtime_error(*, index_uri: Path | str, table_name: str, reason: str) -> str:
