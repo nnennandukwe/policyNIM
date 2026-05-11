@@ -193,7 +193,7 @@ uv run policynim mcp --transport streamable-http
 Then check readiness from another terminal:
 
 ```bash
-curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:6000/healthz
 ```
 
 What to look for:

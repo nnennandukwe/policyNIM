@@ -48,6 +48,8 @@ The repo ships three related templates:
 - `.env.example` remains a backward-compatible alias for the development defaults
 
 Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
+The development template binds `POLICYNIM_MCP_PORT=6000` so local hosted HTTP
+demo runs do not collide with the code default of `127.0.0.1:8000`.
 
 ## Important Runtime Settings
 
@@ -60,6 +62,7 @@ Core retrieval and grounding:
 - `POLICYNIM_DEFAULT_TOP_K`
 - `POLICYNIM_NVIDIA_CHAT_MODEL`
 - `POLICYNIM_NVIDIA_BASE_URL`
+- `POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL`
 - `POLICYNIM_NVIDIA_TIMEOUT_SECONDS`
 - `POLICYNIM_NVIDIA_MAX_RETRIES`
 
@@ -77,6 +80,8 @@ Hosted MCP and beta portal:
 - `POLICYNIM_BETA_GITHUB_CLIENT_ID`
 - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET`
 - `POLICYNIM_BETA_DAILY_REQUEST_QUOTA`
+- `POLICYNIM_BETA_AUTH_RATE_LIMIT_MAX_ATTEMPTS`
+- `POLICYNIM_BETA_AUTH_RATE_LIMIT_WINDOW_SECONDS`
 
 Runtime rules, evidence, and eval UI:
 

@@ -217,9 +217,9 @@ Important evaluation rules:
 
 - The only module that reads environment variables directly.
 - Exposes validated application settings to the rest of the package, including
-  hosted MCP port resolution from explicit app config or Railway `PORT`, plus a
-  production-only default bind of `0.0.0.0` when Railway injects `PORT` and
-  `POLICYNIM_MCP_HOST` is unset.
+  hosted MCP port resolution from explicit app config or `PORT`, plus a
+  production-mode default bind of `0.0.0.0` when `POLICYNIM_ENV=production`,
+  `PORT` is present, and `POLICYNIM_MCP_HOST` is unset.
 
 ### `src/policynim/types.py`
 
@@ -337,9 +337,9 @@ Important evaluation rules:
   URL is always `<POLICYNIM_MCP_PUBLIC_BASE_URL>/mcp`.
 - Hosted self-serve portal deployments on Railway use the same public domain, and
   the beta portal URL is always `<POLICYNIM_MCP_PUBLIC_BASE_URL>/beta`.
-- Hosted `streamable-http` startup fails fast when
-  `POLICYNIM_MCP_PUBLIC_BASE_URL` is set and the configured local index is
-  missing or empty.
+- Hosted `streamable-http` startup checks the configured local index before
+  serving traffic, attempts one rebuild with the runtime `NVIDIA_API_KEY`, and
+  fails fast if the index is still missing or empty.
 
 Shared interface guarantees:
 

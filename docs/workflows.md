@@ -38,9 +38,9 @@ reference that used to live in the root README.
 - `GET /healthz` reports local index readiness when using `streamable-http`
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
 - `/beta` stays as the self-serve signup and key-management surface
-- hosted `streamable-http` startup fails fast when
-  `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
-  missing or empty
+- hosted `streamable-http` startup checks the configured local index before
+  serving traffic, attempts one rebuild with the runtime `NVIDIA_API_KEY`, and
+  fails fast if the index is still missing or empty
 
 `policynim init` writes the local config file interactively when you want the
 CLI to prompt for `NVIDIA_API_KEY` and an optional custom corpus directory.
@@ -324,7 +324,9 @@ uv run policynim mcp --transport streamable-http
 ```
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other
-than the default development bind `127.0.0.1:8000`.
+than the code default `127.0.0.1:8000`. The development example template sets
+`POLICYNIM_MCP_PORT=6000` so the hosted HTTP demo does not collide with that
+default.
 
 Hosted HTTP notes:
 
@@ -348,8 +350,8 @@ Hosted HTTP notes:
 - `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
   URL
 - `stdio` ignores the hosted auth settings completely
-- when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
-  defaults to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
+- when `POLICYNIM_ENV=production` and `PORT` is present, hosted MCP defaults to
+  `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
 - the baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
   as the fast path. Hosted startup only falls back to `policynim ingest` when
   that local index is missing or empty
@@ -360,7 +362,7 @@ Hosted HTTP notes:
 Example readiness check:
 
 ```bash
-curl http://localhost:8000/healthz
+curl http://localhost:6000/healthz
 ```
 
 For hosted-first client setup examples, see:

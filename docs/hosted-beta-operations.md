@@ -33,6 +33,10 @@ Hosted beta notes:
   PolicyNIM app setting
 - `POLICYNIM_MCP_BEARER_TOKENS` is optional and reserved for operator
   break-glass access on `/mcp`
+- GitHub OAuth login routes use process-local sliding-window rate limiting;
+  tune it with `POLICYNIM_BETA_AUTH_RATE_LIMIT_MAX_ATTEMPTS` and
+  `POLICYNIM_BETA_AUTH_RATE_LIMIT_WINDOW_SECONDS` if you need different
+  thresholds
 - if you run the opt-in live smoke test locally, export the same deployed values
   as `POLICYNIM_BETA_MCP_URL` and `POLICYNIM_BETA_MCP_TOKEN`
 
