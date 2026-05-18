@@ -142,6 +142,7 @@ def init() -> None:
 @app.command()
 def ingest() -> None:
     """Build the local policy index from the shipped corpus."""
+    service = None
     try:
         settings = _load_setup_dependent_settings()
         service = create_ingest_service(settings)
@@ -150,6 +151,8 @@ def ingest() -> None:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
 
     typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
     typer.echo(f"Model: {result.embedding_model}")
@@ -173,12 +176,15 @@ def dump_index(
     ] = False,
 ) -> None:
     """Print all indexed chunks in a terminal-friendly format."""
+    service = None
     try:
         settings = _load_setup_dependent_settings()
         service = create_index_dump_service(settings)
         chunks = service.list_chunks()
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
+    finally:
+        _close_service(service)
 
     typer.echo(f"Indexed chunks: {len(chunks)}")
     if count_only:

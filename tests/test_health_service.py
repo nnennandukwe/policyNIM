@@ -210,6 +210,15 @@ def test_ensure_hosted_runtime_ready_rebuilds_missing_index(
         ]
     )
     rebuilds: list[str] = []
+    closed: list[bool] = []
+
+    class FakeIngestService:
+        def run(self):
+            rebuilds.append("run")
+            return SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
+
+        def close(self) -> None:
+            closed.append(True)
 
     monkeypatch.setattr(
         health_module,
@@ -219,17 +228,13 @@ def test_ensure_hosted_runtime_ready_rebuilds_missing_index(
     monkeypatch.setattr(
         health_module,
         "create_ingest_service",
-        lambda settings: SimpleNamespace(
-            run=lambda: (
-                rebuilds.append("run")
-                or SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
-            )
-        ),
+        lambda settings: FakeIngestService(),
     )
 
     health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
 
     assert rebuilds == ["run"]
+    assert closed == [True]
 
 
 def test_ensure_hosted_runtime_ready_rebuilds_empty_index(

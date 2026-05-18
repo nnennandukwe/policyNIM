@@ -127,3 +127,17 @@ def test_auth_store_reset_for_tests_clears_existing_state(tmp_path) -> None:
     store.reset_for_tests()
 
     assert store.list_accounts() == []
+
+
+def test_auth_store_reset_for_tests_removes_wal_sidecars(tmp_path) -> None:
+    db_path = tmp_path / "auth.sqlite3"
+    store = AuthStore(path=db_path)
+    wal_path = db_path.with_name(f"{db_path.name}-wal")
+    shm_path = db_path.with_name(f"{db_path.name}-shm")
+    wal_path.write_text("stale wal", encoding="utf-8")
+    shm_path.write_text("stale shm", encoding="utf-8")
+
+    store.reset_for_tests()
+
+    assert wal_path.exists() is False
+    assert shm_path.exists() is False

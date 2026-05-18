@@ -26,13 +26,24 @@ from policynim.types import (
 class FakeIngestService:
     """Capture the isolated live eval index path."""
 
-    def __init__(self, settings: Settings, seen_paths: list[Path]) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        seen_paths: list[Path],
+        *,
+        closed: list[bool] | None = None,
+    ) -> None:
         self._settings = settings
         self._seen_paths = seen_paths
+        self._closed = closed
 
     def run(self):
         self._seen_paths.append(self._settings.lancedb_uri)
         return None
+
+    def close(self) -> None:
+        if self._closed is not None:
+            self._closed.append(True)
 
 
 class FakeSearchService:
@@ -286,10 +297,11 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
         eval_workspace_dir=tmp_path / "workspace",
     )
     seen_paths: list[Path] = []
+    closed: list[bool] = []
 
     monkeypatch.setattr(
         "policynim.services.eval.create_ingest_service",
-        lambda active_settings: FakeIngestService(active_settings, seen_paths),
+        lambda active_settings: FakeIngestService(active_settings, seen_paths, closed=closed),
     )
     monkeypatch.setattr(
         "policynim.services.eval._create_live_search_service",
@@ -309,6 +321,7 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
     assert seen_paths
     assert seen_paths[0] != settings.lancedb_uri
     assert settings.lancedb_uri == tmp_path / "caller-index"
+    assert closed == [True]
 
 
 def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(

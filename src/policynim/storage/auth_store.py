@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from policynim.errors import PolicyNIMError
 from policynim.types import BetaAccount, BetaAccountStatus, BetaUsageSnapshot
+
+from . import _sqlite
 
 _ACTIVE_STATUS = "active"
 _SUSPENDED_STATUS = "suspended"
@@ -63,8 +65,9 @@ class AuthStore:
 
     def reset_for_tests(self) -> None:
         """Reset the backing SQLite file for deterministic test re-entry."""
-        if self._path.exists():
-            self._path.unlink()
+        for candidate in _sqlite.database_artifact_paths(self._path):
+            if candidate.exists():
+                candidate.unlink()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_schema()
 
@@ -94,7 +97,7 @@ class AuthStore:
     ) -> BetaAccount:
         """Create or update one hosted beta account after GitHub login."""
         with closing(self._connect()) as conn:
-            _begin_immediate(conn)
+            _sqlite.begin_immediate(conn)
             try:
                 row = conn.execute(
                     "SELECT id FROM accounts WHERE github_user_id = ?",
@@ -118,8 +121,8 @@ class AuthStore:
                             github_login,
                             email,
                             _ACTIVE_STATUS,
-                            _iso_utc(now),
-                            _iso_utc(now),
+                            _sqlite.iso_utc(now),
+                            _sqlite.iso_utc(now),
                         ),
                     )
                     lastrowid = cursor.lastrowid
@@ -144,7 +147,7 @@ class AuthStore:
                         SET github_login = ?, email = ?, last_login_at = ?
                         WHERE id = ?
                         """,
-                        (github_login, email, _iso_utc(now), account_id),
+                        (github_login, email, _sqlite.iso_utc(now), account_id),
                     )
                     self._insert_audit_event(
                         conn,
@@ -173,7 +176,7 @@ class AuthStore:
     ) -> BetaAccount:
         """Revoke the current active key and persist a new one atomically."""
         with closing(self._connect()) as conn:
-            _begin_immediate(conn)
+            _sqlite.begin_immediate(conn)
             try:
                 self._require_account(conn, account_id)
                 conn.execute(
@@ -181,14 +184,14 @@ class AuthStore:
                         "UPDATE api_keys SET revoked_at = ? "
                         "WHERE account_id = ? AND revoked_at IS NULL"
                     ),
-                    (_iso_utc(now), account_id),
+                    (_sqlite.iso_utc(now), account_id),
                 )
                 conn.execute(
                     """
                     INSERT INTO api_keys (account_id, key_prefix, key_hash, created_at, revoked_at)
                     VALUES (?, ?, ?, ?, NULL)
                     """,
-                    (account_id, key_prefix, key_hash, _iso_utc(now)),
+                    (account_id, key_prefix, key_hash, _sqlite.iso_utc(now)),
                 )
                 self._insert_audit_event(
                     conn,
@@ -207,7 +210,7 @@ class AuthStore:
     def revoke_active_key(self, *, account_id: int, now: datetime) -> BetaAccount:
         """Revoke the current active key, if one exists."""
         with closing(self._connect()) as conn:
-            _begin_immediate(conn)
+            _sqlite.begin_immediate(conn)
             try:
                 account = self._require_account(conn, account_id)
                 active_key = conn.execute(
@@ -225,7 +228,7 @@ class AuthStore:
                         "UPDATE api_keys SET revoked_at = ? "
                         "WHERE account_id = ? AND revoked_at IS NULL"
                     ),
-                    (_iso_utc(now), account_id),
+                    (_sqlite.iso_utc(now), account_id),
                 )
                 if active_key is not None:
                     self._insert_audit_event(
@@ -245,7 +248,7 @@ class AuthStore:
     def set_account_status(self, *, account_id: int, status: str, now: datetime) -> BetaAccount:
         """Persist the supplied account status."""
         with closing(self._connect()) as conn:
-            _begin_immediate(conn)
+            _sqlite.begin_immediate(conn)
             try:
                 if status not in {_ACTIVE_STATUS, _SUSPENDED_STATUS}:
                     raise PolicyNIMError(f"Unsupported beta account status {status!r}.")
@@ -294,7 +297,7 @@ class AuthStore:
     ) -> tuple[BetaUsageSnapshot, bool]:
         """Consume one request from the current UTC-day quota if capacity remains."""
         with closing(self._connect()) as conn:
-            _begin_immediate(conn)
+            _sqlite.begin_immediate(conn)
             try:
                 self._require_account(conn, account_id)
                 row = conn.execute(
@@ -416,12 +419,7 @@ class AuthStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=30.0, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return _sqlite.connect(self._path)
 
     def _fetch_account_by_column(
         self,
@@ -461,19 +459,9 @@ class AuthStore:
                 account_id,
                 event_type,
                 json.dumps(details, sort_keys=True),
-                _iso_utc(now),
+                _sqlite.iso_utc(now),
             ),
         )
-
-
-def _begin_immediate(conn: sqlite3.Connection) -> None:
-    conn.execute("BEGIN IMMEDIATE")
-
-
-def _iso_utc(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat()
 
 
 def _parse_datetime(value: object) -> datetime | None:

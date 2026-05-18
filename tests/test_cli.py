@@ -129,6 +129,9 @@ def configure_standalone_cli_environment(
 class MockIngestService:
     """Static ingest service for CLI tests."""
 
+    def __init__(self) -> None:
+        self.closed = False
+
     def run(self) -> IngestResult:
         return IngestResult(
             corpus_path="policies",
@@ -139,6 +142,9 @@ class MockIngestService:
             chunk_count=24,
             embedding_dimension=2,
         )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockSearchService:
@@ -404,6 +410,9 @@ class MockPreflightService:
 class MockIndexDumpService:
     """Static dump service for CLI tests."""
 
+    def __init__(self) -> None:
+        self.closed = False
+
     def list_chunks(self) -> list[PolicyChunk]:
         return [
             PolicyChunk(
@@ -420,6 +429,9 @@ class MockIndexDumpService:
                 ),
             )
         ]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockRuntimeDecisionService:
@@ -791,9 +803,10 @@ def make_stderr_prompt_confirmer():
 
 
 def test_ingest_command_prints_summary(monkeypatch) -> None:
+    service = MockIngestService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_ingest_service",
-        lambda settings: MockIngestService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(app, ["ingest"])
@@ -801,6 +814,7 @@ def test_ingest_command_prints_summary(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Indexed 24 chunks from 8 documents." in result.stdout
     assert "mock-model" in result.stdout
+    assert service.closed is True
 
 
 def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
@@ -813,6 +827,24 @@ def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "chunk/vector mismatch" in result.stderr
+
+
+def test_ingest_command_closes_service_when_run_fails(monkeypatch) -> None:
+    class FailingIngestService(MockIngestService):
+        def run(self) -> IngestResult:
+            raise ValueError("chunk/vector mismatch")
+
+    service = FailingIngestService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_ingest_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "chunk/vector mismatch" in result.stderr
+    assert service.closed is True
 
 
 def test_search_command_prints_json(monkeypatch) -> None:
@@ -1349,9 +1381,10 @@ def test_preflight_command_formats_route_validation_errors(
 
 
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
+    service = MockIndexDumpService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
-        lambda settings: MockIndexDumpService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(app, ["dump-index"])
@@ -1360,18 +1393,21 @@ def test_dump_index_command_prints_chunks(monkeypatch) -> None:
     assert "Indexed chunks: 1" in result.stdout
     assert "BACKEND-1" in result.stdout
     assert "Use request ids in backend logs." in result.stdout
+    assert service.closed is True
 
 
 def test_dump_index_count_only_prints_only_count(monkeypatch) -> None:
+    service = MockIndexDumpService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
-        lambda settings: MockIndexDumpService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(app, ["dump-index", "--count-only"])
 
     assert result.exit_code == 0
     assert result.stdout == "Indexed chunks: 1\n"
+    assert service.closed is True
 
 
 def test_help_includes_dump_index_command() -> None:

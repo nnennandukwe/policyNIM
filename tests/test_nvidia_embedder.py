@@ -35,6 +35,16 @@ class RaisingEmbeddingsClient:
         raise self._exc
 
 
+class CloseableEmbeddingsClient:
+    """Embeddings client stub that exposes a close hook."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_embedder_classifies_upstream_auth_failures() -> None:
     embedder = NVIDIAEmbedder(
         api_key="test-key",
@@ -67,3 +77,35 @@ def test_embedder_classifies_upstream_rate_limits() -> None:
         embedder.embed_query("backend logging")
 
     assert excinfo.value.failure_class == "rate_limit"
+
+
+def test_embedder_close_closes_owned_client() -> None:
+    client = CloseableEmbeddingsClient()
+    embedder = NVIDIAEmbedder(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        batch_size=2,
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,
+    )
+
+    embedder.close()
+
+    assert client.closed is False
+
+    owned_client = CloseableEmbeddingsClient()
+    owned_embedder = NVIDIAEmbedder(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        batch_size=2,
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    owned_embedder._client = owned_client  # type: ignore[assignment]
+
+    owned_embedder.close()
+
+    assert owned_client.closed is True

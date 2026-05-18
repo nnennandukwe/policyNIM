@@ -81,6 +81,14 @@ def _service(tmp_path: Path) -> BetaAuthService:
     )
 
 
+def test_service_derives_public_urls_from_shared_helper(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    assert service.mcp_url == "https://beta.example.com/mcp"
+    assert service.portal_url == "https://beta.example.com/beta"
+    assert service.github_callback_url == "https://beta.example.com/auth/github/callback"
+
+
 def test_exchange_code_rejects_invalid_json(monkeypatch, tmp_path: Path) -> None:
     service = _service(tmp_path)
 

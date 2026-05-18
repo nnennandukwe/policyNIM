@@ -7,6 +7,7 @@ from pathlib import Path
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError
+from policynim.hosted_urls import derive_mcp_url
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
@@ -75,7 +76,7 @@ def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHe
             table_name=active_settings.lancedb_table,
         ),
         table_name=active_settings.lancedb_table,
-        mcp_url=_derive_mcp_url(active_settings),
+        mcp_url=derive_mcp_url(active_settings),
     )
 
 
@@ -147,8 +148,10 @@ def _rebuild_hosted_runtime_index(
         index_uri,
         summary,
     )
+    ingest_service = None
     try:
-        result = create_ingest_service(settings).run()
+        ingest_service = create_ingest_service(settings)
+        result = ingest_service.run()
     except Exception as exc:
         rebuild_reason = f"Automatic hosted-index rebuild failed: {type(exc).__name__}: {exc}."
         raise ConfigurationError(
@@ -158,6 +161,10 @@ def _rebuild_hosted_runtime_index(
                 reason=rebuild_reason,
             )
         ) from exc
+    finally:
+        close = getattr(ingest_service, "close", None)
+        if callable(close):
+            close()
 
     LOGGER.info(
         "Hosted runtime index rebuilt at %s with %s chunks across %s documents.",
@@ -165,12 +172,6 @@ def _rebuild_hosted_runtime_index(
         result.chunk_count,
         result.document_count,
     )
-
-
-def _derive_mcp_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
 
 
 def _format_hosted_runtime_error(*, index_uri: Path | str, table_name: str, reason: str) -> str:

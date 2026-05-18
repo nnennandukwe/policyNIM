@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 import httpx
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
+from policynim.hosted_urls import derive_beta_url, derive_github_callback_url, derive_mcp_url
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import AuthStore
@@ -45,23 +46,23 @@ class BetaAuthService:
     @property
     def mcp_url(self) -> str:
         """Return the public hosted MCP URL."""
-        if self._settings.mcp_public_base_url is None:
+        mcp_url = derive_mcp_url(self._settings)
+        if mcp_url is None:
             raise ConfigurationError("POLICYNIM_MCP_PUBLIC_BASE_URL must be configured.")
-        return str(self._settings.mcp_public_base_url).rstrip("/") + "/mcp"
+        return mcp_url
 
     @property
     def portal_url(self) -> str:
         """Return the public hosted beta portal URL."""
-        if self._settings.mcp_public_base_url is None:
+        beta_url = derive_beta_url(self._settings)
+        if beta_url is None:
             raise ConfigurationError("POLICYNIM_MCP_PUBLIC_BASE_URL must be configured.")
-        return str(self._settings.mcp_public_base_url).rstrip("/") + "/beta"
+        return beta_url
 
     @property
     def github_callback_url(self) -> str:
         """Return the configured GitHub OAuth callback URL."""
-        if self._settings.mcp_public_base_url is None:
-            raise ConfigurationError("POLICYNIM_MCP_PUBLIC_BASE_URL must be configured.")
-        return str(self._settings.mcp_public_base_url).rstrip("/") + "/auth/github/callback"
+        return derive_github_callback_url(self._settings)
 
     def list_accounts(self) -> list[BetaAccount]:
         """Return all hosted beta accounts."""

@@ -25,6 +25,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
+from policynim.hosted_urls import derive_beta_url, derive_mcp_url
 from policynim.services import (
     BetaAuthService,
     create_beta_auth_service,
@@ -518,7 +519,7 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
             ready=False,
             table_name=settings.lancedb_table,
             row_count=0,
-            mcp_url=_derive_mcp_url(settings),
+            mcp_url=derive_mcp_url(settings),
             reason=fallback_reason,
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=503)
@@ -536,18 +537,6 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
 
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)
-
-
-def _derive_mcp_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
-
-
-def _derive_beta_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + _BETA_PATH
 
 
 def _beta_asset_path(filename: str) -> Path:
@@ -637,8 +626,8 @@ def _render_beta_landing(
     message: str | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
-    portal_url = _derive_beta_url(settings) or _BETA_PATH
-    mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
+    portal_url = derive_beta_url(settings) or _BETA_PATH
+    mcp_url = derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
     notices: list[dict[str, str]] = []
     if message:
         notices.append(
@@ -704,8 +693,8 @@ def _render_beta_dashboard(
     message: str | None = None,
     message_tone: str = "warning",
 ) -> HTMLResponse:
-    portal_url = _derive_beta_url(settings) or _BETA_PATH
-    mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
+    portal_url = derive_beta_url(settings) or _BETA_PATH
+    mcp_url = derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
     current_key = account.api_key_prefix or "No active key"
     current_key_created = (
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"

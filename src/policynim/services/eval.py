@@ -313,7 +313,10 @@ class EvalService:
                 update={"lancedb_uri": Path(temp_dir) / "lancedb"}
             )
             ingest_service = create_ingest_service(temp_settings)
-            ingest_service.run()
+            try:
+                ingest_service.run()
+            finally:
+                _close_component(ingest_service)
 
             search_service = _create_live_search_service(
                 temp_settings,

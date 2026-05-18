@@ -55,6 +55,7 @@ class NVIDIAEmbedder(Embedder):
         batch_size: int,
         timeout_seconds: float,
         max_retries: int,
+        client: OpenAI | Any | None = None,
     ) -> None:
         api_key = api_key.strip()
         if not api_key:
@@ -63,7 +64,8 @@ class NVIDIAEmbedder(Embedder):
         self._model = model
         self._batch_size = batch_size
         self._max_retries = max_retries
-        self._client = OpenAI(
+        self._owns_client = client is None
+        self._client = client or OpenAI(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout_seconds,
@@ -81,6 +83,11 @@ class NVIDIAEmbedder(Embedder):
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
         )
+
+    def close(self) -> None:
+        """Release the owned OpenAI client when supported by the SDK."""
+        if self._owns_client:
+            _close_client(self._client)
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed policy chunk text in batches."""

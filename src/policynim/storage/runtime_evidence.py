@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from policynim.contracts import RuntimeEvidenceStoreProtocol
 from policynim.types import RuntimeExecutionEvidenceRecord
+
+from . import _sqlite
 
 
 class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
@@ -34,11 +36,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
 
     def reset_for_tests(self) -> None:
         """Reset the backing SQLite file and WAL sidecars for deterministic tests."""
-        for candidate in (
-            self._path,
-            self._path.with_name(f"{self._path.name}-wal"),
-            self._path.with_name(f"{self._path.name}-shm"),
-        ):
+        for candidate in _sqlite.database_artifact_paths(self._path):
             if candidate.exists():
                 candidate.unlink()
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +45,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
     def append_event(self, record: RuntimeExecutionEvidenceRecord) -> None:
         """Persist one immutable evidence event."""
         with closing(self._connect()) as conn:
-            _begin_immediate(conn)
+            _sqlite.begin_immediate(conn)
             try:
                 conn.execute(
                     """
@@ -74,7 +72,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
                         record.event_id,
                         record.execution_id,
                         record.session_id,
-                        _iso_utc(record.created_at),
+                        _sqlite.iso_utc(record.created_at),
                         record.event_kind,
                         json.dumps(record.request.model_dump(mode="json"), sort_keys=True),
                         record.decision,
@@ -166,22 +164,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=30.0, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
-
-
-def _begin_immediate(conn: sqlite3.Connection) -> None:
-    conn.execute("BEGIN IMMEDIATE")
-
-
-def _iso_utc(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat()
+        return _sqlite.connect(self._path)
 
 
 def _evidence_record_from_row(row: sqlite3.Row) -> RuntimeExecutionEvidenceRecord:
