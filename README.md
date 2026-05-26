@@ -49,7 +49,7 @@ PolicyNIM currently ships with two main user-facing surfaces:
   blocked, and failed runtime actions.
 - Interactive `init` setup plus JSON-first CLI commands for `ingest`,
   `dump-index`, `search`, `route`, `compile`, `preflight`, `eval`, `mcp`,
-  `runtime`, and `evidence`.
+  `runtime`, `evidence`, and hosted `beta-admin` operator commands.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
@@ -143,8 +143,8 @@ Start here when you want the longer version of a specific path:
 - [docs/contributor-guide.md](docs/contributor-guide.md): local setup, env vars,
   model references, and quality gates
 - [docs/workflows.md](docs/workflows.md): CLI surfaces,
-  ingest/search/route/compile/preflight, eval, MCP, runtime/evidence, and
-  troubleshooting
+  ingest/search/route/compile/preflight, eval, MCP, runtime/evidence,
+  `beta-admin`, and troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,
