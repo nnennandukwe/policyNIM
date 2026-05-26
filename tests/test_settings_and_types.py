@@ -13,8 +13,18 @@ from policynim.settings import Settings
 from policynim.types import (
     DEFAULT_TOP_K,
     DocumentSection,
+    EvalAggregateMetrics,
+    EvalCaseMetrics,
+    EvalCaseResult,
+    EvalComparisonDelta,
+    EvalModeRunResult,
+    EvalRunResult,
+    HealthCheckResult,
     HTTPRequestActionRequest,
     ParsedRuntimeRule,
+    PolicyConformanceMetric,
+    PolicyConformanceResult,
+    PolicyEvidenceTraceConformanceCheck,
     RuntimeActionRequest,
     RuntimeDecisionResult,
     RuntimeEvidenceExecutionSummary,
@@ -830,3 +840,123 @@ def test_runtime_evidence_session_summary_accepts_aggregate_counts() -> None:
     assert summary.execution_count == 1
     assert summary.allowed_count == 1
     assert summary.executions[0].execution_outcome == "allowed"
+
+
+def test_health_check_result_rejects_drifted_status_fields() -> None:
+    with pytest.raises(ValidationError, match="ready must match status"):
+        HealthCheckResult(
+            status="ok",
+            ready=False,
+            table_name="policy_chunks",
+            row_count=0,
+            reason="index missing",
+        )
+
+    with pytest.raises(ValidationError, match="not-ready health checks must include a reason"):
+        HealthCheckResult(
+            status="error",
+            ready=False,
+            table_name="policy_chunks",
+            row_count=0,
+        )
+
+
+def test_policy_conformance_models_require_failure_reason_parity() -> None:
+    with pytest.raises(ValidationError, match="must include failure_reasons"):
+        PolicyConformanceMetric(name="plan_completeness", score=0.0, passed=False)
+
+    with pytest.raises(ValidationError, match="must not include failure_reasons"):
+        PolicyConformanceResult(
+            backend="nemo",
+            passed=True,
+            overall_score=1.0,
+            metrics=[
+                PolicyConformanceMetric(
+                    name="plan_completeness",
+                    score=1.0,
+                    passed=True,
+                )
+            ],
+            failure_reasons=["unexpected failure"],
+        )
+
+    with pytest.raises(ValidationError, match="must include failure_reasons"):
+        PolicyEvidenceTraceConformanceCheck(
+            backend="nemo",
+            name="final_adherence",
+            passed=False,
+            score=0.0,
+        )
+
+
+def test_eval_run_result_rejects_invalid_compare_rerank_shape() -> None:
+    base_metrics = EvalAggregateMetrics(
+        case_count=1,
+        passed_count=1,
+        search_case_count=1,
+        search_passed_count=1,
+        preflight_case_count=0,
+        preflight_passed_count=0,
+        overall_pass_rate=1.0,
+        search_pass_rate=1.0,
+        preflight_pass_rate=0.0,
+        expected_chunk_recall=1.0,
+        expected_policy_recall=1.0,
+        insufficient_context_accuracy=1.0,
+    )
+    base_case = EvalCaseResult(
+        case_id="search-case",
+        kind="search",
+        input="backend logs",
+        top_k=1,
+        rerank_enabled=True,
+        passed=True,
+        expected_insufficient_context=False,
+        actual_insufficient_context=False,
+        metrics=EvalCaseMetrics(
+            expected_chunk_recall=1.0,
+            expected_policy_recall=1.0,
+            insufficient_context_correct=True,
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="compare_rerank=true requires exactly two runs"):
+        EvalRunResult(
+            mode="offline",
+            suite_name="default",
+            suite_path="evals/default_cases.json",
+            workspace_path="data/evals/workspace",
+            compare_rerank=True,
+            runs=[
+                EvalModeRunResult(
+                    rerank_enabled=True,
+                    metrics=base_metrics,
+                    result_json_path="run.json",
+                    report_html_path="run.html",
+                    case_results=[base_case],
+                )
+            ],
+            comparison=EvalComparisonDelta(),
+        )
+
+    with pytest.raises(
+        ValidationError,
+        match="compare_rerank=false must not include a comparison summary",
+    ):
+        EvalRunResult(
+            mode="offline",
+            suite_name="default",
+            suite_path="evals/default_cases.json",
+            workspace_path="data/evals/workspace",
+            compare_rerank=False,
+            runs=[
+                EvalModeRunResult(
+                    rerank_enabled=True,
+                    metrics=base_metrics,
+                    result_json_path="run.json",
+                    report_html_path="run.html",
+                    case_results=[base_case],
+                )
+            ],
+            comparison=EvalComparisonDelta(),
+        )

@@ -591,16 +591,81 @@ class MockEvalService:
         self.last_regenerate = regenerate
         self.last_max_regenerations = max_regenerations
         passed_count = 2 if self.passed else 1
-        return EvalRunResult(
-            mode=mode,
-            backend=backend,
-            suite_name="day-6-default",
-            suite_path="evals/default_cases.json",
-            workspace_path="data/evals/workspace",
-            compare_rerank=compare_rerank,
-            runs=[
+        runs = [
+            EvalModeRunResult(
+                rerank_enabled=True,
+                metrics=EvalAggregateMetrics(
+                    case_count=2,
+                    passed_count=passed_count,
+                    search_case_count=1,
+                    search_passed_count=1,
+                    preflight_case_count=1,
+                    preflight_passed_count=passed_count - 1,
+                    overall_pass_rate=passed_count / 2,
+                    search_pass_rate=1.0,
+                    preflight_pass_rate=(passed_count - 1) / 1,
+                    expected_chunk_recall=1.0,
+                    expected_policy_recall=1.0 if self.passed else 0.5,
+                    insufficient_context_accuracy=1.0,
+                ),
+                result_json_path="data/evals/workspace/results/run.json",
+                report_html_path="data/evals/workspace/reports/run.html",
+                case_results=[
+                    EvalCaseResult(
+                        case_id="search-case",
+                        kind="search",
+                        input="backend logs",
+                        domain=None,
+                        top_k=1,
+                        rerank_enabled=True,
+                        passed=True,
+                        failure_reasons=[],
+                        expected_insufficient_context=False,
+                        actual_insufficient_context=False,
+                        expected_chunk_ids=["BACKEND-1"],
+                        actual_chunk_ids=["BACKEND-1"],
+                        matched_chunk_ids=["BACKEND-1"],
+                        expected_policy_ids=[],
+                        actual_policy_ids=[],
+                        matched_policy_ids=[],
+                        metrics=EvalCaseMetrics(
+                            expected_chunk_recall=1.0,
+                            expected_policy_recall=1.0,
+                            insufficient_context_correct=True,
+                        ),
+                    ),
+                    EvalCaseResult(
+                        case_id="preflight-case",
+                        kind="preflight",
+                        input="refresh token cleanup",
+                        domain=None,
+                        top_k=1,
+                        rerank_enabled=True,
+                        passed=self.passed,
+                        failure_reasons=(
+                            [] if self.passed else ["missing expected policy_id values: AUTH-1"]
+                        ),
+                        expected_insufficient_context=False,
+                        actual_insufficient_context=False,
+                        expected_chunk_ids=[],
+                        actual_chunk_ids=["AUTH-1"],
+                        matched_chunk_ids=[],
+                        expected_policy_ids=["AUTH-1"],
+                        actual_policy_ids=["AUTH-1"] if self.passed else [],
+                        matched_policy_ids=["AUTH-1"] if self.passed else [],
+                        metrics=EvalCaseMetrics(
+                            expected_chunk_recall=1.0,
+                            expected_policy_recall=1.0 if self.passed else 0.0,
+                            insufficient_context_correct=True,
+                        ),
+                    ),
+                ],
+            )
+        ]
+        if compare_rerank:
+            runs.append(
                 EvalModeRunResult(
-                    rerank_enabled=True,
+                    rerank_enabled=False,
                     metrics=EvalAggregateMetrics(
                         case_count=2,
                         passed_count=passed_count,
@@ -615,8 +680,8 @@ class MockEvalService:
                         expected_policy_recall=1.0 if self.passed else 0.5,
                         insufficient_context_accuracy=1.0,
                     ),
-                    result_json_path="data/evals/workspace/results/run.json",
-                    report_html_path="data/evals/workspace/reports/run.html",
+                    result_json_path="data/evals/workspace/results/run-no-rerank.json",
+                    report_html_path="data/evals/workspace/reports/run-no-rerank.html",
                     case_results=[
                         EvalCaseResult(
                             case_id="search-case",
@@ -624,7 +689,7 @@ class MockEvalService:
                             input="backend logs",
                             domain=None,
                             top_k=1,
-                            rerank_enabled=True,
+                            rerank_enabled=False,
                             passed=True,
                             failure_reasons=[],
                             expected_insufficient_context=False,
@@ -647,7 +712,7 @@ class MockEvalService:
                             input="refresh token cleanup",
                             domain=None,
                             top_k=1,
-                            rerank_enabled=True,
+                            rerank_enabled=False,
                             passed=self.passed,
                             failure_reasons=(
                                 [] if self.passed else ["missing expected policy_id values: AUTH-1"]
@@ -668,15 +733,27 @@ class MockEvalService:
                         ),
                     ],
                 )
-            ],
-            comparison=EvalComparisonDelta(
-                overall_pass_rate_delta=0.5,
-                expected_chunk_recall_delta=0.5,
-                expected_policy_recall_delta=0.5,
-                insufficient_context_accuracy_delta=0.0,
-                improved_case_ids=["preflight-case"],
-                regressed_case_ids=[],
-                unchanged_case_ids=["search-case"],
+            )
+        return EvalRunResult(
+            mode=mode,
+            backend=backend,
+            suite_name="day-6-default",
+            suite_path="evals/default_cases.json",
+            workspace_path="data/evals/workspace",
+            compare_rerank=compare_rerank,
+            runs=runs,
+            comparison=(
+                EvalComparisonDelta(
+                    overall_pass_rate_delta=0.0,
+                    expected_chunk_recall_delta=0.0,
+                    expected_policy_recall_delta=0.0,
+                    insufficient_context_accuracy_delta=0.0,
+                    improved_case_ids=[],
+                    regressed_case_ids=[],
+                    unchanged_case_ids=["search-case", "preflight-case"],
+                )
+                if compare_rerank
+                else None
             ),
         )
 

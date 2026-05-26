@@ -623,6 +623,17 @@ class HealthCheckResult(StrictModel):
     mcp_url: str | None = None
     reason: str | None = None
 
+    @model_validator(mode="after")
+    def validate_status_shape(self) -> Self:
+        """Keep readiness booleans and status strings from drifting apart."""
+        if self.ready != (self.status == "ok"):
+            raise ValueError("ready must match status.")
+        if self.ready and self.reason is not None:
+            raise ValueError("ready health checks must not include a reason.")
+        if not self.ready and self.reason is None:
+            raise ValueError("not-ready health checks must include a reason.")
+        return self
+
 
 BetaAccountStatus = Literal["active", "suspended"]
 
@@ -682,6 +693,14 @@ def _validate_non_empty_path(value: object, *, field_name: str) -> object:
     if isinstance(value, str) and not value.strip():
         raise ValueError(f"{field_name} must not be empty.")
     return value
+
+
+def _validate_pass_fail_shape(*, passed: bool, failure_reasons: list[str], label: str) -> None:
+    """Require pass/fail booleans and failure reasons to agree."""
+    if passed and failure_reasons:
+        raise ValueError(f"{label} must not include failure_reasons when passed is true.")
+    if not passed and not failure_reasons:
+        raise ValueError(f"{label} must include failure_reasons when passed is false.")
 
 
 class PolicyGuidance(StrictModel):
@@ -789,6 +808,15 @@ class PolicyConformanceMetric(StrictModel):
     passed: bool
     failure_reasons: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_failure_shape(self) -> Self:
+        _validate_pass_fail_shape(
+            passed=self.passed,
+            failure_reasons=self.failure_reasons,
+            label="policy conformance metrics",
+        )
+        return self
+
 
 class PolicyConformanceTraceStep(StrictModel):
     """One optional intermediate step available for trajectory-aware judging."""
@@ -825,6 +853,15 @@ class PolicyConformanceResult(StrictModel):
     constraint_ids: list[str] = Field(default_factory=list)
     chunk_ids: list[str] = Field(default_factory=list)
     failure_reasons: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_failure_shape(self) -> Self:
+        _validate_pass_fail_shape(
+            passed=self.passed,
+            failure_reasons=self.failure_reasons,
+            label="policy conformance results",
+        )
+        return self
 
 
 class PolicyConformanceRequest(StrictModel):
@@ -914,6 +951,15 @@ class PolicyEvidenceTraceConformanceCheck(StrictModel):
     failure_reasons: list[str] = Field(default_factory=list)
     constraint_ids: list[str] = Field(default_factory=list)
     chunk_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_failure_shape(self) -> Self:
+        _validate_pass_fail_shape(
+            passed=self.passed,
+            failure_reasons=self.failure_reasons,
+            label="policy evidence trace conformance checks",
+        )
+        return self
 
 
 class PolicyEvidenceTrace(StrictModel):
@@ -1033,6 +1079,15 @@ class EvalCaseResult(StrictModel):
     regeneration_result: PreflightRegenerationResult | None = None
     metrics: EvalCaseMetrics
 
+    @model_validator(mode="after")
+    def validate_failure_shape(self) -> Self:
+        _validate_pass_fail_shape(
+            passed=self.passed,
+            failure_reasons=self.failure_reasons,
+            label="eval case results",
+        )
+        return self
+
 
 class EvalAggregateMetrics(StrictModel):
     """Aggregate metrics for one rerank mode run."""
@@ -1089,3 +1144,27 @@ class EvalRunResult(StrictModel):
     compare_rerank: bool = True
     runs: list[EvalModeRunResult] = Field(default_factory=list)
     comparison: EvalComparisonDelta | None = None
+
+    @model_validator(mode="after")
+    def validate_compare_rerank_shape(self) -> Self:
+        """Keep compare-mode metadata aligned with the persisted runs."""
+        if self.compare_rerank:
+            if len(self.runs) != 2:
+                raise ValueError("compare_rerank=true requires exactly two runs.")
+            if {run.rerank_enabled for run in self.runs} != {True, False}:
+                raise ValueError(
+                    "compare_rerank=true requires one rerank-enabled and one rerank-disabled run."
+                )
+            if self.comparison is None:
+                raise ValueError("compare_rerank=true requires a comparison summary.")
+            return self
+
+        if len(self.runs) != 1:
+            raise ValueError("compare_rerank=false requires exactly one run.")
+        if not self.runs[0].rerank_enabled:
+            raise ValueError(
+                "compare_rerank=false requires the single run to keep reranking enabled."
+            )
+        if self.comparison is not None:
+            raise ValueError("compare_rerank=false must not include a comparison summary.")
+        return self

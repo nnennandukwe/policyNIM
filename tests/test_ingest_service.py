@@ -99,6 +99,8 @@ def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
     service = IngestService(
         embedder=MockEmbedder(),
         index_store=store,
+        index_uri=store.uri,
+        table_name=store.table_name,
         corpus_root=policies_dir,
         embedding_model="mock-embedder",
         runtime_rules_artifact_path=artifact_path,
@@ -165,6 +167,8 @@ def test_ingest_service_rejects_unwritable_runtime_rules_artifact_before_index_r
     service = IngestService(
         embedder=MockEmbedder(),
         index_store=store,
+        index_uri=store.uri,
+        table_name=store.table_name,
         corpus_root=policies_dir,
         embedding_model="mock-embedder",
         runtime_rules_artifact_path=blocking_parent / "runtime_rules.json",
@@ -207,6 +211,8 @@ def test_ingest_service_does_not_leave_staged_runtime_rule_artifacts_on_embed_fa
     service = IngestService(
         embedder=FailingEmbedder(),
         index_store=RecordingIndexStore(uri=tmp_path / "index", table_name="policy_chunks"),
+        index_uri=tmp_path / "index",
+        table_name="policy_chunks",
         corpus_root=policies_dir,
         embedding_model="mock-embedder",
         runtime_rules_artifact_path=artifact_path,
@@ -244,6 +250,8 @@ def test_ingest_service_rejects_directory_runtime_rules_artifact_before_index_re
     service = IngestService(
         embedder=MockEmbedder(),
         index_store=store,
+        index_uri=store.uri,
+        table_name=store.table_name,
         corpus_root=policies_dir,
         embedding_model="mock-embedder",
         runtime_rules_artifact_path=artifact_path,

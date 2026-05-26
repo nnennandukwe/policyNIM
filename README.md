@@ -99,7 +99,8 @@ Use this path only if you want to run PolicyNIM from a local checkout.
 uv sync --group test --group dev
 export NVIDIA_API_KEY=<your-nvidia-api-key>
 uv run policynim ingest
-uv run pytest -q
+uv run --group dev pyright
+uv run --group test pytest -q
 ```
 
 If you want the CLI to prompt for the required values and write the local config

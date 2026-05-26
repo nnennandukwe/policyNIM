@@ -23,18 +23,8 @@ from policynim.types import (
 )
 
 
-class _IngestIndexStore(Protocol):
-    """Index-store surface required by ingest."""
-
-    @property
-    def uri(self) -> Path:
-        """Return the underlying index URI."""
-        ...
-
-    @property
-    def table_name(self) -> str:
-        """Return the configured table name."""
-        ...
+class _IndexReplaceStore(Protocol):
+    """Minimal index-store behavior required by ingest."""
 
     def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
         """Replace the local index contents with embedded chunks."""
@@ -48,13 +38,17 @@ class IngestService:
         self,
         *,
         embedder: Embedder,
-        index_store: _IngestIndexStore,
+        index_store: _IndexReplaceStore,
+        index_uri: Path,
+        table_name: str,
         corpus_root: Path,
         embedding_model: str,
         runtime_rules_artifact_path: Path,
     ) -> None:
         self._embedder = embedder
         self._index_store = index_store
+        self._index_uri = index_uri
+        self._table_name = table_name
         self._corpus_root = corpus_root
         self._embedding_model = embedding_model
         self._runtime_rules_artifact_path = runtime_rules_artifact_path
@@ -83,8 +77,8 @@ class IngestService:
 
         return IngestResult(
             corpus_path=self._corpus_root.as_posix(),
-            index_uri=self._index_store.uri.as_posix(),
-            table_name=self._index_store.table_name,
+            index_uri=self._index_uri.as_posix(),
+            table_name=self._table_name,
             embedding_model=self._embedding_model,
             document_count=len(documents),
             chunk_count=len(embedded_chunks),
@@ -95,12 +89,15 @@ class IngestService:
 def create_ingest_service(settings: Settings | None = None) -> IngestService:
     """Build the default ingest service from application settings."""
     active_settings = settings or get_settings()
+    index_uri = resolve_runtime_path(active_settings.lancedb_uri)
     return IngestService(
         embedder=_create_default_embedder(active_settings),
         index_store=LanceDBIndexStore(
-            uri=resolve_runtime_path(active_settings.lancedb_uri),
+            uri=index_uri,
             table_name=active_settings.lancedb_table,
         ),
+        index_uri=index_uri,
+        table_name=active_settings.lancedb_table,
         corpus_root=resolve_corpus_root(active_settings.corpus_dir),
         embedding_model=active_settings.nvidia_embed_model,
         runtime_rules_artifact_path=resolve_runtime_path(

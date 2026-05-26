@@ -87,6 +87,8 @@ def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: 
 
     assert service._embedder is mock_embedder
     assert isinstance(service._index_store, MockIndexStore)
+    assert service._index_uri == (tmp_path / "ingest-index").resolve(strict=False)
+    assert service._table_name == settings.lancedb_table
     assert service._index_store.uri == (tmp_path / "ingest-index").resolve(strict=False)
     assert service._index_store.table_name == settings.lancedb_table
     assert service._corpus_root == (tmp_path / "policies").resolve(strict=False)
