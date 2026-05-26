@@ -10,6 +10,7 @@ from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
+    RUNTIME_EXECUTION_OUTCOME_KEYS,
     RuntimeEvidenceExecutionSummary,
     RuntimeEvidenceSessionSummary,
     RuntimeExecutionEvidenceRecord,
@@ -135,14 +136,8 @@ def _last_terminal_event(
 def _count_execution_outcomes(
     execution_summaries: list[RuntimeEvidenceExecutionSummary],
 ) -> dict[str, int]:
-    counts = {
-        "allowed": 0,
-        "confirmed": 0,
-        "blocked": 0,
-        "refused": 0,
-        "failed": 0,
-        "incomplete": 0,
-    }
+    counts = {outcome: 0 for outcome in RUNTIME_EXECUTION_OUTCOME_KEYS}
+    counts["incomplete"] = 0
     for summary in execution_summaries:
         outcome = summary.execution_outcome
         if outcome is None:

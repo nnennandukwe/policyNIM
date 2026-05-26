@@ -120,7 +120,9 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
     assert result.ready is False
     assert result.row_count == 0
     assert result.reason is not None
-    assert result.reason == "Local index readiness could not be inspected."
+    assert (
+        result.reason == "Local index readiness could not be inspected: OSError: permission denied."
+    )
 
 
 def test_ensure_hosted_runtime_ready_accepts_ready_index(monkeypatch: pytest.MonkeyPatch) -> None:

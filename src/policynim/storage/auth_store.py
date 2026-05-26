@@ -10,10 +10,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from policynim.errors import PolicyNIMError
-from policynim.types import BetaAccount, BetaAccountStatus, BetaUsageSnapshot
+from policynim.types import (
+    BETA_ACCOUNT_STATUS_ACTIVE,
+    BETA_ACCOUNT_STATUSES,
+    BetaAccount,
+    BetaAccountStatus,
+    BetaUsageSnapshot,
+)
 
-_ACTIVE_STATUS = "active"
-_SUSPENDED_STATUS = "suspended"
 _ACCOUNT_SELECT = """
 SELECT
     a.id AS account_id,
@@ -117,7 +121,7 @@ class AuthStore:
                             github_user_id,
                             github_login,
                             email,
-                            _ACTIVE_STATUS,
+                            BETA_ACCOUNT_STATUS_ACTIVE,
                             _iso_utc(now),
                             _iso_utc(now),
                         ),
@@ -247,13 +251,17 @@ class AuthStore:
         with closing(self._connect()) as conn:
             _begin_immediate(conn)
             try:
-                if status not in {_ACTIVE_STATUS, _SUSPENDED_STATUS}:
+                if status not in BETA_ACCOUNT_STATUSES:
                     raise PolicyNIMError(f"Unsupported beta account status {status!r}.")
                 conn.execute(
                     "UPDATE accounts SET status = ? WHERE id = ?",
                     (status, account_id),
                 )
-                event_type = "account_resumed" if status == _ACTIVE_STATUS else "account_suspended"
+                event_type = (
+                    "account_resumed"
+                    if status == BETA_ACCOUNT_STATUS_ACTIVE
+                    else "account_suspended"
+                )
                 self._insert_audit_event(
                     conn,
                     account_id=account_id,
@@ -489,7 +497,7 @@ def _account_from_row(row: sqlite3.Row) -> BetaAccount:
         raise PolicyNIMError("Account row is missing required timestamps.")
 
     status_value = str(row["status"])
-    if status_value not in {_ACTIVE_STATUS, _SUSPENDED_STATUS}:
+    if status_value not in BETA_ACCOUNT_STATUSES:
         raise PolicyNIMError(f"Unsupported beta account status: {status_value}")
 
     return BetaAccount(

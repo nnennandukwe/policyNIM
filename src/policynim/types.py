@@ -131,6 +131,13 @@ RuntimeEvidenceEventKind = Literal[
     "refused",
     "failed",
 ]
+RUNTIME_EXECUTION_OUTCOME_KEYS: tuple[RuntimeExecutionOutcome, ...] = (
+    "allowed",
+    "confirmed",
+    "blocked",
+    "refused",
+    "failed",
+)
 
 
 class RuntimeActionRequestBase(StrictModel):
@@ -625,6 +632,12 @@ class HealthCheckResult(StrictModel):
 
 
 BetaAccountStatus = Literal["active", "suspended"]
+BETA_ACCOUNT_STATUS_ACTIVE: BetaAccountStatus = "active"
+BETA_ACCOUNT_STATUS_SUSPENDED: BetaAccountStatus = "suspended"
+BETA_ACCOUNT_STATUSES: tuple[BetaAccountStatus, ...] = (
+    BETA_ACCOUNT_STATUS_ACTIVE,
+    BETA_ACCOUNT_STATUS_SUSPENDED,
+)
 
 
 class BetaAccount(StrictModel):

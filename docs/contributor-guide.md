@@ -155,6 +155,7 @@ uv run --group dev pre-commit install
 Run the standard quality gates:
 
 ```bash
+uv run pyright
 uv run ruff check
 uv run pytest -q
 ```
