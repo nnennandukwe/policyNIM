@@ -50,9 +50,9 @@ class RuntimeHealthService:
                 mcp_url=self._mcp_url,
                 reason=None,
             )
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("Runtime health check failed.")
-            return self._not_ready("Local index readiness could not be inspected.")
+            return self._not_ready(format_health_failure_reason(exc))
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
         return HealthCheckResult(
@@ -125,7 +125,7 @@ def _check_hosted_runtime_health(
     try:
         return create_runtime_health_service(settings).check()
     except Exception as exc:
-        reason = f"Local index readiness could not be inspected: {type(exc).__name__}: {exc}."
+        reason = format_health_failure_reason(exc)
         raise ConfigurationError(
             _format_hosted_runtime_error(
                 index_uri=index_uri,
@@ -171,6 +171,25 @@ def _derive_mcp_url(settings: Settings) -> str | None:
     if settings.mcp_public_base_url is None:
         return None
     return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+
+
+def format_health_failure_reason(exc: Exception) -> str:
+    """Return an operator-safe reason for readiness inspection failures."""
+    if isinstance(exc, OSError):
+        message = _single_line_message(exc.strerror)
+        if message:
+            return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
+    return f"Local index readiness could not be inspected: {type(exc).__name__}."
+
+
+def _single_line_message(message: str | None) -> str | None:
+    """Return a compact sanitized exception message, if one is available."""
+    if message is None:
+        return None
+    message = " ".join(message.split()).strip().rstrip(".")
+    if message:
+        return message
+    return None
 
 
 def _format_hosted_runtime_error(*, index_uri: Path | str, table_name: str, reason: str) -> str:

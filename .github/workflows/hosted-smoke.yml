@@ -1,0 +1,42 @@
+name: Hosted Beta Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-smoke:
+    runs-on: ubuntu-24.04
+    env:
+      POLICYNIM_BETA_MCP_URL: ${{ secrets.POLICYNIM_BETA_MCP_URL }}
+      POLICYNIM_BETA_MCP_TOKEN: ${{ secrets.POLICYNIM_BETA_MCP_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate hosted smoke secrets
+        run: |
+          test -n "$POLICYNIM_BETA_MCP_URL" || {
+            echo "POLICYNIM_BETA_MCP_URL secret is required for hosted smoke tests."
+            exit 1
+          }
+          test -n "$POLICYNIM_BETA_MCP_TOKEN" || {
+            echo "POLICYNIM_BETA_MCP_TOKEN secret is required for hosted smoke tests."
+            exit 1
+          }
+
+      - name: Sync dependencies
+        run: uv sync --group test --group dev
+
+      - name: Run hosted live smoke
+        run: uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py

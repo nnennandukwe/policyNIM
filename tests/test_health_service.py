@@ -109,7 +109,9 @@ def test_runtime_health_service_reports_empty_index() -> None:
 
 def test_runtime_health_service_reports_unreadable_index() -> None:
     service = RuntimeHealthService(
-        index_store=StubIndexStore(count_error=OSError("permission denied")),
+        index_store=StubIndexStore(
+            count_error=PermissionError(13, "permission denied", "/tmp/key")
+        ),
         table_name="policy_chunks",
         mcp_url=None,
     )
@@ -120,7 +122,10 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
     assert result.ready is False
     assert result.row_count == 0
     assert result.reason is not None
-    assert result.reason == "Local index readiness could not be inspected."
+    assert result.reason == (
+        "Local index readiness could not be inspected: PermissionError: permission denied."
+    )
+    assert "/tmp/key" not in result.reason
 
 
 def test_ensure_hosted_runtime_ready_accepts_ready_index(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -376,7 +381,7 @@ def test_ensure_hosted_runtime_ready_wraps_constructor_errors(
         raise_constructor_error,
     )
 
-    with pytest.raises(ConfigurationError, match="PermissionError: permission denied") as exc_info:
+    with pytest.raises(ConfigurationError, match="PermissionError") as exc_info:
         health_module.ensure_hosted_runtime_ready(Settings())
 
     assert exc_info.value.__cause__ is failure

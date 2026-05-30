@@ -13,6 +13,7 @@ from policynim.services.health import (
     RuntimeHealthService,
     create_runtime_health_service,
     ensure_hosted_runtime_ready,
+    format_health_failure_reason,
 )
 from policynim.services.ingest import IngestService, create_ingest_service
 from policynim.services.preflight import PreflightService, create_preflight_service
@@ -61,6 +62,7 @@ __all__ = [
     "create_runtime_execution_service",
     "create_runtime_health_service",
     "ensure_hosted_runtime_ready",
+    "format_health_failure_reason",
     "create_index_dump_service",
     "create_ingest_service",
     "create_preflight_service",
