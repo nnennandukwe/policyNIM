@@ -34,7 +34,17 @@ class MockOpenAIClient:
     """OpenAI client stub with the minimum chat surface."""
 
     def __init__(self, content: str) -> None:
+        """Create a falsy chat client with close tracking."""
         self.chat = SimpleNamespace(completions=MockChatCompletions(content))
+        self.closed = False
+
+    def close(self) -> None:
+        """Record that the generator closed the client."""
+        self.closed = True
+
+    def __bool__(self) -> bool:
+        """Behave like a falsy injected client."""
+        return False
 
 
 class MockRateLimitError(RateLimitError):
@@ -194,6 +204,23 @@ def test_generator_requires_api_key() -> None:
             timeout_seconds=1,
             max_retries=0,
         )
+
+
+def test_generator_preserves_falsy_injected_client() -> None:
+    """Use a falsy injected client instead of replacing it."""
+    client = MockOpenAIClient('{"summary":"ok","citation_ids":["BACKEND-1"]}')
+    generator = NVIDIAGenerator(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,  # type: ignore[arg-type]
+    )
+
+    assert generator._client is client
+    generator.close()
+    assert client.closed is False
 
 
 def make_chunk() -> ScoredChunk:

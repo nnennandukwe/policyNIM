@@ -862,6 +862,25 @@ def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> N
     assert response.json() == {"ok": True}
 
 
+@pytest.mark.parametrize("secret", [None, "", "   "])
+def test_streamable_http_app_requires_non_empty_session_secret_without_settings_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    secret: str | None,
+) -> None:
+    """Guard hosted beta startup even when settings validation is bypassed."""
+    _stub_streamable_http_server(monkeypatch)
+
+    settings = Settings.model_construct(
+        beta_signup_enabled=True,
+        beta_session_secret=secret,
+        mcp_require_auth=True,
+        mcp_public_base_url="https://beta.example.com",
+    )
+
+    with pytest.raises(ConfigurationError, match="POLICYNIM_BETA_SESSION_SECRET"):
+        mcp_module._build_streamable_http_app(settings)
+
+
 def test_streamable_http_app_rejects_missing_bearer_token(monkeypatch) -> None:
     _stub_streamable_http_server(monkeypatch)
 

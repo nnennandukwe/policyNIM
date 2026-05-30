@@ -96,13 +96,16 @@ def root(
 
 @app.command(
     help=(
-        "Run interactive standalone setup, prompt for NVIDIA_API_KEY and an optional "
+        "Run interactive local setup, prompt for NVIDIA_API_KEY and an optional "
         "custom corpus directory, and write the local PolicyNIM config file."
     ),
 )
 def init() -> None:
-    """Prompt for standalone local CLI settings and write them to an env file."""
+    """Prompt for local CLI settings and write them to an env file."""
     destination = config_discovery.resolve_init_config_file()
+    include_data_paths = not (
+        config_discovery.is_source_checkout() or config_discovery.is_hosted_process_environment()
+    )
     api_key = typer.prompt(
         "NVIDIA_API_KEY",
         default="",
@@ -123,6 +126,7 @@ def init() -> None:
             destination=destination,
             api_key=api_key,
             corpus_dir=resolved_corpus_dir,
+            include_data_paths=include_data_paths,
         )
     except ValueError as exc:
         _exit_with_error(str(exc))
@@ -142,6 +146,7 @@ def init() -> None:
 @app.command()
 def ingest() -> None:
     """Build the local policy index from the shipped corpus."""
+    service = None
     try:
         settings = _load_setup_dependent_settings()
         service = create_ingest_service(settings)
@@ -150,6 +155,8 @@ def ingest() -> None:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
         _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
 
     typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
     typer.echo(f"Model: {result.embedding_model}")
@@ -173,12 +180,15 @@ def dump_index(
     ] = False,
 ) -> None:
     """Print all indexed chunks in a terminal-friendly format."""
+    service = None
     try:
         settings = _load_setup_dependent_settings()
         service = create_index_dump_service(settings)
         chunks = service.list_chunks()
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
+    finally:
+        _close_service(service)
 
     typer.echo(f"Indexed chunks: {len(chunks)}")
     if count_only:

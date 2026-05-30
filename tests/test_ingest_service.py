@@ -17,11 +17,19 @@ from policynim.types import EmbeddedChunk
 class MockEmbedder:
     """Deterministic offline embedder for service tests."""
 
+    def __init__(self) -> None:
+        """Track whether the ingest service closed the embedder."""
+        self.closed = False
+
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         return [[float(index + 1), float(len(text))] for index, text in enumerate(texts)]
 
     def embed_query(self, text: str) -> list[float]:
         return [1.0, float(len(text))]
+
+    def close(self) -> None:
+        """Record that the embedder was closed."""
+        self.closed = True
 
 
 class FailingEmbedder:
@@ -254,3 +262,19 @@ def test_ingest_service_rejects_directory_runtime_rules_artifact_before_index_re
 
     assert store.replace_calls == 0
     assert not list(artifact_path.parent.glob(".runtime_rules.json.*.tmp"))
+
+
+def test_ingest_service_close_closes_embedder(tmp_path: Path) -> None:
+    """Release the embedder when the ingest service is closed."""
+    embedder = MockEmbedder()
+    service = IngestService(
+        embedder=embedder,
+        index_store=RecordingIndexStore(uri=tmp_path / "index", table_name="policy_chunks"),
+        corpus_root=tmp_path / "policies",
+        embedding_model="mock-embedder",
+        runtime_rules_artifact_path=tmp_path / "runtime" / "runtime_rules.json",
+    )
+
+    service.close()
+
+    assert embedder.closed is True

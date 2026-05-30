@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from collections.abc import Callable
@@ -46,6 +47,7 @@ from policynim.types import (
 )
 
 _DEFAULT_HTTP_TIMEOUT_SECONDS = 10.0
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,14 +71,18 @@ class RuntimeExecutionService:
         http_client: HTTPRequestClientProtocol | None = None,
         shell_timeout_seconds: float = 300.0,
     ) -> None:
+        """Create an executor with explicit collaborators and owned defaults."""
         self._decision_service = decision_service
         self._evidence_store = evidence_store
         self._confirmer = confirmer
-        self._http_client = http_client or httpx.Client(
-            timeout=_DEFAULT_HTTP_TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
         self._owns_http_client = http_client is None
+        if http_client is None:
+            self._http_client = httpx.Client(
+                timeout=_DEFAULT_HTTP_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            )
+        else:
+            self._http_client = http_client
         self._shell_timeout_seconds = shell_timeout_seconds
 
     def __enter__(self) -> RuntimeExecutionService:
@@ -330,6 +336,7 @@ def _run_shell_command(
 
 
 def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:
+    """Write a file atomically and report typed write failures."""
     target_path = _resolve_action_path(request.path, base=request.cwd)
     if not target_path.parent.exists():
         return _ActionExecutionResult(
@@ -353,7 +360,14 @@ def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:
         staged_path.replace(target_path)
     except OSError:
         if staged_path is not None:
-            staged_path.unlink(missing_ok=True)
+            try:
+                staged_path.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                LOGGER.warning(
+                    "Could not remove staged runtime file-write temp file %s: %s",
+                    staged_path,
+                    cleanup_exc,
+                )
         return _ActionExecutionResult(
             succeeded=False,
             metadata=FileWriteExecutionMetadata(path=target_path, bytes_written=0),

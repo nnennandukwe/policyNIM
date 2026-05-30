@@ -308,12 +308,16 @@ class EvalService:
         regenerate: bool,
         max_regenerations: int,
     ) -> list[EvalCaseResult]:
+        """Run live eval cases against an isolated temporary index."""
         with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
             temp_settings = self._settings.model_copy(
                 update={"lancedb_uri": Path(temp_dir) / "lancedb"}
             )
             ingest_service = create_ingest_service(temp_settings)
-            ingest_service.run()
+            try:
+                ingest_service.run()
+            finally:
+                _close_component(ingest_service)
 
             search_service = _create_live_search_service(
                 temp_settings,
