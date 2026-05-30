@@ -909,6 +909,8 @@ class _BearerProtectedASGIApp:
             response = JSONResponse({"error": "Unauthorized."}, status_code=401)
 
         if auth_result != "authorized":
+            if response is None:
+                response = JSONResponse({"error": "Unauthorized."}, status_code=401)
             _emit_hosted_event(
                 "mcp.auth",
                 auth_result=auth_result or "unauthorized",
@@ -917,7 +919,6 @@ class _BearerProtectedASGIApp:
                 upstream_failure_class=None,
                 request_id=None,
             )
-            assert response is not None
             await response(scope, receive, send)
             return
 
@@ -950,10 +951,15 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
     server = _create_mcp_server(settings, beta_auth_service=beta_auth_service)
     app = server.streamable_http_app()
     if settings.beta_signup_enabled:
-        assert settings.beta_session_secret is not None
+        session_secret = settings.beta_session_secret
+        if session_secret is None or not session_secret.strip():
+            raise ConfigurationError(
+                "POLICYNIM_BETA_SESSION_SECRET must be set when "
+                "POLICYNIM_BETA_SIGNUP_ENABLED is true."
+            )
         app = SessionMiddleware(
             app,
-            secret_key=settings.beta_session_secret,
+            secret_key=session_secret,
             same_site="lax",
             https_only=_beta_session_https_only(settings),
         )

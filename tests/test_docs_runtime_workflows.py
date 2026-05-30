@@ -59,13 +59,21 @@ def test_contributor_guide_and_env_examples_include_runtime_settings() -> None:
 
 
 def test_standalone_setup_docs_use_installed_cli_entrypoint() -> None:
-    for path in STANDALONE_SETUP_DOCS:
-        text = _read_text(path)
-        assert "uv run policynim init" not in text, f"{path.name} should not require uv for init"
-        assert "policynim init" in text, f"{path.name} should document standalone init"
-
     workflows_text = _read_text(WORKFLOWS_GUIDE)
     assert "policynim init\npolicynim ingest" in workflows_text
+    assert "Installed copies should keep using" in workflows_text
+    assert "the direct `policynim ...` entrypoint" in workflows_text
+
+    for path in STANDALONE_SETUP_DOCS:
+        text = _read_text(path)
+        assert "policynim init" in text, f"{path.name} should document standalone init"
+
+
+def test_source_checkout_setup_docs_state_init_writes_checkout_dotenv() -> None:
+    for path in STANDALONE_SETUP_DOCS:
+        text = _read_text(path)
+        assert "uv run policynim init" in text
+        assert "checkout `.env`" in text
 
 
 def test_production_env_example_uses_absolute_runtime_paths() -> None:

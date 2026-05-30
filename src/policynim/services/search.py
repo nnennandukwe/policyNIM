@@ -41,6 +41,7 @@ class SearchService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
+        _close_component(self._embedder)
         _close_component(self._reranker)
 
     def search(self, request: SearchRequest) -> SearchResult:

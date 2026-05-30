@@ -11,14 +11,26 @@ Install the runtime, test, and dev dependencies:
 uv sync --group test --group dev
 ```
 
-Copy the development example environment file:
+If you want the CLI to prompt for the required values and write the local config
+for you, run:
+
+```bash
+uv run policynim init
+```
+
+In a source checkout, `init` writes the checkout `.env` file, and the normal
+settings loader reads that file on subsequent `uv run policynim ...` commands.
+In an installed standalone runtime, `init` writes the user config path printed in
+the command output.
+
+Otherwise, copy the development example environment file:
 
 ```bash
 cp .env.development.example .env
 ```
 
-Then set `NVIDIA_API_KEY` in `.env` or your shell. For the official key-creation
-flow, use NVIDIA's
+If you copied the template manually, set `NVIDIA_API_KEY` in `.env` or your
+shell. For the official key-creation flow, use NVIDIA's
 [API Catalog Quickstart Guide](https://docs.api.nvidia.com/nim/docs/api-quickstart)
 and [Build catalog](https://build.nvidia.com/).
 
@@ -48,7 +60,7 @@ config directory with user-owned defaults for `POLICYNIM_LANCEDB_URI`,
 and `POLICYNIM_EVAL_WORKSPACE_DIR`.
 
 After that, run `policynim ingest` as usual. Source checkouts can keep using the
-`.env.development.example` flow above and `uv run` for in-project commands.
+checkout `.env` flow above and `uv run` for in-project commands.
 
 ## Environment Templates
 
@@ -168,6 +180,7 @@ Run the standard quality gates:
 ```bash
 uv run ruff check
 uv run pytest -q
+uv run pyright
 ```
 
 For live or hosted-only checks, use the coverage notes in

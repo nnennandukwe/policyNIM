@@ -38,6 +38,9 @@ class SpyRerankClient:
     def close(self) -> None:
         self.closed = True
 
+    def __bool__(self) -> bool:
+        return False
+
 
 class OwnedClientSpy:
     """Tracks lifecycle of internally created clients."""
@@ -134,6 +137,22 @@ def test_reranker_close_does_not_close_injected_client() -> None:
     reranker.close()
 
     assert not client.closed
+
+
+def test_reranker_preserves_falsy_injected_client() -> None:
+    client = SpyRerankClient({"scores": [0.5]})
+    reranker = NVIDIAReranker(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1/retrieval",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,  # type: ignore[arg-type]
+    )
+
+    assert reranker._client is client
+    reranker.close()
+    assert client.closed is False
 
 
 def test_reranker_close_closes_owned_client(monkeypatch) -> None:

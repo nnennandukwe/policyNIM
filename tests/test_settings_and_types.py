@@ -13,6 +13,7 @@ from policynim.settings import Settings
 from policynim.types import (
     DEFAULT_TOP_K,
     DocumentSection,
+    HealthCheckResult,
     HTTPRequestActionRequest,
     ParsedRuntimeRule,
     RuntimeActionRequest,
@@ -531,6 +532,15 @@ def test_settings_keeps_checkout_defaults_when_running_from_source_checkout(
     assert settings.eval_workspace_dir == Path("data/evals/workspace")
 
 
+def test_init_config_file_targets_checkout_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clear_config_precedence_env(monkeypatch)
+    checkout_root, _, _ = configure_checkout_discovery(monkeypatch, tmp_path)
+
+    assert config_discovery.resolve_init_config_file() == checkout_root / ".env"
+
+
 def test_settings_keeps_hosted_defaults_out_of_standalone_platformdirs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -635,6 +645,34 @@ def test_document_section_rejects_inverted_line_ranges() -> None:
             content="Impossible line range.",
             start_line=8,
             end_line=7,
+        )
+
+
+def test_health_check_result_rejects_drifted_status_fields() -> None:
+    with pytest.raises(ValidationError, match="ready must match status"):
+        HealthCheckResult(
+            status="ok",
+            ready=False,
+            table_name="policy_chunks",
+            row_count=0,
+            reason="index missing",
+        )
+
+    with pytest.raises(ValidationError, match="not-ready health checks must include a reason"):
+        HealthCheckResult(
+            status="error",
+            ready=False,
+            table_name="policy_chunks",
+            row_count=0,
+        )
+
+    with pytest.raises(ValidationError, match="ready health checks must not include a reason"):
+        HealthCheckResult(
+            status="ok",
+            ready=True,
+            table_name="policy_chunks",
+            row_count=1,
+            reason="stale startup failure",
         )
 
 

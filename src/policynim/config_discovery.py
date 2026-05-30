@@ -57,6 +57,9 @@ def resolve_init_config_file(*, environ: Mapping[str, str] | None = None) -> Pat
     explicit_config = _explicit_config_file(process_env)
     if explicit_config is not None:
         return explicit_config
+    source_root = find_source_checkout_root()
+    if source_root is not None and not is_hosted_process_environment(process_env):
+        return source_root / ".env"
     return standalone_paths().config_file
 
 
@@ -126,6 +129,7 @@ def build_init_config_contents(
     *,
     api_key: str,
     corpus_dir: Path | str | None,
+    include_data_paths: bool = True,
 ) -> str:
     """Return the env-file contents for standalone local CLI setup."""
     normalized_api_key = str(api_key).strip()
@@ -139,23 +143,24 @@ def build_init_config_contents(
     if normalized_corpus_dir is not None:
         lines.append(_env_assignment("POLICYNIM_CORPUS_DIR", normalized_corpus_dir.as_posix()))
 
-    lines.extend(
-        [
-            _env_assignment("POLICYNIM_LANCEDB_URI", standalone.lancedb_uri.as_posix()),
-            _env_assignment(
-                "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
-                standalone.runtime_rules_artifact_path.as_posix(),
-            ),
-            _env_assignment(
-                "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
-                standalone.runtime_evidence_db_path.as_posix(),
-            ),
-            _env_assignment(
-                "POLICYNIM_EVAL_WORKSPACE_DIR",
-                standalone.eval_workspace_dir.as_posix(),
-            ),
-        ]
-    )
+    if include_data_paths:
+        lines.extend(
+            [
+                _env_assignment("POLICYNIM_LANCEDB_URI", standalone.lancedb_uri.as_posix()),
+                _env_assignment(
+                    "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
+                    standalone.runtime_rules_artifact_path.as_posix(),
+                ),
+                _env_assignment(
+                    "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
+                    standalone.runtime_evidence_db_path.as_posix(),
+                ),
+                _env_assignment(
+                    "POLICYNIM_EVAL_WORKSPACE_DIR",
+                    standalone.eval_workspace_dir.as_posix(),
+                ),
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -164,10 +169,15 @@ def write_init_config_file(
     destination: Path,
     api_key: str,
     corpus_dir: Path | str | None,
+    include_data_paths: bool = True,
 ) -> Path:
     """Write the standalone init config atomically and return the destination."""
     resolved_destination = destination.expanduser()
-    contents = build_init_config_contents(api_key=api_key, corpus_dir=corpus_dir)
+    contents = build_init_config_contents(
+        api_key=api_key,
+        corpus_dir=corpus_dir,
+        include_data_paths=include_data_paths,
+    )
     resolved_destination.parent.mkdir(parents=True, exist_ok=True)
 
     handle, temp_name = tempfile.mkstemp(

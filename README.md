@@ -101,6 +101,17 @@ uv run policynim ingest
 uv run pytest -q
 ```
 
+If you want the CLI to prompt for the required values and write the local config
+for you, run:
+
+```bash
+uv run policynim init
+```
+
+In a source checkout, `init` writes the checkout `.env` file that PolicyNIM
+loads by default. Installed copies should keep using the direct `policynim init`
+entrypoint described below.
+
 After the index is built, the fastest local sanity checks are:
 
 ```bash

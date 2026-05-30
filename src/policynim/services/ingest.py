@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Embedder
@@ -58,6 +59,21 @@ class IngestService:
         self._corpus_root = corpus_root
         self._embedding_model = embedding_model
         self._runtime_rules_artifact_path = runtime_rules_artifact_path
+
+    def __enter__(self) -> IngestService:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release owned provider resources held by this service."""
+        _close_component(self._embedder)
 
     def run(self) -> IngestResult:
         """Load, chunk, embed, and persist the policy corpus."""
@@ -190,3 +206,9 @@ def _finalize_runtime_rules_artifact(staged_path: Path, destination: Path) -> No
 def _cleanup_staged_runtime_rules_artifact(staged_path: Path) -> None:
     """Best-effort cleanup for staged artifact files after a failed ingest."""
     staged_path.unlink(missing_ok=True)
+
+
+def _close_component(component: object | None) -> None:
+    close = getattr(component, "close", None)
+    if callable(close):
+        close()

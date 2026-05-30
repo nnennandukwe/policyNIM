@@ -47,6 +47,9 @@ class MockOpenAIClient:
     def close(self) -> None:
         self.closed = True
 
+    def __bool__(self) -> bool:
+        return False
+
 
 class MockRateLimitError(RateLimitError):
     """Minimal rate-limit error subclass for provider classification tests."""
@@ -220,6 +223,15 @@ def test_policy_compiler_close_leaves_injected_client_open() -> None:
 
     compiler.close()
 
+    assert client.closed is False
+
+
+def test_policy_compiler_preserves_falsy_injected_client() -> None:
+    client = MockOpenAIClient('{"required_steps":[]}')
+    compiler = make_compiler(client)
+
+    assert compiler._client is client
+    compiler.close()
     assert client.closed is False
 
 

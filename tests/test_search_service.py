@@ -14,6 +14,9 @@ from policynim.types import EmbeddedChunk, PolicyChunk, PolicyMetadata, ScoredCh
 class MockEmbedder:
     """Returns deterministic query embeddings."""
 
+    def __init__(self) -> None:
+        self.closed = False
+
     def embed_query(self, text: str) -> list[float]:
         mapping = {
             "backend logs": [1.0, 0.0],
@@ -24,6 +27,9 @@ class MockEmbedder:
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         return [[1.0, 0.0] for _ in texts]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockIndexStore:
@@ -216,16 +222,18 @@ def test_search_service_requires_existing_index() -> None:
         service.search(SearchRequest(query="backend logs", top_k=1))
 
 
-def test_search_service_close_closes_reranker() -> None:
+def test_search_service_close_closes_embedder_and_reranker() -> None:
+    embedder = MockEmbedder()
     reranker = MockReranker()
     service = SearchService(
-        embedder=MockEmbedder(),
+        embedder=embedder,
         index_store=MockIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")]),
         reranker=reranker,
     )
 
     service.close()
 
+    assert embedder.closed is True
     assert reranker.closed is True
 
 

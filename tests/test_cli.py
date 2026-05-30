@@ -126,8 +126,45 @@ def configure_standalone_cli_environment(
     return workspace, config_root, data_root
 
 
+def configure_checkout_cli_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Path, Path, Path]:
+    """Simulate running the CLI from a source checkout."""
+    clear_installer_env(monkeypatch)
+
+    checkout_root = tmp_path / "checkout"
+    package_root = checkout_root / "src" / "policynim"
+    package_root.mkdir(parents=True)
+    (checkout_root / "pyproject.toml").write_text(
+        "[project]\nname = 'policynim'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(checkout_root)
+
+    config_root = tmp_path / "user-config"
+    data_root = tmp_path / "user-data"
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_config_path",
+        lambda *args, **kwargs: config_root,
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_data_path",
+        lambda *args, **kwargs: data_root,
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.__file__",
+        str(package_root / "config_discovery.py"),
+    )
+
+    return checkout_root, config_root, data_root
+
+
 class MockIngestService:
     """Static ingest service for CLI tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
 
     def run(self) -> IngestResult:
         return IngestResult(
@@ -139,6 +176,9 @@ class MockIngestService:
             chunk_count=24,
             embedding_dimension=2,
         )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockSearchService:
@@ -404,6 +444,9 @@ class MockPreflightService:
 class MockIndexDumpService:
     """Static dump service for CLI tests."""
 
+    def __init__(self) -> None:
+        self.closed = False
+
     def list_chunks(self) -> list[PolicyChunk]:
         return [
             PolicyChunk(
@@ -420,6 +463,9 @@ class MockIndexDumpService:
                 ),
             )
         ]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockRuntimeDecisionService:
@@ -791,9 +837,10 @@ def make_stderr_prompt_confirmer():
 
 
 def test_ingest_command_prints_summary(monkeypatch) -> None:
+    service = MockIngestService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_ingest_service",
-        lambda settings: MockIngestService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(app, ["ingest"])
@@ -801,6 +848,7 @@ def test_ingest_command_prints_summary(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Indexed 24 chunks from 8 documents." in result.stdout
     assert "mock-model" in result.stdout
+    assert service.closed is True
 
 
 def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
@@ -813,6 +861,24 @@ def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "chunk/vector mismatch" in result.stderr
+
+
+def test_ingest_command_closes_service_when_run_fails(monkeypatch) -> None:
+    class FailingIngestService(MockIngestService):
+        def run(self) -> IngestResult:
+            raise ValueError("chunk/vector mismatch")
+
+    service = FailingIngestService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_ingest_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "chunk/vector mismatch" in result.stderr
+    assert service.closed is True
 
 
 def test_search_command_prints_json(monkeypatch) -> None:
@@ -1349,9 +1415,10 @@ def test_preflight_command_formats_route_validation_errors(
 
 
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
+    service = MockIndexDumpService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
-        lambda settings: MockIndexDumpService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(app, ["dump-index"])
@@ -1360,18 +1427,21 @@ def test_dump_index_command_prints_chunks(monkeypatch) -> None:
     assert "Indexed chunks: 1" in result.stdout
     assert "BACKEND-1" in result.stdout
     assert "Use request ids in backend logs." in result.stdout
+    assert service.closed is True
 
 
 def test_dump_index_count_only_prints_only_count(monkeypatch) -> None:
+    service = MockIndexDumpService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
-        lambda settings: MockIndexDumpService(),
+        lambda settings: service,
     )
 
     result = runner.invoke(app, ["dump-index", "--count-only"])
 
     assert result.exit_code == 0
     assert result.stdout == "Indexed chunks: 1\n"
+    assert service.closed is True
 
 
 def test_help_includes_dump_index_command() -> None:
@@ -1464,6 +1534,21 @@ def test_init_command_writes_config_and_prints_next_step(
         f"'{data_root / 'runtime' / 'runtime_evidence.sqlite3'}'\n"
         f"POLICYNIM_EVAL_WORKSPACE_DIR='{data_root / 'evals' / 'workspace'}'\n"
     )
+
+
+def test_init_command_writes_checkout_dotenv_without_standalone_path_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    checkout_root, config_root, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["init"], input="nvapi-test-key\n\n")
+
+    dotenv_path = checkout_root / ".env"
+    assert result.exit_code == 0
+    assert str(dotenv_path) in result.stdout
+    assert dotenv_path.read_text(encoding="utf-8") == "NVIDIA_API_KEY='nvapi-test-key'\n"
+    assert not (config_root / "config.env").exists()
 
 
 def test_init_command_rejects_blank_required_api_key(

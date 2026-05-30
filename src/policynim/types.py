@@ -623,6 +623,17 @@ class HealthCheckResult(StrictModel):
     mcp_url: str | None = None
     reason: str | None = None
 
+    @model_validator(mode="after")
+    def validate_status_shape(self) -> Self:
+        """Keep readiness booleans, status labels, and reason text synchronized."""
+        if self.ready != (self.status == "ok"):
+            raise ValueError("ready must match status.")
+        if self.ready and self.reason is not None:
+            raise ValueError("ready health checks must not include a reason.")
+        if not self.ready and self.reason is None:
+            raise ValueError("not-ready health checks must include a reason.")
+        return self
+
 
 BetaAccountStatus = Literal["active", "suspended"]
 

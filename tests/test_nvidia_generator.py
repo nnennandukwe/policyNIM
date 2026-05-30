@@ -35,6 +35,13 @@ class MockOpenAIClient:
 
     def __init__(self, content: str) -> None:
         self.chat = SimpleNamespace(completions=MockChatCompletions(content))
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __bool__(self) -> bool:
+        return False
 
 
 class MockRateLimitError(RateLimitError):
@@ -194,6 +201,22 @@ def test_generator_requires_api_key() -> None:
             timeout_seconds=1,
             max_retries=0,
         )
+
+
+def test_generator_preserves_falsy_injected_client() -> None:
+    client = MockOpenAIClient('{"summary":"ok","citation_ids":["BACKEND-1"]}')
+    generator = NVIDIAGenerator(
+        api_key="test-key",
+        model="mock-model",
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,  # type: ignore[arg-type]
+    )
+
+    assert generator._client is client
+    generator.close()
+    assert client.closed is False
 
 
 def make_chunk() -> ScoredChunk:

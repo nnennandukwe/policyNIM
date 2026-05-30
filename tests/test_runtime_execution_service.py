@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+import policynim.services.runtime_execution as runtime_execution_module
 from policynim.errors import RuntimeEvidencePersistenceError
 from policynim.services.runtime_execution import RuntimeExecutionService
 from policynim.types import (
@@ -276,6 +277,41 @@ def test_runtime_execution_service_runs_allowed_file_write(tmp_path: Path) -> No
         bytes_written=len(b"hello world"),
     )
     assert [event.event_kind for event in evidence_store.events] == ["decision", "allowed"]
+
+
+def test_runtime_execution_service_returns_failed_when_file_write_cleanup_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence_store = StubEvidenceStore()
+    service = RuntimeExecutionService(
+        decision_service=StubDecisionService("allow"),
+        evidence_store=evidence_store,
+    )
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        raise OSError("replace failed")
+
+    def fail_unlink(self: Path, *, missing_ok: bool = False) -> None:
+        del missing_ok
+        raise OSError("cleanup failed")
+
+    monkeypatch.setattr(runtime_execution_module.Path, "replace", fail_replace)
+    monkeypatch.setattr(runtime_execution_module.Path, "unlink", fail_unlink)
+
+    result = service.execute(
+        FileWriteActionRequest(
+            kind="file_write",
+            task="Write a file with failing temp cleanup.",
+            cwd=tmp_path,
+            path=Path("notes.txt"),
+            content="payload",
+        )
+    )
+
+    assert result.execution_outcome == "failed"
+    assert result.failure_class == "io_error"
+    assert [event.event_kind for event in evidence_store.events] == ["decision", "failed"]
 
 
 def test_runtime_execution_service_returns_failed_for_http_transport_error(

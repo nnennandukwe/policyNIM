@@ -56,10 +56,11 @@ checkout. It prompts for `NVIDIA_API_KEY` and an optional custom corpus
 directory, then writes the standalone config file with user-owned data-path
 defaults before building the local index.
 
-Source checkouts can keep using `.env.development.example`, skip this step, and
-use the later `uv run policynim ...` examples inside the uv-managed project
-environment. Installed copies should keep using the direct `policynim ...`
-entrypoint.
+Source checkouts can either copy `.env.development.example` to `.env` or run
+`uv run policynim init`, which writes the checkout `.env` file that source
+commands load by default. Then use the later `uv run policynim ...` examples
+inside the uv-managed project environment. Installed copies should keep using
+the direct `policynim ...` entrypoint.
 
 ### 1. Build The Local Index
 
