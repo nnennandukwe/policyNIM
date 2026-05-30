@@ -55,7 +55,6 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
 
     for asset in (
         "policynim-$TAG-darwin-arm64.tar.gz",
-        "policynim-$TAG-darwin-amd64.tar.gz",
         "policynim-$TAG-linux-amd64.tar.gz",
     ):
         assert asset in install_sh
@@ -99,7 +98,7 @@ def test_unix_installer_rejects_unsupported_platform(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode != 0
     assert "Unsupported platform: linux-arm64" in output
-    assert "Supported platforms: darwin-arm64, darwin-amd64, linux-amd64." in output
+    assert "Supported platforms: darwin-arm64, linux-amd64." in output
     assert not (home / ".local" / "bin" / "policynim").exists()
 
 

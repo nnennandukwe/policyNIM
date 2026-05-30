@@ -93,9 +93,6 @@ jobs:
           - os: ubuntu-24.04
             platform: linux-amd64
             archive: tar
-          - os: macos-15-intel
-            platform: darwin-amd64
-            archive: tar
           - os: macos-14
             platform: darwin-arm64
             archive: tar
@@ -170,7 +167,6 @@ jobs:
           mkdir -p artifacts
           case "${{ matrix.platform }}" in
             linux-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-linux-amd64.tar.gz" ;;
-            darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;
             darwin-arm64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-arm64.tar.gz" ;;
             *) echo "Unsupported release platform: ${{ matrix.platform }}" >&2; exit 1 ;;
           esac
@@ -253,7 +249,7 @@ jobs:
           PolicyNIM release artifacts:
 
           - Python wheel and source distribution for `pipx install policynim`
-          - Standalone CLI bundles for Linux, macOS, and Windows
+          - Standalone CLI bundles for Linux, Apple Silicon macOS, and Windows
           - Unix and PowerShell installer scripts
           - SHA256SUMS for release asset verification
           EOF

@@ -91,7 +91,6 @@ def test_release_workflow_uploads_expected_install_artifacts() -> None:
 
     for token in (
         "policynim-${RELEASE_TAG}-linux-amd64.tar.gz",
-        "policynim-${RELEASE_TAG}-darwin-amd64.tar.gz",
         "policynim-${RELEASE_TAG}-darwin-arm64.tar.gz",
         "policynim-${RELEASE_TAG}-windows-amd64.zip",
         "scripts/install.sh",
