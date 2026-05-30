@@ -259,6 +259,7 @@ def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
 
 
 def test_beta_portal_missing_packaged_asset_returns_404(monkeypatch) -> None:
+    """Return the existing 404 response when packaged beta assets are missing."""
     monkeypatch.setattr(
         mcp_module,
         "create_beta_auth_service",

@@ -140,6 +140,11 @@ fi
 need_command curl
 need_command tar
 need_command awk
+need_command mktemp
+need_command find
+need_command head
+need_command cp
+need_command chmod
 
 if [ "$VERSION" = "latest" ]; then
   VERSION="$(resolve_latest_version)"

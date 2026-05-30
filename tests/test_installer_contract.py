@@ -22,6 +22,7 @@ LINUX_ASSET = f"policynim-v{VERSION}-linux-amd64.tar.gz"
 
 
 def test_pyinstaller_is_release_only_and_pinned() -> None:
+    """Keep PyInstaller scoped to release builds instead of runtime installs."""
     project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
     release_deps = project["dependency-groups"]["release"]
@@ -35,6 +36,7 @@ def test_pyinstaller_is_release_only_and_pinned() -> None:
 
 
 def test_pyinstaller_spec_packages_runtime_resources() -> None:
+    """Ensure standalone bundles include the package resources used at runtime."""
     spec = PYINSTALLER_SPEC.read_text(encoding="utf-8")
 
     assert "src/policynim/interfaces/cli.py" in spec
@@ -47,6 +49,7 @@ def test_pyinstaller_spec_packages_runtime_resources() -> None:
 
 
 def test_installer_scripts_lock_supported_artifact_contract() -> None:
+    """Keep installer asset names and security assumptions aligned with releases."""
     install_sh = INSTALL_SH.read_text(encoding="utf-8")
     install_ps1 = INSTALL_PS1.read_text(encoding="utf-8")
 
@@ -59,12 +62,15 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
     assert "policynim-$tag-windows-amd64.zip" in install_ps1
     assert "SHA256SUMS" in install_sh
     assert "SHA256SUMS" in install_ps1
+    for command in ("curl", "tar", "awk", "mktemp", "find", "head", "cp", "chmod"):
+        assert f"need_command {command}" in install_sh
     assert "NVIDIA_API_KEY" not in install_sh
     assert "NVIDIA_API_KEY" not in install_ps1
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
 def test_unix_installer_rejects_unsupported_platform(tmp_path: Path) -> None:
+    """Reject unsupported Unix platform tuples before downloading anything."""
     release_dir = tmp_path / "release"
     release_dir.mkdir()
 
@@ -84,6 +90,7 @@ def test_unix_installer_rejects_unsupported_platform(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
 def test_unix_installer_stops_before_extracting_on_checksum_mismatch(tmp_path: Path) -> None:
+    """Abort before extraction when the downloaded archive checksum is wrong."""
     release_dir = tmp_path / "release"
     release_dir.mkdir()
     create_unix_release_asset(release_dir, checksum="0" * 64)
@@ -99,6 +106,7 @@ def test_unix_installer_stops_before_extracting_on_checksum_mismatch(tmp_path: P
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
 def test_unix_installer_reports_missing_release_asset(tmp_path: Path) -> None:
+    """Surface actionable guidance when a release asset is unavailable."""
     release_dir = tmp_path / "release"
     release_dir.mkdir()
     (release_dir / "SHA256SUMS").write_text(f"{'0' * 64}  {LINUX_ASSET}\n", encoding="utf-8")
@@ -114,6 +122,7 @@ def test_unix_installer_reports_missing_release_asset(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
 def test_unix_installer_installs_launcher_and_prints_path_guidance(tmp_path: Path) -> None:
+    """Install the bundle, create a launcher, and print follow-up setup guidance."""
     release_dir = tmp_path / "release"
     release_dir.mkdir()
     create_unix_release_asset(release_dir)
@@ -131,6 +140,7 @@ def test_unix_installer_installs_launcher_and_prints_path_guidance(tmp_path: Pat
 
 
 def test_windows_installer_contract_is_actionable() -> None:
+    """Check the PowerShell installer keeps checksum and PATH behavior discoverable."""
     script = INSTALL_PS1.read_text(encoding="utf-8")
 
     assert "Get-FileHash" in script
@@ -143,6 +153,7 @@ def test_windows_installer_contract_is_actionable() -> None:
 
 
 def create_unix_release_asset(release_dir: Path, *, checksum: str | None = None) -> Path:
+    """Create a fake Unix release archive and matching checksum file."""
     build_root = release_dir / "build"
     bundle_root = build_root / "policynim"
     bundle_root.mkdir(parents=True)
@@ -168,6 +179,7 @@ def run_unix_installer(
     arch: str = "x86_64",
     path: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the Unix installer against a local fake release directory."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     env = os.environ.copy()

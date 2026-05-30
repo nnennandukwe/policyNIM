@@ -98,3 +98,13 @@ def test_release_workflow_uploads_expected_install_artifacts() -> None:
         "--draft",
     ):
         assert token in text
+
+
+def test_release_workflow_rejects_mismatched_manual_versions() -> None:
+    """Prevent manual release dispatches from publishing inconsistent artifacts."""
+    text = _read_text(RELEASE_WORKFLOW)
+
+    assert 'project_version = project["project"]["version"]' in text
+    assert 'requested_version = requested.removeprefix("v")' in text
+    assert "requested_version != project_version" in text
+    assert "Release version mismatch:" in text

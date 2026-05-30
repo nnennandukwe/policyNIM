@@ -11,6 +11,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
 def _project() -> dict[str, Any]:
+    """Load pyproject data for package release contract assertions."""
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
 

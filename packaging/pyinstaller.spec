@@ -18,7 +18,7 @@ datas = [
 ]
 datas += copy_metadata("policynim")
 
-a = Analysis(
+analysis = Analysis(
     [str(entrypoint)],
     pathex=[str(project_root / "src")],
     binaries=[],
@@ -31,11 +31,11 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-pyz = PYZ(a.pure)
+pyz = PYZ(analysis.pure)
 
 exe = EXE(
     pyz,
-    a.scripts,
+    analysis.scripts,
     [],
     exclude_binaries=True,
     name="policynim",
@@ -53,8 +53,8 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
-    a.binaries,
-    a.datas,
+    analysis.binaries,
+    analysis.datas,
     strip=False,
     upx=False,
     upx_exclude=[],

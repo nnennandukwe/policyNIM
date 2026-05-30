@@ -125,15 +125,24 @@ jobs:
           import tomllib
           from pathlib import Path
 
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
           if os.environ.get("GITHUB_REF_TYPE") == "tag":
               tag = os.environ["GITHUB_REF_NAME"]
+              requested_version = tag.removeprefix("v")
           else:
               requested = os.environ.get("REQUESTED_VERSION", "").strip()
               if requested:
-                  tag = requested if requested.startswith("v") else f"v{requested}"
+                  requested_version = requested.removeprefix("v")
+                  tag = f"v{requested_version}"
               else:
-                  project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-                  tag = f"v{project['project']['version']}"
+                  requested_version = project_version
+                  tag = f"v{project_version}"
+          if requested_version != project_version:
+              raise SystemExit(
+                  "Release version mismatch: "
+                  f"requested {requested_version}, pyproject.toml has {project_version}."
+              )
           print(f"RELEASE_TAG={tag}")
           PY
 
@@ -209,15 +218,24 @@ jobs:
           import tomllib
           from pathlib import Path
 
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
           if os.environ.get("GITHUB_REF_TYPE") == "tag":
               tag = os.environ["GITHUB_REF_NAME"]
+              requested_version = tag.removeprefix("v")
           else:
               requested = os.environ.get("REQUESTED_VERSION", "").strip()
               if requested:
-                  tag = requested if requested.startswith("v") else f"v{requested}"
+                  requested_version = requested.removeprefix("v")
+                  tag = f"v{requested_version}"
               else:
-                  project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-                  tag = f"v{project['project']['version']}"
+                  requested_version = project_version
+                  tag = f"v{project_version}"
+          if requested_version != project_version:
+              raise SystemExit(
+                  "Release version mismatch: "
+                  f"requested {requested_version}, pyproject.toml has {project_version}."
+              )
           print(f"RELEASE_TAG={tag}")
           PY
 
