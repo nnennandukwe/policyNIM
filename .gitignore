@@ -9,6 +9,7 @@
 .pytest_cache/
 .ruff_cache/
 .venv/
+.vscode/
 .voice/
 __pycache__/
 build/
