@@ -93,7 +93,7 @@ jobs:
           - os: ubuntu-24.04
             platform: linux-amd64
             archive: tar
-          - os: macos-13
+          - os: macos-15-intel
             platform: darwin-amd64
             archive: tar
           - os: macos-14
