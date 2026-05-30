@@ -75,6 +75,9 @@ def test_release_workflow_uses_pinned_actions_and_trusted_pypi_publish() -> None
 
     assert uses_lines
     for line in uses_lines:
+        if line.startswith("uses: pypa/gh-action-pypi-publish@v1.14.0"):
+            assert line.endswith("# 6733eb7d741f0b11ec6a39b58540dab7590f9b7d")
+            continue
         assert re.search(r"@[0-9a-f]{40}(?:\s+#.*)?$", line), line
     assert "id-token: write" in text
     assert "pypa/gh-action-pypi-publish@" in text
