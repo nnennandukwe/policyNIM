@@ -62,6 +62,34 @@ and `POLICYNIM_EVAL_WORKSPACE_DIR`.
 After that, run `policynim ingest` as usual. Source checkouts can keep using the
 checkout `.env` flow above and `uv run` for in-project commands.
 
+## Direct CLI Install
+
+Use `pipx` or `uv tool` when you want the Python package install path without
+cloning this repository:
+
+```bash
+pipx install policynim
+uv tool install policynim
+policynim --help
+policynim init
+policynim ingest
+```
+
+Use the GitHub release installers when you want a standalone binary bundle:
+
+```bash
+curl -fsSL https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.sh | sh
+```
+
+```powershell
+irm https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.ps1 | iex
+```
+
+Both installers download the latest GitHub release, verify `SHA256SUMS`, install
+the versioned bundle, and print PATH guidance. They do not prompt for or collect
+`NVIDIA_API_KEY`; run `policynim init` after installation to create the local
+config, then `policynim ingest` to build the local policy index.
+
 ## Environment Templates
 
 The repo ships three related templates:

@@ -18,7 +18,7 @@ INSTALL_PS1 = REPO_ROOT / "scripts" / "install.ps1"
 PYINSTALLER_SPEC = REPO_ROOT / "packaging" / "pyinstaller.spec"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 VERSION = "0.1.0"
-LINUX_ASSET = f"policynim-v{VERSION}-linux-amd64"
+LINUX_ASSET = f"policynim-v{VERSION}-linux-amd64.tar.gz"
 
 
 def test_pyinstaller_is_release_only_and_pinned() -> None:
@@ -50,9 +50,13 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
     install_sh = INSTALL_SH.read_text(encoding="utf-8")
     install_ps1 = INSTALL_PS1.read_text(encoding="utf-8")
 
-    for platform in ("darwin-arm64", "darwin-amd64", "linux-amd64"):
-        assert platform in install_sh
-    assert "windows-amd64" in install_ps1
+    for asset in (
+        "policynim-$TAG-darwin-arm64.tar.gz",
+        "policynim-$TAG-darwin-amd64.tar.gz",
+        "policynim-$TAG-linux-amd64.tar.gz",
+    ):
+        assert asset in install_sh
+    assert "policynim-$tag-windows-amd64.zip" in install_ps1
     assert "SHA256SUMS" in install_sh
     assert "SHA256SUMS" in install_ps1
     assert "NVIDIA_API_KEY" not in install_sh
@@ -88,7 +92,7 @@ def test_unix_installer_stops_before_extracting_on_checksum_mismatch(tmp_path: P
 
     output = result.stdout + result.stderr
     assert result.returncode != 0
-    assert "Checksum mismatch for policynim-v0.1.0-linux-amd64." in output
+    assert "Checksum mismatch for policynim-v0.1.0-linux-amd64.tar.gz." in output
     assert not (home / ".local" / "share" / "policynim" / VERSION).exists()
     assert not (home / ".local" / "bin" / "policynim").exists()
 
@@ -103,7 +107,7 @@ def test_unix_installer_reports_missing_release_asset(tmp_path: Path) -> None:
 
     output = result.stdout + result.stderr
     assert result.returncode != 0
-    assert "Could not download release asset policynim-v0.1.0-linux-amd64" in output
+    assert "Could not download release asset policynim-v0.1.0-linux-amd64.tar.gz" in output
     assert "Check the release page or retry the install." in output
     assert not (home / ".local" / "bin" / "policynim").exists()
 

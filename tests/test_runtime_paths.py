@@ -236,6 +236,31 @@ def test_resolve_asset_path_finds_bundled_package_asset(
     assert resolve_asset_path("beta", "beta.css") == bundled_asset
 
 
+def test_resolve_template_root_falls_back_to_checkout_package_templates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "checkout" / "src" / "policynim"
+    checkout_templates = package_root / "templates"
+    checkout_templates.mkdir(parents=True)
+    monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
+    monkeypatch.setattr("policynim.runtime_paths._resolve_packaged_resource", lambda *parts: None)
+
+    assert resolve_template_root() == checkout_templates
+
+
+def test_resolve_asset_path_falls_back_to_checkout_package_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "checkout" / "src" / "policynim"
+    checkout_asset = package_root / "assets" / "beta" / "beta.css"
+    checkout_asset.parent.mkdir(parents=True)
+    checkout_asset.write_text("body { color: black; }", encoding="utf-8")
+    monkeypatch.setattr("policynim.runtime_paths.__file__", str(package_root / "runtime_paths.py"))
+    monkeypatch.setattr("policynim.runtime_paths._resolve_packaged_resource", lambda *parts: None)
+
+    assert resolve_asset_path("beta", "beta.css") == checkout_asset
+
+
 def test_resolve_asset_path_raises_with_reinstall_guidance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

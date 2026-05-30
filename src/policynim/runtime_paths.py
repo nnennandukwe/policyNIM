@@ -118,7 +118,7 @@ def _resolve_checkout_resource(
 ) -> Path | None:
     """Resolve a checkout-relative fallback by walking parents of the package path."""
     package_root = Path(__file__).resolve().parent
-    for parent in package_root.parents:
+    for parent in (package_root, *package_root.parents):
         candidate = parent.joinpath(*parts)
         if predicate(candidate):
             return candidate

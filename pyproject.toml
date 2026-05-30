@@ -4,12 +4,29 @@ version = "0.1.0"
 description = "A policy-aware NVIDIA NIM engineering preflight layer for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
+authors = [
+  { name = "Nnenna Ndukwe" },
+]
+license = { file = "LICENSE" }
+keywords = ["ai-agents", "mcp", "nvidia-nim", "policy", "preflight"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
   "arize-phoenix==13.21.0",
   "arize-phoenix-evals==2.12.0",
   "httpx==0.27.2",
   "itsdangerous==2.2.0",
   "jinja2==3.1.6",
+  "lance-namespace==0.6.1",
+  "lance-namespace-urllib3-client==0.6.1",
   "lancedb==0.27.1",
   "markdown-it-py==4.0.0",
   "mcp[cli]==1.26.0",
@@ -20,6 +37,11 @@ dependencies = [
   "pydantic-settings==2.13.1",
   "typer==0.24.1",
 ]
+
+[project.urls]
+Documentation = "https://github.com/nnennandukwe/policyNIM/tree/main/docs"
+Issues = "https://github.com/nnennandukwe/policyNIM/issues"
+Repository = "https://github.com/nnennandukwe/policyNIM"
 
 [project.optional-dependencies]
 nvidia-guardrails = [
@@ -48,8 +70,6 @@ packages = ["src/policynim"]
 [tool.hatch.build.targets.wheel.force-include]
 "policies" = "policynim/policies"
 "evals" = "policynim/evals"
-"src/policynim/assets" = "policynim/assets"
-"src/policynim/templates" = "policynim/templates"
 
 [dependency-groups]
 test = [

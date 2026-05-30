@@ -91,7 +91,7 @@ if ($Version -eq "latest") {
 }
 $Version = $Version.TrimStart("v")
 $tag = "v$Version"
-$assetName = "policynim-$tag-$platform"
+$assetName = "policynim-$tag-windows-amd64.zip"
 $releaseBaseUrl = if ($env:POLICYNIM_RELEASE_BASE_URL) { $env:POLICYNIM_RELEASE_BASE_URL } else { "$RepositoryUrl/releases/download/$tag" }
 $releasePageUrl = "$RepositoryUrl/releases/tag/$tag"
 $installDir = Join-Path $env:LocalAppData "PolicyNIM\$Version"
@@ -105,7 +105,6 @@ try {
     $assetPath = Join-Path $workDir $assetName
     $checksumsPath = Join-Path $workDir $ChecksumsFile
     $extractDir = Join-Path $workDir "extract"
-    $assetZipPath = Join-Path $workDir "$assetName.zip"
     New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
 
     Download-Asset "$releaseBaseUrl/$assetName" $assetPath $assetName
@@ -121,9 +120,8 @@ try {
         Stop-Install "Checksum mismatch for $assetName. Check $releasePageUrl and retry the install."
     }
 
-    Copy-Item -Path $assetPath -Destination $assetZipPath
     try {
-        Expand-Archive -Path $assetZipPath -DestinationPath $extractDir -Force
+        Expand-Archive -Path $assetPath -DestinationPath $extractDir -Force
     } catch {
         Stop-Install "Could not extract PolicyNIM bundle. Delete the downloaded asset and retry the install."
     }

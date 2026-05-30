@@ -146,7 +146,12 @@ if [ "$VERSION" = "latest" ]; then
 fi
 VERSION="${VERSION#v}"
 TAG="v${VERSION}"
-ASSET_NAME="policynim-${TAG}-${PLATFORM}"
+case "$PLATFORM" in
+  darwin-arm64) ASSET_NAME="policynim-$TAG-darwin-arm64.tar.gz" ;;
+  darwin-amd64) ASSET_NAME="policynim-$TAG-darwin-amd64.tar.gz" ;;
+  linux-amd64) ASSET_NAME="policynim-$TAG-linux-amd64.tar.gz" ;;
+  *) fail "Unsupported platform: $PLATFORM. Supported platforms: darwin-arm64, darwin-amd64, linux-amd64." ;;
+esac
 RELEASE_BASE_URL="${POLICYNIM_RELEASE_BASE_URL:-$REPO_URL/releases/download/$TAG}"
 RELEASE_PAGE_URL="$REPO_URL/releases/tag/$TAG"
 INSTALL_DIR="$HOME/.local/share/policynim/$VERSION"
