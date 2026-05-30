@@ -62,7 +62,22 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
     assert "policynim-$tag-windows-amd64.zip" in install_ps1
     assert "SHA256SUMS" in install_sh
     assert "SHA256SUMS" in install_ps1
-    for command in ("curl", "tar", "awk", "mktemp", "find", "head", "cp", "chmod"):
+    for command in (
+        "awk",
+        "cat",
+        "chmod",
+        "cp",
+        "curl",
+        "dirname",
+        "find",
+        "head",
+        "mkdir",
+        "mktemp",
+        "mv",
+        "rm",
+        "tar",
+        "uname",
+    ):
         assert f"need_command {command}" in install_sh
     assert "NVIDIA_API_KEY" not in install_sh
     assert "NVIDIA_API_KEY" not in install_ps1
@@ -117,6 +132,20 @@ def test_unix_installer_reports_missing_release_asset(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "Could not download release asset policynim-v0.1.0-linux-amd64.tar.gz" in output
     assert "Check the release page or retry the install." in output
+    assert not (home / ".local" / "bin" / "policynim").exists()
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
+def test_unix_installer_reports_missing_required_command(tmp_path: Path) -> None:
+    """Fail with installer guidance when a required Unix tool is unavailable."""
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+
+    result, home = run_unix_installer(tmp_path, release_dir, path="")
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Missing required command: curl. Install it and retry." in output
     assert not (home / ".local" / "bin" / "policynim").exists()
 
 

@@ -19,7 +19,7 @@ normalize_os() {
   case "$raw_os" in
     Darwin | darwin) printf 'darwin' ;;
     Linux | linux) printf 'linux' ;;
-    *) printf '%s' "$raw_os" | tr '[:upper:]' '[:lower:]' ;;
+    *) printf '%s' "$raw_os" ;;
   esac
 }
 
@@ -28,7 +28,7 @@ normalize_arch() {
   case "$raw_arch" in
     arm64 | aarch64) printf 'arm64' ;;
     x86_64 | amd64) printf 'amd64' ;;
-    *) printf '%s' "$raw_arch" | tr '[:upper:]' '[:lower:]' ;;
+    *) printf '%s' "$raw_arch" ;;
   esac
 }
 
@@ -130,6 +130,10 @@ print_path_guidance() {
   printf 'Run `policynim init` to configure your local NVIDIA API key.\n'
 }
 
+if [ -z "${POLICYNIM_INSTALLER_TEST_OS:-}" ] || [ -z "${POLICYNIM_INSTALLER_TEST_ARCH:-}" ]; then
+  need_command uname
+fi
+
 OS_NAME="$(normalize_os)"
 ARCH_NAME="$(normalize_arch)"
 PLATFORM="${OS_NAME}-${ARCH_NAME}"
@@ -140,11 +144,16 @@ fi
 need_command curl
 need_command tar
 need_command awk
-need_command mktemp
+need_command cat
+need_command chmod
+need_command cp
+need_command dirname
 need_command find
 need_command head
-need_command cp
-need_command chmod
+need_command mkdir
+need_command mktemp
+need_command mv
+need_command rm
 
 if [ "$VERSION" = "latest" ]; then
   VERSION="$(resolve_latest_version)"
