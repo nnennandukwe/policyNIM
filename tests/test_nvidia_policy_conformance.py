@@ -42,13 +42,16 @@ class MockOpenAIClient:
     """OpenAI client stub with the minimum chat surface."""
 
     def __init__(self, content: str) -> None:
+        """Create a falsy chat client with close tracking."""
         self.chat = SimpleNamespace(completions=MockChatCompletions(content))
         self.closed = False
 
     def close(self) -> None:
+        """Record that the evaluator closed the client."""
         self.closed = True
 
     def __bool__(self) -> bool:
+        """Behave like a falsy injected client."""
         return False
 
 
@@ -205,6 +208,7 @@ def test_policy_conformance_close_leaves_injected_client_open() -> None:
 
 
 def test_policy_conformance_preserves_falsy_injected_client() -> None:
+    """Use a falsy injected client instead of replacing it."""
     client = MockOpenAIClient('{"final_adherence_score":1}')
     evaluator = make_evaluator(client)
 

@@ -867,6 +867,7 @@ def test_streamable_http_app_requires_non_empty_session_secret_without_settings_
     monkeypatch: pytest.MonkeyPatch,
     secret: str | None,
 ) -> None:
+    """Guard hosted beta startup even when settings validation is bypassed."""
     _stub_streamable_http_server(monkeypatch)
 
     settings = Settings.model_construct(

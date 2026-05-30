@@ -164,6 +164,7 @@ class MockIngestService:
     """Static ingest service for CLI tests."""
 
     def __init__(self) -> None:
+        """Track whether the CLI closed the service."""
         self.closed = False
 
     def run(self) -> IngestResult:
@@ -178,6 +179,7 @@ class MockIngestService:
         )
 
     def close(self) -> None:
+        """Record that the CLI released the service."""
         self.closed = True
 
 
@@ -445,6 +447,7 @@ class MockIndexDumpService:
     """Static dump service for CLI tests."""
 
     def __init__(self) -> None:
+        """Track whether the CLI closed the dump service."""
         self.closed = False
 
     def list_chunks(self) -> list[PolicyChunk]:
@@ -465,6 +468,7 @@ class MockIndexDumpService:
         ]
 
     def close(self) -> None:
+        """Record that the CLI released the dump service."""
         self.closed = True
 
 
@@ -837,6 +841,7 @@ def make_stderr_prompt_confirmer():
 
 
 def test_ingest_command_prints_summary(monkeypatch) -> None:
+    """Print ingest output and close the created service on success."""
     service = MockIngestService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_ingest_service",
@@ -852,6 +857,7 @@ def test_ingest_command_prints_summary(monkeypatch) -> None:
 
 
 def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
+    """Surface ingest construction failures as CLI errors."""
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_ingest_service",
         lambda settings: (_ for _ in ()).throw(ValueError("chunk/vector mismatch")),
@@ -864,8 +870,11 @@ def test_ingest_command_surfaces_value_errors(monkeypatch) -> None:
 
 
 def test_ingest_command_closes_service_when_run_fails(monkeypatch) -> None:
+    """Close the created ingest service when its run fails."""
+
     class FailingIngestService(MockIngestService):
         def run(self) -> IngestResult:
+            """Raise a deterministic ingest failure."""
             raise ValueError("chunk/vector mismatch")
 
     service = FailingIngestService()
@@ -1415,6 +1424,7 @@ def test_preflight_command_formats_route_validation_errors(
 
 
 def test_dump_index_command_prints_chunks(monkeypatch) -> None:
+    """Print dump-index details and close the created service."""
     service = MockIndexDumpService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
@@ -1431,6 +1441,7 @@ def test_dump_index_command_prints_chunks(monkeypatch) -> None:
 
 
 def test_dump_index_count_only_prints_only_count(monkeypatch) -> None:
+    """Print only the dump-index count and close the created service."""
     service = MockIndexDumpService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_index_dump_service",
@@ -1540,6 +1551,7 @@ def test_init_command_writes_checkout_dotenv_without_standalone_path_overrides(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Write checkout env config without standalone data-path defaults."""
     checkout_root, config_root, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["init"], input="nvapi-test-key\n\n")

@@ -882,6 +882,7 @@ class _BearerProtectedASGIApp:
         self._beta_auth_service = beta_auth_service
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Authorize protected MCP HTTP requests before delegating to the app."""
         if scope["type"] != "http" or scope.get("path") != self._protected_path:
             await self._app(scope, receive, send)
             return

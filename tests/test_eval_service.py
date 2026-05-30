@@ -33,6 +33,7 @@ class MockIngestService:
         *,
         closed: list[bool] | None = None,
     ) -> None:
+        """Store live-eval ingest settings and close tracking hooks."""
         self._settings = settings
         self._seen_paths = seen_paths
         self._closed = closed
@@ -42,6 +43,7 @@ class MockIngestService:
         return None
 
     def close(self) -> None:
+        """Record that live-eval cleanup closed the ingest service."""
         if self._closed is not None:
             self._closed.append(True)
 
@@ -292,6 +294,7 @@ def test_eval_service_regeneration_runs_for_preflight_cases_only(tmp_path: Path)
 
 
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
+    """Close live ingest while keeping caller index settings unchanged."""
     settings = Settings(
         lancedb_uri=tmp_path / "caller-index",
         eval_workspace_dir=tmp_path / "workspace",

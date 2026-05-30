@@ -57,6 +57,7 @@ class NVIDIAEmbedder(Embedder):
         max_retries: int,
         client: OpenAI | Any | None = None,
     ) -> None:
+        """Create an embedder with either an owned or injected SDK client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
@@ -197,6 +198,7 @@ class NVIDIAReranker(Reranker):
         max_retries: int,
         client: httpx.Client | None = None,
     ) -> None:
+        """Create a reranker with either an owned or injected HTTP client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for reranking.")
@@ -343,6 +345,7 @@ class NVIDIAGenerator(Generator):
         max_retries: int,
         client: OpenAI | Any | None = None,
     ) -> None:
+        """Create a generator with either an owned or injected SDK client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for grounded generation.")
@@ -414,6 +417,7 @@ class NVIDIAPolicyCompiler:
         max_retries: int,
         client: OpenAI | Any | None = None,
     ) -> None:
+        """Create a policy compiler with either an owned or injected SDK client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for policy compilation.")
@@ -478,6 +482,7 @@ class NVIDIAPolicyConformanceEvaluator:
         max_retries: int,
         client: OpenAI | Any | None = None,
     ) -> None:
+        """Create a conformance evaluator with either an owned or injected client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError(

@@ -18,6 +18,7 @@ class MockEmbedder:
     """Deterministic offline embedder for service tests."""
 
     def __init__(self) -> None:
+        """Track whether the ingest service closed the embedder."""
         self.closed = False
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
@@ -27,6 +28,7 @@ class MockEmbedder:
         return [1.0, float(len(text))]
 
     def close(self) -> None:
+        """Record that the embedder was closed."""
         self.closed = True
 
 
@@ -263,6 +265,7 @@ def test_ingest_service_rejects_directory_runtime_rules_artifact_before_index_re
 
 
 def test_ingest_service_close_closes_embedder(tmp_path: Path) -> None:
+    """Release the embedder when the ingest service is closed."""
     embedder = MockEmbedder()
     service = IngestService(
         embedder=embedder,

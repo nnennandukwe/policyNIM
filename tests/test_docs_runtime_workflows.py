@@ -59,6 +59,7 @@ def test_contributor_guide_and_env_examples_include_runtime_settings() -> None:
 
 
 def test_standalone_setup_docs_use_installed_cli_entrypoint() -> None:
+    """Document standalone setup with the installed CLI entrypoint."""
     workflows_text = _read_text(WORKFLOWS_GUIDE)
     assert "policynim init\npolicynim ingest" in workflows_text
     assert "Installed copies should keep using" in workflows_text
@@ -70,6 +71,7 @@ def test_standalone_setup_docs_use_installed_cli_entrypoint() -> None:
 
 
 def test_source_checkout_setup_docs_state_init_writes_checkout_dotenv() -> None:
+    """Document source-checkout init as writing the checkout env file."""
     for path in STANDALONE_SETUP_DOCS:
         text = _read_text(path)
         assert "uv run policynim init" in text

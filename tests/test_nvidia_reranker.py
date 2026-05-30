@@ -39,6 +39,7 @@ class SpyRerankClient:
         self.closed = True
 
     def __bool__(self) -> bool:
+        """Behave like a falsy injected client."""
         return False
 
 
@@ -140,6 +141,7 @@ def test_reranker_close_does_not_close_injected_client() -> None:
 
 
 def test_reranker_preserves_falsy_injected_client() -> None:
+    """Use a falsy injected client instead of replacing it."""
     client = SpyRerankClient({"scores": [0.5]})
     reranker = NVIDIAReranker(
         api_key="test-key",

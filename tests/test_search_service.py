@@ -15,6 +15,7 @@ class MockEmbedder:
     """Returns deterministic query embeddings."""
 
     def __init__(self) -> None:
+        """Track whether the search service closed the embedder."""
         self.closed = False
 
     def embed_query(self, text: str) -> list[float]:
@@ -29,6 +30,7 @@ class MockEmbedder:
         return [[1.0, 0.0] for _ in texts]
 
     def close(self) -> None:
+        """Record that the embedder was closed."""
         self.closed = True
 
 
@@ -223,6 +225,7 @@ def test_search_service_requires_existing_index() -> None:
 
 
 def test_search_service_close_closes_embedder_and_reranker() -> None:
+    """Release both owned search providers when the service closes."""
     embedder = MockEmbedder()
     reranker = MockReranker()
     service = SearchService(

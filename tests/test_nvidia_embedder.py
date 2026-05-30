@@ -39,9 +39,11 @@ class CloseableEmbeddingsClient:
     """Embeddings client stub that exposes a close hook."""
 
     def __init__(self) -> None:
+        """Track whether the adapter closed the injected SDK client."""
         self.closed = False
 
     def close(self) -> None:
+        """Record that the SDK client was closed."""
         self.closed = True
 
 
@@ -80,6 +82,7 @@ def test_embedder_classifies_upstream_rate_limits() -> None:
 
 
 def test_embedder_close_closes_owned_client() -> None:
+    """Close the owned SDK client created by the embedder."""
     injected_client = CloseableEmbeddingsClient()
     embedder = NVIDIAEmbedder(
         api_key="test-key",

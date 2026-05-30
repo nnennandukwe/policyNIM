@@ -34,13 +34,16 @@ class MockOpenAIClient:
     """OpenAI client stub with the minimum chat surface."""
 
     def __init__(self, content: str) -> None:
+        """Create a falsy chat client with close tracking."""
         self.chat = SimpleNamespace(completions=MockChatCompletions(content))
         self.closed = False
 
     def close(self) -> None:
+        """Record that the generator closed the client."""
         self.closed = True
 
     def __bool__(self) -> bool:
+        """Behave like a falsy injected client."""
         return False
 
 
@@ -204,6 +207,7 @@ def test_generator_requires_api_key() -> None:
 
 
 def test_generator_preserves_falsy_injected_client() -> None:
+    """Use a falsy injected client instead of replacing it."""
     client = MockOpenAIClient('{"summary":"ok","citation_ids":["BACKEND-1"]}')
     generator = NVIDIAGenerator(
         api_key="test-key",

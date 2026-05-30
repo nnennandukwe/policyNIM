@@ -283,6 +283,7 @@ def test_runtime_execution_service_returns_failed_when_file_write_cleanup_also_f
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Preserve the primary file-write failure when temp cleanup also fails."""
     evidence_store = StubEvidenceStore()
     service = RuntimeExecutionService(
         decision_service=StubDecisionService("allow"),
@@ -290,9 +291,11 @@ def test_runtime_execution_service_returns_failed_when_file_write_cleanup_also_f
     )
 
     def fail_replace(self: Path, target: Path) -> Path:
+        """Simulate an atomic replace failure."""
         raise OSError("replace failed")
 
     def fail_unlink(self: Path, *, missing_ok: bool = False) -> None:
+        """Simulate cleanup failure for the staged temp file."""
         del missing_ok
         raise OSError("cleanup failed")
 

@@ -61,6 +61,7 @@ class IngestService:
         self._runtime_rules_artifact_path = runtime_rules_artifact_path
 
     def __enter__(self) -> IngestService:
+        """Return this service for context-managed ingest runs."""
         return self
 
     def __exit__(
@@ -69,6 +70,7 @@ class IngestService:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        """Release owned resources when leaving a context-managed ingest run."""
         self.close()
 
     def close(self) -> None:
@@ -209,6 +211,7 @@ def _cleanup_staged_runtime_rules_artifact(staged_path: Path) -> None:
 
 
 def _close_component(component: object | None) -> None:
+    """Close an optional owned component when it exposes a close hook."""
     close = getattr(component, "close", None)
     if callable(close):
         close()

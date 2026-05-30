@@ -71,6 +71,7 @@ class RuntimeExecutionService:
         http_client: HTTPRequestClientProtocol | None = None,
         shell_timeout_seconds: float = 300.0,
     ) -> None:
+        """Create an executor with explicit collaborators and owned defaults."""
         self._decision_service = decision_service
         self._evidence_store = evidence_store
         self._confirmer = confirmer
@@ -335,6 +336,7 @@ def _run_shell_command(
 
 
 def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:
+    """Write a file atomically and report typed write failures."""
     target_path = _resolve_action_path(request.path, base=request.cwd)
     if not target_path.parent.exists():
         return _ActionExecutionResult(
