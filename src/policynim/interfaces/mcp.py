@@ -515,6 +515,7 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
         fallback_reason = format_health_failure_reason(exc)
 
     def _fallback_result(reason: str = fallback_reason) -> JSONResponse:
+        """Return the public not-ready response for fallback health failures."""
         result = HealthCheckResult(
             status="error",
             ready=False,

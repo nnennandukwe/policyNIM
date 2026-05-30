@@ -3,6 +3,9 @@ name: Hosted Beta Smoke
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   hosted-smoke:
     runs-on: ubuntu-24.04

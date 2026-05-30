@@ -43,6 +43,7 @@ def _structured_payload(result) -> dict[str, object]:  # noqa: ANN001
 
 
 def _hosted_url(path: str) -> str:
+    """Build a hosted URL on the same origin as the configured MCP endpoint."""
     parts = urlsplit(_BETA_URL)
     if not parts.scheme or not parts.netloc:
         raise AssertionError("POLICYNIM_BETA_MCP_URL must be an absolute URL.")
@@ -52,14 +53,17 @@ def _hosted_url(path: str) -> str:
 
 
 def _expected_mcp_url() -> str:
+    """Return the normalized hosted MCP URL expected in health payloads."""
     return _hosted_url("/mcp")
 
 
 def _health_url() -> str:
+    """Return the public hosted readiness URL for the beta service."""
     return _hosted_url("/healthz")
 
 
 def test_hosted_healthz_reports_ready_index_live() -> None:
+    """Verify the deployed beta exposes a ready health payload with an indexed corpus."""
     response = httpx.get(_health_url(), timeout=30.0)
 
     assert response.status_code == 200

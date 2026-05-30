@@ -109,6 +109,7 @@ def test_hosted_operations_doc_covers_required_recovery_topics() -> None:
 
 
 def test_hosted_operations_doc_covers_60_day_readiness_smoke() -> None:
+    """Ensure hosted docs describe the live readiness smoke and recovery evidence."""
     text = _read_text(HOSTED_OPERATIONS)
 
     for expected in (

@@ -102,9 +102,9 @@ GitHub Actions smoke:
   hosted service or baked local index is not ready yet
 - retry after the service becomes healthy. If you operate the service, check the
   Railway deploy state and `/healthz` first
-- if `/healthz` includes `Local index readiness could not be inspected`, inspect
-  the exception class and message in the payload, then check the Railway deploy
-  logs for index path, volume, or file-permission failures
+- if `/healthz` includes `Local index readiness could not be inspected`, use the
+  sanitized exception class in the payload, then check the Railway deploy logs
+  for detailed index path, volume, or file-permission failures
 - if `/healthz` says the local index is missing or empty, confirm the latest
   build received `NVIDIA_API_KEY`, rerun the deploy so `policynim ingest` bakes
   the index, and confirm `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
