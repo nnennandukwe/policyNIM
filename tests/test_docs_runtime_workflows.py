@@ -29,6 +29,7 @@ def test_workflows_guide_documents_runtime_request_shapes_and_sqlite_usage() -> 
         "policynim runtime decide --input <path|->",
         "policynim runtime execute --input <path|->",
         "policynim evidence report --session-id <id>",
+        "policynim evidence report --session-id <id> --format markdown --output reports/<id>.md",
         '"kind": "shell_command"',
         '"kind": "file_write"',
         '"kind": "http_request"',
@@ -107,5 +108,21 @@ def test_tests_readme_mentions_runtime_and_docs_parity_coverage() -> None:
     for token in (
         "Real SQLite-backed CLI runtime execution plus `evidence report` coverage",
         "Runtime docs parity",
+    ):
+        assert token in text
+
+
+def test_hosted_operations_documents_operator_beta_release_gate() -> None:
+    """Document the deterministic and opt-in hosted beta release checks."""
+    text = _read_text(REPO_ROOT / "docs" / "hosted-beta-operations.md")
+
+    for token in (
+        "90-Day Operator Beta Release Gate",
+        "uv run ruff check .",
+        "uv run pyright",
+        'uv run pytest -q -m "not live and not docker_live"',
+        "uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py",
+        "POLICYNIM_RUN_DOCKER_TESTS=1 uv run --group test pytest -q -m docker_live",
+        "policynim beta-admin audit-log",
     ):
         assert token in text

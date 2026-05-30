@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, date, datetime
 
+from policynim.errors import PolicyNIMError
 from policynim.storage import AuthStore
 
 
@@ -113,6 +114,108 @@ def test_auth_store_consumes_quota_atomically_until_limit(tmp_path) -> None:
     assert third_allowed is False
     assert third.request_count == 2
     assert third.remaining == 0
+
+
+def test_auth_store_lists_audit_events_newest_first_with_account_metadata(tmp_path) -> None:
+    """Return hosted beta audit events newest first with account metadata."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    first_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    second_time = datetime(2026, 4, 5, 12, 5, tzinfo=UTC)
+    account = store.upsert_account_from_github(
+        github_user_id=123,
+        github_login="octocat",
+        email="octocat@example.com",
+        now=first_time,
+    )
+    store.rotate_api_key(
+        account_id=account.account_id,
+        key_prefix="pnm_first",
+        key_hash=_hash_api_key("pnm_first_secret"),
+        now=second_time,
+    )
+
+    events = store.list_audit_events(limit=10)
+
+    assert [event.event_type for event in events] == ["api_key_rotated", "account_signup"]
+    assert events[0].github_login == "octocat"
+    assert events[0].account_status == "active"
+    assert events[0].details == {"key_prefix": "pnm_first"}
+    assert events[0].created_at == second_time
+
+
+def test_auth_store_filters_audit_events_and_redacts_secret_details(tmp_path) -> None:
+    """Filter hosted beta audit events and redact secret-bearing details."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = store.upsert_account_from_github(
+        github_user_id=123,
+        github_login="octocat",
+        email="octocat@example.com",
+        now=now,
+    )
+    other = store.upsert_account_from_github(
+        github_user_id=456,
+        github_login="hubot",
+        email="hubot@example.com",
+        now=now,
+    )
+    store.rotate_api_key(
+        account_id=account.account_id,
+        key_prefix="pnm_first",
+        key_hash=_hash_api_key("pnm_first_secret"),
+        now=now,
+    )
+    with store._connect() as conn:
+        store._insert_audit_event(
+            conn,
+            account_id=other.account_id,
+            event_type="operator_note",
+            details={
+                "api_key": "pnm_full_secret",
+                "key_hash": _hash_api_key("pnm_full_secret"),
+                "key_prefix": "pnm_safe_prefix",
+                "nested": {"session_token": "token-secret"},
+            },
+            now=now,
+        )
+
+    events = store.list_audit_events(github_login="hubot", event_type="operator_note", limit=1)
+
+    assert len(events) == 1
+    assert events[0].github_login == "hubot"
+    assert events[0].details == {
+        "api_key": "[redacted]",
+        "key_hash": "[redacted]",
+        "key_prefix": "pnm_safe_prefix",
+        "nested": {"session_token": "[redacted]"},
+    }
+
+
+def test_auth_store_rejects_malformed_audit_event_details(tmp_path) -> None:
+    """Raise a controlled error when stored audit event details are malformed."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = store.upsert_account_from_github(
+        github_user_id=123,
+        github_login="octocat",
+        email="octocat@example.com",
+        now=now,
+    )
+    with store._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO audit_events (account_id, event_type, details_json, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (account.account_id, "operator_note", "{not-json", now.isoformat()),
+        )
+
+    try:
+        store.list_audit_events(event_type="operator_note")
+    except PolicyNIMError as exc:
+        assert "malformed details JSON" in str(exc)
+    else:
+        raise AssertionError("Expected malformed audit event details to fail.")
 
 
 def test_auth_store_reset_for_tests_clears_existing_state(tmp_path) -> None:

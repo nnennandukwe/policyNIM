@@ -47,8 +47,9 @@ Current automated coverage includes:
   guidance
 - CLI output for `eval`
 - CLI output for `eval --backend default|nemo|nemo_evaluator|nat`
-- CLI output for `runtime decide`, `runtime execute`, and `evidence report`
-- CLI output for `beta-admin` hosted operator commands
+- CLI output for `runtime decide`, `runtime execute`, and `evidence report`,
+  including Markdown/file artifact exports
+- CLI output for `beta-admin` hosted operator commands, including audit-log filtering
 - MCP tool parity for `policy_preflight` and `policy_search`
 - MCP startup wiring for `stdio` and `streamable-http`
 - Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper

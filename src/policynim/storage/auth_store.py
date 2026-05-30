@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from policynim.errors import PolicyNIMError
-from policynim.types import BetaAccount, BetaAccountStatus, BetaUsageSnapshot
+from policynim.types import BetaAccount, BetaAccountStatus, BetaAuditEvent, BetaUsageSnapshot
 
 _ACTIVE_STATUS = "active"
 _SUSPENDED_STATUS = "suspended"
@@ -73,6 +73,54 @@ class AuthStore:
         with closing(self._connect()) as conn:
             rows = conn.execute(_ACCOUNT_SELECT + " ORDER BY a.created_at ASC").fetchall()
             return [_account_from_row(row) for row in rows]
+
+    def list_audit_events(
+        self,
+        *,
+        github_login: str | None = None,
+        event_type: str | None = None,
+        limit: int = 50,
+    ) -> list[BetaAuditEvent]:
+        """Return hosted beta audit events newest first."""
+        if limit < 1:
+            raise PolicyNIMError("Audit event limit must be greater than zero.")
+
+        where_clauses: list[str] = []
+        parameters: list[object] = []
+        if github_login is not None:
+            where_clauses.append("a.github_login = ?")
+            parameters.append(github_login)
+        if event_type is not None:
+            where_clauses.append("e.event_type = ?")
+            parameters.append(event_type)
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = " WHERE " + " AND ".join(where_clauses)
+
+        query = (
+            """
+            SELECT
+                e.id AS event_id,
+                e.account_id,
+                a.github_login,
+                a.status AS account_status,
+                e.event_type,
+                e.details_json,
+                e.created_at
+            FROM audit_events e
+            LEFT JOIN accounts a ON a.id = e.account_id
+            """
+            + where_sql
+            + """
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT ?
+            """
+        )
+        parameters.append(limit)
+        with closing(self._connect()) as conn:
+            rows = conn.execute(query, tuple(parameters)).fetchall()
+        return [_audit_event_from_row(row) for row in rows]
 
     def get_account_by_id(self, account_id: int) -> BetaAccount | None:
         """Return one hosted beta account by internal id."""
@@ -503,6 +551,66 @@ def _account_from_row(row: sqlite3.Row) -> BetaAccount:
         api_key_prefix=str(row["api_key_prefix"]) if row["api_key_prefix"] is not None else None,
         api_key_created_at=_parse_datetime(row["api_key_created_at"]),
     )
+
+
+def _audit_event_from_row(row: sqlite3.Row) -> BetaAuditEvent:
+    """Convert one SQLite audit row into the operator-visible typed model."""
+    created_at = _parse_datetime(row["created_at"])
+    if created_at is None:
+        raise PolicyNIMError("Audit event row is missing a created_at timestamp.")
+
+    try:
+        raw_details = json.loads(str(row["details_json"]))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise PolicyNIMError(f"Audit event {row['event_id']} has malformed details JSON.") from exc
+    details = _redact_audit_detail(raw_details)
+    if not isinstance(details, dict):
+        details = {}
+
+    account_status = row["account_status"]
+    if account_status is not None and str(account_status) not in {
+        _ACTIVE_STATUS,
+        _SUSPENDED_STATUS,
+    }:
+        raise PolicyNIMError(f"Unsupported beta account status: {account_status}")
+
+    return BetaAuditEvent(
+        event_id=int(row["event_id"]),
+        account_id=int(row["account_id"]) if row["account_id"] is not None else None,
+        github_login=str(row["github_login"]) if row["github_login"] is not None else None,
+        account_status=(
+            cast(BetaAccountStatus, str(account_status)) if account_status is not None else None
+        ),
+        event_type=str(row["event_type"]),
+        details=cast(dict[str, object], details),
+        created_at=created_at,
+    )
+
+
+def _redact_audit_detail(value: object) -> object:
+    """Recursively redact secret-bearing values from audit event details."""
+    if isinstance(value, dict):
+        redacted: dict[str, object] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _is_sensitive_audit_detail_key(key_text):
+                redacted[key_text] = "[redacted]"
+            else:
+                redacted[key_text] = _redact_audit_detail(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_audit_detail(item) for item in value]
+    return value
+
+
+def _is_sensitive_audit_detail_key(key: str) -> bool:
+    """Return whether an audit details key should be redacted for operators."""
+    normalized = key.lower()
+    if normalized == "key_prefix":
+        return False
+    if normalized == "key" or normalized.endswith("_key"):
+        return True
+    return any(marker in normalized for marker in ("secret", "token", "key_hash", "api_key"))
 
 
 def _usage_snapshot(
