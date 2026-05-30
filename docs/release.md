@@ -8,8 +8,9 @@ Docker checks stay opt-in.
 
 PolicyNIM supports two direct install channels:
 
-- Python package users install the CLI with `pipx install policynim` or
-  `uv tool install policynim`.
+- Python package users install the CLI with
+  `pipx install --python 3.11 policynim` or
+  `uv tool install --python 3.11 policynim`.
 - Standalone users install GitHub release binaries with `install.sh` or
   `install.ps1`, without cloning the repo or managing Python dependencies.
 

@@ -65,12 +65,16 @@ Use the Python package path when you already have Python 3.11 or 3.12 and want
 `pipx` or `uv` to manage an isolated CLI environment:
 
 ```bash
-pipx install policynim
-uv tool install policynim
+pipx install --python 3.11 policynim
+uv tool install --python 3.11 policynim
 policynim --help
 policynim init
 policynim ingest
 ```
+
+Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
+machine does not expose `3.11` or `3.12` by name, pass the full path to that
+Python executable.
 
 Use the GitHub release installers when you want a standalone `policynim` binary
 without managing Python dependencies yourself:

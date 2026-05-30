@@ -64,16 +64,20 @@ checkout `.env` flow above and `uv run` for in-project commands.
 
 ## Direct CLI Install
 
-Use `pipx` or `uv tool` when you want the Python package install path without
-cloning this repository:
+Use `pipx` or `uv tool` with Python 3.11 or 3.12 when you want the Python
+package install path without cloning this repository:
 
 ```bash
-pipx install policynim
-uv tool install policynim
+pipx install --python 3.11 policynim
+uv tool install --python 3.11 policynim
 policynim --help
 policynim init
 policynim ingest
 ```
+
+Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
+machine does not expose `3.11` or `3.12` by name, pass the full path to that
+Python executable.
 
 Use the GitHub release installers when you want a standalone binary bundle:
 
