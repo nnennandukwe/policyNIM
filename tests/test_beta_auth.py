@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from policynim.errors import ProviderError
+from policynim.errors import PolicyNIMError, ProviderError
 from policynim.services.beta_auth import BetaAuthService
 from policynim.settings import Settings
 from policynim.storage import AuthStore
@@ -115,3 +115,33 @@ def test_fetch_github_identity_rejects_missing_required_fields(
 
     with pytest.raises(ProviderError, match="valid user id"):
         service._fetch_github_identity("github-access-token")
+
+
+def test_beta_auth_service_lists_filtered_audit_events(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    account = service._store.upsert_account_from_github(
+        github_user_id=123,
+        github_login="octocat",
+        email="octocat@example.com",
+        now=service._utc_now(),
+    )
+    service._store.rotate_api_key(
+        account_id=account.account_id,
+        key_prefix="pnm_first",
+        key_hash="stored-hash",
+        now=service._utc_now(),
+    )
+
+    events = service.list_audit_events(github_login="octocat", event_type="api_key_rotated")
+
+    assert len(events) == 1
+    assert events[0].event_type == "api_key_rotated"
+    assert events[0].github_login == "octocat"
+    assert events[0].details == {"key_prefix": "pnm_first"}
+
+
+def test_beta_auth_service_rejects_audit_filter_for_unknown_account(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    with pytest.raises(PolicyNIMError, match="does not exist"):
+        service.list_audit_events(github_login="missing-user")

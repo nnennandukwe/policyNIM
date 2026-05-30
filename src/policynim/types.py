@@ -652,6 +652,18 @@ class BetaAccount(StrictModel):
     api_key_created_at: datetime | None = None
 
 
+class BetaAuditEvent(StrictModel):
+    """One operator-visible hosted beta audit event."""
+
+    event_id: int = Field(ge=1)
+    account_id: int | None = Field(default=None, ge=1)
+    github_login: str | None = None
+    account_status: BetaAccountStatus | None = None
+    event_type: str = Field(min_length=1)
+    details: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
 class BetaUsageSnapshot(StrictModel):
     """Current daily hosted-usage state for one beta account."""
 

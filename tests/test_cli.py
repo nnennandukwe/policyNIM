@@ -21,6 +21,7 @@ from policynim.settings import Settings, get_settings
 from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
     BetaAccount,
+    BetaAuditEvent,
     Citation,
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -53,6 +54,8 @@ from policynim.types import (
     RouteResult,
     RuntimeDecision,
     RuntimeDecisionResult,
+    RuntimeEvidenceExecutionSummary,
+    RuntimeEvidenceSessionSummary,
     RuntimeExecutionResult,
     ScoredChunk,
     SearchRequest,
@@ -605,13 +608,15 @@ class _MockJSONModel:
 class MockRuntimeEvidenceReportService:
     """Static evidence report service for CLI tests."""
 
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(self, payload: dict[str, object] | RuntimeEvidenceSessionSummary) -> None:
         self._payload = payload
         self.closed = False
         self.last_session_id: str | None = None
 
-    def report_session(self, session_id: str) -> _MockJSONModel:
+    def report_session(self, session_id: str) -> _MockJSONModel | RuntimeEvidenceSessionSummary:
         self.last_session_id = session_id
+        if isinstance(self._payload, RuntimeEvidenceSessionSummary):
+            return self._payload
         return _MockJSONModel(self._payload)
 
     def close(self) -> None:
@@ -760,6 +765,43 @@ class MockBetaAuthService:
 
     def list_accounts(self) -> list[BetaAccount]:
         return [self._account]
+
+    def list_audit_events(
+        self,
+        *,
+        github_login: str | None = None,
+        event_type: str | None = None,
+        limit: int = 50,
+    ) -> list[BetaAuditEvent]:
+        if github_login == "missing-user":
+            raise PolicyNIMError(
+                "Hosted beta account with GitHub login 'missing-user' does not exist."
+            )
+        events = [
+            BetaAuditEvent(
+                event_id=2,
+                account_id=1,
+                github_login="octocat",
+                account_status="active",
+                event_type="api_key_rotated",
+                details={"key_prefix": "pnm_current"},
+                created_at=datetime(2026, 4, 5, 12, 5, tzinfo=UTC),
+            ),
+            BetaAuditEvent(
+                event_id=1,
+                account_id=1,
+                github_login="octocat",
+                account_status="active",
+                event_type="account_signup",
+                details={"github_login": "octocat", "email": "octocat@example.com"},
+                created_at=datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+            ),
+        ]
+        if github_login is not None:
+            events = [event for event in events if event.github_login == github_login]
+        if event_type is not None:
+            events = [event for event in events if event.event_type == event_type]
+        return events[:limit]
 
     def suspend_account(self, *, github_login: str) -> BetaAccount:
         assert github_login == "octocat"
@@ -1907,11 +1949,64 @@ def test_beta_admin_revoke_key_prints_json(monkeypatch) -> None:
     assert json.loads(result.stdout)["api_key_prefix"] is None
 
 
+def test_beta_admin_audit_log_prints_filtered_json(monkeypatch) -> None:
+    service = MockBetaAuthService()
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_beta_auth_service",
+        lambda settings: service,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "beta-admin",
+            "audit-log",
+            "--github-login",
+            "octocat",
+            "--event-type",
+            "api_key_rotated",
+            "--limit",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert len(payload) == 1
+    assert payload[0]["event_id"] == 2
+    assert payload[0]["github_login"] == "octocat"
+    assert payload[0]["event_type"] == "api_key_rotated"
+    assert payload[0]["details"] == {"key_prefix": "pnm_current"}
+
+
+def test_beta_admin_audit_log_rejects_invalid_limit() -> None:
+    result = runner.invoke(app, ["beta-admin", "audit-log", "--limit", "0"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.stderr
+
+
+def test_beta_admin_audit_log_surfaces_missing_account(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_beta_auth_service",
+        lambda settings: MockBetaAuthService(),
+    )
+
+    result = runner.invoke(
+        app,
+        ["beta-admin", "audit-log", "--github-login", "missing-user"],
+    )
+
+    assert result.exit_code == 1
+    assert "missing-user" in result.stderr
+
+
 def test_beta_admin_help_mentions_operator_commands() -> None:
     result = runner.invoke(app, ["beta-admin", "--help"])
 
     assert result.exit_code == 0
     assert "list-accounts" in result.stdout
+    assert "audit-log" in result.stdout
     assert "revoke-key" in result.stdout
 
 
@@ -2424,6 +2519,121 @@ def test_evidence_report_command_prints_session_summary_json(monkeypatch) -> Non
     assert payload["session_id"] == "session-1"
     assert payload["execution_count"] == 1
     assert service.closed is True
+
+
+def _cli_evidence_summary() -> RuntimeEvidenceSessionSummary:
+    started_at = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    completed_at = datetime(2026, 4, 5, 12, 0, 10, tzinfo=UTC)
+    return RuntimeEvidenceSessionSummary(
+        session_id="session-1",
+        started_at=started_at,
+        completed_at=completed_at,
+        event_count=2,
+        execution_count=1,
+        allowed_count=1,
+        confirmed_count=0,
+        blocked_count=0,
+        refused_count=0,
+        failed_count=0,
+        incomplete_count=0,
+        executions=[
+            RuntimeEvidenceExecutionSummary(
+                execution_id="exec-1",
+                action_kind="shell_command",
+                task="Run release checks.",
+                decision="allow",
+                summary="Release checks may run.",
+                confirmation_outcome="not_required",
+                execution_outcome="allowed",
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+        ],
+    )
+
+
+def test_evidence_report_command_prints_markdown(monkeypatch) -> None:
+    service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: service,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["evidence", "report", "--session-id", "session-1", "--format", "markdown"],
+    )
+
+    assert result.exit_code == 0
+    assert "# Runtime Evidence Report" in result.stdout
+    assert "session-1" in result.stdout
+    assert "| exec-1 | shell_command | allow | allowed |" in result.stdout
+    assert service.closed is True
+
+
+def test_evidence_report_command_writes_json_output_atomically(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: service,
+        raising=False,
+    )
+    monkeypatch.chdir(tmp_path)
+    output_path = Path("reports") / "session-1.json"
+
+    result = runner.invoke(
+        app,
+        ["evidence", "report", "--session-id", "session-1", "--output", str(output_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote runtime evidence report to" in result.stdout
+    payload = json.loads((tmp_path / output_path).read_text(encoding="utf-8"))
+    assert payload["session_id"] == "session-1"
+    assert service.closed is True
+
+
+def test_evidence_report_command_rejects_directory_output(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: service,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["evidence", "report", "--session-id", "session-1", "--output", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "must be a file path" in result.stderr
+
+
+def test_evidence_report_command_rejects_empty_output(
+    monkeypatch,
+) -> None:
+    service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: service,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["evidence", "report", "--session-id", "session-1", "--output", " "],
+    )
+
+    assert result.exit_code == 1
+    assert "must not be empty" in result.stderr
 
 
 def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) -> None:

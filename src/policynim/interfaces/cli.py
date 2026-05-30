@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Annotated, Literal, NoReturn
 
 import typer
@@ -15,6 +18,7 @@ from pydantic import TypeAdapter, ValidationError
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.mcp import run_server
+from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
     create_beta_auth_service,
     create_eval_service,
@@ -43,6 +47,7 @@ from policynim.types import (
     RouteRequest,
     RuntimeActionRequest,
     RuntimeDecisionResult,
+    RuntimeEvidenceSessionSummary,
     RuntimeExecutionOutcome,
     SearchRequest,
     TaskType,
@@ -503,18 +508,40 @@ def evidence_report(
             help="Runtime evidence session id to summarize.",
         ),
     ],
+    output_format: Annotated[
+        Literal["json", "markdown"],
+        typer.Option(
+            "--format",
+            help="Report format. Supported values: json, markdown.",
+        ),
+    ] = "json",
+    output: Annotated[
+        str | None,
+        typer.Option(
+            "--output",
+            help="Optional file path to write the rendered report.",
+        ),
+    ] = None,
 ) -> None:
     """Summarize one runtime evidence session from SQLite-backed storage."""
     service = None
+    rendered: str | None = None
+    written_path: Path | None = None
     try:
         service = create_runtime_evidence_report_service(_load_setup_dependent_settings())
         result = service.report_session(session_id)
+        rendered = _render_runtime_evidence_report(result, output_format=output_format)
+        if output is not None:
+            written_path = _write_cli_artifact_text(output, rendered)
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     finally:
         _close_service(service)
 
-    typer.echo(result.model_dump_json(indent=2))
+    if output is not None and written_path is not None:
+        typer.echo(f"Wrote runtime evidence report to {written_path}.")
+        return
+    typer.echo(rendered)
 
 
 @app.command()
@@ -688,6 +715,38 @@ def beta_admin_revoke_key(
     typer.echo(account.model_dump_json(indent=2))
 
 
+@beta_admin_app.command("audit-log")
+def beta_admin_audit_log(
+    github_login: Annotated[
+        str | None,
+        typer.Option("--github-login", help="Filter audit events by GitHub login."),
+    ] = None,
+    event_type: Annotated[
+        str | None,
+        typer.Option("--event-type", help="Filter audit events by event type."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", min=1, help="Maximum audit events to return."),
+    ] = 50,
+) -> None:
+    """Print hosted beta audit events as JSON."""
+    service = None
+    try:
+        service = create_beta_auth_service(get_settings())
+        events = service.list_audit_events(
+            github_login=github_login,
+            event_type=event_type,
+            limit=limit,
+        )
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    finally:
+        _close_service(service)
+
+    typer.echo(json.dumps([event.model_dump(mode="json") for event in events], indent=2))
+
+
 def main() -> None:
     """Run the PolicyNIM CLI."""
     app()
@@ -706,6 +765,114 @@ def _version_option_callback(value: bool) -> None:
 def _exit_with_error(message: str) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
+
+
+def _render_runtime_evidence_report(
+    summary: RuntimeEvidenceSessionSummary,
+    *,
+    output_format: Literal["json", "markdown"],
+) -> str:
+    if output_format == "json":
+        return summary.model_dump_json(indent=2)
+    return _runtime_evidence_report_markdown(summary)
+
+
+def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) -> str:
+    lines = [
+        f"# Runtime Evidence Report: {summary.session_id}",
+        "",
+        f"- Started: {summary.started_at.isoformat()}",
+        f"- Completed: {_optional_iso(summary.completed_at)}",
+        f"- Events: {summary.event_count}",
+        f"- Executions: {summary.execution_count}",
+        (
+            "- Outcomes: "
+            f"allowed={summary.allowed_count}, "
+            f"confirmed={summary.confirmed_count}, "
+            f"blocked={summary.blocked_count}, "
+            f"refused={summary.refused_count}, "
+            f"failed={summary.failed_count}, "
+            f"incomplete={summary.incomplete_count}"
+        ),
+        "",
+        "## Executions",
+        "",
+    ]
+    if not summary.executions:
+        lines.append("No executions recorded.")
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            (
+                "| Execution | Action | Decision | Outcome | Confirmation | "
+                "Started | Completed | Failure |"
+            ),
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for execution in summary.executions:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_markdown_cell(execution.execution_id)}",
+                    _markdown_cell(execution.action_kind),
+                    _markdown_cell(execution.decision),
+                    _markdown_cell(execution.execution_outcome or "incomplete"),
+                    _markdown_cell(execution.confirmation_outcome),
+                    _markdown_cell(execution.started_at.isoformat()),
+                    _markdown_cell(_optional_iso(execution.completed_at)),
+                    f"{_markdown_cell(execution.failure_class or '')} |",
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _optional_iso(value: datetime | None) -> str:
+    if value is None:
+        return "N/A"
+    return value.isoformat()
+
+
+def _markdown_cell(value: object) -> str:
+    return str(value).replace("\n", " ").replace("|", "\\|")
+
+
+def _write_cli_artifact_text(output: str, content: str) -> Path:
+    output_value = output.strip()
+    if not output_value:
+        raise PolicyNIMError("Runtime evidence report output path must not be empty.")
+
+    target = resolve_runtime_path(Path(output_value))
+    if target.exists() and target.is_dir():
+        raise PolicyNIMError(f"Runtime evidence report output must be a file path: {target}.")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: str | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(content)
+            temp_file.write("\n")
+        os.replace(temp_path, target)
+    except OSError as exc:
+        if temp_path is not None:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise PolicyNIMError(
+            f"Could not write runtime evidence report to {target}: {exc}."
+        ) from exc
+    return target
 
 
 def _format_validation_error(label: str, exc: ValidationError) -> str:

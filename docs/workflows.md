@@ -20,6 +20,7 @@ reference that used to live in the root README.
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
 - `policynim evidence report --session-id <id>`
+- `policynim evidence report --session-id <id> --format markdown --output reports/<id>.md`
 
 ### MCP Tools
 
@@ -32,6 +33,7 @@ reference that used to live in the root README.
 - `policynim beta-admin suspend --github-login <login>`
 - `policynim beta-admin resume --github-login <login>`
 - `policynim beta-admin revoke-key --github-login <login>`
+- `policynim beta-admin audit-log [--github-login <login>] [--event-type <type>] [--limit 50]`
 
 ### Hosted HTTP
 
@@ -437,6 +439,12 @@ JSON
 
 # Summarize the stored evidence for one execution session.
 uv run policynim evidence report --session-id <session-id-from-runtime-execute>
+
+# Write an operator-friendly Markdown artifact.
+uv run policynim evidence report \
+  --session-id <id> \
+  --format markdown \
+  --output reports/<id>.md
 ```
 
 Contract notes:
@@ -458,6 +466,9 @@ Contract notes:
 - `runtime execute` exits `1` for `blocked`, `refused`, and `failed`
 - `evidence report` is summary-only: it aggregates one session from the SQLite
   runtime evidence store rather than dumping raw rows
+- `evidence report --format markdown --output <path>` writes a durable
+  release artifact; parent directories are created automatically and existing
+  files are replaced atomically
 
 SQLite runtime evidence notes:
 
@@ -466,6 +477,19 @@ SQLite runtime evidence notes:
 - persisted events live in the `runtime_execution_events` table
 - `evidence report` is the supported operator surface for session summaries
 - raw SQLite inspection is a debugging aid, not a formal public API
+
+Hosted beta operator audit:
+
+```bash
+uv run policynim beta-admin audit-log --limit 20
+uv run policynim beta-admin audit-log --github-login octocat
+uv run policynim beta-admin audit-log --event-type api_key_rotated --limit 10
+```
+
+`beta-admin audit-log` reads the hosted auth SQLite `audit_events` table,
+returns newest events first, and redacts secret-bearing detail keys. API key
+prefixes are safe to display because they are already stored as recovery
+metadata; full API keys, bearer tokens, and hashes are not exposed.
 
 Useful inspection commands:
 

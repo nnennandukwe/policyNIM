@@ -253,6 +253,48 @@ Important hosted behavior:
   including `auth_result`, `tool_name`, `latency_ms`, and
   `upstream_failure_class`
 
+## 90-Day Operator Beta Release Gate
+
+Use this gate before tagging a hosted beta release or handing a deployment to an
+operator. The default checks stay offline and deterministic:
+
+```bash
+uv run ruff check .
+uv run pyright
+uv run pytest -q -m "not live and not docker_live"
+git diff --check
+```
+
+Capture runtime evidence for any local release workflow that uses
+`policynim runtime execute`:
+
+```bash
+uv run policynim evidence report \
+  --session-id <id> \
+  --format markdown \
+  --output reports/<id>.md
+```
+
+Inspect hosted beta account and key activity from the operator CLI:
+
+```bash
+uv run policynim beta-admin audit-log --limit 50
+uv run policynim beta-admin audit-log --github-login <login>
+uv run policynim beta-admin audit-log --event-type api_key_rotated --limit 10
+```
+
+The audit log output is JSON, newest-first, and redacts secret-bearing detail
+keys. It may show API key prefixes because those are stored as recovery metadata;
+it must not expose full API keys, bearer tokens, or key hashes.
+
+Optional checks stay explicitly opt-in:
+
+- run the deployed-service smoke only when hosted secrets are configured:
+  `uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py`
+- run Docker hosted-image checks only when Docker is running and the local opt-in
+  flag is set:
+  `POLICYNIM_RUN_DOCKER_TESTS=1 uv run --group test pytest -q -m docker_live tests/test_docker_build_live.py`
+
 Opt-in Railway smoke test:
 
 ```bash

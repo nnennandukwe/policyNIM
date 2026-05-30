@@ -15,7 +15,13 @@ from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import AuthStore
-from policynim.types import BetaAccount, BetaAuthDecision, BetaIssuedApiKey, BetaUsageSnapshot
+from policynim.types import (
+    BetaAccount,
+    BetaAuditEvent,
+    BetaAuthDecision,
+    BetaIssuedApiKey,
+    BetaUsageSnapshot,
+)
 
 _GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 _GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -66,6 +72,22 @@ class BetaAuthService:
     def list_accounts(self) -> list[BetaAccount]:
         """Return all hosted beta accounts."""
         return self._store.list_accounts()
+
+    def list_audit_events(
+        self,
+        *,
+        github_login: str | None = None,
+        event_type: str | None = None,
+        limit: int = 50,
+    ) -> list[BetaAuditEvent]:
+        """Return operator-visible hosted beta audit events."""
+        if github_login is not None:
+            self._require_account_by_login(github_login)
+        return self._store.list_audit_events(
+            github_login=github_login,
+            event_type=event_type,
+            limit=limit,
+        )
 
     def get_account(self, account_id: int) -> BetaAccount | None:
         """Return one hosted beta account by id."""
