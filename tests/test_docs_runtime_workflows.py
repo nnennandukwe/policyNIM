@@ -113,6 +113,7 @@ def test_tests_readme_mentions_runtime_and_docs_parity_coverage() -> None:
 
 
 def test_hosted_operations_documents_operator_beta_release_gate() -> None:
+    """Document the deterministic and opt-in hosted beta release checks."""
     text = _read_text(REPO_ROOT / "docs" / "hosted-beta-operations.md")
 
     for token in (

@@ -118,6 +118,7 @@ def test_fetch_github_identity_rejects_missing_required_fields(
 
 
 def test_beta_auth_service_lists_filtered_audit_events(tmp_path: Path) -> None:
+    """Return filtered hosted beta audit events through the service layer."""
     service = _service(tmp_path)
     account = service._store.upsert_account_from_github(
         github_user_id=123,
@@ -141,6 +142,7 @@ def test_beta_auth_service_lists_filtered_audit_events(tmp_path: Path) -> None:
 
 
 def test_beta_auth_service_rejects_audit_filter_for_unknown_account(tmp_path: Path) -> None:
+    """Reject audit-log account filters that do not match a hosted beta account."""
     service = _service(tmp_path)
 
     with pytest.raises(PolicyNIMError, match="does not exist"):

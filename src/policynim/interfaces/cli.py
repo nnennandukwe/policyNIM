@@ -772,12 +772,14 @@ def _render_runtime_evidence_report(
     *,
     output_format: Literal["json", "markdown"],
 ) -> str:
+    """Render one runtime evidence summary in the requested CLI format."""
     if output_format == "json":
         return summary.model_dump_json(indent=2)
     return _runtime_evidence_report_markdown(summary)
 
 
 def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) -> str:
+    """Render one runtime evidence session summary as Markdown."""
     lines = [
         f"# Runtime Evidence Report: {summary.session_id}",
         "",
@@ -830,16 +832,19 @@ def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) ->
 
 
 def _optional_iso(value: datetime | None) -> str:
+    """Return an ISO timestamp or the CLI placeholder for missing timestamps."""
     if value is None:
         return "N/A"
     return value.isoformat()
 
 
 def _markdown_cell(value: object) -> str:
+    """Escape a value for use inside a Markdown table cell."""
     return str(value).replace("\n", " ").replace("|", "\\|")
 
 
 def _write_cli_artifact_text(output: str, content: str) -> Path:
+    """Write rendered CLI artifact text to a user-provided path atomically."""
     output_value = output.strip()
     if not output_value:
         raise PolicyNIMError("Runtime evidence report output path must not be empty.")

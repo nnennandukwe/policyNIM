@@ -554,11 +554,15 @@ def _account_from_row(row: sqlite3.Row) -> BetaAccount:
 
 
 def _audit_event_from_row(row: sqlite3.Row) -> BetaAuditEvent:
+    """Convert one SQLite audit row into the operator-visible typed model."""
     created_at = _parse_datetime(row["created_at"])
     if created_at is None:
         raise PolicyNIMError("Audit event row is missing a created_at timestamp.")
 
-    raw_details = json.loads(str(row["details_json"]))
+    try:
+        raw_details = json.loads(str(row["details_json"]))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise PolicyNIMError(f"Audit event {row['event_id']} has malformed details JSON.") from exc
     details = _redact_audit_detail(raw_details)
     if not isinstance(details, dict):
         details = {}
@@ -584,6 +588,7 @@ def _audit_event_from_row(row: sqlite3.Row) -> BetaAuditEvent:
 
 
 def _redact_audit_detail(value: object) -> object:
+    """Recursively redact secret-bearing values from audit event details."""
     if isinstance(value, dict):
         redacted: dict[str, object] = {}
         for key, item in value.items():
@@ -599,6 +604,7 @@ def _redact_audit_detail(value: object) -> object:
 
 
 def _is_sensitive_audit_detail_key(key: str) -> bool:
+    """Return whether an audit details key should be redacted for operators."""
     normalized = key.lower()
     if normalized == "key_prefix":
         return False

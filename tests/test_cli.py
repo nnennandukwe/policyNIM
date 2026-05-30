@@ -773,6 +773,7 @@ class MockBetaAuthService:
         event_type: str | None = None,
         limit: int = 50,
     ) -> list[BetaAuditEvent]:
+        """Return static hosted beta audit events for CLI assertions."""
         if github_login == "missing-user":
             raise PolicyNIMError(
                 "Hosted beta account with GitHub login 'missing-user' does not exist."
@@ -1950,6 +1951,7 @@ def test_beta_admin_revoke_key_prints_json(monkeypatch) -> None:
 
 
 def test_beta_admin_audit_log_prints_filtered_json(monkeypatch) -> None:
+    """Print filtered hosted beta audit events as JSON."""
     service = MockBetaAuthService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_beta_auth_service",
@@ -1980,6 +1982,7 @@ def test_beta_admin_audit_log_prints_filtered_json(monkeypatch) -> None:
 
 
 def test_beta_admin_audit_log_rejects_invalid_limit() -> None:
+    """Reject non-positive audit-log limits at the Typer boundary."""
     result = runner.invoke(app, ["beta-admin", "audit-log", "--limit", "0"])
 
     assert result.exit_code == 2
@@ -1987,6 +1990,7 @@ def test_beta_admin_audit_log_rejects_invalid_limit() -> None:
 
 
 def test_beta_admin_audit_log_surfaces_missing_account(monkeypatch) -> None:
+    """Surface missing account filters as operator-facing CLI errors."""
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_beta_auth_service",
         lambda settings: MockBetaAuthService(),
@@ -2522,6 +2526,7 @@ def test_evidence_report_command_prints_session_summary_json(monkeypatch) -> Non
 
 
 def _cli_evidence_summary() -> RuntimeEvidenceSessionSummary:
+    """Return one typed evidence summary for report-format CLI tests."""
     started_at = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
     completed_at = datetime(2026, 4, 5, 12, 0, 10, tzinfo=UTC)
     return RuntimeEvidenceSessionSummary(
@@ -2553,6 +2558,7 @@ def _cli_evidence_summary() -> RuntimeEvidenceSessionSummary:
 
 
 def test_evidence_report_command_prints_markdown(monkeypatch) -> None:
+    """Render runtime evidence reports as Markdown on stdout."""
     service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_runtime_evidence_report_service",
@@ -2576,6 +2582,7 @@ def test_evidence_report_command_writes_json_output_atomically(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Write rendered JSON evidence reports to a nested output path."""
     service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_runtime_evidence_report_service",
@@ -2601,6 +2608,7 @@ def test_evidence_report_command_rejects_directory_output(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Reject output paths that already point at directories."""
     service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_runtime_evidence_report_service",
@@ -2620,6 +2628,7 @@ def test_evidence_report_command_rejects_directory_output(
 def test_evidence_report_command_rejects_empty_output(
     monkeypatch,
 ) -> None:
+    """Reject empty output path strings before filesystem writes."""
     service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_runtime_evidence_report_service",
