@@ -10,6 +10,7 @@ WORKFLOWS_GUIDE = REPO_ROOT / "docs" / "workflows.md"
 CONTRIBUTOR_GUIDE = REPO_ROOT / "docs" / "contributor-guide.md"
 POLICY_TEMPLATE = REPO_ROOT / "policies" / "TEMPLATE.md"
 TESTS_README = REPO_ROOT / "tests" / "README.md"
+RELEASE_GUIDE = REPO_ROOT / "docs" / "release.md"
 STANDALONE_SETUP_DOCS = (README, WORKFLOWS_GUIDE, CONTRIBUTOR_GUIDE)
 ENV_EXAMPLES = (
     REPO_ROOT / ".env.example",
@@ -126,3 +127,45 @@ def test_hosted_operations_documents_operator_beta_release_gate() -> None:
         "policynim beta-admin audit-log",
     ):
         assert token in text
+
+
+def test_install_docs_cover_direct_cli_channels() -> None:
+    """Document install paths that do not require cloning the repo."""
+    readme = _read_text(README)
+    contributor = _read_text(CONTRIBUTOR_GUIDE)
+
+    for text in (readme, contributor):
+        for token in (
+            "pipx install policynim",
+            "uv tool install policynim",
+            (
+                "curl -fsSL "
+                "https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.sh | sh"
+            ),
+            (
+                "irm "
+                "https://github.com/nnennandukwe/policyNIM/releases/latest/download/"
+                "install.ps1 | iex"
+            ),
+            "policynim init",
+            "policynim ingest",
+            "policynim --help",
+        ):
+            assert token in text
+
+
+def test_release_guide_documents_publish_checklist() -> None:
+    """Keep GitHub and PyPI release steps discoverable."""
+    index_text = _read_text(REPO_ROOT / "docs" / "index.md")
+    release_text = _read_text(RELEASE_GUIDE)
+
+    assert "release.md" in index_text
+    for token in (
+        "git tag v",
+        "Release",
+        "draft GitHub release",
+        "SHA256SUMS",
+        "PyPI trusted publishing",
+        "Hosted Beta Smoke",
+    ):
+        assert token in release_text

@@ -1,0 +1,290 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version or tag, for example 0.1.0 or v0.1.0."
+        required: false
+        type: string
+      publish_pypi:
+        description: "Publish the built Python distribution to PyPI using trusted publishing."
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Sync dependencies
+        run: uv sync --group test --group dev
+
+      - name: Check lockfile
+        run: uv lock --check
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Run Pyright
+        run: uv run pyright
+
+      - name: Run offline pytest
+        run: uv run pytest -q -m "not live and not docker_live"
+
+      - name: Build Python distribution
+        run: uv build --out-dir dist
+
+      - name: Upload Python distribution
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+
+  wheel-smoke:
+    runs-on: ubuntu-24.04
+    needs: verify
+    steps:
+      - name: Download Python distribution
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Smoke install built wheel
+        run: |
+          python -m venv /tmp/policynim-wheel-smoke
+          /tmp/policynim-wheel-smoke/bin/python -m pip install dist/*.whl
+          /tmp/policynim-wheel-smoke/bin/policynim --help
+          /tmp/policynim-wheel-smoke/bin/policynim --version
+
+  standalone-build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+            archive: tar
+          - os: macos-13
+            platform: darwin-amd64
+            archive: tar
+          - os: macos-14
+            platform: darwin-arm64
+            archive: tar
+          - os: windows-2022
+            platform: windows-amd64
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Resolve release tag
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
+          if os.environ.get("GITHUB_REF_TYPE") == "tag":
+              tag = os.environ["GITHUB_REF_NAME"]
+              requested_version = tag.removeprefix("v")
+          else:
+              requested = os.environ.get("REQUESTED_VERSION", "").strip()
+              if requested:
+                  requested_version = requested.removeprefix("v")
+                  tag = f"v{requested_version}"
+              else:
+                  requested_version = project_version
+                  tag = f"v{project_version}"
+          if requested_version != project_version:
+              raise SystemExit(
+                  "Release version mismatch: "
+                  f"requested {requested_version}, pyproject.toml has {project_version}."
+              )
+          print(f"RELEASE_TAG={tag}")
+          PY
+
+      - name: Sync release dependencies
+        run: uv sync --group release
+
+      - name: Build standalone bundle
+        run: uv run --group release pyinstaller --clean --noconfirm packaging/pyinstaller.spec
+
+      - name: Smoke standalone bundle
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "windows-amd64" ]; then
+            dist/policynim/policynim.exe --help
+            dist/policynim/policynim.exe --version
+          else
+            dist/policynim/policynim --help
+            dist/policynim/policynim --version
+          fi
+
+      - name: Archive Unix standalone bundle
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          case "${{ matrix.platform }}" in
+            linux-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-linux-amd64.tar.gz" ;;
+            darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;
+            darwin-arm64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-arm64.tar.gz" ;;
+            *) echo "Unsupported release platform: ${{ matrix.platform }}" >&2; exit 1 ;;
+          esac
+          tar -C dist -czf "artifacts/${ASSET_NAME}" policynim
+
+      - name: Archive Windows standalone bundle
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $RELEASE_TAG = $env:RELEASE_TAG
+          $AssetName = "policynim-${RELEASE_TAG}-windows-amd64.zip"
+          Compress-Archive -Path "dist/policynim/*" -DestinationPath "artifacts/$AssetName" -Force
+
+      - name: Upload standalone bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standalone-${{ matrix.platform }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  publish-github-release:
+    runs-on: ubuntu-24.04
+    needs:
+      - verify
+      - wheel-smoke
+      - standalone-build
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release-downloads
+
+      - name: Resolve release tag
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
+          if os.environ.get("GITHUB_REF_TYPE") == "tag":
+              tag = os.environ["GITHUB_REF_NAME"]
+              requested_version = tag.removeprefix("v")
+          else:
+              requested = os.environ.get("REQUESTED_VERSION", "").strip()
+              if requested:
+                  requested_version = requested.removeprefix("v")
+                  tag = f"v{requested_version}"
+              else:
+                  requested_version = project_version
+                  tag = f"v{project_version}"
+          if requested_version != project_version:
+              raise SystemExit(
+                  "Release version mismatch: "
+                  f"requested {requested_version}, pyproject.toml has {project_version}."
+              )
+          print(f"RELEASE_TAG={tag}")
+          PY
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find release-downloads -type f -exec cp {} release-assets/ \;
+          cp scripts/install.sh release-assets/install.sh
+          cp scripts/install.ps1 release-assets/install.ps1
+          (
+            cd release-assets
+            sha256sum * > SHA256SUMS
+          )
+          cat > release-notes.md <<'EOF'
+          PolicyNIM release artifacts:
+
+          - Python wheel and source distribution for `pipx install policynim`
+          - Standalone CLI bundles for Linux, macOS, and Windows
+          - Unix and PowerShell installer scripts
+          - SHA256SUMS for release asset verification
+          EOF
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --notes-file release-notes.md \
+            release-assets/*
+
+  publish-pypi:
+    runs-on: ubuntu-24.04
+    needs:
+      - verify
+      - wheel-smoke
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_pypi)
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download Python distribution
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d # v1.14.0

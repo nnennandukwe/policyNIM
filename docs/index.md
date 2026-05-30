@@ -13,6 +13,8 @@ operations into separate pages so the root README can stay short.
   troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,
   recovery, container build flow, and Railway deployment notes
+- [release.md](release.md): package, GitHub release, PyPI, and standalone
+  installer release checklist
 
 ## Examples
 

@@ -11,7 +11,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv==0.7.12
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 COPY policies ./policies
 COPY evals ./evals
@@ -37,6 +37,7 @@ COPY --from=builder /app/policies /app/policies
 COPY --from=builder /app/evals /app/evals
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 COPY --from=builder /app/README.md /app/README.md
+COPY --from=builder /app/LICENSE /app/LICENSE
 COPY --from=builder /app/data/lancedb-baked /app/data/lancedb-baked
 
 CMD ["policynim", "mcp", "--transport", "streamable-http"]

@@ -24,7 +24,13 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
+from policynim.errors import (
+    ConfigurationError,
+    InvalidPolicyDocumentError,
+    PolicyNIMError,
+    ProviderError,
+)
+from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
     create_beta_auth_service,
@@ -554,11 +560,11 @@ def _derive_beta_url(settings: Settings) -> str | None:
 
 
 def _beta_asset_path(filename: str) -> Path:
-    return Path(__file__).resolve().parent.parent / "assets" / "beta" / filename
+    return resolve_asset_path("beta", filename)
 
 
 def _beta_template_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "templates"
+    return resolve_template_root()
 
 
 @lru_cache(maxsize=1)
@@ -574,7 +580,10 @@ def _beta_template_environment() -> Environment:
 
 
 def _render_beta_asset(filename: str, *, media_type: str) -> Response:
-    asset_path = _beta_asset_path(filename)
+    try:
+        asset_path = _beta_asset_path(filename)
+    except InvalidPolicyDocumentError:
+        return Response("Missing beta asset.", status_code=404)
     if not asset_path.is_file():
         return Response("Missing beta asset.", status_code=404)
     return FileResponse(

@@ -258,6 +258,25 @@ def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
     assert favicon.headers["content-type"].startswith("image/png")
 
 
+def test_beta_portal_missing_packaged_asset_returns_404(monkeypatch) -> None:
+    """Return the existing 404 response when packaged beta assets are missing."""
+    monkeypatch.setattr(
+        mcp_module,
+        "create_beta_auth_service",
+        lambda settings: StubBetaAuthService(),
+    )
+    monkeypatch.setattr(mcp_module, "_BETA_CSS_FILENAME", "missing.css")
+    mcp_module._beta_template_environment.cache_clear()
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app) as client:
+        response = client.get(mcp_module._BETA_CSS_ROUTE)
+
+    assert response.status_code == 404
+    assert response.text == "Missing beta asset."
+
+
 def test_beta_portal_uses_secure_session_cookie_for_https_deployments(monkeypatch) -> None:
     monkeypatch.setattr(
         mcp_module,

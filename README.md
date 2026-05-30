@@ -59,6 +59,34 @@ PolicyNIM currently ships with two main user-facing surfaces:
 If you want the shortest path to a real preflight run, start with the hosted
 beta instead of cloning the repo.
 
+### Install The CLI Without Cloning
+
+Use the Python package path when you already have Python 3.11 or 3.12 and want
+`pipx` or `uv` to manage an isolated CLI environment:
+
+```bash
+pipx install policynim
+uv tool install policynim
+policynim --help
+policynim init
+policynim ingest
+```
+
+Use the GitHub release installers when you want a standalone `policynim` binary
+without managing Python dependencies yourself:
+
+```bash
+curl -fsSL https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.sh | sh
+```
+
+```powershell
+irm https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.ps1 | iex
+```
+
+Both installer paths verify release checksums before installing. After install,
+run `policynim init`, then `policynim ingest`, then `policynim --help` whenever
+you need to confirm the entrypoint is available.
+
 ### Self-Serve Hosted Beta
 
 <p align="center">
@@ -156,6 +184,8 @@ Start here when you want the longer version of a specific path:
   troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
+- [docs/release.md](docs/release.md): CLI packaging, GitHub release, PyPI
+  publish, and smoke-test checklist
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,
   and interface rules
 - [docs/architecture-diagram.md](docs/architecture-diagram.md): Mermaid diagram
