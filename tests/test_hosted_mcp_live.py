@@ -6,13 +6,14 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from policynim.types import PreflightResult, SearchResult
+from policynim.types import HealthCheckResult, PreflightResult, SearchResult
 
 _BETA_URL = os.getenv("POLICYNIM_BETA_MCP_URL", "").strip()
 _BETA_TOKEN = os.getenv("POLICYNIM_BETA_MCP_TOKEN", "").strip()
@@ -39,6 +40,35 @@ def _structured_payload(result) -> dict[str, object]:  # noqa: ANN001
     payload = result.structuredContent
     assert isinstance(payload, dict)
     return payload
+
+
+def _hosted_url(path: str) -> str:
+    parts = urlsplit(_BETA_URL)
+    if not parts.scheme or not parts.netloc:
+        raise AssertionError("POLICYNIM_BETA_MCP_URL must be an absolute URL.")
+    if parts.path.rstrip("/") != "/mcp":
+        raise AssertionError("POLICYNIM_BETA_MCP_URL must point to the hosted /mcp route.")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _expected_mcp_url() -> str:
+    return _hosted_url("/mcp")
+
+
+def _health_url() -> str:
+    return _hosted_url("/healthz")
+
+
+def test_hosted_healthz_reports_ready_index_live() -> None:
+    response = httpx.get(_health_url(), timeout=30.0)
+
+    assert response.status_code == 200
+    payload = HealthCheckResult.model_validate(response.json())
+    assert payload.ready is True
+    assert payload.status == "ok"
+    assert payload.row_count > 0
+    assert payload.mcp_url == _expected_mcp_url()
+    assert payload.reason is None
 
 
 def test_hosted_mcp_lists_tools_live() -> None:
@@ -84,7 +114,7 @@ def test_hosted_policy_preflight_live() -> None:
 
 def test_hosted_mcp_rejects_invalid_token_live() -> None:
     response = httpx.get(
-        _BETA_URL,
+        _expected_mcp_url(),
         headers={
             "Accept": "text/event-stream",
             "Authorization": "Bearer invalid-token",

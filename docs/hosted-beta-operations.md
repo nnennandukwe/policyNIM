@@ -36,6 +36,41 @@ Hosted beta notes:
 - if you run the opt-in live smoke test locally, export the same deployed values
   as `POLICYNIM_BETA_MCP_URL` and `POLICYNIM_BETA_MCP_TOKEN`
 
+## 60-Day Readiness Verification
+
+Use this checklist before calling the hosted beta ready for a release window.
+The normal CI suite stays offline; this smoke path intentionally calls the
+deployed Railway service and NVIDIA-backed MCP tools.
+
+Required deployed-service checks:
+
+```bash
+curl -fsS https://<railway-domain>/healthz
+
+export POLICYNIM_BETA_MCP_URL=https://<railway-domain>/mcp
+export POLICYNIM_BETA_MCP_TOKEN=<beta-token>
+uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
+```
+
+Expected evidence:
+
+- `/healthz` returns `200` with `ready: true`, `row_count` greater than `0`, and
+  `mcp_url` matching `https://<railway-domain>/mcp`
+- invalid bearer-token smoke returns `401 {"error":"Unauthorized."}`
+- authenticated MCP smoke lists exactly `policy_preflight` and `policy_search`
+- `policy_search` returns at least one cited hit for the smoke query
+- `policy_preflight` returns a grounded summary, citations, and
+  `insufficient_context: false`
+
+GitHub Actions smoke:
+
+- run the manual `Hosted Beta Smoke` workflow only when the deployed Railway
+  service and a beta token are available
+- set repository secrets `POLICYNIM_BETA_MCP_URL` and
+  `POLICYNIM_BETA_MCP_TOKEN` before dispatching the workflow
+- the regular `CI` workflow remains offline and runs pytest with
+  `-m "not live and not docker_live"`
+
 ## Hosted Beta Recovery
 
 ### Invalid Token
@@ -67,6 +102,15 @@ Hosted beta notes:
   hosted service or baked local index is not ready yet
 - retry after the service becomes healthy. If you operate the service, check the
   Railway deploy state and `/healthz` first
+- if `/healthz` includes `Local index readiness could not be inspected`, inspect
+  the exception class and message in the payload, then check the Railway deploy
+  logs for index path, volume, or file-permission failures
+- if `/healthz` says the local index is missing or empty, confirm the latest
+  build received `NVIDIA_API_KEY`, rerun the deploy so `policynim ingest` bakes
+  the index, and confirm `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+- if the live smoke passes `/healthz` but fails `policy_search` or
+  `policy_preflight`, inspect hosted MCP logs for `upstream_failure_class`
+  before rotating auth tokens or rebuilding the image
 
 ## Container Build For Hosted HTTP
 

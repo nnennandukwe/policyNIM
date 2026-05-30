@@ -32,6 +32,7 @@ from policynim.services import (
     create_runtime_health_service,
     create_search_service,
     ensure_hosted_runtime_ready,
+    format_health_failure_reason,
 )
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -507,19 +508,20 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
     """Register a public readiness endpoint for hosted HTTP runtimes."""
     try:
         health_service = create_runtime_health_service(settings)
-    except Exception:
+        fallback_reason = "Local index readiness could not be inspected."
+    except Exception as exc:
         LOGGER.exception("Could not construct runtime health service.")
         health_service = None
-    fallback_reason = "Local index readiness could not be inspected."
+        fallback_reason = format_health_failure_reason(exc)
 
-    def _fallback_result() -> JSONResponse:
+    def _fallback_result(reason: str = fallback_reason) -> JSONResponse:
         result = HealthCheckResult(
             status="error",
             ready=False,
             table_name=settings.lancedb_table,
             row_count=0,
             mcp_url=_derive_mcp_url(settings),
-            reason=fallback_reason,
+            reason=reason,
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=503)
 
@@ -530,9 +532,9 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
 
         try:
             result = await asyncio.to_thread(health_service.check)
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("Runtime health probe failed.")
-            return _fallback_result()
+            return _fallback_result(format_health_failure_reason(exc))
 
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)

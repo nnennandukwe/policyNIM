@@ -805,7 +805,37 @@ def test_healthz_returns_fallback_payload_when_service_construction_fails(monkey
     assert response.status_code == 503
     payload = response.json()
     assert payload["ready"] is False
-    assert payload["reason"] == "Local index readiness could not be inspected."
+    assert payload["reason"] == (
+        "Local index readiness could not be inspected: OSError: permission denied."
+    )
+    assert payload["mcp_url"] == "https://beta.example.com/mcp"
+    assert "index_uri" not in payload
+
+
+def test_healthz_returns_fallback_payload_when_probe_fails(monkeypatch) -> None:
+    class FailingHealthService:
+        def check(self) -> HealthCheckResult:
+            raise RuntimeError("unexpected readiness failure")
+
+    monkeypatch.setattr(
+        mcp_module,
+        "create_runtime_health_service",
+        lambda settings: FailingHealthService(),
+    )
+
+    app = mcp_module._build_streamable_http_app(
+        Settings.model_validate({"mcp_public_base_url": "https://beta.example.com"})
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["ready"] is False
+    assert payload["reason"] == (
+        "Local index readiness could not be inspected: RuntimeError: unexpected readiness failure."
+    )
     assert payload["mcp_url"] == "https://beta.example.com/mcp"
     assert "index_uri" not in payload
 

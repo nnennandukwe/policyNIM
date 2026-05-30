@@ -47,5 +47,5 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group test --group dev
 
-      - name: Run pytest
-        run: uv run pytest -q -m "not live"
+      - name: Run offline pytest
+        run: uv run pytest -q -m "not live and not docker_live"

@@ -108,6 +108,22 @@ def test_hosted_operations_doc_covers_required_recovery_topics() -> None:
         assert topic in text
 
 
+def test_hosted_operations_doc_covers_60_day_readiness_smoke() -> None:
+    text = _read_text(HOSTED_OPERATIONS)
+
+    for expected in (
+        "## 60-Day Readiness Verification",
+        "curl -fsS https://<railway-domain>/healthz",
+        "POLICYNIM_BETA_MCP_URL=https://<railway-domain>/mcp",
+        "uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py",
+        "Hosted Beta Smoke",
+        '`-m "not live and not docker_live"`',
+        "Local index readiness could not be inspected",
+        "upstream_failure_class",
+    ):
+        assert expected in text
+
+
 def test_readme_links_to_contributor_and_workflow_guides() -> None:
     text = _read_text(README)
 
