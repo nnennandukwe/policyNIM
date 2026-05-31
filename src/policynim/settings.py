@@ -43,7 +43,6 @@ class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
         standalone = config_discovery.standalone_paths()
         return {
             "index_db_path": standalone.index_db_path,
-            "lancedb_uri": standalone.lancedb_uri,
             "runtime_rules_artifact_path": standalone.runtime_rules_artifact_path,
             "runtime_evidence_db_path": standalone.runtime_evidence_db_path,
             "eval_workspace_dir": standalone.eval_workspace_dir,
@@ -70,8 +69,6 @@ class Settings(BaseSettings):
         default=Path("data/index.sqlite3"),
         validation_alias=AliasChoices("POLICYNIM_INDEX_DB_PATH", "POLICYNIM_LANCEDB_URI"),
     )
-    lancedb_uri: Path = Path("data/lancedb")
-    lancedb_table: str = "policy_chunks"
     runtime_rules_artifact_path: Path = Path("data/runtime/runtime_rules.json")
     runtime_evidence_db_path: Path = Path("data/runtime/runtime_evidence.sqlite3")
     runtime_shell_timeout_seconds: Annotated[float, Field(gt=0)] = 300.0

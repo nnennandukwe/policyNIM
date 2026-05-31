@@ -5,7 +5,7 @@ FROM ${PYTHON_BASE_IMAGE} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked
+    POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3
 
 WORKDIR /app
 
@@ -16,9 +16,7 @@ COPY src ./src
 COPY policies ./policies
 COPY evals ./evals
 
-# Hosted services still use the legacy LanceDB store until service wiring moves
-# to SQLiteVecIndexStore; default package installs stay portable.
-RUN uv sync --frozen --extra hosted-legacy-index
+RUN uv sync --frozen
 RUN --mount=type=secret,id=nvidia_api_key,required=true \
     sh -c 'NVIDIA_API_KEY="$(cat /run/secrets/nvidia_api_key)" uv run policynim ingest'
 
@@ -27,7 +25,7 @@ FROM ${PYTHON_BASE_IMAGE} AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked \
+    POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3 \
     POLICYNIM_MCP_HOST=0.0.0.0 \
     PATH=/app/.venv/bin:$PATH
 
@@ -40,6 +38,6 @@ COPY --from=builder /app/evals /app/evals
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 COPY --from=builder /app/README.md /app/README.md
 COPY --from=builder /app/LICENSE /app/LICENSE
-COPY --from=builder /app/data/lancedb-baked /app/data/lancedb-baked
+COPY --from=builder /app/data/index.sqlite3 /app/data/index.sqlite3
 
 CMD ["policynim", "mcp", "--transport", "streamable-http"]

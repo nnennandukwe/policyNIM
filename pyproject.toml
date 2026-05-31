@@ -42,11 +42,6 @@ Issues = "https://github.com/nnennandukwe/policyNIM/issues"
 Repository = "https://github.com/nnennandukwe/policyNIM"
 
 [project.optional-dependencies]
-hosted-legacy-index = [
-  "lance-namespace==0.6.1",
-  "lance-namespace-urllib3-client==0.6.1",
-  "lancedb==0.27.1",
-]
 nvidia-guardrails = [
   "nemoguardrails[nvidia]==0.21.0",
 ]

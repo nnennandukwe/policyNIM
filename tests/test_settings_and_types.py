@@ -182,7 +182,6 @@ def test_settings_uses_user_config_and_standalone_defaults_when_no_local_dotenv(
 
     assert settings.default_top_k == 8
     assert settings.index_db_path == data_root / "index.sqlite3"
-    assert settings.lancedb_uri == data_root / "lancedb"
     assert settings.eval_workspace_dir == data_root / "evals" / "workspace"
 
 
@@ -302,7 +301,6 @@ def test_settings_ignores_config_file_from_discovered_user_config(
     assert settings.default_top_k == 8
     assert settings.config_file is None
     assert settings.index_db_path == data_root / "index.sqlite3"
-    assert settings.lancedb_uri == data_root / "lancedb"
 
 
 def test_standalone_setup_missing_when_redirected_config_file_does_not_exist(
@@ -420,7 +418,6 @@ def test_settings_loads_quoted_init_config_values_with_paths_that_contain_spaces
     assert settings.nvidia_api_key == "quoted-key"
     assert settings.corpus_dir == custom_corpus.resolve(strict=False)
     assert settings.index_db_path == data_root / "index.sqlite3"
-    assert settings.lancedb_uri == data_root / "lancedb"
     assert settings.runtime_rules_artifact_path == data_root / "runtime" / "runtime_rules.json"
     assert settings.runtime_evidence_db_path == data_root / "runtime" / "runtime_evidence.sqlite3"
     assert settings.eval_workspace_dir == data_root / "evals" / "workspace"
@@ -571,7 +568,7 @@ def test_settings_ignores_user_config_when_platform_port_is_present(
     assert settings.policynim_env == "development"
     assert settings.default_top_k == DEFAULT_TOP_K
     assert settings.mcp_host == "127.0.0.1"
-    assert settings.lancedb_uri == Path("data/lancedb")
+    assert settings.index_db_path == Path("data/index.sqlite3")
     assert settings.eval_workspace_dir == Path("data/evals/workspace")
 
 
@@ -586,7 +583,7 @@ def test_settings_keeps_checkout_defaults_when_running_from_source_checkout(
     settings = Settings()
 
     assert settings.default_top_k == 11
-    assert settings.lancedb_uri == Path("data/lancedb")
+    assert settings.index_db_path == Path("data/index.sqlite3")
     assert settings.eval_workspace_dir == Path("data/evals/workspace")
 
 
@@ -657,7 +654,7 @@ def test_settings_keeps_hosted_defaults_out_of_standalone_platformdirs(
 
     assert settings.mcp_host == "0.0.0.0"
     assert settings.mcp_port == 8123
-    assert settings.lancedb_uri == Path("data/lancedb")
+    assert settings.index_db_path == Path("data/index.sqlite3")
     assert settings.eval_workspace_dir == Path("data/evals/workspace")
 
 

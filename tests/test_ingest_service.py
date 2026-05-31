@@ -10,7 +10,7 @@ from textwrap import dedent
 import pytest
 
 from policynim.services.ingest import IngestService
-from policynim.storage import LanceDBIndexStore
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import EmbeddedChunk
 
 
@@ -64,8 +64,7 @@ class RecordingIndexStore:
 
 
 def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
-    """Build and rebuild the legacy LanceDB index when that backend is installed."""
-    pytest.importorskip("lancedb")
+    """Build and rebuild the default SQLite index."""
     policies_dir = tmp_path / "policies"
     artifact_path = tmp_path / "runtime" / "runtime_rules.json"
     write_policy(
@@ -105,7 +104,7 @@ def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
         """,
     )
 
-    store = LanceDBIndexStore(uri=tmp_path / "index", table_name="policy_chunks")
+    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
     service = IngestService(
         embedder=MockEmbedder(),
         index_store=store,

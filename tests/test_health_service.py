@@ -328,7 +328,7 @@ def test_ensure_hosted_runtime_ready_raises_when_empty_index_stays_empty_after_r
         health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
 
     assert rebuilds == ["run"]
-    assert "Rebuild the image so `policynim ingest` runs during Docker build" in str(exc_info.value)
+    assert "Configure the path with `POLICYNIM_INDEX_DB_PATH`" in str(exc_info.value)
 
 
 def test_ensure_hosted_runtime_ready_raises_when_automatic_rebuild_fails(
@@ -364,7 +364,7 @@ def test_ensure_hosted_runtime_ready_raises_when_automatic_rebuild_fails(
 
     assert exc_info.value.__cause__ is failure
     assert "NVIDIA_API_KEY is required for embeddings." in str(exc_info.value)
-    assert "Rebuild the image so `policynim ingest` runs during Docker build" in str(exc_info.value)
+    assert "Configure the path with `POLICYNIM_INDEX_DB_PATH`" in str(exc_info.value)
 
 
 def test_ensure_hosted_runtime_ready_wraps_constructor_errors(

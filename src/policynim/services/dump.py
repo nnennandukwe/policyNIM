@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from policynim.contracts import IndexStore
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_legacy_index_store
+from policynim.storage import create_index_store
 from policynim.types import PolicyChunk
 
 
@@ -22,4 +22,4 @@ class IndexDumpService:
 def create_index_dump_service(settings: Settings | None = None) -> IndexDumpService:
     """Build the default index dump service from application settings."""
     active_settings = settings or get_settings()
-    return IndexDumpService(index_store=create_legacy_index_store(active_settings))
+    return IndexDumpService(index_store=create_index_store(active_settings))

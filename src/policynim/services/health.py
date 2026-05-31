@@ -7,10 +7,9 @@ from pathlib import Path
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError
-from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_legacy_index_store
+from policynim.storage import create_index_store
 from policynim.types import HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
@@ -68,9 +67,10 @@ class RuntimeHealthService:
 def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHealthService:
     """Build the default runtime health service from application settings."""
     active_settings = settings or get_settings()
+    index_store = create_index_store(active_settings)
     return RuntimeHealthService(
-        index_store=create_legacy_index_store(active_settings),
-        table_name=active_settings.lancedb_table,
+        index_store=index_store,
+        table_name=index_store.table_name,
         mcp_url=_derive_mcp_url(active_settings),
     )
 
@@ -82,23 +82,36 @@ def ensure_hosted_runtime_ready(
 ) -> None:
     """Fail fast when hosted HTTP startup points at a missing or empty local index."""
     active_settings = settings or get_settings()
-    index_uri = resolve_runtime_path(active_settings.lancedb_uri)
+    index_store = create_index_store(active_settings)
 
-    result = _check_hosted_runtime_health(active_settings, index_uri=index_uri)
+    result = _check_hosted_runtime_health(
+        active_settings,
+        index_path=index_store.path,
+        table_name=index_store.table_name,
+    )
     if result.ready:
         return
 
     if rebuild_if_missing:
-        _rebuild_hosted_runtime_index(active_settings, index_uri=index_uri, reason=result.reason)
-        result = _check_hosted_runtime_health(active_settings, index_uri=index_uri)
+        _rebuild_hosted_runtime_index(
+            active_settings,
+            index_path=index_store.path,
+            table_name=index_store.table_name,
+            reason=result.reason,
+        )
+        result = _check_hosted_runtime_health(
+            active_settings,
+            index_path=index_store.path,
+            table_name=index_store.table_name,
+        )
         if result.ready:
             return
 
         reason = result.reason or "Local index readiness could not be inspected after rebuild."
         raise ConfigurationError(
             _format_hosted_runtime_error(
-                index_uri=index_uri,
-                table_name=active_settings.lancedb_table,
+                index_path=index_store.path,
+                table_name=index_store.table_name,
                 reason=reason,
             )
         )
@@ -106,8 +119,8 @@ def ensure_hosted_runtime_ready(
     reason = result.reason or "Local index readiness could not be inspected."
     raise ConfigurationError(
         _format_hosted_runtime_error(
-            index_uri=index_uri,
-            table_name=active_settings.lancedb_table,
+            index_path=index_store.path,
+            table_name=index_store.table_name,
             reason=reason,
         )
     )
@@ -116,16 +129,18 @@ def ensure_hosted_runtime_ready(
 def _check_hosted_runtime_health(
     settings: Settings,
     *,
-    index_uri: Path,
+    index_path: Path,
+    table_name: str,
 ) -> HealthCheckResult:
+    """Inspect hosted runtime readiness and wrap constructor failures."""
     try:
         return create_runtime_health_service(settings).check()
     except Exception as exc:
         reason = format_health_failure_reason(exc)
         raise ConfigurationError(
             _format_hosted_runtime_error(
-                index_uri=index_uri,
-                table_name=settings.lancedb_table,
+                index_path=index_path,
+                table_name=table_name,
                 reason=reason,
             )
         ) from exc
@@ -134,13 +149,15 @@ def _check_hosted_runtime_health(
 def _rebuild_hosted_runtime_index(
     settings: Settings,
     *,
-    index_uri: Path,
+    index_path: Path,
+    table_name: str,
     reason: str | None,
 ) -> None:
+    """Rebuild the local hosted-runtime index and report controlled failures."""
     summary = reason or "Local index readiness could not be inspected."
     LOGGER.warning(
         "Hosted runtime index at %s is not ready. Rebuilding before serving traffic. Reason: %s",
-        index_uri,
+        index_path,
         summary,
     )
     try:
@@ -149,8 +166,8 @@ def _rebuild_hosted_runtime_index(
         rebuild_reason = f"Automatic hosted-index rebuild failed: {type(exc).__name__}: {exc}."
         raise ConfigurationError(
             _format_hosted_runtime_error(
-                index_uri=index_uri,
-                table_name=settings.lancedb_table,
+                index_path=index_path,
+                table_name=table_name,
                 reason=rebuild_reason,
             )
         ) from exc
@@ -188,11 +205,13 @@ def _single_line_message(message: str | None) -> str | None:
     return None
 
 
-def _format_hosted_runtime_error(*, index_uri: Path | str, table_name: str, reason: str) -> str:
-    index_uri_text = str(index_uri)
+def _format_hosted_runtime_error(*, index_path: Path | str, table_name: str, reason: str) -> str:
+    """Format hosted startup recovery guidance for operators."""
+    index_path_text = str(index_path)
     return (
-        "Hosted streamable-http startup requires a populated local index at "
-        f"{index_uri_text} (table: {table_name}). "
-        f"{reason} Rebuild the image so `policynim ingest` runs during Docker build "
-        "or set `POLICYNIM_LANCEDB_URI` to a populated directory."
+        "Hosted streamable-http startup requires a populated local SQLite index at "
+        f"{index_path_text} (table: {table_name}). "
+        f"{reason} Run `policynim ingest` before serving traffic, or bake that command "
+        "during Docker build. Configure the path with `POLICYNIM_INDEX_DB_PATH`; "
+        "`POLICYNIM_LANCEDB_URI` is only a deprecated alias for that path."
     )

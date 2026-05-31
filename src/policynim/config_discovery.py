@@ -22,7 +22,6 @@ class StandalonePaths:
     config_file: Path
     data_root: Path
     index_db_path: Path
-    lancedb_uri: Path
     runtime_rules_artifact_path: Path
     runtime_evidence_db_path: Path
     eval_workspace_dir: Path
@@ -46,7 +45,6 @@ def standalone_paths() -> StandalonePaths:
         config_file=config_root / "config.env",
         data_root=data_root,
         index_db_path=data_root / "index.sqlite3",
-        lancedb_uri=data_root / "lancedb",
         runtime_rules_artifact_path=data_root / "runtime" / "runtime_rules.json",
         runtime_evidence_db_path=data_root / "runtime" / "runtime_evidence.sqlite3",
         eval_workspace_dir=data_root / "evals" / "workspace",
