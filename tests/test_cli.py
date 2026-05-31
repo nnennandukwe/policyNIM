@@ -1582,7 +1582,7 @@ def test_init_command_writes_config_and_prints_next_step(
     assert config_path.read_text(encoding="utf-8") == (
         "NVIDIA_API_KEY='nvapi-test-key'\n"
         f"POLICYNIM_CORPUS_DIR='{custom_corpus}'\n"
-        f"POLICYNIM_LANCEDB_URI='{data_root / 'lancedb'}'\n"
+        f"POLICYNIM_INDEX_DB_PATH='{data_root / 'index.sqlite3'}'\n"
         f"POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH='{data_root / 'runtime' / 'runtime_rules.json'}'\n"
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH="
         f"'{data_root / 'runtime' / 'runtime_evidence.sqlite3'}'\n"

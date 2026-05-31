@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
-
-import lancedb
 
 from policynim.contracts import IndexStore
 from policynim.errors import MissingIndexError
@@ -17,9 +16,11 @@ class LanceDBIndexStore(IndexStore):
     """Stores embedded policy chunks in a local LanceDB table."""
 
     def __init__(self, *, uri: Path, table_name: str) -> None:
+        """Connect to the configured LanceDB table location."""
         self._uri = uri
         self._table_name = table_name
         self._uri.mkdir(parents=True, exist_ok=True)
+        lancedb = import_module("lancedb")
         connect = cast(Any, getattr(lancedb, "connect"))
         self._db = connect(self._uri.as_posix())
 

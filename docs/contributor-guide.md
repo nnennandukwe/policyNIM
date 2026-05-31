@@ -55,7 +55,7 @@ policynim init
 
 That command prompts for `NVIDIA_API_KEY` and an optional custom corpus
 directory, then writes the standalone `config.env` file under your platform
-config directory with user-owned defaults for `POLICYNIM_LANCEDB_URI`,
+config directory with user-owned defaults for `POLICYNIM_INDEX_DB_PATH`,
 `POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH`, `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH`,
 and `POLICYNIM_EVAL_WORKSPACE_DIR`.
 
@@ -74,6 +74,9 @@ policynim --help
 policynim init
 policynim ingest
 ```
+
+If your default Python is already supported, the shorter
+`pipx install policynim` and `uv tool install policynim` forms are also valid.
 
 Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
 machine does not expose `3.11` or `3.12` by name, pass the full path to that
@@ -110,8 +113,7 @@ Core retrieval and grounding:
 
 - `NVIDIA_API_KEY`
 - `POLICYNIM_CORPUS_DIR`
-- `POLICYNIM_LANCEDB_URI`
-- `POLICYNIM_LANCEDB_TABLE`
+- `POLICYNIM_INDEX_DB_PATH`
 - `POLICYNIM_DEFAULT_TOP_K`
 - `POLICYNIM_NVIDIA_CHAT_MODEL`
 - `POLICYNIM_NVIDIA_BASE_URL`

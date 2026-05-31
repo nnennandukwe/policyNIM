@@ -10,7 +10,7 @@ from policynim.errors import ConfigurationError
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
-from policynim.storage import LanceDBIndexStore
+from policynim.storage import create_legacy_index_store
 from policynim.types import HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
@@ -68,12 +68,8 @@ class RuntimeHealthService:
 def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHealthService:
     """Build the default runtime health service from application settings."""
     active_settings = settings or get_settings()
-    index_uri = resolve_runtime_path(active_settings.lancedb_uri)
     return RuntimeHealthService(
-        index_store=LanceDBIndexStore(
-            uri=index_uri,
-            table_name=active_settings.lancedb_table,
-        ),
+        index_store=create_legacy_index_store(active_settings),
         table_name=active_settings.lancedb_table,
         mcp_url=_derive_mcp_url(active_settings),
     )

@@ -6,9 +6,8 @@ from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.errors import MissingIndexError
-from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
-from policynim.storage import LanceDBIndexStore
+from policynim.storage import create_legacy_index_store
 from policynim.types import SearchRequest, SearchResult
 
 _DEFAULT_RERANK_CANDIDATE_POOL = 15
@@ -82,10 +81,7 @@ def create_search_service(settings: Settings | None = None) -> SearchService:
     embedder, reranker = _create_default_search_components(active_settings)
     return SearchService(
         embedder=embedder,
-        index_store=LanceDBIndexStore(
-            uri=resolve_runtime_path(active_settings.lancedb_uri),
-            table_name=active_settings.lancedb_table,
-        ),
+        index_store=create_legacy_index_store(active_settings),
         reranker=reranker,
     )
 

@@ -28,7 +28,7 @@ from policynim.services.preflight import PreflightService
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
-from policynim.storage import LanceDBIndexStore
+from policynim.storage import create_legacy_index_store
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -1259,10 +1259,7 @@ def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> 
 
     return SearchService(
         embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=LanceDBIndexStore(
-            uri=resolve_runtime_path(settings.lancedb_uri),
-            table_name=settings.lancedb_table,
-        ),
+        index_store=create_legacy_index_store(settings),
         reranker=NVIDIAReranker.from_settings(settings) if rerank_enabled else None,
     )
 
@@ -1281,10 +1278,7 @@ def _create_live_preflight_service(
 
     return PreflightService(
         embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=LanceDBIndexStore(
-            uri=resolve_runtime_path(settings.lancedb_uri),
-            table_name=settings.lancedb_table,
-        ),
+        index_store=create_legacy_index_store(settings),
         reranker=(
             NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
         ),
@@ -1336,10 +1330,7 @@ def _create_live_regeneration_service(
     try:
         compiler_service = PolicyCompilerService(
             embedder=NVIDIAEmbedder.from_settings(settings),
-            index_store=LanceDBIndexStore(
-                uri=resolve_runtime_path(settings.lancedb_uri),
-                table_name=settings.lancedb_table,
-            ),
+            index_store=create_legacy_index_store(settings),
             reranker=(
                 NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
             ),

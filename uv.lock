@@ -2815,9 +2815,6 @@ dependencies = [
     { name = "httpx" },
     { name = "itsdangerous" },
     { name = "jinja2" },
-    { name = "lance-namespace" },
-    { name = "lance-namespace-urllib3-client" },
-    { name = "lancedb" },
     { name = "markdown-it-py" },
     { name = "mcp", extra = ["cli"] },
     { name = "openai" },
@@ -2825,10 +2822,16 @@ dependencies = [
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "sqlite-vec" },
     { name = "typer" },
 ]
 
 [package.optional-dependencies]
+hosted-legacy-index = [
+    { name = "lance-namespace" },
+    { name = "lance-namespace-urllib3-client" },
+    { name = "lancedb" },
+]
 nvidia-eval = [
     { name = "nemo-evaluator" },
     { name = "nvidia-nat-eval" },
@@ -2862,9 +2865,9 @@ requires-dist = [
     { name = "httpx", specifier = "==0.27.2" },
     { name = "itsdangerous", specifier = "==2.2.0" },
     { name = "jinja2", specifier = "==3.1.6" },
-    { name = "lance-namespace", specifier = "==0.6.1" },
-    { name = "lance-namespace-urllib3-client", specifier = "==0.6.1" },
-    { name = "lancedb", specifier = "==0.27.1" },
+    { name = "lance-namespace", marker = "extra == 'hosted-legacy-index'", specifier = "==0.6.1" },
+    { name = "lance-namespace-urllib3-client", marker = "extra == 'hosted-legacy-index'", specifier = "==0.6.1" },
+    { name = "lancedb", marker = "extra == 'hosted-legacy-index'", specifier = "==0.27.1" },
     { name = "markdown-it-py", specifier = "==4.0.0" },
     { name = "mcp", extras = ["cli"], specifier = "==1.26.0" },
     { name = "nemo-evaluator", marker = "extra == 'nvidia-eval'", specifier = "==0.2.5" },
@@ -2878,9 +2881,10 @@ requires-dist = [
     { name = "platformdirs", specifier = "==4.5.0" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pydantic-settings", specifier = "==2.13.1" },
+    { name = "sqlite-vec", specifier = "==0.1.9" },
     { name = "typer", specifier = "==0.24.1" },
 ]
-provides-extras = ["nvidia-guardrails", "nvidia-eval", "nvidia-eval-launcher"]
+provides-extras = ["hosted-legacy-index", "nvidia-guardrails", "nvidia-eval", "nvidia-eval-launcher"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3818,6 +3822,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/47/84/065a21e9a578ef13d9749c2bf3c382f7e50a1644af7d7a109924fbc6faee/sqlean_py-3.49.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ae92413470409b3b3678c797db82c1d247b6ed2198017b5e893d9fc0606e061f", size = 3008238, upload-time = "2025-05-02T11:57:58.927Z" },
     { url = "https://files.pythonhosted.org/packages/e8/e5/d980bf0c5e67cfd4486b5e6d8daea6815fdac57b3d0899c23127a30283b5/sqlean_py-3.49.1-cp312-cp312-win_amd64.whl", hash = "sha256:b45ed4adb8442299019988d5e90aa1474f3ef8c71f6e8921a70705b9d971c590", size = 804506, upload-time = "2025-05-02T11:58:00.583Z" },
     { url = "https://files.pythonhosted.org/packages/f2/d1/8828ec685022e2b86ebd717743359dd5e8eab70a9c1ebff78aa733848216/sqlean_py-3.49.1-cp312-cp312-win_arm64.whl", hash = "sha256:c2537f69879adaed22b16e840d494c440ece5b49d28a5a51094e6c8ca6a2b0a5", size = 739690, upload-time = "2025-05-02T11:58:02.262Z" },
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/85/9fad0045d8e7c8df3e0fa5a56c630e8e15ad6e5ca2e6106fceb666aa6638/sqlite_vec-0.1.9-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb", size = 131171, upload-time = "2026-03-31T08:02:31.717Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/3d/3677e0cd2f92e5ebc43cd29fbf565b75582bff1ccfa0b8327c7508e1084f/sqlite_vec-0.1.9-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c", size = 165434, upload-time = "2026-03-31T08:02:32.712Z" },
+    { url = "https://files.pythonhosted.org/packages/00/d4/f2b936d3bdc38eadcbd2a87875815db36430fab0363182ba5d12cd8e0b51/sqlite_vec-0.1.9-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9", size = 160076, upload-time = "2026-03-31T08:02:33.796Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/ad/6afd073b0f817b3e03f9e37ad626ae341805891f23c74b5292818f49ac63/sqlite_vec-0.1.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux1_x86_64.whl", hash = "sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786", size = 163388, upload-time = "2026-03-31T08:02:34.888Z" },
+    { url = "https://files.pythonhosted.org/packages/42/89/81b2907cda14e566b9bf215e2ad82fc9b349edf07d2010756ffdb902f328/sqlite_vec-0.1.9-py3-none-win_amd64.whl", hash = "sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32", size = 292804, upload-time = "2026-03-31T08:02:36.035Z" },
 ]
 
 [[package]]
