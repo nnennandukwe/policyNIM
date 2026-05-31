@@ -54,6 +54,7 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
     install_ps1 = INSTALL_PS1.read_text(encoding="utf-8")
 
     for asset in (
+        "policynim-$TAG-darwin-amd64.tar.gz",
         "policynim-$TAG-darwin-arm64.tar.gz",
         "policynim-$TAG-linux-amd64.tar.gz",
     ):
@@ -98,8 +99,27 @@ def test_unix_installer_rejects_unsupported_platform(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode != 0
     assert "Unsupported platform: linux-arm64" in output
-    assert "Supported platforms: darwin-arm64, linux-amd64." in output
+    assert "Supported platforms: darwin-amd64, darwin-arm64, linux-amd64." in output
     assert not (home / ".local" / "bin" / "policynim").exists()
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
+def test_unix_installer_installs_macos_intel_bundle(tmp_path: Path) -> None:
+    """Allow Intel macOS users to install the restored standalone bundle."""
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    asset = "policynim-v0.1.0-darwin-amd64.tar.gz"
+    create_unix_release_asset(release_dir, asset_name=asset)
+
+    result, home = run_unix_installer(
+        tmp_path,
+        release_dir,
+        os_name="Darwin",
+        arch="x86_64",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (home / ".local" / "share" / "policynim" / VERSION / "policynim").is_file()
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
@@ -180,7 +200,12 @@ def test_windows_installer_contract_is_actionable() -> None:
     assert "Read-Host" not in script
 
 
-def create_unix_release_asset(release_dir: Path, *, checksum: str | None = None) -> Path:
+def create_unix_release_asset(
+    release_dir: Path,
+    *,
+    asset_name: str = LINUX_ASSET,
+    checksum: str | None = None,
+) -> Path:
     """Create a fake Unix release archive and matching checksum file."""
     build_root = release_dir / "build"
     bundle_root = build_root / "policynim"
@@ -190,12 +215,12 @@ def create_unix_release_asset(release_dir: Path, *, checksum: str | None = None)
     binary.chmod(0o755)
     (bundle_root / "_internal").mkdir()
 
-    asset_path = release_dir / LINUX_ASSET
+    asset_path = release_dir / asset_name
     with tarfile.open(asset_path, "w:gz") as archive:
         archive.add(bundle_root, arcname="policynim")
 
     digest = checksum or hashlib.sha256(asset_path.read_bytes()).hexdigest()
-    (release_dir / "SHA256SUMS").write_text(f"{digest}  {LINUX_ASSET}\n", encoding="utf-8")
+    (release_dir / "SHA256SUMS").write_text(f"{digest}  {asset_name}\n", encoding="utf-8")
     return asset_path
 
 

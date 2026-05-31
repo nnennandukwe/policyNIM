@@ -53,18 +53,18 @@ git push origin v0.1.0
 ```
 
 The `Release` workflow builds the wheel, source distribution, and standalone
-archives for Linux, Apple Silicon macOS, and Windows. It creates a draft GitHub
+archives for Linux, Apple Silicon macOS, Intel macOS, and Windows. It creates a draft GitHub
 release with:
 
 - Python wheel and source distribution
 - `install.sh` and `install.ps1`
 - `policynim-vX.Y.Z-linux-amd64.tar.gz`
 - `policynim-vX.Y.Z-darwin-arm64.tar.gz`
+- `policynim-vX.Y.Z-darwin-amd64.tar.gz`
 - `policynim-vX.Y.Z-windows-amd64.zip`
 - `SHA256SUMS`
 
-PolicyNIM does not publish a macOS Intel standalone bundle because the pinned
-LanceDB dependency does not ship macOS x86_64 wheels.
+PolicyNIM publishes separate macOS bundles for Apple Silicon and Intel hosts.
 
 Review the draft GitHub release before publishing. Confirm that the release
 asset names match the installer scripts and that `SHA256SUMS` includes every

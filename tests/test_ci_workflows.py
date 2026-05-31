@@ -109,12 +109,25 @@ def test_release_workflow_uploads_expected_install_artifacts() -> None:
     for token in (
         "policynim-${RELEASE_TAG}-linux-amd64.tar.gz",
         "policynim-${RELEASE_TAG}-darwin-arm64.tar.gz",
+        "policynim-${RELEASE_TAG}-darwin-amd64.tar.gz",
         "policynim-${RELEASE_TAG}-windows-amd64.zip",
         "scripts/install.sh",
         "scripts/install.ps1",
         "SHA256SUMS",
         "gh release create",
         "--draft",
+    ):
+        assert token in text
+
+
+def test_release_workflow_builds_macos_intel_standalone_artifact() -> None:
+    """Restore macOS Intel as a first-class standalone release target."""
+    text = _read_text(RELEASE_WORKFLOW)
+
+    for token in (
+        "os: macos-15-intel",
+        "platform: darwin-amd64",
+        'darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;',
     ):
         assert token in text
 

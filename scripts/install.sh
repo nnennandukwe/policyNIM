@@ -34,7 +34,7 @@ normalize_arch() {
 
 supported_platform() {
   case "$1" in
-    darwin-arm64 | linux-amd64) return 0 ;;
+    darwin-amd64 | darwin-arm64 | linux-amd64) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -138,7 +138,7 @@ OS_NAME="$(normalize_os)"
 ARCH_NAME="$(normalize_arch)"
 PLATFORM="${OS_NAME}-${ARCH_NAME}"
 if ! supported_platform "$PLATFORM"; then
-  fail "Unsupported platform: $PLATFORM. Supported platforms: darwin-arm64, linux-amd64."
+  fail "Unsupported platform: $PLATFORM. Supported platforms: darwin-amd64, darwin-arm64, linux-amd64."
 fi
 
 need_command curl
@@ -161,9 +161,10 @@ fi
 VERSION="${VERSION#v}"
 TAG="v${VERSION}"
 case "$PLATFORM" in
+  darwin-amd64) ASSET_NAME="policynim-$TAG-darwin-amd64.tar.gz" ;;
   darwin-arm64) ASSET_NAME="policynim-$TAG-darwin-arm64.tar.gz" ;;
   linux-amd64) ASSET_NAME="policynim-$TAG-linux-amd64.tar.gz" ;;
-  *) fail "Unsupported platform: $PLATFORM. Supported platforms: darwin-arm64, linux-amd64." ;;
+  *) fail "Unsupported platform: $PLATFORM. Supported platforms: darwin-amd64, darwin-arm64, linux-amd64." ;;
 esac
 RELEASE_BASE_URL="${POLICYNIM_RELEASE_BASE_URL:-$REPO_URL/releases/download/$TAG}"
 RELEASE_PAGE_URL="$REPO_URL/releases/tag/$TAG"
