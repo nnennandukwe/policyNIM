@@ -922,6 +922,42 @@ def test_streamable_http_app_rejects_missing_bearer_token(monkeypatch) -> None:
     assert response.json() == {"error": "Unauthorized."}
 
 
+def test_streamable_http_app_redirects_browser_mcp_visits_to_beta_portal(monkeypatch) -> None:
+    """Route humans who paste the hosted MCP URL toward token creation."""
+    _stub_streamable_http_server(monkeypatch)
+
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get(
+            "/mcp",
+            headers={"accept": "text/html"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://beta.example.com/beta"
+
+
+def test_streamable_http_app_keeps_bad_bearer_header_json_for_browser_accept(
+    monkeypatch,
+) -> None:
+    """Do not hide broken MCP client auth behind the human onboarding redirect."""
+    _stub_streamable_http_server(monkeypatch)
+
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get(
+            "/mcp",
+            headers={"accept": "text/html", "authorization": "Token wrong"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized."}
+
+
 def test_streamable_http_app_logs_auth_rejection(monkeypatch) -> None:
     events: list[dict[str, object]] = []
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from collections.abc import Generator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -14,6 +16,7 @@ from click import unstyle
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
+from policynim.interfaces import cli as cli_module
 from policynim.interfaces.cli import app
 from policynim.services.runtime_evidence_report import RuntimeEvidenceReportService
 from policynim.services.runtime_execution import RuntimeExecutionService
@@ -27,6 +30,7 @@ from policynim.types import (
     CompiledPolicyPacket,
     CompileRequest,
     CompileResult,
+    EmbeddedChunk,
     EvalAggregateMetrics,
     EvalBackend,
     EvalCaseMetrics,
@@ -82,12 +86,39 @@ def write_env_file(path: Path, **values: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_ready_sqlite_index(path: Path) -> None:
+    """Write a minimal populated PolicyNIM sqlite-vec index for doctor tests."""
+    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+
+    SQLiteVecIndexStore(path=path).replace(
+        [
+            EmbeddedChunk(
+                chunk_id="DOCTOR-READY-1",
+                path="policies/backend/doctor-ready.md",
+                section="Rules",
+                lines="1-3",
+                text="Backend services should keep request ids in logs.",
+                policy=PolicyMetadata(
+                    policy_id="BACKEND-DOCTOR-001",
+                    title="Doctor Ready",
+                    doc_type="guidance",
+                    domain="backend",
+                    tags=["setup"],
+                    grounded_in=["https://example.com/policy"],
+                ),
+                vector=[1.0, 0.0],
+            )
+        ]
+    )
+
+
 def clear_installer_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear env that would interfere with standalone installer-style tests."""
     for key in (
         "NVIDIA_API_KEY",
         "POLICYNIM_CONFIG_FILE",
         "POLICYNIM_CORPUS_DIR",
+        "POLICYNIM_INDEX_DB_PATH",
         "POLICYNIM_LANCEDB_URI",
         "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
@@ -173,7 +204,7 @@ class MockIngestService:
     def run(self) -> IngestResult:
         return IngestResult(
             corpus_path="policies",
-            index_uri="data/lancedb",
+            index_uri="data/index.sqlite3",
             table_name="policy_chunks",
             embedding_model="mock-model",
             document_count=8,
@@ -1512,6 +1543,11 @@ def test_help_includes_runtime_and_evidence_commands() -> None:
     assert result.exit_code == 0
     assert "--version" in help_output
     assert "init" in help_output
+    assert "quickstart" in help_output
+    assert "doctor" in help_output
+    assert "mcp-config" in help_output
+    assert "mcp-smoke" in help_output
+    assert "support-bundle" in help_output
     assert "runtime" in help_output
     assert "evidence" in help_output
     assert "route" in help_output
@@ -1558,6 +1594,475 @@ def test_init_help_documents_interactive_setup_flow() -> None:
     assert "interactive" in result.stdout.lower()
     assert "NVIDIA_API_KEY" in result.stdout
     assert "--non-interactive" not in result.stdout
+
+
+def test_doctor_reports_missing_standalone_setup_without_provider_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Diagnose first-run setup before settings or provider construction."""
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "action_required"
+    assert payload["runtime_mode"] == "standalone"
+    assert payload["config"]["expected_init_config_file"] == str(config_root / "config.env")
+    assert payload["next_steps"] == [
+        f"Run `policynim init` to create {config_root / 'config.env'}."
+    ]
+    assert "nvapi" not in result.stdout.lower()
+
+
+def test_doctor_reports_ready_checkout_and_mcp_hints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Report safe local setup state without exposing configured secrets."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    index_path = checkout_root / "data" / "index.sqlite3"
+    runtime_rules_path = checkout_root / "data" / "runtime" / "runtime_rules.json"
+    write_ready_sqlite_index(index_path)
+    runtime_rules_path.parent.mkdir(parents=True)
+    runtime_rules_path.write_text("{}", encoding="utf-8")
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_INDEX_DB_PATH="data/index.sqlite3",
+        POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH="data/runtime/runtime_rules.json",
+    )
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["runtime_mode"] == "source_checkout"
+    assert payload["config"]["active_config_file"] == str(checkout_root / ".env")
+    assert payload["paths"]["index_db_path"] == str(index_path)
+    assert payload["mcp"]["stdio_command"] == "uv run policynim mcp --transport stdio"
+    assert payload["mcp"]["smoke_command"] == "uv run policynim mcp-smoke --format json"
+    assert payload["mcp"]["local_stdio_config_commands"] == {
+        "codex": "uv run policynim mcp-config --target local-stdio --client codex "
+        f"--repo-root {checkout_root} --format json",
+        "claude-code": (
+            "uv run policynim mcp-config --target local-stdio --client claude-code "
+            f"--repo-root {checkout_root} --format json"
+        ),
+    }
+    assert payload["mcp"]["streamable_http_url"] == "http://127.0.0.1:8000/mcp"
+    assert "nvapi-test-key" not in result.stdout
+
+
+def test_doctor_source_checkout_recovery_uses_uv_run_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Give source-checkout users recovery commands that run in the uv project."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout_root / ".env", NVIDIA_API_KEY="nvapi-test-key")
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "action_required"
+    assert (
+        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
+    ) in payload["next_steps"]
+    assert (
+        "Run `policynim ingest` to build the local policy index and runtime rules artifact."
+        not in payload["next_steps"]
+    )
+
+
+def test_doctor_flags_invalid_sqlite_index_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Do not report ready when the configured SQLite file is not a PolicyNIM index."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    index_path = checkout_root / "data" / "index.sqlite3"
+    runtime_rules_path = checkout_root / "data" / "runtime" / "runtime_rules.json"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text("placeholder", encoding="utf-8")
+    runtime_rules_path.parent.mkdir(parents=True)
+    runtime_rules_path.write_text("{}", encoding="utf-8")
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_INDEX_DB_PATH="data/index.sqlite3",
+        POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH="data/runtime/runtime_rules.json",
+    )
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "action_required"
+    local_index_check = next(
+        check for check in payload["checks"] if check["name"] == "local_index_path"
+    )
+    assert local_index_check == {
+        "name": "local_index_path",
+        "status": "action_required",
+        "message": (
+            "Configured local SQLite index file is not a populated PolicyNIM sqlite-vec index."
+        ),
+    }
+    assert payload["next_steps"] == [
+        (
+            "Run `uv run policynim ingest` to build the local policy index "
+            "and runtime rules artifact."
+        )
+    ]
+
+
+def test_doctor_flags_legacy_lancedb_directory_index_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Guide sqlite-vec upgrades away from old LanceDB directory paths."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    legacy_index_dir = checkout_root / "data" / "lancedb"
+    legacy_index_dir.mkdir(parents=True)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_LANCEDB_URI="data/lancedb",
+    )
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "action_required"
+    local_index_check = next(
+        check for check in payload["checks"] if check["name"] == "local_index_path"
+    )
+    assert local_index_check == {
+        "name": "local_index_path",
+        "status": "action_required",
+        "message": (
+            "Configured local SQLite index path points to a directory. "
+            "Set POLICYNIM_INDEX_DB_PATH to a SQLite file path such as data/index.sqlite3."
+        ),
+    }
+    assert (
+        "Replace deprecated `POLICYNIM_LANCEDB_URI` with "
+        "`POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
+    ) in payload["next_steps"]
+    assert (
+        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
+        not in payload["next_steps"]
+    )
+
+
+def test_doctor_flags_canonical_directory_index_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Tell users that sqlite-vec needs a file path, not a directory."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    index_dir = checkout_root / "data" / "index-dir"
+    index_dir.mkdir(parents=True)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_INDEX_DB_PATH="data/index-dir",
+    )
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "action_required"
+    local_index_check = next(
+        check for check in payload["checks"] if check["name"] == "local_index_path"
+    )
+    assert local_index_check["status"] == "action_required"
+    assert "points to a directory" in local_index_check["message"]
+    assert (
+        "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
+    ) in payload["next_steps"]
+    assert "POLICYNIM_LANCEDB_URI" not in " ".join(payload["next_steps"])
+
+
+def test_doctor_reports_installed_mcp_config_commands_without_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep installed no-clone MCP setup discoverable from doctor output."""
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    write_env_file(config_root / "config.env", NVIDIA_API_KEY="nvapi-test-key")
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["runtime_mode"] == "standalone"
+    assert payload["mcp"]["smoke_command"] == "policynim mcp-smoke --format json"
+    assert payload["mcp"]["local_stdio_config_commands"] == {
+        "codex": "policynim mcp-config --target local-stdio --client codex --format json",
+        "claude-code": (
+            "policynim mcp-config --target local-stdio --client claude-code --format json"
+        ),
+    }
+    assert "--repo-root" not in json.dumps(payload["mcp"])
+    assert "uv run" not in json.dumps(payload["mcp"])
+    assert "nvapi-test-key" not in result.stdout
+
+
+def test_doctor_text_output_is_human_readable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the default diagnostic useful in a terminal."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "PolicyNIM doctor" in result.stdout
+    assert "Status: action_required" in result.stdout
+    assert "Next steps:" in result.stdout
+    assert "policynim init" in result.stdout
+
+
+def test_doctor_text_output_prints_mcp_config_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Make local MCP client setup discoverable from the default diagnostic."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout_root / ".env", NVIDIA_API_KEY="nvapi-test-key")
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "MCP:" in result.stdout
+    assert "policynim mcp-smoke --format json" in result.stdout
+    assert (
+        "uv run policynim mcp-config --target local-stdio --client codex "
+        f"--repo-root {checkout_root} --format json"
+    ) in result.stdout
+    assert (
+        "uv run policynim mcp-config --target local-stdio --client claude-code "
+        f"--repo-root {checkout_root} --format json"
+    ) in result.stdout
+
+
+def test_doctor_mcp_config_commands_quote_checkout_paths_with_spaces(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep doctor's copyable MCP setup commands valid for spaced checkout paths."""
+    clear_installer_env(monkeypatch)
+    checkout_root = tmp_path / "checkout with spaces"
+    package_root = checkout_root / "src" / "policynim"
+    package_root.mkdir(parents=True)
+    (checkout_root / "pyproject.toml").write_text(
+        "[project]\nname = 'policynim'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(checkout_root)
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_config_path",
+        lambda *args, **kwargs: tmp_path / "user-config",
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.user_data_path",
+        lambda *args, **kwargs: tmp_path / "user-data",
+    )
+    monkeypatch.setattr(
+        "policynim.config_discovery.__file__",
+        str(package_root / "config_discovery.py"),
+    )
+    write_env_file(checkout_root / ".env", NVIDIA_API_KEY="nvapi-test-key")
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    commands = payload["mcp"]["local_stdio_config_commands"]
+    assert f"--repo-root '{checkout_root}' --format json" in commands["codex"]
+    assert f"--repo-root '{checkout_root}' --format json" in commands["claude-code"]
+
+
+def test_support_bundle_reports_redacted_first_run_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Collect issue-ready diagnostics without requiring completed setup."""
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr("policynim.interfaces.cli._resolve_installed_version", lambda: "1.2.3")
+
+    result = runner.invoke(app, ["support-bundle"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "1"
+    assert payload["policynim_version"] == "1.2.3"
+    assert payload["python"]["version"]
+    assert payload["platform"]["system"]
+    assert payload["first_run"]["runtime_mode"] == "standalone"
+    assert payload["first_run"]["default_target"] == "hosted-mcp"
+    assert payload["first_run"]["targets"]["hosted_mcp"]["target"] == "hosted-mcp"
+    assert payload["first_run"]["targets"]["hosted_mcp"]["requires_local_setup"] is False
+    assert payload["first_run"]["targets"]["hosted_mcp"]["hosted_url"] == (
+        "https://<railway-domain>/mcp"
+    )
+    assert payload["first_run"]["targets"]["hosted_mcp"]["beta_portal_url"] == (
+        "https://<railway-domain>/beta"
+    )
+    assert payload["first_run"]["targets"]["hosted_mcp"]["hosted_url_placeholder"] is True
+    assert payload["first_run"]["targets"]["local_cli"]["requires_local_setup"] is True
+    assert payload["first_run"]["targets"]["local_mcp"]["local_launch_mode"] == "installed-cli"
+    assert payload["first_run"]["targets"]["hosted_mcp"]["quickstart_command"] == (
+        "policynim quickstart --target hosted-mcp --format json"
+    )
+    assert payload["first_run"]["targets"]["hosted_mcp"]["agent_workflows"][0]["tool"] == (
+        "policy_preflight"
+    )
+    assert (
+        "policy_search"
+        in (payload["first_run"]["targets"]["local_mcp"]["agent_workflows"][1]["prompt"])
+    )
+    assert (
+        "policynim mcp-config --target hosted-http"
+        in (payload["first_run"]["targets"]["hosted_mcp"]["commands"][1])
+    )
+    assert payload["first_run"]["targets"]["hosted_mcp"]["client_commands"] == [
+        (
+            "codex mcp add policynim --url 'https://<railway-domain>/mcp' "
+            "--bearer-token-env-var POLICYNIM_TOKEN"
+        ),
+        (
+            "claude mcp add --transport http policynim 'https://<railway-domain>/mcp' "
+            '--header "Authorization: Bearer $POLICYNIM_TOKEN"'
+        ),
+    ]
+    assert payload["doctor"]["status"] == "action_required"
+    assert payload["python"]["executable"] == "<python-executable>"
+    assert payload["doctor"]["config"]["expected_init_config_file"] == ("<config-dir>/config.env")
+    assert payload["redaction"]["local_paths"] == "redacted"
+    assert payload["redaction"]["path_markers"] == [
+        "<config-dir>",
+        "<data-dir>",
+        "<home>",
+        "<python-executable>",
+    ]
+    assert payload["mcp_smoke"] == {
+        "status": "skipped",
+        "reason": "Pass --include-mcp-smoke to verify stdio tool registration.",
+    }
+    assert str(tmp_path) not in result.stdout
+    assert "<repo-root>" not in result.stdout
+    assert "nvapi" not in result.stdout.lower()
+
+
+def test_support_bundle_does_not_label_installed_cwd_as_repo_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Avoid treating an arbitrary installed-runtime CWD as a source checkout."""
+    workspace, _, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr("policynim.interfaces.cli._resolve_installed_version", lambda: "1.2.3")
+
+    result = runner.invoke(app, ["support-bundle"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["first_run"]["runtime_mode"] == "standalone"
+    assert "<repo-root>" not in payload["redaction"]["path_markers"]
+    assert str(workspace) not in result.stdout
+    assert "workspace" not in result.stdout
+
+
+def test_support_bundle_can_include_local_paths_for_private_triage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Let maintainers opt into exact paths when support happens privately."""
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr("policynim.interfaces.cli._resolve_installed_version", lambda: "1.2.3")
+
+    result = runner.invoke(app, ["support-bundle", "--include-local-paths"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["python"]["executable"] == sys.executable
+    assert payload["doctor"]["config"]["expected_init_config_file"] == str(
+        config_root / "config.env"
+    )
+    assert payload["redaction"]["local_paths"] == "included"
+    assert str(config_root) in result.stdout
+    assert "nvapi" not in result.stdout.lower()
+
+
+def test_support_bundle_can_include_mcp_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Let issue reporters include local MCP launch evidence on demand."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout_root / ".env", NVIDIA_API_KEY="nvapi-test-key")
+    monkeypatch.setattr("policynim.interfaces.cli._resolve_installed_version", lambda: "1.2.3")
+
+    async def fake_smoke(*, timeout_seconds: float) -> dict[str, object]:
+        """Return successful MCP smoke evidence for support-bundle output."""
+        assert timeout_seconds == 7.0
+        return {
+            "status": "ok",
+            "transport": "stdio",
+            "command": [sys.executable, "-m", "policynim.interfaces.cli", "mcp"],
+            "tools": ["policy_preflight", "policy_search"],
+            "missing_tools": [],
+        }
+
+    monkeypatch.setattr("policynim.interfaces.cli._run_mcp_stdio_smoke", fake_smoke)
+
+    result = runner.invoke(
+        app,
+        ["support-bundle", "--include-mcp-smoke", "--mcp-timeout-seconds", "7"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["doctor"]["runtime_mode"] == "source_checkout"
+    assert payload["first_run"]["runtime_mode"] == "source_checkout"
+    assert payload["first_run"]["targets"]["hosted_mcp"]["quickstart_command"] == (
+        "policynim quickstart --target hosted-mcp --format json"
+    )
+    assert payload["first_run"]["targets"]["hosted_mcp"]["commands"][1].startswith(
+        "policynim mcp-config --target hosted-http"
+    )
+    assert "uv run" not in payload["first_run"]["targets"]["hosted_mcp"]["commands"][1]
+    assert payload["first_run"]["targets"]["local_mcp"]["local_launch_mode"] == ("source-checkout")
+    assert "<repo-root>" in " ".join(payload["first_run"]["targets"]["local_mcp"]["commands"])
+    assert payload["mcp_smoke"]["status"] == "ok"
+    assert payload["mcp_smoke"]["command"][0] == "<python-executable>"
+    assert payload["mcp_smoke"]["tools"] == ["policy_preflight", "policy_search"]
+    assert str(checkout_root) not in result.stdout
+    assert "nvapi-test-key" not in result.stdout
+
+
+def test_support_bundle_markdown_wraps_json_for_issues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Provide a paste-friendly Markdown form for issue bodies."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr("policynim.interfaces.cli._resolve_installed_version", lambda: "1.2.3")
+
+    result = runner.invoke(app, ["support-bundle", "--format", "markdown"])
+
+    assert result.exit_code == 0
+    assert "## PolicyNIM Support Bundle" in result.stdout
+    assert "```json" in result.stdout
+    assert '"schema_version": "1"' in result.stdout
 
 
 def test_init_command_writes_config_and_prints_next_step(
@@ -1639,6 +2144,387 @@ def test_init_command_surfaces_unwritable_config_destination(
     assert "permission denied" in result.stderr
     assert not target_config.exists()
     assert list(target_config.parent.glob("*.tmp")) == []
+
+
+def test_quickstart_defaults_to_hosted_mcp_without_requiring_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Show the shortest no-clone path before local config exists."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "1"
+    assert payload["target"] == "hosted-mcp"
+    assert payload["client"] == "codex"
+    assert payload["requires_local_setup"] is False
+    assert payload["calls_external_services"] is False
+    assert payload["hosted_url"] == "https://<railway-domain>/mcp"
+    assert payload["hosted_url_placeholder"] is True
+    assert payload["steps"][0] == (
+        "Open https://<railway-domain>/mcp in a browser; it routes to "
+        "https://<railway-domain>/beta for token creation."
+    )
+    assert "POLICYNIM_TOKEN" in " ".join(payload["commands"])
+    assert "export POLICYNIM_TOKEN='<generated-beta-token>'" in payload["commands"]
+    assert "export POLICYNIM_TOKEN=<generated-beta-token>" not in payload["commands"]
+    assert payload["client_commands"] == [
+        (
+            "codex mcp add policynim --url 'https://<railway-domain>/mcp' "
+            "--bearer-token-env-var POLICYNIM_TOKEN"
+        )
+    ]
+    assert "<generated-beta-token>" not in " ".join(payload["client_commands"])
+    assert "Replace the hosted URL placeholder" in " ".join(payload["next_steps"])
+    assert "policy_preflight" in " ".join(payload["next_steps"])
+    agent_workflows = payload["agent_workflows"]
+    assert [workflow["title"] for workflow in agent_workflows] == [
+        "Preflight before implementation",
+        "Retrieve policy evidence while debugging",
+        "Verify MCP tool availability",
+    ]
+    assert agent_workflows[0]["tool"] == "policy_preflight"
+    assert "Before editing, call policy_preflight" in agent_workflows[0]["prompt"]
+    assert "cited constraints" in agent_workflows[0]["prompt"]
+    assert "insufficient_context" in agent_workflows[0]["prompt"]
+    assert agent_workflows[1]["tool"] == "policy_search"
+    assert (
+        "Use policy_search for: release installer checksum verification."
+        in (agent_workflows[1]["prompt"])
+    )
+    assert "cited policy lines" in agent_workflows[1]["prompt"]
+    assert "policy_preflight and policy_search" in agent_workflows[2]["prompt"]
+    assert "before starting implementation" in agent_workflows[2]["prompt"]
+
+
+def test_quickstart_text_renders_agent_workflows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Make the human-readable first-run output show copyable agent prompts."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart"])
+
+    assert result.exit_code == 0
+    output = unstyle(result.stdout)
+    assert "Agent workflows:" in output
+    assert "- Preflight before implementation: Before editing, call policy_preflight" in output
+    assert "- Retrieve policy evidence while debugging: Use policy_search for:" in output
+    assert "insufficient_context" in output
+    assert "cited policy lines" in output
+    assert "- Verify MCP tool availability: List the PolicyNIM MCP tools" in output
+
+
+def test_quickstart_text_renders_hosted_client_setup_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Make hosted first-run output copy-pasteable without opening extra docs."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart"])
+
+    assert result.exit_code == 0
+    output = unstyle(result.stdout)
+    assert "Client setup:" in output
+    assert (
+        "Open https://<railway-domain>/mcp in a browser; it routes to "
+        "https://<railway-domain>/beta for token creation."
+    ) in output
+    assert (
+        "codex mcp add policynim --url 'https://<railway-domain>/mcp' "
+        "--bearer-token-env-var POLICYNIM_TOKEN"
+    ) in output
+    assert "<generated-beta-token>" not in output.split("Client setup:", maxsplit=1)[1]
+
+
+def test_quickstart_text_points_to_alternate_hosted_mcp_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Make default quickstart self-guiding for non-default MCP clients."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart"])
+
+    assert result.exit_code == 0
+    output = unstyle(result.stdout)
+    assert (
+        "For Claude Code setup commands, rerun "
+        "`policynim quickstart --target hosted-mcp --client claude-code`."
+    ) in output
+
+
+def test_quickstart_uses_installed_entrypoint_for_hosted_config_from_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the hosted path no-clone even when quickstart runs from a checkout."""
+    configure_checkout_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart", "--target", "hosted-mcp", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert "policynim mcp-config --target hosted-http --client codex" in payload["commands"][1]
+    assert payload["commands"][1].startswith("policynim mcp-config")
+    assert "uv run" not in payload["commands"][1]
+    assert "uv run" not in " ".join(payload["next_steps"])
+    assert "policynim quickstart --target hosted-mcp --client claude-code" in " ".join(
+        payload["next_steps"]
+    )
+    assert payload["requires_local_setup"] is False
+
+
+def test_quickstart_derives_beta_portal_from_hosted_mcp_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep hosted first-run guidance concrete when operators pass a real /mcp URL."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "hosted-mcp",
+            "--hosted-url",
+            "https://policy.policynim.dev/mcp",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["hosted_url_placeholder"] is False
+    assert payload["hosted_url"] == "https://policy.policynim.dev/mcp"
+    assert payload["beta_portal_url"] == "https://policy.policynim.dev/beta"
+    assert payload["steps"][0] == (
+        "Open https://policy.policynim.dev/mcp in a browser; it routes to "
+        "https://policy.policynim.dev/beta for token creation."
+    )
+    assert payload["client_commands"] == [
+        (
+            "codex mcp add policynim --url https://policy.policynim.dev/mcp "
+            "--bearer-token-env-var POLICYNIM_TOKEN"
+        )
+    ]
+    assert "https://<railway-domain>/beta" not in payload["steps"]
+    assert "Replace the hosted URL placeholder" not in " ".join(payload["next_steps"])
+
+
+def test_quickstart_prints_claude_hosted_client_setup_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Honor --client when printing the hosted MCP command to paste."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "hosted-mcp",
+            "--client",
+            "claude-code",
+            "--hosted-url",
+            "https://policy.policynim.dev/mcp",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["client"] == "claude-code"
+    assert payload["client_commands"] == [
+        (
+            "claude mcp add --transport http policynim https://policy.policynim.dev/mcp "
+            '--header "Authorization: Bearer $POLICYNIM_TOKEN"'
+        )
+    ]
+    assert "<generated-beta-token>" not in payload["client_commands"][0]
+
+
+def test_quickstart_text_points_claude_users_back_to_codex_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the alternate-client hint symmetric when Claude Code is selected."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart", "--client", "claude-code"])
+
+    assert result.exit_code == 0
+    output = unstyle(result.stdout)
+    assert (
+        "For Codex setup commands, rerun `policynim quickstart --target hosted-mcp --client codex`."
+    ) in output
+
+
+def test_quickstart_rejects_hosted_url_that_is_not_mcp_endpoint() -> None:
+    """Do not print hosted first-run commands that cannot work in MCP clients."""
+    result = runner.invoke(
+        app,
+        ["quickstart", "--target", "hosted-mcp", "--hosted-url", "https://policy.example"],
+    )
+
+    assert result.exit_code == 1
+    assert "Hosted MCP URL must point to the /mcp endpoint." in result.stderr
+
+
+def test_quickstart_prints_current_pypi_local_cli_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep installed CLI first-run guidance aligned with public package state."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart", "--target", "local-cli", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    prerequisites = " ".join(payload["prerequisites"])
+    assert payload["target"] == "local-cli"
+    assert "Python 3.11 or 3.12 for PyPI package installs." in payload["prerequisites"]
+    assert "after publication" not in prerequisites
+    assert "trusted-publishing evidence is tracked separately" in prerequisites
+    assert "policynim quickstart" in " ".join(payload["next_steps"])
+    assert "policynim support-bundle" in " ".join(payload["next_steps"])
+    assert "attaching public setup evidence" in " ".join(payload["next_steps"])
+    assert "doctor --format json` local" in " ".join(payload["next_steps"])
+
+
+def test_quickstart_uses_source_checkout_entrypoint_for_local_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep local CLI first-run commands runnable from a source checkout."""
+    configure_checkout_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["quickstart", "--target", "local-cli", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["description"] == "Local CLI path for running preflight from a source checkout."
+    assert "PolicyNIM source checkout with uv dependencies synced." in payload["prerequisites"]
+    assert "PyPI package installs" not in " ".join(payload["prerequisites"])
+    assert "Check the source-checkout entrypoint." in payload["steps"]
+    assert "installed entrypoint" not in " ".join(payload["steps"])
+    commands = payload["commands"]
+    assert commands[:4] == [
+        "uv run policynim --help",
+        "uv run policynim doctor",
+        "uv run policynim init",
+        "uv run policynim ingest",
+    ]
+    assert commands[4].startswith("uv run policynim preflight --task")
+    assert "Run `uv run policynim quickstart --target hosted-mcp`" in (
+        " ".join(payload["next_steps"])
+    )
+    assert "uv run policynim support-bundle" in " ".join(payload["next_steps"])
+
+
+def test_quickstart_prints_local_mcp_path_with_source_checkout_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Guide local MCP users through doctor, ingest, smoke, and config generation."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "local-mcp",
+            "--client",
+            "claude-code",
+            "--repo-root",
+            str(checkout_root),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "local-mcp"
+    assert payload["client"] == "claude-code"
+    assert payload["local_launch_mode"] == "source-checkout"
+    assert payload["description"] == (
+        "Local MCP path for Codex or Claude Code from a source checkout."
+    )
+    assert "PolicyNIM source checkout with uv dependencies synced." in payload["prerequisites"]
+    assert "installed PolicyNIM CLI" not in " ".join(payload["prerequisites"])
+    assert payload["requires_local_setup"] is True
+    assert "Generate client config from the checkout path." in payload["steps"]
+    assert "uv run policynim doctor" in payload["commands"]
+    assert "uv run policynim init" in payload["commands"]
+    assert "uv run policynim ingest" in payload["commands"]
+    assert "uv run policynim mcp-smoke" in payload["commands"]
+    assert "uv run policynim mcp-config --target local-stdio --client claude-code" in " ".join(
+        payload["commands"]
+    )
+    assert "policynim mcp-smoke" not in payload["commands"]
+    assert f"--repo-root {checkout_root}" in " ".join(payload["commands"])
+    assert "NVIDIA_API_KEY" in " ".join(payload["prerequisites"])
+    assert "exact local filesystem paths" in " ".join(payload["safety"])
+    assert "policynim support-bundle" in " ".join(payload["safety"])
+
+
+def test_quickstart_prints_installed_local_mcp_path_without_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Guide installed users to local stdio MCP without requiring a source checkout."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "local-mcp",
+            "--client",
+            "codex",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "local-mcp"
+    assert payload["local_launch_mode"] == "installed-cli"
+    assert "installed PolicyNIM CLI" in " ".join(payload["prerequisites"])
+    assert "Generate client config from the installed entrypoint." in payload["steps"]
+    assert "checkout path" not in " ".join(payload["steps"])
+    assert "policynim mcp-config --target local-stdio --client codex" in payload["commands"]
+    assert "--repo-root" not in " ".join(payload["commands"])
+    assert "policynim support-bundle" in " ".join(payload["safety"])
+
+
+def test_quickstart_help_mentions_targets_clients_and_json_output() -> None:
+    """Keep help discoverable for installed users starting from --help."""
+    result = runner.invoke(app, ["quickstart", "--help"])
+    help_output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert "Print the first-run path" in help_output
+    assert "--target" in help_output
+    assert "hosted-mcp" in help_output
+    assert "local-cli" in help_output
+    assert "local-mcp" in help_output
+    assert "--client" in help_output
+    assert "--format" in help_output
 
 
 def test_route_help_mentions_task_type_override() -> None:
@@ -1776,7 +2662,7 @@ def test_search_command_points_to_ingest_when_config_exists_but_index_is_missing
             ),
         ),
         (["evidence", "report", "--session-id", "session-123"], None),
-        (["mcp"], None),
+        (["mcp", "--transport", "streamable-http"], None),
     ],
 )
 def test_setup_dependent_commands_point_to_init_when_redirected_config_is_missing(
@@ -1799,6 +2685,26 @@ def test_setup_dependent_commands_point_to_init_when_redirected_config_is_missin
     assert "PolicyNIM is not set up yet." in result.stderr
     assert "policynim init" in result.stderr
     assert str(redirected_config) in result.stderr
+
+
+def test_mcp_stdio_launch_does_not_require_completed_standalone_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Let stdio MCP launch for client discovery before API-key setup."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    launched: list[str] = []
+
+    def fake_run_server(*, transport: str) -> None:
+        """Record the selected MCP transport without starting a server."""
+        launched.append(transport)
+
+    monkeypatch.setattr("policynim.interfaces.cli.run_server", fake_run_server)
+
+    result = runner.invoke(app, ["mcp"])
+
+    assert result.exit_code == 0
+    assert launched == ["stdio"]
 
 
 def test_preflight_command_surfaces_missing_index_errors(monkeypatch) -> None:
@@ -1892,12 +2798,13 @@ def test_mcp_command_surfaces_hosted_rebuild_key_errors(monkeypatch) -> None:
         "policynim.interfaces.cli.run_server",
         lambda transport: (_ for _ in ()).throw(
             ConfigurationError(
-                "Hosted streamable-http startup requires a populated local index at "
-                "/app/data/lancedb-baked (table: policy_chunks). "
+                "Hosted streamable-http startup requires a populated local SQLite index at "
+                "/app/data/index.sqlite3 (table: policy_chunks). "
                 "Automatic hosted-index rebuild failed: ConfigurationError: "
                 "NVIDIA_API_KEY is required for embeddings. "
-                "Rebuild the image so `policynim ingest` runs during Docker build "
-                "or set `POLICYNIM_LANCEDB_URI` to a populated directory."
+                "Run `policynim ingest` before serving traffic, or bake that command "
+                "during Docker build. Configure the path with `POLICYNIM_INDEX_DB_PATH`; "
+                "`POLICYNIM_LANCEDB_URI` is only a deprecated alias for that path."
             )
         ),
     )
@@ -1906,7 +2813,643 @@ def test_mcp_command_surfaces_hosted_rebuild_key_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "NVIDIA_API_KEY is required for embeddings." in result.stderr
-    assert "Rebuild the image so `policynim ingest` runs during Docker build" in result.stderr
+    assert "Configure the path with `POLICYNIM_INDEX_DB_PATH`" in result.stderr
+
+
+def test_mcp_config_prints_claude_code_json_without_secret_values(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate a project-scoped Claude Code config from a verified checkout path."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-secret-value")
+
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--client",
+            "claude-code",
+            "--repo-root",
+            str(checkout_root),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    server = payload["config"]["mcpServers"]["policynim"]
+    assert payload["client"] == "claude-code"
+    assert payload["repo_root"] == str(checkout_root)
+    assert server == {
+        "type": "stdio",
+        "command": "uv",
+        "args": [
+            "run",
+            "--directory",
+            str(checkout_root),
+            "policynim",
+            "mcp",
+            "--transport",
+            "stdio",
+        ],
+        "env": {"NVIDIA_API_KEY": "${NVIDIA_API_KEY}"},
+    }
+    assert "uv run policynim doctor" in payload["next_steps"]
+    assert "uv run policynim mcp-smoke" in payload["next_steps"]
+    assert "exact local filesystem paths" in " ".join(payload["safety"])
+    assert "policynim support-bundle" in " ".join(payload["safety"])
+    assert "nvapi-secret-value" not in result.stdout
+
+
+def test_mcp_config_prints_codex_installed_stdio_json_without_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate no-clone local MCP config from an installed CLI entrypoint."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "local-stdio",
+            "--client",
+            "codex",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["client"] == "codex"
+    assert payload["target"] == "local-stdio"
+    assert payload["local_launch_mode"] == "installed-cli"
+    assert "repo_root" not in payload
+    assert payload["codex_cli_command"] == [
+        "codex",
+        "mcp",
+        "add",
+        "policynim",
+        "--env",
+        "NVIDIA_API_KEY=$NVIDIA_API_KEY",
+        "--",
+        "policynim",
+        "mcp",
+        "--transport",
+        "stdio",
+    ]
+    assert payload["codex_app"] == {
+        "name": "policynim",
+        "transport": "STDIO",
+        "command": "policynim",
+        "arguments": ["mcp", "--transport", "stdio"],
+        "environment_variable_passthrough": ["NVIDIA_API_KEY"],
+    }
+
+
+def test_mcp_config_prints_claude_installed_stdio_json_without_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate Claude Code local MCP config from an installed CLI entrypoint."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "local-stdio",
+            "--client",
+            "claude-code",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    server = payload["config"]["mcpServers"]["policynim"]
+    assert payload["client"] == "claude-code"
+    assert payload["local_launch_mode"] == "installed-cli"
+    assert "repo_root" not in payload
+    assert server == {
+        "type": "stdio",
+        "command": "policynim",
+        "args": ["mcp", "--transport", "stdio"],
+        "env": {"NVIDIA_API_KEY": "${NVIDIA_API_KEY}"},
+    }
+
+
+def test_mcp_config_prints_codex_cli_and_app_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate Codex CLI and app setup guidance from the same stdio contract."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--client",
+            "codex",
+            "--repo-root",
+            str(checkout_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "PolicyNIM MCP config for Codex" in result.stdout
+    assert "codex mcp add policynim" in result.stdout
+    assert "--env NVIDIA_API_KEY=$NVIDIA_API_KEY --" in result.stdout
+    assert f"uv run --directory {checkout_root} policynim mcp --transport stdio" in result.stdout
+    assert "Command to launch: uv" in result.stdout
+    assert f"Working directory: {checkout_root}" in result.stdout
+    assert "Environment variable passthrough: NVIDIA_API_KEY" in result.stdout
+    assert "Safety:" in result.stdout
+    assert "exact local filesystem paths" in result.stdout
+    assert "policynim support-bundle" in result.stdout
+
+
+def test_mcp_config_prints_codex_hosted_http_json_without_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate hosted Codex setup without requiring a local source checkout."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "hosted-http",
+            "--client",
+            "codex",
+            "--hosted-url",
+            "https://policy.policynim.dev/mcp",
+            "--bearer-token-env-var",
+            "POLICYNIM_TOKEN",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "hosted-http"
+    assert payload["client"] == "codex"
+    assert payload["hosted_url"] == "https://policy.policynim.dev/mcp"
+    assert payload["beta_portal_url"] == "https://policy.policynim.dev/beta"
+    assert payload["hosted_url_placeholder"] is False
+    assert payload["bearer_token_env_var"] == "POLICYNIM_TOKEN"
+    assert "repo_root" not in payload
+    assert payload["codex_cli_command"] == [
+        "codex",
+        "mcp",
+        "add",
+        "policynim",
+        "--url",
+        "https://policy.policynim.dev/mcp",
+        "--bearer-token-env-var",
+        "POLICYNIM_TOKEN",
+    ]
+    assert payload["codex_cli_shell_command"] == (
+        "codex mcp add policynim --url https://policy.policynim.dev/mcp "
+        "--bearer-token-env-var POLICYNIM_TOKEN"
+    )
+    assert "Export POLICYNIM_TOKEN='<generated-beta-token>'" in payload["next_steps"]
+    assert "policy_preflight" in " ".join(payload["next_steps"])
+
+
+def test_mcp_config_marks_placeholder_hosted_url_without_failing() -> None:
+    """Keep offline placeholder smokes possible while warning users before setup."""
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "hosted-http",
+            "--client",
+            "codex",
+            "--hosted-url",
+            "https://<railway-domain>/mcp",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["hosted_url"] == "https://<railway-domain>/mcp"
+    assert payload["beta_portal_url"] == "https://<railway-domain>/beta"
+    assert payload["hosted_url_placeholder"] is True
+    assert "Replace the hosted URL placeholder" in " ".join(payload["next_steps"])
+    assert "policy_preflight" in " ".join(payload["next_steps"])
+
+
+def test_mcp_config_prints_claude_hosted_http_guidance() -> None:
+    """Generate hosted Claude Code setup from the same MCP URL contract."""
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "hosted-http",
+            "--client",
+            "claude-code",
+            "--hosted-url",
+            "https://policy.policynim.dev/mcp",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "PolicyNIM hosted MCP config for Claude Code" in result.stdout
+    assert (
+        "claude mcp add --transport http policynim https://policy.policynim.dev/mcp "
+        '--header "Authorization: Bearer $POLICYNIM_TOKEN"'
+    ) in result.stdout
+    assert "Export POLICYNIM_TOKEN='<generated-beta-token>'" in result.stdout
+    assert "policy_search" in result.stdout
+
+
+def test_mcp_config_rejects_hosted_http_without_url() -> None:
+    """Hosted config should fail before printing unusable client commands."""
+    result = runner.invoke(app, ["mcp-config", "--target", "hosted-http"])
+
+    assert result.exit_code == 1
+    assert "Hosted MCP config requires --hosted-url" in result.stderr
+
+
+def test_mcp_config_rejects_non_http_hosted_url() -> None:
+    """Reject hosted config URLs that MCP clients cannot use as HTTP endpoints."""
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "hosted-http",
+            "--hosted-url",
+            "file:///tmp/mcp",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Hosted MCP URL must start with http:// or https://" in result.stderr
+
+
+def test_mcp_config_rejects_hosted_http_with_local_only_options(tmp_path: Path) -> None:
+    """Avoid silently ignoring local stdio flags for hosted config."""
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "hosted-http",
+            "--hosted-url",
+            "https://policy.example/mcp",
+            "--repo-root",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--repo-root is only valid with --target local-stdio" in result.stderr
+
+
+def test_mcp_config_rejects_local_stdio_with_hosted_only_options() -> None:
+    """Avoid silently ignoring hosted HTTP flags for local stdio config."""
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "local-stdio",
+            "--hosted-url",
+            "https://policy.example/mcp",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--hosted-url is only valid with --target hosted-http" in result.stderr
+
+
+def test_mcp_config_rejects_uv_command_without_source_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Avoid silently ignoring source-checkout launch flags in installed mode."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["mcp-config", "--uv-command", "/opt/uv"])
+
+    assert result.exit_code == 1
+    assert "--uv-command requires a PolicyNIM source checkout" in result.stderr
+    assert "Pass --repo-root /ABS/PATH/TO/policyNIM" in result.stderr
+
+
+def test_mcp_config_help_mentions_hosted_http_options() -> None:
+    """Keep CLI help aligned with hosted-first docs."""
+    result = runner.invoke(app, ["mcp-config", "--help"])
+    help_output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert "hosted HTTP or local stdio MCP client config" in help_output
+    assert "--target" in help_output
+    assert "local-stdio" in help_output
+    assert "hosted-http" in help_output
+    assert "--hosted-url" in help_output
+    assert "--bearer-token-env-var" in help_output
+
+
+def test_mcp_config_rejects_non_checkout_repo_root(tmp_path: Path) -> None:
+    """Avoid emitting client config that points at an arbitrary directory."""
+    not_checkout = tmp_path / "not-policyNIM"
+    not_checkout.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--client",
+            "codex",
+            "--repo-root",
+            str(not_checkout),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--repo-root must point to a PolicyNIM source checkout" in result.stderr
+    assert "Omit --repo-root to launch the installed CLI" in result.stderr
+
+
+def test_mcp_smoke_prints_stdio_tool_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Print machine-readable MCP tool discovery evidence."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout_root / ".env", NVIDIA_API_KEY="nvapi-test-key")
+
+    async def fake_smoke(*, timeout_seconds: float) -> dict[str, object]:
+        """Return successful MCP smoke evidence for CLI rendering."""
+        assert timeout_seconds == 5.0
+        return {
+            "status": "ok",
+            "transport": "stdio",
+            "command": [sys.executable, "-m", "policynim.interfaces.cli", "mcp"],
+            "tools": ["policy_preflight", "policy_search"],
+            "missing_tools": [],
+        }
+
+    monkeypatch.setattr("policynim.interfaces.cli._run_mcp_stdio_smoke", fake_smoke)
+
+    result = runner.invoke(app, ["mcp-smoke", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["tools"] == ["policy_preflight", "policy_search"]
+
+
+def test_mcp_smoke_can_launch_from_generated_codex_config_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Handshake with the same local stdio command emitted by mcp-config."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    config_result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--client",
+            "codex",
+            "--repo-root",
+            str(checkout_root),
+            "--format",
+            "json",
+        ],
+    )
+    config_file = tmp_path / "codex-mcp-config.json"
+    config_file.write_text(config_result.stdout, encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    async def fake_smoke(
+        *,
+        timeout_seconds: float,
+        command: list[str] | None = None,
+        cwd: Path | None = None,
+    ) -> dict[str, object]:
+        """Capture the config-derived stdio launch command."""
+        captured["timeout_seconds"] = timeout_seconds
+        captured["command"] = command
+        captured["cwd"] = cwd
+        return {
+            "status": "ok",
+            "transport": "stdio",
+            "command": command,
+            "config_source": str(config_file),
+            "tools": ["policy_preflight", "policy_search"],
+            "missing_tools": [],
+        }
+
+    monkeypatch.setattr("policynim.interfaces.cli._run_mcp_stdio_smoke", fake_smoke)
+
+    result = runner.invoke(
+        app,
+        ["mcp-smoke", "--mcp-config-file", str(config_file), "--format", "json"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["timeout_seconds"] == 5.0
+    assert captured["command"] == [
+        "uv",
+        "run",
+        "--directory",
+        str(checkout_root),
+        "policynim",
+        "mcp",
+        "--transport",
+        "stdio",
+    ]
+    assert captured["cwd"] == checkout_root
+    payload = json.loads(result.stdout)
+    assert payload["config_source"] == str(config_file)
+
+
+def test_mcp_smoke_rejects_hosted_mcp_config_file(tmp_path: Path) -> None:
+    """Do not imply that local stdio smoke proves a hosted HTTP config."""
+    config_file = tmp_path / "hosted-mcp-config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "client": "codex",
+                "target": "hosted-http",
+                "server_name": "policynim",
+                "hosted_url": "https://policy.example/mcp",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["mcp-smoke", "--mcp-config-file", str(config_file)])
+
+    assert result.exit_code == 1
+    assert "mcp-smoke --mcp-config-file only supports local-stdio configs" in result.stderr
+
+
+def test_mcp_smoke_help_mentions_generated_config_file() -> None:
+    """Keep the generated-config handshake discoverable from CLI help."""
+    result = runner.invoke(app, ["mcp-smoke", "--help"])
+    help_output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert "--mcp-config-file" in help_output
+    assert "mcp-config" in help_output
+    assert "--format json" in help_output
+
+
+def test_mcp_smoke_does_not_require_completed_standalone_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Let clean installs prove MCP tool registration before API-key setup."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    async def fake_smoke(*, timeout_seconds: float) -> dict[str, object]:
+        """Return successful MCP smoke evidence for a clean install."""
+        assert timeout_seconds == 5.0
+        return {
+            "status": "ok",
+            "transport": "stdio",
+            "command": [sys.executable, "-m", "policynim.interfaces.cli", "mcp"],
+            "tools": ["policy_preflight", "policy_search"],
+            "missing_tools": [],
+        }
+
+    monkeypatch.setattr("policynim.interfaces.cli._run_mcp_stdio_smoke", fake_smoke)
+
+    result = runner.invoke(app, ["mcp-smoke", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["missing_tools"] == []
+
+
+def test_mcp_smoke_exits_nonzero_when_tools_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Exit nonzero when local stdio smoke misses expected MCP tools."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout_root / ".env", NVIDIA_API_KEY="nvapi-test-key")
+
+    async def fake_smoke(*, timeout_seconds: float) -> dict[str, object]:
+        """Return incomplete MCP smoke evidence for CLI rendering."""
+        return {
+            "status": "error",
+            "transport": "stdio",
+            "command": [sys.executable, "-m", "policynim.interfaces.cli", "mcp"],
+            "tools": ["policy_search"],
+            "missing_tools": ["policy_preflight"],
+        }
+
+    monkeypatch.setattr("policynim.interfaces.cli._run_mcp_stdio_smoke", fake_smoke)
+
+    result = runner.invoke(app, ["mcp-smoke"])
+
+    assert result.exit_code == 1
+    assert "PolicyNIM MCP smoke" in result.stdout
+    assert "missing_tools" in result.stdout
+    assert "policy_preflight" in result.stdout
+
+
+def test_mcp_smoke_failure_text_prints_recovery_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Tell users how to recover when local stdio registration fails."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    async def fake_smoke(*, timeout_seconds: float) -> dict[str, object]:
+        """Return failed MCP smoke evidence with recovery steps."""
+        assert timeout_seconds == 5.0
+        return {
+            "status": "error",
+            "transport": "stdio",
+            "command": [sys.executable, "-m", "policynim.interfaces.cli", "mcp"],
+            "tools": [],
+            "missing_tools": ["policy_preflight", "policy_search"],
+            "message": "MCP stdio smoke failed: RuntimeError: launch failed",
+            "next_steps": [
+                "Run `policynim doctor` to inspect config, credentials, and local index state.",
+                "Run `policynim ingest` before calling policy_preflight or policy_search.",
+            ],
+        }
+
+    monkeypatch.setattr("policynim.interfaces.cli._run_mcp_stdio_smoke", fake_smoke)
+
+    result = runner.invoke(app, ["mcp-smoke"])
+
+    assert result.exit_code == 1
+    assert "Next steps:" in result.stdout
+    assert "policynim doctor" in result.stdout
+    assert "policynim ingest" in result.stdout
+
+
+def test_mcp_stdio_smoke_exception_report_includes_recovery_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Include recovery steps in machine-readable stdio launch failures."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    @asynccontextmanager
+    async def failing_stdio_client(*args: object, **kwargs: object):
+        """Raise during stdio client startup to exercise recovery output."""
+        raise RuntimeError("spawn failed")
+        yield
+
+    monkeypatch.setattr("policynim.interfaces.cli.stdio_client", failing_stdio_client)
+
+    report = asyncio.run(cli_module._run_mcp_stdio_smoke(timeout_seconds=1.0))
+
+    assert report["status"] == "error"
+    next_steps = cast(list[str], report["next_steps"])
+    assert "policynim doctor" in " ".join(next_steps)
+    assert "policynim ingest" in " ".join(next_steps)
+    assert "mcp-config --target local-stdio" in " ".join(next_steps)
+
+
+def test_mcp_stdio_smoke_uses_frozen_executable_for_standalone_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Re-enter PyInstaller bundles directly instead of using Python -m."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    binary = tmp_path / "dist" / "policynim" / "policynim"
+    monkeypatch.setattr(cli_module.sys, "executable", str(binary))
+    monkeypatch.setattr(cli_module.sys, "frozen", True, raising=False)
+
+    @asynccontextmanager
+    async def failing_stdio_client(*args: object, **kwargs: object):
+        """Raise during frozen stdio client startup to capture the command."""
+        raise RuntimeError("spawn failed")
+        yield
+
+    monkeypatch.setattr("policynim.interfaces.cli.stdio_client", failing_stdio_client)
+
+    report = asyncio.run(cli_module._run_mcp_stdio_smoke(timeout_seconds=1.0))
+
+    assert report["status"] == "error"
+    assert report["command"] == [str(binary), "mcp", "--transport", "stdio"]
 
 
 def test_beta_admin_list_accounts_prints_json(monkeypatch) -> None:

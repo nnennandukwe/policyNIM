@@ -152,6 +152,40 @@ def test_beta_portal_login_flow_sets_session_and_renders_dashboard(monkeypatch) 
     assert "claude mcp add --transport http policynim" in dashboard.text
 
 
+def test_beta_portal_dashboard_shows_agent_workflow_prompts(monkeypatch) -> None:
+    """Show hosted users what to ask their coding agent after setup."""
+    stub = StubBetaAuthService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
+
+    app = mcp_module._build_streamable_http_app(_signup_settings())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        client.get("/auth/github/start", follow_redirects=False)
+        client.get(
+            f"/auth/github/callback?state={stub.oauth_states[0]}&code=oauth-code",
+            follow_redirects=False,
+        )
+        dashboard = client.get("/beta")
+
+    assert dashboard.status_code == 200
+    for token in (
+        "Agent workflows",
+        "Preflight before implementation",
+        "Retrieve policy evidence while debugging",
+        "Verify MCP tool availability",
+        "Before editing, call policy_preflight for: Implement a refresh-token cleanup",
+        "cited constraints",
+        "insufficient_context",
+        "Use policy_search for: release installer checksum verification.",
+        "cited policy lines",
+        (
+            "List the PolicyNIM MCP tools and confirm policy_preflight and "
+            "policy_search are available before starting implementation."
+        ),
+    ):
+        assert token in dashboard.text
+
+
 def test_beta_portal_rejects_invalid_oauth_state(monkeypatch) -> None:
     stub = StubBetaAuthService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
@@ -222,7 +256,7 @@ def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> Non
     assert response.status_code == 200
     assert "pnm_new_secret" in response.text
     assert "Copy export" in response.text
-    assert "export POLICYNIM_TOKEN=pnm_new_secret" in response.text
+    assert "export POLICYNIM_TOKEN=&#39;pnm_new_secret&#39;" in response.text
 
 
 def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
