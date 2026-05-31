@@ -1,0 +1,23 @@
+# PolicyNIM ownership map.
+# GitHub loads CODEOWNERS from .github/, the repository root, or docs/.
+
+* @nnennandukwe
+
+/.github/workflows/ @nnennandukwe
+/.github/dependabot.yml @nnennandukwe
+/.github/labels.yml @nnennandukwe
+/.github/ISSUE_TEMPLATE/ @nnennandukwe
+/.github/PULL_REQUEST_TEMPLATE.md @nnennandukwe
+/pyproject.toml @nnennandukwe
+/uv.lock @nnennandukwe
+/scripts/release_check.py @nnennandukwe
+/scripts/release_manifest.py @nnennandukwe
+/scripts/oss_readiness_check.py @nnennandukwe
+/scripts/sync_github_labels.py @nnennandukwe
+/scripts/install.sh @nnennandukwe
+/scripts/install.ps1 @nnennandukwe
+/src/policynim/interfaces/cli.py @nnennandukwe
+/src/policynim/interfaces/mcp.py @nnennandukwe
+/docs/release.md @nnennandukwe
+/docs/public-launch-runbook.md @nnennandukwe
+/SECURITY.md @nnennandukwe
