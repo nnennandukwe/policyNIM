@@ -1,0 +1,55 @@
+name: Public Launch Evidence
+description: Attach reviewed external proof before claiming PolicyNIM is public-ready.
+title: "[Launch Evidence]: "
+labels: ["type/launch", "status/needs-triage", "needs/launch-evidence"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when a release, PR, or launch note claims public readiness.
+        Do not paste tokens, private policy content, or unredacted client transcripts.
+  - type: input
+    id: release_tag
+    attributes:
+      label: Release tag
+      description: Name the release tag or candidate under review, for example v0.1.0.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: strict_public
+    attributes:
+      label: Strict public readiness output
+      description: Paste `uv run python scripts/release_check.py --strict-public --external-evidence-file docs/launch-evidence.json --format json` output or the failing summary.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: launch_issue
+    attributes:
+      label: Generated launch issue
+      description: Paste the current `uv run python scripts/oss_readiness_check.py --external-evidence-file docs/launch-evidence.json --format launch-issue` output.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: evidence_records
+    attributes:
+      label: Attached evidence records
+      description: List completed proof from `scripts/collect_launch_evidence.py`, including GitHub release artifacts, attestations, PyPI, hosted MCP, hosted smoke, labels/topics, and real MCP client-session records.
+      placeholder: |
+        - github_release_artifacts: ...
+        - pypi_install_smoke: ...
+        - real_mcp_client_session: ...
+    validations:
+      required: true
+  - type: textarea
+    id: remaining_proof
+    attributes:
+      label: Remaining external proof
+      description: List any checks still marked `missing_external` or explain why this issue should stay blocked.
+      placeholder: |
+        - github_artifact_attestations: waiting on Release workflow attestation
+        - hosted_beta_live_smoke: waiting on hosted deployment secret
+    validations:
+      required: true
