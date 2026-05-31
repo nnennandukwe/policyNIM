@@ -72,6 +72,38 @@ sha256_file() {
   fi
 }
 
+should_verify_attestation() {
+  case "${POLICYNIM_VERIFY_ATTESTATION:-}" in
+    1 | true | TRUE | yes | required) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+repository_slug() {
+  slug="$REPO_URL"
+  slug="${slug#https://github.com/}"
+  slug="${slug#http://github.com/}"
+  slug="${slug#git@github.com:}"
+  slug="${slug%.git}"
+  slug="${slug%/}"
+  case "$slug" in
+    */*) printf '%s' "$slug" ;;
+    *) fail "Could not derive GitHub repository slug from $REPO_URL for attestation verification." ;;
+  esac
+}
+
+verify_attestation() {
+  asset_path="$1"
+  asset_name="$2"
+  if should_verify_attestation; then
+    need_command gh
+    slug="$(repository_slug)"
+    if ! gh attestation verify "$asset_path" -R "$slug"; then
+      fail "Artifact attestation verification failed for $asset_name. Check $RELEASE_PAGE_URL and retry the install."
+    fi
+  fi
+}
+
 extract_bundle() {
   archive_path="$1"
   destination="$2"
@@ -127,7 +159,11 @@ print_path_guidance() {
       printf '  export PATH="$HOME/.local/bin:$PATH"\n'
       ;;
   esac
-  printf 'Run `policynim init` to configure your local NVIDIA API key.\n'
+  printf 'Run `policynim quickstart` to choose a first-run path.\n'
+  printf 'Hosted MCP does not require `policynim init` or `policynim ingest`.\n'
+  printf 'For local CLI or local MCP, run `policynim init` then `policynim ingest`.\n'
+  printf 'Run `policynim doctor` to inspect first-run setup.\n'
+  printf 'Run `policynim support-bundle` before opening an issue.\n'
 }
 
 if [ -z "${POLICYNIM_INSTALLER_TEST_OS:-}" ] || [ -z "${POLICYNIM_INSTALLER_TEST_ARCH:-}" ]; then
@@ -196,6 +232,8 @@ actual_checksum="$(sha256_file "$asset_path")"
 if [ "$actual_checksum" != "$expected_checksum" ]; then
   fail "Checksum mismatch for $ASSET_NAME. Check $RELEASE_PAGE_URL and retry the install."
 fi
+
+verify_attestation "$asset_path" "$ASSET_NAME"
 
 extract_bundle "$asset_path" "$extract_dir"
 bundle_binary="$(find "$extract_dir" -type f -name policynim -perm -111 | head -n 1)"

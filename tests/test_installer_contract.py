@@ -62,6 +62,10 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
     assert "policynim-$tag-windows-amd64.zip" in install_ps1
     assert "SHA256SUMS" in install_sh
     assert "SHA256SUMS" in install_ps1
+    assert "POLICYNIM_VERIFY_ATTESTATION" in install_sh
+    assert "POLICYNIM_VERIFY_ATTESTATION" in install_ps1
+    assert "gh attestation verify" in install_sh
+    assert "gh attestation verify" in install_ps1
     for command in (
         "awk",
         "cat",
@@ -81,6 +85,38 @@ def test_installer_scripts_lock_supported_artifact_contract() -> None:
         assert f"need_command {command}" in install_sh
     assert "NVIDIA_API_KEY" not in install_sh
     assert "NVIDIA_API_KEY" not in install_ps1
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
+def test_unix_installer_can_require_github_attestation_verification(tmp_path: Path) -> None:
+    """Let security-conscious users require GitHub artifact attestations during install."""
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    create_unix_release_asset(release_dir)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh_log = tmp_path / "gh.log"
+    gh_stub = bin_dir / "gh"
+    gh_stub.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$GH_LOG"\n',
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+
+    result, home = run_unix_installer(
+        tmp_path,
+        release_dir,
+        path=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        env_extra={
+            "GH_LOG": str(gh_log),
+            "POLICYNIM_VERIFY_ATTESTATION": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (home / ".local" / "bin" / "policynim").exists()
+    assert "attestation verify" in gh_log.read_text(encoding="utf-8")
+    assert "-R nnennandukwe/policyNIM" in gh_log.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="requires a POSIX shell")
@@ -184,7 +220,13 @@ def test_unix_installer_installs_launcher_and_prints_path_guidance(tmp_path: Pat
     assert launcher.is_file()
     assert f".local/share/policynim/{VERSION}/policynim" in launcher.read_text(encoding="utf-8")
     assert 'export PATH="$HOME/.local/bin:$PATH"' in result.stdout
-    assert "Run `policynim init` to configure your local NVIDIA API key." in result.stdout
+    assert "Run `policynim quickstart` to choose a first-run path." in result.stdout
+    assert "Hosted MCP does not require `policynim init` or `policynim ingest`." in (result.stdout)
+    assert "For local CLI or local MCP, run `policynim init` then `policynim ingest`." in (
+        result.stdout
+    )
+    assert "Run `policynim doctor` to inspect first-run setup." in result.stdout
+    assert "Run `policynim support-bundle` before opening an issue." in result.stdout
 
 
 def test_windows_installer_contract_is_actionable() -> None:
@@ -196,7 +238,13 @@ def test_windows_installer_contract_is_actionable() -> None:
     assert "policynim.cmd" in script
     assert "LocalAppData" in script
     assert "SetEnvironmentVariable" in script
-    assert "policynim init" in script
+    assert "policynim quickstart" in script
+    assert "Hosted MCP does not require ``policynim init`` or ``policynim ingest``." in script
+    assert "For local CLI or local MCP, run ``policynim init`` then ``policynim ingest``." in (
+        script
+    )
+    assert "policynim doctor" in script
+    assert "policynim support-bundle" in script
     assert "Read-Host" not in script
 
 
@@ -231,6 +279,7 @@ def run_unix_installer(
     os_name: str = "Linux",
     arch: str = "x86_64",
     path: str | None = None,
+    env_extra: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     """Run the Unix installer against a local fake release directory."""
     home = tmp_path / "home"
@@ -245,6 +294,8 @@ def run_unix_installer(
             "POLICYNIM_INSTALLER_TEST_ARCH": arch,
         }
     )
+    if env_extra:
+        env.update(env_extra)
     if path is not None:
         env["PATH"] = path
 

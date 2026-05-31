@@ -38,5 +38,19 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group test --group dev
 
+      - name: Prepare hosted smoke evidence
+        run: mkdir -p hosted-smoke-evidence
+
       - name: Run hosted live smoke
-        run: uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
+        run: |
+          uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py \
+            --junitxml hosted-smoke-evidence/policynim-hosted-smoke-junit.xml
+
+      - name: Upload hosted smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-smoke-evidence
+          path: hosted-smoke-evidence/policynim-hosted-smoke-junit.xml
+          if-no-files-found: warn
+          retention-days: 30

@@ -46,6 +46,39 @@ function Download-Asset([string]$SourceUrl, [string]$Destination, [string]$Label
     }
 }
 
+function Test-ShouldVerifyAttestation {
+    if (-not $env:POLICYNIM_VERIFY_ATTESTATION) {
+        return $false
+    }
+    $mode = $env:POLICYNIM_VERIFY_ATTESTATION.ToLowerInvariant()
+    return $mode -in @("1", "true", "yes", "required")
+}
+
+function Get-RepositorySlug {
+    $slug = $RepositoryUrl.TrimEnd("/")
+    $slug = $slug -replace "^https?://github\.com/", ""
+    $slug = $slug -replace "^git@github\.com:", ""
+    $slug = $slug -replace "\.git$", ""
+    if ($slug -notmatch "^[^/]+/[^/]+$") {
+        Stop-Install "Could not derive GitHub repository slug from $RepositoryUrl for attestation verification."
+    }
+    return $slug
+}
+
+function Verify-Attestation([string]$AssetPath, [string]$AssetName) {
+    if (-not (Test-ShouldVerifyAttestation)) {
+        return
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Stop-Install "Missing required command: gh. Install GitHub CLI or unset POLICYNIM_VERIFY_ATTESTATION and retry."
+    }
+    $slug = Get-RepositorySlug
+    & gh attestation verify $AssetPath -R $slug
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Install "Artifact attestation verification failed for $AssetName. Check $releasePageUrl and retry the install."
+    }
+}
+
 function Replace-InstallDirectory([string]$StagingDir, [string]$InstallDir, [string]$Version) {
     $installParent = Split-Path -Parent $InstallDir
     $backupDir = Join-Path $installParent ".$Version.backup.$PID"
@@ -120,6 +153,8 @@ try {
         Stop-Install "Checksum mismatch for $assetName. Check $releasePageUrl and retry the install."
     }
 
+    Verify-Attestation $assetPath $assetName
+
     try {
         Expand-Archive -Path $assetPath -DestinationPath $extractDir -Force
     } catch {
@@ -148,7 +183,11 @@ try {
         Write-Host "Add PolicyNIM to PATH for future PowerShell sessions:"
         Write-Host '$launcherDir = Join-Path $env:LocalAppData "PolicyNIM\bin"; [Environment]::SetEnvironmentVariable("Path", ([Environment]::GetEnvironmentVariable("Path", "User") + ";" + $launcherDir).Trim(";"), "User")'
     }
-    Write-Host "Run ``policynim init`` to configure your local NVIDIA API key."
+    Write-Host "Run ``policynim quickstart`` to choose a first-run path."
+    Write-Host "Hosted MCP does not require ``policynim init`` or ``policynim ingest``."
+    Write-Host "For local CLI or local MCP, run ``policynim init`` then ``policynim ingest``."
+    Write-Host "Run ``policynim doctor`` to inspect first-run setup."
+    Write-Host "Run ``policynim support-bundle`` before opening an issue."
 } finally {
     if (Test-Path $workDir) {
         Remove-Item -Recurse -Force $workDir

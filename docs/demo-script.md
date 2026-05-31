@@ -36,7 +36,7 @@ What to look for:
 - a non-zero document count
 - a non-zero chunk count
 - the configured embedding model
-- the local LanceDB path and table name
+- the local SQLite index path and table name
 
 What this proves:
 
@@ -158,9 +158,9 @@ If you have an issued beta token and Railway domain, connect your client to the
 hosted MCP first:
 
 ```bash
-export POLICYNIM_TOKEN=<issued-beta-token>
-codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-var POLICYNIM_TOKEN
-claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
+export POLICYNIM_TOKEN='<issued-beta-token>'
+codex mcp add policynim --url 'https://<railway-domain>/mcp' --bearer-token-env-var POLICYNIM_TOKEN
+claude mcp add --transport http policynim 'https://<railway-domain>/mcp' --header "Authorization: Bearer $POLICYNIM_TOKEN"
 ```
 
 Then point the demo prompts at the hosted service using one of the existing examples:
