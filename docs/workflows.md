@@ -8,6 +8,9 @@ reference that used to live in the root README.
 ### CLI
 
 - `policynim init`
+- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--format text|json]`
+- `policynim doctor [--format text|json]`
+- `policynim support-bundle [--format json|markdown] [--include-mcp-smoke]`
 - `policynim ingest`
 - `policynim dump-index [--count-only]`
 - `policynim search --query "..."`
@@ -17,6 +20,9 @@ reference that used to live in the root README.
 - `policynim preflight --task "..." [--trace] [--regenerate] [--max-regenerations 1] [--backend nemo|nemo_evaluator|nat]`
 - `policynim eval --mode offline|live [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
+- `policynim mcp-smoke [--format text|json] [--mcp-config-file <path>]`
+- `policynim mcp-config --target hosted-http --client codex|claude-code --hosted-url 'https://<host>/mcp'`
+- `policynim mcp-config --target local-stdio --client codex|claude-code [--repo-root /ABS/PATH/TO/policyNIM]`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
 - `policynim evidence report --session-id <id>`
@@ -26,6 +32,88 @@ reference that used to live in the root README.
 
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
+
+### Hosted MCP Config
+
+Generate hosted client setup from the same CLI contract used by the examples.
+Run the command for the selected client:
+
+Codex:
+
+```bash
+policynim quickstart --target hosted-mcp --client codex --hosted-url 'https://<railway-domain>/mcp' --format json
+```
+
+Claude Code:
+
+```bash
+policynim quickstart --target hosted-mcp --client claude-code --hosted-url 'https://<railway-domain>/mcp' --format json
+```
+
+Codex:
+
+```bash
+policynim mcp-config --target hosted-http --client codex --hosted-url 'https://<railway-domain>/mcp' --bearer-token-env-var POLICYNIM_TOKEN
+```
+
+Claude Code:
+
+```bash
+policynim mcp-config --target hosted-http --client claude-code --hosted-url 'https://<railway-domain>/mcp' --bearer-token-env-var POLICYNIM_TOKEN
+```
+
+Hosted config generation does not require a source checkout. It prints the
+Codex or Claude Code command with `POLICYNIM_TOKEN` kept as an environment
+variable reference. Hosted `quickstart --format json` also includes
+`client_commands` so the first-run output itself contains the exact MCP client
+command for the selected client to paste after exporting `POLICYNIM_TOKEN`.
+If you open the hosted `/mcp` URL in a browser before configuring a client, the
+service routes you to `/beta` so you can create or rotate a token first. MCP
+clients still receive protocol/auth responses from `/mcp`.
+When the generated JSON includes `"hosted_url_placeholder": true`, the command
+is only proving config shape for docs or CI smoke. Replace the hosted URL
+placeholder with the deployed `/mcp` URL before adding the server to Codex or
+Claude Code. `quickstart` also emits `hosted_url` and `beta_portal_url`; with a
+real `/mcp` URL, the token portal URL is derived from the same hosted origin.
+Hosted `mcp-config --format json` includes the same `beta_portal_url` so setup
+reports can show both the portal and MCP endpoint.
+
+### First-Run Quickstart
+
+Use `quickstart` when you have an installed CLI and need the shortest safe path
+for your workflow:
+
+```bash
+policynim quickstart
+policynim quickstart --target local-cli
+policynim quickstart --target local-mcp --client codex --repo-root /ABS/PATH/TO/policyNIM
+policynim quickstart --format json
+```
+
+From a source checkout, use the uv-managed entrypoint so generated local CLI
+and local MCP steps also use source-checkout commands:
+
+```bash
+uv run policynim quickstart --target local-cli --format json
+uv run policynim quickstart --target local-mcp --client codex --repo-root /ABS/PATH/TO/policyNIM --format json
+```
+
+The command only prints guidance. It does not write config, launch MCP, or call
+NVIDIA-hosted services. The JSON form is useful for release smoke and docs
+parity because it exposes the selected target, setup requirements, commands,
+copyable `agent_workflows` prompts, local MCP `local_launch_mode`, and
+secret-safety notes as structured output.
+For generated follow-up CLI commands, hosted MCP quickstart keeps the no-clone
+direct `policynim mcp-config ...` entrypoint even when the command is run from a
+source checkout. Local CLI and local MCP quickstart output may use
+`uv run policynim ...` from a checkout; installed copies use the direct
+`policynim ...` entrypoint.
+For local MCP, `local_launch_mode` is `installed-cli` when the generated config
+uses the direct `policynim mcp --transport stdio` entrypoint, and
+`source-checkout` when it uses `uv run --directory ... policynim mcp`.
+Local MCP quickstart output can include exact filesystem paths when it targets a
+source checkout. Use `policynim support-bundle` for public diagnostics instead
+of pasting quickstart output into public issues.
 
 ### Operator CLI
 
@@ -47,12 +135,67 @@ reference that used to live in the root README.
 `policynim init` writes the local config file interactively when you want the
 CLI to prompt for `NVIDIA_API_KEY` and an optional custom corpus directory.
 
+## Coding-Agent Workflow Patterns
+
+Use PolicyNIM where an agent needs grounded policy context before it makes,
+explains, or reviews an implementation decision.
+
+For copy-paste prompts and setup recipes organized around Codex and Claude Code
+sessions, use [agent-workflows.md](agent-workflows.md).
+
+### Run policy preflight before implementation
+
+Ask your coding agent to call `policy_preflight` before it edits code:
+
+- `Before editing, call policy_preflight for: Implement a refresh-token cleanup background job. Use the cited constraints in your implementation plan. If the result is insufficient_context, stop and call policy_search with a narrower query before changing files.`
+- `Before editing, call policy_preflight for: Add a GitHub release smoke check for the installer. Use the cited constraints before changing workflow files.`
+
+The matching CLI path is:
+
+```bash
+policynim preflight --task "Implement a refresh-token cleanup background job" --top-k 5
+```
+
+### Search policy evidence during review or debugging
+
+Ask your coding agent to call `policy_search` when review feedback, a failing
+gate, or a vague implementation question needs the underlying policy text:
+
+- `Use policy_search for: release installer checksum verification. Summarize the relevant cited policy lines before proposing a fix.`
+- `Use policy_search for: runtime evidence retention rules.`
+
+The matching CLI path is:
+
+```bash
+policynim search --query "release installer checksum verification" --top-k 5
+```
+
+### Smoke MCP setup before a long agent session
+
+Generate client config and prove the local `stdio` server can list tools before
+you start a real Codex or Claude Code session:
+
+```bash
+policynim mcp-config --target local-stdio --client codex --format json > codex-mcp-config.json
+policynim mcp-smoke --mcp-config-file codex-mcp-config.json --format json
+```
+
+### Attach diagnostics when setup fails
+
+Use the redacted support bundle for public issues instead of raw local paths or
+secrets:
+
+```bash
+policynim support-bundle --include-mcp-smoke
+```
+
 ## Core Workflows
 
 ### 0. Initialize A Standalone Install
 
 ```bash
 policynim init
+policynim doctor
 policynim ingest
 ```
 
@@ -67,6 +210,33 @@ commands load by default. Then use the later `uv run policynim ...` examples
 inside the uv-managed project environment. Installed copies should keep using
 the direct `policynim ...` entrypoint.
 
+`policynim doctor` is safe to run before and after `ingest`. It reports which
+config file is active, whether `NVIDIA_API_KEY` is present, where local index
+and runtime artifacts should live, and MCP launch plus config-generation hints
+without calling NVIDIA-hosted APIs. Use `policynim doctor --format json` when
+you want copyable `mcp-smoke` and local `mcp-config` commands for Codex or
+Claude Code in the diagnostic output.
+
+For issue-ready diagnostics, run:
+
+```bash
+policynim support-bundle
+```
+
+`policynim support-bundle` includes version, Python, platform, a first-run target summary, and `doctor` output in one JSON object. The `first_run` section
+shows the hosted MCP, local CLI, and local MCP quickstart targets, each
+target's `quickstart_command`, setup requirements, no-network status, and
+generated next commands. Hosted MCP summaries include Codex and Claude Code
+`client_commands`; all targets include `agent_workflows` with copyable `policy_preflight`, `policy_search`, and MCP tool-list prompts so issue triage can see what the reporter
+saw in quickstart output. Hosted summaries also include `hosted_url`,
+`beta_portal_url`, and the browser token-creation steps so maintainers can
+reconstruct the no-clone setup path without raw transcripts. Source-checkout bundles keep those generated commands on the `uv run policynim ...` path where appropriate. It does not print configured secret values, and local
+path prefixes are redacted by default with markers such as `<repo-root>`,
+`<config-dir>`, `<data-dir>`, `<home>`, and `<python-executable>`. For local MCP
+`stdio` issues, add `--include-mcp-smoke` to include the same tool-list smoke
+output described below. Use `--include-local-paths` only for private maintainer
+triage when exact filesystem paths matter.
+
 ### 1. Build The Local Index
 
 ```bash
@@ -79,7 +249,7 @@ What this does:
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
-- rebuilds the local LanceDB table
+- rebuilds the local SQLite vector index
 
 Typical output includes the chunk count, document count, embedding model, and
 index location.
@@ -328,6 +498,77 @@ uv run policynim mcp --transport stdio
 uv run policynim mcp
 ```
 
+Before wiring a local agent client to `stdio`, run the deterministic smoke:
+
+```bash
+uv run policynim mcp-smoke
+```
+
+`policynim mcp-smoke` launches the local `stdio` server, initializes an MCP
+client session, and verifies that `policy_preflight` and `policy_search` are
+listed. It does not call either tool, so it checks launch and tool registration
+without making a retrieval or generation request. The smoke can run before
+`policynim init` or `policynim ingest`; actual `policy_preflight` and
+`policy_search` calls still need the normal configured API key and local index.
+For public issues, prefer the redacted support bundle because raw
+`mcp-smoke --format json` output can include exact local launch paths:
+
+```bash
+policynim support-bundle --include-mcp-smoke
+```
+
+Use raw JSON output for local debugging, CI artifacts, or maintainer launch
+checklists:
+
+```bash
+policynim mcp-smoke --format json
+```
+
+To prove the generated local client config can launch the server, save the
+local `mcp-config --format json` output and smoke that exact config:
+
+```bash
+policynim mcp-config --target local-stdio --client codex --format json > codex-mcp-config.json
+policynim mcp-smoke --mcp-config-file codex-mcp-config.json --format json
+```
+
+Use the same pattern with `--client claude-code` for Claude Code. This mode is
+for local `stdio` configs only; hosted HTTP configs are verified through hosted
+domain and client-session launch evidence.
+
+When the smoke fails, the report includes recovery steps. Start with `doctor`,
+then build the local index with `ingest` before calling `policy_preflight` or
+`policy_search`. Regenerate client config after changing install mode, checkout
+path, or client:
+
+```bash
+policynim doctor
+policynim ingest
+policynim mcp-smoke --format json
+policynim mcp-config --target local-stdio --client codex --format json
+```
+
+For source checkouts, use the same flow with `uv run policynim ...`.
+Regenerate client config with `--repo-root /ABS/PATH/TO/policyNIM`; if the MCP
+client cannot find `uv`, pass an absolute `--uv-command`.
+
+Generate local client config before copying values into Codex or Claude Code:
+
+```bash
+policynim mcp-config --client codex
+policynim mcp-config --client claude-code
+```
+
+For installed CLI users, `policynim mcp-config` emits a no-clone stdio config
+that launches `policynim mcp --transport stdio`. In a source checkout, it
+resolves the checkout to an absolute path and emits the
+`uv run --directory ... policynim mcp --transport stdio` contract used by the
+examples. Both modes keep `NVIDIA_API_KEY` as an environment variable reference
+instead of printing the configured secret value.
+Local `mcp-config` output can include exact filesystem paths because MCP
+clients need concrete launch commands. Use `policynim support-bundle` for
+public diagnostics. Do not paste local client config into public issues.
+
 For HTTP transport:
 
 ```bash
@@ -361,7 +602,7 @@ Hosted HTTP notes:
 - `stdio` ignores the hosted auth settings completely
 - when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
   defaults to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
-- the baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+- the baked-image workflow uses `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
   as the fast path. Hosted startup only falls back to `policynim ingest` when
   that local index is missing or empty
 - if that automatic rebuild path runs without a runtime `NVIDIA_API_KEY`, hosted
@@ -505,7 +746,7 @@ PolicyNIM keeps the retrieval stack explicit:
 
 1. chunk Markdown policies with stable IDs and line spans
 2. embed query and document text with NVIDIA-hosted embeddings
-3. retrieve dense candidates from LanceDB
+3. retrieve dense candidates from the SQLite vector index
 4. rerank candidates with NVIDIA
 5. route retained evidence into selected-policy packets
 6. compile selected policy evidence into constraint packets

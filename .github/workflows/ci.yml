@@ -28,7 +28,7 @@ jobs:
         run: uv sync --group test --group dev
 
       - name: Run Ruff
-        run: uv run ruff check
+        run: uv run ruff check .
 
       - name: Run Pyright
         run: uv run pyright
@@ -52,3 +52,101 @@ jobs:
 
       - name: Run offline pytest
         run: uv run pytest -q -m "not live and not docker_live"
+
+  package:
+    runs-on: ubuntu-24.04
+    env:
+      NVIDIA_API_KEY: ""
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Check lockfile
+        run: uv lock --check
+
+      - name: Check OSS readiness evidence contract
+        run: |
+          python3 scripts/oss_readiness_check.py --format json >/tmp/policynim-oss-readiness.json
+          python3 -m json.tool /tmp/policynim-oss-readiness.json >/tmp/policynim-oss-readiness-json-ok.txt
+          python3 scripts/oss_readiness_check.py --format launch-issue >/tmp/policynim-launch-issue.md
+          grep -F "## Missing Evidence Collection Commands" /tmp/policynim-launch-issue.md
+
+      - name: Build Python distribution
+        run: uv build --out-dir dist
+
+      - name: Smoke install built wheel
+        run: |
+          python -m venv /tmp/policynim-wheel-smoke
+          mkdir -p /tmp/policynim-wheel-cwd
+          /tmp/policynim-wheel-smoke/bin/python -m pip install --upgrade pip
+          /tmp/policynim-wheel-smoke/bin/python -m pip install dist/*.whl
+          cd /tmp/policynim-wheel-cwd
+          /tmp/policynim-wheel-smoke/bin/policynim --help
+          /tmp/policynim-wheel-smoke/bin/policynim init --help >/tmp/policynim-init-help.txt
+          grep -F "Usage: policynim init" /tmp/policynim-init-help.txt
+          /tmp/policynim-wheel-smoke/bin/policynim ingest --help >/tmp/policynim-ingest-help.txt
+          grep -F "Usage: policynim ingest" /tmp/policynim-ingest-help.txt
+          /tmp/policynim-wheel-smoke/bin/policynim preflight --help >/tmp/policynim-preflight-help.txt
+          grep -F "Usage: policynim preflight" /tmp/policynim-preflight-help.txt
+          /tmp/policynim-wheel-smoke/bin/policynim quickstart --format json >/tmp/policynim-quickstart.json
+          /tmp/policynim-wheel-smoke/bin/policynim quickstart --target local-cli --format json >/tmp/policynim-quickstart-local-cli.json
+          /tmp/policynim-wheel-smoke/bin/policynim quickstart --target local-mcp --format json >/tmp/policynim-quickstart-local-mcp.json
+          /tmp/policynim-wheel-smoke/bin/policynim doctor --format json >/tmp/policynim-doctor.json
+          /tmp/policynim-wheel-smoke/bin/policynim support-bundle >/tmp/policynim-support-bundle.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-smoke --format json >/tmp/policynim-mcp-smoke.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --client codex --target local-stdio --format json >/tmp/policynim-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --client claude-code --target local-stdio --format json >/tmp/policynim-claude-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-smoke --mcp-config-file /tmp/policynim-mcp-config.json --format json >/tmp/policynim-mcp-smoke-from-codex-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-smoke --mcp-config-file /tmp/policynim-claude-mcp-config.json --format json >/tmp/policynim-mcp-smoke-from-claude-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --target hosted-http --client codex --hosted-url https://example.invalid/mcp --bearer-token-env-var POLICYNIM_TOKEN --format json >/tmp/policynim-hosted-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --target hosted-http --client claude-code --hosted-url https://example.invalid/mcp --bearer-token-env-var POLICYNIM_TOKEN --format json >/tmp/policynim-claude-hosted-mcp-config.json
+          python -m json.tool /tmp/policynim-quickstart.json >/tmp/policynim-quickstart-json-ok.txt
+          python -m json.tool /tmp/policynim-quickstart-local-cli.json >/tmp/policynim-quickstart-local-cli-json-ok.txt
+          python -m json.tool /tmp/policynim-quickstart-local-mcp.json >/tmp/policynim-quickstart-local-mcp-json-ok.txt
+          python -m json.tool /tmp/policynim-doctor.json >/tmp/policynim-doctor-json-ok.txt
+          python -m json.tool /tmp/policynim-support-bundle.json >/tmp/policynim-support-bundle-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-smoke.json >/tmp/policynim-mcp-smoke-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-config.json >/tmp/policynim-mcp-config-json-ok.txt
+          python -m json.tool /tmp/policynim-claude-mcp-config.json >/tmp/policynim-claude-mcp-config-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-smoke-from-codex-config.json >/tmp/policynim-mcp-smoke-from-codex-config-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-smoke-from-claude-config.json >/tmp/policynim-mcp-smoke-from-claude-config-json-ok.txt
+          python -m json.tool /tmp/policynim-hosted-mcp-config.json >/tmp/policynim-hosted-mcp-config-json-ok.txt
+          python -m json.tool /tmp/policynim-claude-hosted-mcp-config.json >/tmp/policynim-claude-hosted-mcp-config-json-ok.txt
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-codex-local-stdio /tmp/policynim-mcp-config.json
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-claude-code-local-stdio /tmp/policynim-claude-mcp-config.json
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-codex-hosted-http /tmp/policynim-hosted-mcp-config.json
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-claude-code-hosted-http /tmp/policynim-claude-hosted-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim --version
+
+      - name: Upload package smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-smoke-evidence
+          path: |
+            /tmp/policynim-oss-readiness.json
+            /tmp/policynim-launch-issue.md
+            /tmp/policynim-init-help.txt
+            /tmp/policynim-ingest-help.txt
+            /tmp/policynim-preflight-help.txt
+            /tmp/policynim-quickstart.json
+            /tmp/policynim-quickstart-local-cli.json
+            /tmp/policynim-quickstart-local-mcp.json
+            /tmp/policynim-doctor.json
+            /tmp/policynim-support-bundle.json
+            /tmp/policynim-mcp-smoke.json
+            /tmp/policynim-mcp-config.json
+            /tmp/policynim-claude-mcp-config.json
+            /tmp/policynim-mcp-smoke-from-codex-config.json
+            /tmp/policynim-mcp-smoke-from-claude-config.json
+            /tmp/policynim-hosted-mcp-config.json
+            /tmp/policynim-claude-hosted-mcp-config.json
+          if-no-files-found: error
+          retention-days: 14

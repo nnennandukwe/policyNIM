@@ -60,29 +60,46 @@ config directory with user-owned defaults for `POLICYNIM_INDEX_DB_PATH`,
 and `POLICYNIM_EVAL_WORKSPACE_DIR`.
 
 After that, run `policynim ingest` as usual. Source checkouts can keep using the
-checkout `.env` flow above and `uv run` for in-project commands.
+checkout `.env` flow above and `uv run` for in-project commands. Run
+`policynim doctor` before or after ingest when you need a safe local setup
+diagnostic that does not call NVIDIA-hosted APIs.
 
 ## Direct CLI Install
 
-Use `pipx` or `uv tool` with Python 3.11 or 3.12 when you want the Python
-package install path without cloning this repository:
+Use the PyPI package path when you already have Python 3.11 or 3.12 and want
+`pipx` or `uv tool` to manage an isolated CLI environment:
+
+Public PyPI install status: treat PyPI package availability as install-channel
+discovery until `pypi_install_smoke` passes for the version you are installing.
+The contributor docs describe the current source-tree first-run contract. If
+`policynim quickstart` is unavailable after a public PyPI install, that package
+version does not pass the public launch gate. Use a source checkout or a GitHub
+release built from the current CLI, or wait for the next PyPI release before
+using the no-clone first-run path.
 
 ```bash
 pipx install --python 3.11 policynim
 uv tool install --python 3.11 policynim
 policynim --help
-policynim init
-policynim ingest
+policynim quickstart
+policynim doctor
 ```
 
-If your default Python is already supported, the shorter
-`pipx install policynim` and `uv tool install policynim` forms are also valid.
+Use the GitHub release installers when you want a standalone `policynim` binary
+without managing Python dependencies yourself:
 
-Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
-machine does not expose `3.11` or `3.12` by name, pass the full path to that
-Python executable.
+Published standalone release targets are macOS Apple Silicon (`darwin-arm64`),
+macOS Intel (`darwin-amd64`), Linux x86_64 (`linux-amd64`), and Windows x86_64
+(`windows-amd64`). `install.sh` auto-detects the supported macOS or Linux
+target and downloads the matching tarball; `install.ps1` installs the Windows
+bundle.
 
-Use the GitHub release installers when you want a standalone binary bundle:
+GitHub release installer status: treat release asset availability as
+install-channel discovery until `github_release_install_smoke` passes for the
+version you are installing. If `policynim quickstart` is unavailable after a
+GitHub release installer run, that release does not pass the public launch gate.
+Use a source checkout or wait for the next GitHub release before using the
+no-clone first-run path.
 
 ```bash
 curl -fsSL https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.sh | sh
@@ -92,10 +109,24 @@ curl -fsSL https://github.com/nnennandukwe/policyNIM/releases/latest/download/in
 irm https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.ps1 | iex
 ```
 
+Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
+machine does not expose `3.11` or `3.12` by name, pass the full path to that
+Python executable.
+
+PyPI trusted-publishing evidence is still tracked separately in the public
+launch runbook. Package availability proves the install channel exists; it does
+not by itself prove that the Release workflow's `publish-pypi` job was verified.
+
 Both installers download the latest GitHub release, verify `SHA256SUMS`, install
-the versioned bundle, and print PATH guidance. They do not prompt for or collect
-`NVIDIA_API_KEY`; run `policynim init` after installation to create the local
-config, then `policynim ingest` to build the local policy index.
+the versioned bundle, and print PATH guidance. If GitHub CLI is available and
+you want provenance verification during install, set
+`POLICYNIM_VERIFY_ATTESTATION=1`; the installers then run
+`gh attestation verify` before extracting the bundle. They do not prompt for or
+collect `NVIDIA_API_KEY`; run `policynim quickstart` first when you need to
+choose between hosted MCP, local CLI, and local MCP. The hosted MCP path does
+not require local setup. Run `policynim init` after installation to create the
+local config, then `policynim ingest` to build the local policy index only when
+you choose a local CLI or local MCP workflow.
 
 ## Environment Templates
 
@@ -212,9 +243,13 @@ uv run --group dev pre-commit install
 Run the standard quality gates:
 
 ```bash
-uv run ruff check
-uv run pytest -q
+uv run ruff check .
 uv run pyright
+uv run pytest -q -m "not live and not docker_live"
+uv lock --check
+uv build --out-dir dist
+uv run policynim doctor --format json
+uv run policynim support-bundle
 ```
 
 For live or hosted-only checks, use the coverage notes in

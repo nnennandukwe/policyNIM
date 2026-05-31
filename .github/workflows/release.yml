@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      public_launch:
+        description: "Require public-launch proof mode; fails unless publish_pypi is enabled."
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "v*.*.*"
@@ -28,6 +33,43 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate public launch inputs
+        env:
+          PUBLIC_LAUNCH: ${{ inputs.public_launch }}
+          PUBLISH_PYPI: ${{ inputs.publish_pypi }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$PUBLIC_LAUNCH" = "true" ] && [ "$PUBLISH_PYPI" != "true" ]; then
+              echo "public_launch=true requires publish_pypi=true so PyPI trusted-publishing evidence can be collected." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Record release mode
+        env:
+          PUBLIC_LAUNCH: ${{ inputs.public_launch }}
+          PUBLISH_PYPI: ${{ inputs.publish_pypi }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            MODE="Public launch candidate"
+            PYPI_MODE="PyPI trusted publishing runs automatically for v* tags."
+          elif [ "$PUBLIC_LAUNCH" = "true" ]; then
+            MODE="Public launch candidate"
+            PYPI_MODE="PyPI trusted publishing was requested for this manual dispatch."
+          elif [ "$PUBLISH_PYPI" = "true" ]; then
+            MODE="PyPI publish candidate"
+            PYPI_MODE="Manual PyPI trusted publishing was requested without public-launch proof mode."
+          else
+            MODE="GitHub-only release candidate"
+            PYPI_MODE="PyPI trusted publishing was not requested for this manual dispatch."
+          fi
+          {
+            echo "## PolicyNIM release mode"
+            echo "- Mode: ${MODE}"
+            echo "- PyPI: ${PYPI_MODE}"
+            echo "- Public launch proof still requires strict OSS readiness evidence from docs/launch-evidence.json."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install uv
         uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
@@ -52,6 +94,16 @@ jobs:
       - name: Run offline pytest
         run: uv run pytest -q -m "not live and not docker_live"
 
+      - name: Check release notes
+        run: |
+          python3 scripts/check_release_notes.py --format json >/tmp/policynim-release-notes.json
+          python3 -m json.tool /tmp/policynim-release-notes.json >/tmp/policynim-release-notes-json-ok.txt
+
+      - name: Check OSS readiness evidence contract
+        run: |
+          python3 scripts/oss_readiness_check.py --format json >/tmp/policynim-oss-readiness.json
+          python3 -m json.tool /tmp/policynim-oss-readiness.json >/tmp/policynim-oss-readiness-json-ok.txt
+
       - name: Build Python distribution
         run: uv build --out-dir dist
 
@@ -65,6 +117,8 @@ jobs:
   wheel-smoke:
     runs-on: ubuntu-24.04
     needs: verify
+    env:
+      NVIDIA_API_KEY: ""
     steps:
       - name: Download Python distribution
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -80,9 +134,70 @@ jobs:
       - name: Smoke install built wheel
         run: |
           python -m venv /tmp/policynim-wheel-smoke
+          mkdir -p /tmp/policynim-wheel-cwd
+          /tmp/policynim-wheel-smoke/bin/python -m pip install --upgrade pip
           /tmp/policynim-wheel-smoke/bin/python -m pip install dist/*.whl
+          cd /tmp/policynim-wheel-cwd
           /tmp/policynim-wheel-smoke/bin/policynim --help
+          /tmp/policynim-wheel-smoke/bin/policynim init --help >/tmp/policynim-init-help.txt
+          grep -F "Usage: policynim init" /tmp/policynim-init-help.txt
+          /tmp/policynim-wheel-smoke/bin/policynim ingest --help >/tmp/policynim-ingest-help.txt
+          grep -F "Usage: policynim ingest" /tmp/policynim-ingest-help.txt
+          /tmp/policynim-wheel-smoke/bin/policynim preflight --help >/tmp/policynim-preflight-help.txt
+          grep -F "Usage: policynim preflight" /tmp/policynim-preflight-help.txt
+          /tmp/policynim-wheel-smoke/bin/policynim quickstart --format json >/tmp/policynim-quickstart.json
+          /tmp/policynim-wheel-smoke/bin/policynim quickstart --target local-cli --format json >/tmp/policynim-quickstart-local-cli.json
+          /tmp/policynim-wheel-smoke/bin/policynim quickstart --target local-mcp --format json >/tmp/policynim-quickstart-local-mcp.json
+          /tmp/policynim-wheel-smoke/bin/policynim doctor --format json >/tmp/policynim-doctor.json
+          /tmp/policynim-wheel-smoke/bin/policynim support-bundle >/tmp/policynim-support-bundle.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-smoke --format json >/tmp/policynim-mcp-smoke.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --help
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --client codex --target local-stdio --format json >/tmp/policynim-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --client claude-code --target local-stdio --format json >/tmp/policynim-claude-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-smoke --mcp-config-file /tmp/policynim-mcp-config.json --format json >/tmp/policynim-mcp-smoke-from-codex-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-smoke --mcp-config-file /tmp/policynim-claude-mcp-config.json --format json >/tmp/policynim-mcp-smoke-from-claude-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --target hosted-http --client codex --hosted-url https://example.invalid/mcp --bearer-token-env-var POLICYNIM_TOKEN --format json >/tmp/policynim-hosted-mcp-config.json
+          /tmp/policynim-wheel-smoke/bin/policynim mcp-config --target hosted-http --client claude-code --hosted-url https://example.invalid/mcp --bearer-token-env-var POLICYNIM_TOKEN --format json >/tmp/policynim-claude-hosted-mcp-config.json
+          python -m json.tool /tmp/policynim-quickstart.json >/tmp/policynim-quickstart-json-ok.txt
+          python -m json.tool /tmp/policynim-quickstart-local-cli.json >/tmp/policynim-quickstart-local-cli-json-ok.txt
+          python -m json.tool /tmp/policynim-quickstart-local-mcp.json >/tmp/policynim-quickstart-local-mcp-json-ok.txt
+          python -m json.tool /tmp/policynim-doctor.json >/tmp/policynim-doctor-json-ok.txt
+          python -m json.tool /tmp/policynim-support-bundle.json >/tmp/policynim-support-bundle-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-smoke.json >/tmp/policynim-mcp-smoke-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-config.json >/tmp/policynim-mcp-config-json-ok.txt
+          python -m json.tool /tmp/policynim-claude-mcp-config.json >/tmp/policynim-claude-mcp-config-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-smoke-from-codex-config.json >/tmp/policynim-mcp-smoke-from-codex-config-json-ok.txt
+          python -m json.tool /tmp/policynim-mcp-smoke-from-claude-config.json >/tmp/policynim-mcp-smoke-from-claude-config-json-ok.txt
+          python -m json.tool /tmp/policynim-hosted-mcp-config.json >/tmp/policynim-hosted-mcp-config-json-ok.txt
+          python -m json.tool /tmp/policynim-claude-hosted-mcp-config.json >/tmp/policynim-claude-hosted-mcp-config-json-ok.txt
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-codex-local-stdio /tmp/policynim-mcp-config.json
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-claude-code-local-stdio /tmp/policynim-claude-mcp-config.json
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-codex-hosted-http /tmp/policynim-hosted-mcp-config.json
+          python "${GITHUB_WORKSPACE}/scripts/release_check.py" --validate-json-contract mcp-config-claude-code-hosted-http /tmp/policynim-claude-hosted-mcp-config.json
           /tmp/policynim-wheel-smoke/bin/policynim --version
+
+      - name: Upload release wheel smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-wheel-smoke-evidence
+          path: |
+            /tmp/policynim-init-help.txt
+            /tmp/policynim-ingest-help.txt
+            /tmp/policynim-preflight-help.txt
+            /tmp/policynim-quickstart.json
+            /tmp/policynim-quickstart-local-cli.json
+            /tmp/policynim-quickstart-local-mcp.json
+            /tmp/policynim-doctor.json
+            /tmp/policynim-support-bundle.json
+            /tmp/policynim-mcp-smoke.json
+            /tmp/policynim-mcp-config.json
+            /tmp/policynim-claude-mcp-config.json
+            /tmp/policynim-mcp-smoke-from-codex-config.json
+            /tmp/policynim-mcp-smoke-from-claude-config.json
+            /tmp/policynim-hosted-mcp-config.json
+            /tmp/policynim-claude-hosted-mcp-config.json
+          if-no-files-found: error
+          retention-days: 30
 
   standalone-build:
     needs: verify
@@ -103,6 +218,8 @@ jobs:
             platform: windows-amd64
             archive: zip
     runs-on: ${{ matrix.os }}
+    env:
+      NVIDIA_API_KEY: ""
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -155,13 +272,75 @@ jobs:
       - name: Smoke standalone bundle
         shell: bash
         run: |
+          SMOKE_EVIDENCE="$PWD/smoke-evidence"
+          STANDALONE_SMOKE_CWD="$PWD/standalone-smoke-cwd"
+          mkdir -p "$SMOKE_EVIDENCE" "$STANDALONE_SMOKE_CWD"
           if [ "${{ matrix.platform }}" = "windows-amd64" ]; then
-            dist/policynim/policynim.exe --help
-            dist/policynim/policynim.exe --version
+            POLICYNIM_STANDALONE="$PWD/dist/policynim/policynim.exe"
           else
-            dist/policynim/policynim --help
-            dist/policynim/policynim --version
+            POLICYNIM_STANDALONE="$PWD/dist/policynim/policynim"
           fi
+          cd "$STANDALONE_SMOKE_CWD"
+          "$POLICYNIM_STANDALONE" --help
+          "$POLICYNIM_STANDALONE" init --help >"$SMOKE_EVIDENCE/policynim-standalone-init-help.txt"
+          "$POLICYNIM_STANDALONE" ingest --help >"$SMOKE_EVIDENCE/policynim-standalone-ingest-help.txt"
+          "$POLICYNIM_STANDALONE" preflight --help >"$SMOKE_EVIDENCE/policynim-standalone-preflight-help.txt"
+          "$POLICYNIM_STANDALONE" doctor --format json >"$SMOKE_EVIDENCE/policynim-standalone-doctor.json"
+          "$POLICYNIM_STANDALONE" quickstart --format json >"$SMOKE_EVIDENCE/policynim-standalone-quickstart.json"
+          "$POLICYNIM_STANDALONE" quickstart --target local-cli --format json >"$SMOKE_EVIDENCE/policynim-standalone-quickstart-local-cli.json"
+          "$POLICYNIM_STANDALONE" quickstart --target local-mcp --format json >"$SMOKE_EVIDENCE/policynim-standalone-quickstart-local-mcp.json"
+          "$POLICYNIM_STANDALONE" support-bundle >"$SMOKE_EVIDENCE/policynim-standalone-support-bundle.json"
+          "$POLICYNIM_STANDALONE" mcp-smoke --format json >"$SMOKE_EVIDENCE/policynim-standalone-mcp-smoke.json"
+          "$POLICYNIM_STANDALONE" mcp-config --help
+          "$POLICYNIM_STANDALONE" mcp-config --client codex --target local-stdio --format json >"$SMOKE_EVIDENCE/policynim-standalone-mcp-config.json"
+          "$POLICYNIM_STANDALONE" mcp-config --client claude-code --target local-stdio --format json >"$SMOKE_EVIDENCE/policynim-standalone-claude-mcp-config.json"
+          "$POLICYNIM_STANDALONE" mcp-smoke --mcp-config-file "$SMOKE_EVIDENCE/policynim-standalone-mcp-config.json" --format json >"$SMOKE_EVIDENCE/policynim-standalone-mcp-smoke-from-codex-config.json"
+          "$POLICYNIM_STANDALONE" mcp-smoke --mcp-config-file "$SMOKE_EVIDENCE/policynim-standalone-claude-mcp-config.json" --format json >"$SMOKE_EVIDENCE/policynim-standalone-mcp-smoke-from-claude-config.json"
+          "$POLICYNIM_STANDALONE" mcp-config --target hosted-http --client codex --hosted-url https://example.invalid/mcp --bearer-token-env-var POLICYNIM_TOKEN --format json >"$SMOKE_EVIDENCE/policynim-standalone-hosted-mcp-config.json"
+          "$POLICYNIM_STANDALONE" mcp-config --target hosted-http --client claude-code --hosted-url https://example.invalid/mcp --bearer-token-env-var POLICYNIM_TOKEN --format json >"$SMOKE_EVIDENCE/policynim-standalone-claude-hosted-mcp-config.json"
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-quickstart.json" >/tmp/policynim-standalone-quickstart-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-quickstart-local-cli.json" >/tmp/policynim-standalone-quickstart-local-cli-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-quickstart-local-mcp.json" >/tmp/policynim-standalone-quickstart-local-mcp-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-doctor.json" >/tmp/policynim-standalone-doctor-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-support-bundle.json" >/tmp/policynim-standalone-support-bundle-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-mcp-smoke.json" >/tmp/policynim-standalone-mcp-smoke-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-mcp-config.json" >/tmp/policynim-standalone-mcp-config-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-claude-mcp-config.json" >/tmp/policynim-standalone-claude-mcp-config-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-mcp-smoke-from-codex-config.json" >/tmp/policynim-standalone-mcp-smoke-from-codex-config-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-mcp-smoke-from-claude-config.json" >/tmp/policynim-standalone-mcp-smoke-from-claude-config-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-hosted-mcp-config.json" >/tmp/policynim-standalone-hosted-mcp-config-json-ok.txt
+          python -m json.tool "$SMOKE_EVIDENCE/policynim-standalone-claude-hosted-mcp-config.json" >/tmp/policynim-standalone-claude-hosted-mcp-config-json-ok.txt
+          python "$GITHUB_WORKSPACE/scripts/release_check.py" --validate-json-contract mcp-config-codex-local-stdio "$SMOKE_EVIDENCE/policynim-standalone-mcp-config.json"
+          python "$GITHUB_WORKSPACE/scripts/release_check.py" --validate-json-contract mcp-config-claude-code-local-stdio "$SMOKE_EVIDENCE/policynim-standalone-claude-mcp-config.json"
+          python "$GITHUB_WORKSPACE/scripts/release_check.py" --validate-json-contract mcp-config-codex-hosted-http "$SMOKE_EVIDENCE/policynim-standalone-hosted-mcp-config.json"
+          python "$GITHUB_WORKSPACE/scripts/release_check.py" --validate-json-contract mcp-config-claude-code-hosted-http "$SMOKE_EVIDENCE/policynim-standalone-claude-hosted-mcp-config.json"
+          grep -F "Usage: policynim init" "$SMOKE_EVIDENCE/policynim-standalone-init-help.txt"
+          grep -F "Usage: policynim ingest" "$SMOKE_EVIDENCE/policynim-standalone-ingest-help.txt"
+          grep -F "Usage: policynim preflight" "$SMOKE_EVIDENCE/policynim-standalone-preflight-help.txt"
+          "$POLICYNIM_STANDALONE" --version
+
+      - name: Upload standalone smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standalone-smoke-evidence-${{ matrix.platform }}
+          path: |
+            smoke-evidence/policynim-standalone-init-help.txt
+            smoke-evidence/policynim-standalone-ingest-help.txt
+            smoke-evidence/policynim-standalone-preflight-help.txt
+            smoke-evidence/policynim-standalone-quickstart.json
+            smoke-evidence/policynim-standalone-quickstart-local-cli.json
+            smoke-evidence/policynim-standalone-quickstart-local-mcp.json
+            smoke-evidence/policynim-standalone-doctor.json
+            smoke-evidence/policynim-standalone-support-bundle.json
+            smoke-evidence/policynim-standalone-mcp-smoke.json
+            smoke-evidence/policynim-standalone-mcp-config.json
+            smoke-evidence/policynim-standalone-claude-mcp-config.json
+            smoke-evidence/policynim-standalone-mcp-smoke-from-codex-config.json
+            smoke-evidence/policynim-standalone-mcp-smoke-from-claude-config.json
+            smoke-evidence/policynim-standalone-hosted-mcp-config.json
+            smoke-evidence/policynim-standalone-claude-hosted-mcp-config.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Archive Unix standalone bundle
         if: matrix.archive == 'tar'
@@ -200,14 +379,41 @@ jobs:
       - standalone-build
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Download release artifacts
+      - name: Download Python distribution for release
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: release-downloads
+          name: python-dist
+          path: release-downloads/python-dist
+
+      - name: Download Linux standalone bundle for release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: standalone-linux-amd64
+          path: release-downloads/standalone-linux-amd64
+
+      - name: Download Apple Silicon macOS standalone bundle for release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: standalone-darwin-arm64
+          path: release-downloads/standalone-darwin-arm64
+
+      - name: Download Intel macOS standalone bundle for release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: standalone-darwin-amd64
+          path: release-downloads/standalone-darwin-amd64
+
+      - name: Download Windows standalone bundle for release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: standalone-windows-amd64
+          path: release-downloads/standalone-windows-amd64
 
       - name: Resolve release tag
         env:
@@ -245,18 +451,58 @@ jobs:
           find release-downloads -type f -exec cp {} release-assets/ \;
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install.ps1 release-assets/install.ps1
-          (
-            cd release-assets
-            sha256sum * > SHA256SUMS
-          )
-          cat > release-notes.md <<'EOF'
-          PolicyNIM release artifacts:
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          python3 scripts/release_manifest.py release-assets \
+            --tag "$RELEASE_TAG" \
+            --source-sha "$GITHUB_SHA" \
+            --expected "install.sh" \
+            --expected "install.ps1" \
+            --expected "policynim-${RELEASE_VERSION}.tar.gz" \
+            --expected "policynim-${RELEASE_VERSION}-py3-none-any.whl" \
+            --expected "policynim-${RELEASE_TAG}-linux-amd64.tar.gz" \
+            --expected "policynim-${RELEASE_TAG}-darwin-arm64.tar.gz" \
+            --expected "policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" \
+            --expected "policynim-${RELEASE_TAG}-windows-amd64.zip"
+          python3 scripts/check_release_notes.py --write-github-release-notes release-notes.md
+          grep -F "SHA256SUMS" release-notes.md
+          grep -F "RELEASE_MANIFEST.json" release-notes.md
+          grep -F "artifact attestations" release-notes.md
 
-          - Python wheel and source distribution for `pipx install policynim`
-          - Standalone CLI bundles for Linux, Apple Silicon macOS, Intel macOS, and Windows
-          - Unix and PowerShell installer scripts
-          - SHA256SUMS for release asset verification
-          EOF
+      - name: Generate release asset attestations
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-checksums: release-assets/SHA256SUMS
+          show-summary: true
+
+      - name: Verify release asset attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p attestation-evidence
+          ASSET_PATH="release-assets/install.sh"
+          OUTPUT_PATH="attestation-evidence/install-sh-attestation.json"
+          for attempt in 1 2 3 4 5; do
+            if gh attestation verify "$ASSET_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --format json > "$OUTPUT_PATH"; then
+              python3 -m json.tool "$OUTPUT_PATH" >/tmp/policynim-attestation-json-ok.txt
+              exit 0
+            fi
+            if [ "$attempt" = "5" ]; then
+              break
+            fi
+            sleep 10
+          done
+          echo "Could not verify GitHub artifact attestation for ${ASSET_PATH}." >&2
+          exit 1
+
+      - name: Upload release attestation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-attestation-evidence
+          path: attestation-evidence/install-sh-attestation.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Create draft GitHub release
         env:
@@ -287,4 +533,4 @@ jobs:
 
       - name: Publish to PyPI
         # This Docker-based action publishes GHCR images under release tags, not commit SHA tags.
-        uses: pypa/gh-action-pypi-publish@v1.14.0 # 6733eb7d741f0b11ec6a39b58540dab7590f9b7d
+        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d # v1.14.0

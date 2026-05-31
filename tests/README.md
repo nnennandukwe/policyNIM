@@ -4,7 +4,7 @@ Current automated coverage includes:
 
 - Markdown policy parsing, metadata normalization, and deterministic chunking
 - Additional chunking edge cases around blank sections and repeated nested headings
-- Ingest orchestration with local LanceDB rebuild behavior
+- Ingest orchestration with local SQLite index rebuild behavior
 - Search orchestration with domain filters and missing-index handling
 - Runtime decision orchestration with compiled runtime rules and evidence-linked citations
 - Runtime execution orchestration with confirmation handling, redaction, and durable evidence persistence
@@ -45,6 +45,9 @@ Current automated coverage includes:
   JSON-first `compile`, JSON-first `preflight`, and `dump-index --count-only`
 - Interactive `init` standalone setup, config file writing, and missing-setup
   guidance
+- Local setup diagnostics through `policynim doctor`
+- Issue-ready diagnostics through `policynim support-bundle`
+- Local MCP `stdio` launch and tool-list smoke through `policynim mcp-smoke`
 - CLI output for `eval`
 - CLI output for `eval --backend default|nemo|nemo_evaluator|nat`
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`,

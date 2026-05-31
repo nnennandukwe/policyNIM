@@ -1,6 +1,6 @@
 [project]
 name = "policynim"
-version = "0.1.0"
+version = "0.1.1"
 description = "A policy-aware NVIDIA NIM engineering preflight layer for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -8,7 +8,7 @@ authors = [
   { name = "Nnenna Ndukwe" },
 ]
 license = { file = "LICENSE" }
-keywords = ["ai-agents", "mcp", "nvidia-nim", "policy", "preflight"]
+keywords = ["ai-agents", "cli", "code-quality", "mcp", "nvidia-nim", "policy", "preflight", "verification"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -18,6 +18,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Quality Assurance",
+  "Typing :: Typed",
 ]
 dependencies = [
   "arize-phoenix==13.21.0",
@@ -37,9 +38,14 @@ dependencies = [
 ]
 
 [project.urls]
+Changelog = "https://github.com/nnennandukwe/policyNIM/blob/main/CHANGELOG.md"
 Documentation = "https://github.com/nnennandukwe/policyNIM/tree/main/docs"
 Issues = "https://github.com/nnennandukwe/policyNIM/issues"
 Repository = "https://github.com/nnennandukwe/policyNIM"
+Releases = "https://github.com/nnennandukwe/policyNIM/releases"
+Roadmap = "https://github.com/nnennandukwe/policyNIM/blob/main/docs/roadmap.md"
+Security = "https://github.com/nnennandukwe/policyNIM/blob/main/SECURITY.md"
+Support = "https://github.com/nnennandukwe/policyNIM/blob/main/SUPPORT.md"
 
 [project.optional-dependencies]
 nvidia-guardrails = [

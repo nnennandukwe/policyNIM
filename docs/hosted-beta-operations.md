@@ -14,21 +14,55 @@ The hosted beta is the fastest path for a new user:
 5. Add the hosted MCP server to Codex or Claude Code.
 
 ```bash
-export POLICYNIM_TOKEN=<generated-beta-token>
-codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-var POLICYNIM_TOKEN
-claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
+export POLICYNIM_TOKEN='<generated-beta-token>'
+codex mcp add policynim --url 'https://<railway-domain>/mcp' --bearer-token-env-var POLICYNIM_TOKEN
+claude mcp add --transport http policynim 'https://<railway-domain>/mcp' --header "Authorization: Bearer $POLICYNIM_TOKEN"
 ```
 
 Then ask your client to call the MCP tools directly:
 
-- `Use policy_preflight for: Implement a refresh-token cleanup background job.`
-- `Use policy_search for: refresh token cleanup background job`
+- `Before editing, call policy_preflight for: Implement a refresh-token cleanup background job. Use the cited constraints in your implementation plan. If the result is insufficient_context, stop and call policy_search with a narrower query before changing files.`
+- `Use policy_search for: release installer checksum verification. Summarize the relevant cited policy lines before proposing a fix.`
+
+After sign-in, the portal dashboard shows both client setup commands and agent
+workflow prompts. The prompts make the first useful hosted MCP calls explicit:
+
+- `Before editing, call policy_preflight for: Implement a refresh-token cleanup background job. Use the cited constraints in your implementation plan. If the result is insufficient_context, stop and call policy_search with a narrower query before changing files.`
+- `Use policy_search for: release installer checksum verification. Summarize the relevant cited policy lines before proposing a fix.`
+- `List the PolicyNIM MCP tools and confirm policy_preflight and policy_search are available before starting implementation.`
+
+Installed CLI users can generate the selected client hosted first-run checklist
+and config command from the same `/mcp` URL:
+
+Codex:
+
+```bash
+policynim quickstart --target hosted-mcp --client codex --hosted-url 'https://<railway-domain>/mcp' --format json
+```
+
+Claude Code:
+
+```bash
+policynim quickstart --target hosted-mcp --client claude-code --hosted-url 'https://<railway-domain>/mcp' --format json
+```
 
 Hosted beta notes:
 
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
+- if you open the hosted `/mcp` URL in a browser before configuring a client,
+  the service routes you to `/beta` so you can create or rotate a token first.
+  MCP clients still receive protocol/auth responses from `/mcp`
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret
+- generated JSON with `"hosted_url_placeholder": true` is only a placeholder
+  smoke. Replace the hosted URL placeholder with the deployed `/mcp` URL before
+  adding the server to a client
+- generated quickstart JSON includes `client_commands`, the exact MCP client
+  command for the selected client to paste after exporting `POLICYNIM_TOKEN`
+- generated quickstart JSON includes `hosted_url` and `beta_portal_url`; with a
+  real `/mcp` URL, the token portal URL is derived from the same hosted origin
+- hosted `mcp-config --format json` includes the same `beta_portal_url` so
+  setup reports can show both the portal and MCP endpoint
 - `POLICYNIM_TOKEN` is a client-side shell variable only. It is not a
   PolicyNIM app setting
 - `POLICYNIM_MCP_BEARER_TOKENS` is optional and reserved for operator
@@ -45,11 +79,12 @@ deployed Railway service and NVIDIA-backed MCP tools.
 Required deployed-service checks:
 
 ```bash
-curl -fsS https://<railway-domain>/healthz
+curl -fsS 'https://<railway-domain>/healthz'
 
-export POLICYNIM_BETA_MCP_URL=https://<railway-domain>/mcp
-export POLICYNIM_BETA_MCP_TOKEN=<beta-token>
-uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
+export POLICYNIM_BETA_MCP_URL='https://<railway-domain>/mcp'
+export POLICYNIM_BETA_MCP_TOKEN='<beta-token>'
+uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py \
+  --junitxml hosted-smoke-evidence/policynim-hosted-smoke-junit.xml
 ```
 
 Expected evidence:
@@ -68,6 +103,9 @@ GitHub Actions smoke:
   service and a beta token are available
 - set repository secrets `POLICYNIM_BETA_MCP_URL` and
   `POLICYNIM_BETA_MCP_TOKEN` before dispatching the workflow
+- inspect the `hosted-smoke-evidence` artifact after the run; it contains
+  `policynim-hosted-smoke-junit.xml` with the live check names and pass/fail
+  status, not beta bearer tokens
 - the regular `CI` workflow remains offline and runs pytest with
   `-m "not live and not docker_live"`
 
@@ -107,7 +145,7 @@ GitHub Actions smoke:
   for detailed index path, volume, or file-permission failures
 - if `/healthz` says the local index is missing or empty, confirm the latest
   build received `NVIDIA_API_KEY`, rerun the deploy so `policynim ingest` bakes
-  the index, and confirm `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+  the index, and confirm `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
 - if the live smoke passes `/healthz` but fails `policy_search` or
   `policy_preflight`, inspect hosted MCP logs for `upstream_failure_class`
   before rotating auth tokens or rebuilding the image
@@ -125,8 +163,8 @@ DOCKER_BUILDKIT=1 docker build \
 
 Important container defaults:
 
-- the image bakes the LanceDB index at `/app/data/lancedb-baked`
-- the image sets `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+- the image bakes the SQLite index at `/app/data/index.sqlite3`
+- the image sets `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
 - the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the
   container
 - the builder stage reads the bake-time key from the temporary BuildKit secret
@@ -200,7 +238,7 @@ Recommended beta setup:
 3. Set at least these Railway service variables:
    - `NVIDIA_API_KEY`
    - `POLICYNIM_ENV=production`
-   - `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+   - `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
    - `POLICYNIM_MCP_HOST=0.0.0.0`
 4. Deploy once so the service becomes healthy on `/healthz`.
 5. Generate a Railway public domain for that service.
@@ -232,7 +270,7 @@ Operator and client env mapping:
 - client setup docs use:
   - `POLICYNIM_TOKEN=<generated portal token>`
 - live smoke tests use:
-  - `POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp`
+  - `POLICYNIM_BETA_MCP_URL='https://<generated-domain>/mcp'`
   - `POLICYNIM_BETA_MCP_TOKEN=<beta-token>`
 
 Important hosted behavior:
@@ -298,7 +336,7 @@ Optional checks stay explicitly opt-in:
 Opt-in Railway smoke test:
 
 ```bash
-export POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp
-export POLICYNIM_BETA_MCP_TOKEN=<beta-token>
+export POLICYNIM_BETA_MCP_URL='https://<generated-domain>/mcp'
+export POLICYNIM_BETA_MCP_TOKEN='<beta-token>'
 uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
 ```
