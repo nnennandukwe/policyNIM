@@ -21,6 +21,7 @@ class StandalonePaths:
 
     config_file: Path
     data_root: Path
+    index_db_path: Path
     lancedb_uri: Path
     runtime_rules_artifact_path: Path
     runtime_evidence_db_path: Path
@@ -44,6 +45,7 @@ def standalone_paths() -> StandalonePaths:
     return StandalonePaths(
         config_file=config_root / "config.env",
         data_root=data_root,
+        index_db_path=data_root / "index.sqlite3",
         lancedb_uri=data_root / "lancedb",
         runtime_rules_artifact_path=data_root / "runtime" / "runtime_rules.json",
         runtime_evidence_db_path=data_root / "runtime" / "runtime_evidence.sqlite3",
@@ -154,7 +156,7 @@ def build_init_config_contents(
     if include_data_paths:
         lines.extend(
             [
-                _env_assignment("POLICYNIM_LANCEDB_URI", standalone.lancedb_uri.as_posix()),
+                _env_assignment("POLICYNIM_INDEX_DB_PATH", standalone.index_db_path.as_posix()),
                 _env_assignment(
                     "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
                     standalone.runtime_rules_artifact_path.as_posix(),

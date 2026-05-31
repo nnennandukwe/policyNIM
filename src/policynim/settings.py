@@ -41,6 +41,7 @@ class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
 
         standalone = config_discovery.standalone_paths()
         return {
+            "index_db_path": standalone.index_db_path,
             "lancedb_uri": standalone.lancedb_uri,
             "runtime_rules_artifact_path": standalone.runtime_rules_artifact_path,
             "runtime_evidence_db_path": standalone.runtime_evidence_db_path,
@@ -64,6 +65,10 @@ class Settings(BaseSettings):
     nvidia_api_key: str | None = Field(default=None, validation_alias="NVIDIA_API_KEY")
     policynim_env: str = Field(default="development", validation_alias="POLICYNIM_ENV")
     corpus_dir: Path | None = None
+    index_db_path: Path = Field(
+        default=Path("data/index.sqlite3"),
+        validation_alias=AliasChoices("POLICYNIM_INDEX_DB_PATH", "POLICYNIM_LANCEDB_URI"),
+    )
     lancedb_uri: Path = Path("data/lancedb")
     lancedb_table: str = "policy_chunks"
     runtime_rules_artifact_path: Path = Path("data/runtime/runtime_rules.json")
@@ -171,6 +176,14 @@ class Settings(BaseSettings):
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:
         """Treat empty configured corpus values as unset."""
         return _normalize_optional_setting(value)
+
+    @field_validator("index_db_path", mode="before")
+    @classmethod
+    def validate_index_db_path(cls, value: Any) -> Any:
+        """Reject empty configured local index paths before Path coercion."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("POLICYNIM_INDEX_DB_PATH must not be empty.")
+        return value
 
     @field_validator("mcp_bearer_tokens", mode="before")
     @classmethod

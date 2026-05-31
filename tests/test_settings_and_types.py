@@ -45,6 +45,7 @@ def clear_config_precedence_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         "POLICYNIM_CONFIG_FILE",
         "POLICYNIM_DEFAULT_TOP_K",
+        "POLICYNIM_INDEX_DB_PATH",
         "POLICYNIM_LANCEDB_URI",
         "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
@@ -180,8 +181,51 @@ def test_settings_uses_user_config_and_standalone_defaults_when_no_local_dotenv(
     settings = Settings()
 
     assert settings.default_top_k == 8
+    assert settings.index_db_path == data_root / "index.sqlite3"
     assert settings.lancedb_uri == data_root / "lancedb"
     assert settings.eval_workspace_dir == data_root / "evals" / "workspace"
+
+
+def test_settings_uses_index_db_path_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("POLICYNIM_INDEX_DB_PATH", str(tmp_path / "index.sqlite3"))
+
+    settings = load_settings_without_env_file()
+
+    assert settings.index_db_path == tmp_path / "index.sqlite3"
+
+
+def test_settings_maps_deprecated_lancedb_uri_to_index_db_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("POLICYNIM_LANCEDB_URI", str(tmp_path / "legacy-index"))
+
+    settings = load_settings_without_env_file()
+
+    assert settings.index_db_path == tmp_path / "legacy-index"
+
+
+def test_settings_prefers_index_db_path_over_deprecated_lancedb_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("POLICYNIM_INDEX_DB_PATH", str(tmp_path / "index.sqlite3"))
+    monkeypatch.setenv("POLICYNIM_LANCEDB_URI", str(tmp_path / "legacy-index"))
+
+    settings = load_settings_without_env_file()
+
+    assert settings.index_db_path == tmp_path / "index.sqlite3"
+
+
+def test_settings_allows_constructor_index_db_path(tmp_path: Path) -> None:
+    settings = load_settings_without_env_file(index_db_path=tmp_path / "index.sqlite3")
+
+    assert settings.index_db_path == tmp_path / "index.sqlite3"
+
+
+def test_settings_rejects_empty_index_db_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICYNIM_INDEX_DB_PATH", "")
+
+    with pytest.raises(ValidationError, match="POLICYNIM_INDEX_DB_PATH must not be empty"):
+        load_settings_without_env_file()
 
 
 def test_settings_prefers_explicit_config_file_over_cwd_dotenv_and_user_config(
@@ -257,6 +301,7 @@ def test_settings_ignores_config_file_from_discovered_user_config(
 
     assert settings.default_top_k == 8
     assert settings.config_file is None
+    assert settings.index_db_path == data_root / "index.sqlite3"
     assert settings.lancedb_uri == data_root / "lancedb"
 
 
@@ -341,6 +386,11 @@ def test_settings_loads_quoted_init_config_values_with_paths_that_contain_spaces
     custom_corpus = tmp_path / "Custom Policies"
     custom_corpus.mkdir(parents=True)
     config_path = config_root / "config.env"
+    workspace = tmp_path / "Installed App Workspace"
+    workspace.mkdir()
+    package_root = tmp_path / "site-packages" / "policynim"
+    package_root.mkdir(parents=True)
+    monkeypatch.chdir(workspace)
 
     monkeypatch.setattr(
         "policynim.config_discovery.user_config_path",
@@ -350,18 +400,26 @@ def test_settings_loads_quoted_init_config_values_with_paths_that_contain_spaces
         "policynim.config_discovery.user_data_path",
         lambda *args, **kwargs: data_root,
     )
+    monkeypatch.setattr(
+        "policynim.config_discovery.__file__",
+        str(package_root / "config_discovery.py"),
+    )
 
     config_discovery.write_init_config_file(
         destination=config_path,
         api_key="quoted-key",
         corpus_dir=custom_corpus,
     )
+    config_text = config_path.read_text(encoding="utf-8")
+    assert "POLICYNIM_INDEX_DB_PATH" in config_text
+    assert "POLICYNIM_LANCEDB_URI" not in config_text
 
     settings_type = cast(Any, Settings)
     settings = settings_type(_env_file=config_path)
 
     assert settings.nvidia_api_key == "quoted-key"
     assert settings.corpus_dir == custom_corpus.resolve(strict=False)
+    assert settings.index_db_path == data_root / "index.sqlite3"
     assert settings.lancedb_uri == data_root / "lancedb"
     assert settings.runtime_rules_artifact_path == data_root / "runtime" / "runtime_rules.json"
     assert settings.runtime_evidence_db_path == data_root / "runtime" / "runtime_evidence.sqlite3"

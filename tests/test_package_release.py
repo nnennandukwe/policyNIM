@@ -15,12 +15,23 @@ def _project() -> dict[str, Any]:
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
 
-def test_runtime_dependencies_pin_lance_namespace_for_clean_wheel_installs() -> None:
-    """Prevent pip/pipx from resolving a lancedb-incompatible namespace client."""
+def test_runtime_dependencies_pin_sqlite_vec_for_portable_local_index() -> None:
+    """Keep the local index backend compatible with standalone release targets."""
     dependencies = set(_project()["project"]["dependencies"])
 
-    assert "lance-namespace==0.6.1" in dependencies
-    assert "lance-namespace-urllib3-client==0.6.1" in dependencies
+    assert "sqlite-vec==0.1.9" in dependencies
+
+
+def test_runtime_dependencies_do_not_ship_lancedb_backend() -> None:
+    """Prevent standalone releases from depending on missing macOS x86_64 wheels."""
+    dependencies = {
+        dependency.split("==", maxsplit=1)[0].lower()
+        for dependency in _project()["project"]["dependencies"]
+    }
+
+    assert "lancedb" not in dependencies
+    assert "lance-namespace" not in dependencies
+    assert "lance-namespace-urllib3-client" not in dependencies
 
 
 def test_package_metadata_is_ready_for_public_install_channels() -> None:

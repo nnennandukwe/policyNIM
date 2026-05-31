@@ -72,6 +72,9 @@ policynim init
 policynim ingest
 ```
 
+If your default Python is already supported, the shorter
+`pipx install policynim` and `uv tool install policynim` forms are also valid.
+
 Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
 machine does not expose `3.11` or `3.12` by name, pass the full path to that
 Python executable.

@@ -71,6 +71,41 @@ import policynim.services.runtime_execution
     assert result.returncode == 0, result.stderr
 
 
+def test_service_modules_import_without_legacy_lancedb_backend() -> None:
+    script = f"""
+import importlib.abc
+import sys
+
+sys.path.insert(0, {str(PROJECT_ROOT / "src")!r})
+
+class BlockLegacyLanceDB(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "lancedb" or fullname.startswith("lancedb."):
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockLegacyLanceDB())
+
+import policynim.services
+import policynim.services.ingest
+import policynim.services.eval
+import policynim.services.search
+import policynim.services.preflight
+import policynim.services.router
+import policynim.services.compiler
+import policynim.services.runtime_decision
+import policynim.storage
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
     mock_embedder = object()
     monkeypatch.setattr(ingest_module, "_create_default_embedder", lambda settings: mock_embedder)

@@ -64,6 +64,7 @@ class RecordingIndexStore:
 
 
 def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
+    pytest.importorskip("lancedb")
     policies_dir = tmp_path / "policies"
     artifact_path = tmp_path / "runtime" / "runtime_rules.json"
     write_policy(
