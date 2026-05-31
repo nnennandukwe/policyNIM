@@ -34,6 +34,17 @@ def test_runtime_dependencies_do_not_ship_lancedb_backend() -> None:
     assert "lance-namespace-urllib3-client" not in dependencies
 
 
+def test_hosted_legacy_index_extra_pins_temporary_lancedb_backend() -> None:
+    """Let hosted Linux builds keep working until service wiring moves to SQLite."""
+    optional_dependencies = _project()["project"]["optional-dependencies"]
+
+    assert optional_dependencies["hosted-legacy-index"] == [
+        "lance-namespace==0.6.1",
+        "lance-namespace-urllib3-client==0.6.1",
+        "lancedb==0.27.1",
+    ]
+
+
 def test_package_metadata_is_ready_for_public_install_channels() -> None:
     """Keep PyPI and GitHub release metadata useful for first-time installers."""
     project = _project()["project"]

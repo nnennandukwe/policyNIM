@@ -50,6 +50,14 @@ def test_container_builds_include_project_metadata_files() -> None:
         assert "COPY pyproject.toml uv.lock README.md LICENSE ./" in text
 
 
+def test_hosted_container_builds_sync_legacy_index_extra() -> None:
+    """Keep hosted deploys alive while the default package removes LanceDB."""
+    for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
+        text = _read_text(path)
+
+        assert "uv sync --frozen --extra hosted-legacy-index" in text
+
+
 def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
     text = " ".join(_read_text(HOSTED_OPERATIONS).split())
 

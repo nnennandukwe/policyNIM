@@ -16,7 +16,9 @@ COPY src ./src
 COPY policies ./policies
 COPY evals ./evals
 
-RUN uv sync --frozen
+# Hosted services still use the legacy LanceDB store until service wiring moves
+# to SQLiteVecIndexStore; default package installs stay portable.
+RUN uv sync --frozen --extra hosted-legacy-index
 RUN --mount=type=secret,id=nvidia_api_key,required=true \
     sh -c 'NVIDIA_API_KEY="$(cat /run/secrets/nvidia_api_key)" uv run policynim ingest'
 
