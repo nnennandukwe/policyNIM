@@ -15,5 +15,7 @@ __pycache__/
 build/
 data/
 dist/
+docs/launch-evidence.json
+launch-notes/
 *.pyc
 .threadloop/state/

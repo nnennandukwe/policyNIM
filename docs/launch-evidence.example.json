@@ -1,0 +1,62 @@
+{
+  "github_artifact_attestations": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "github_labels_applied": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "github_topics_applied": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "github_release_artifacts": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "github_release_install_smoke": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "hosted_beta_live_smoke": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "hosted_mcp_domain": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "pypi_project": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "pypi_install_smoke": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  },
+  "real_mcp_client_session": {
+    "summary": "",
+    "reference": "",
+    "verified_by": "",
+    "verified_at": ""
+  }
+}

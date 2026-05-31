@@ -1,0 +1,13 @@
+{
+  "client": "codex",
+  "transport": "hosted-http",
+  "server_name": "policynim",
+  "setup_command": "",
+  "tools": [
+    "policy_preflight",
+    "policy_search"
+  ],
+  "called_tool": "policy_preflight",
+  "reference": "",
+  "secrets_included": false
+}
