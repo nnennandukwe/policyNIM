@@ -214,7 +214,7 @@ Run the standard quality gates:
 ```bash
 uv run ruff check
 uv run pytest -q
-uv run pyright
+uv run --group test --group dev pyright
 ```
 
 For live or hosted-only checks, use the coverage notes in

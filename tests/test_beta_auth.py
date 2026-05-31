@@ -46,8 +46,8 @@ class _StubGitHubClient:
     def __enter__(self) -> _StubGitHubClient:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
-        return None
+    def __exit__(self, exc_type, exc, tb) -> None:
+        pass
 
     def post(self, url: str, data: dict[str, str]) -> _StubResponse:
         return self._post_response

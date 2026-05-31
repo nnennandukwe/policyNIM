@@ -7,6 +7,7 @@ from pathlib import Path
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError
+from policynim.hosted_urls import optional_hosted_mcp_url
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -71,7 +72,7 @@ def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHe
     return RuntimeHealthService(
         index_store=index_store,
         table_name=index_store.table_name,
-        mcp_url=_derive_mcp_url(active_settings),
+        mcp_url=optional_hosted_mcp_url(active_settings),
     )
 
 
@@ -178,12 +179,6 @@ def _rebuild_hosted_runtime_index(
         result.chunk_count,
         result.document_count,
     )
-
-
-def _derive_mcp_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
 
 
 def format_health_failure_reason(exc: Exception) -> str:

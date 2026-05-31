@@ -47,7 +47,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run Pyright
-        run: uv run pyright
+        run: uv run --group test --group dev pyright
 
       - name: Run offline pytest
         run: uv run pytest -q -m "not live and not docker_live"

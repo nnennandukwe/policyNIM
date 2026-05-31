@@ -31,7 +31,7 @@ jobs:
         run: uv run ruff check
 
       - name: Run Pyright
-        run: uv run pyright
+        run: uv run --group test --group dev pyright
 
   test:
     runs-on: ubuntu-24.04

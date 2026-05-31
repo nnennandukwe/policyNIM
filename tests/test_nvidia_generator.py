@@ -61,7 +61,7 @@ class RaisingChatCompletions:
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
-    def create(self, **kwargs):  # noqa: ANN003
+    def create(self, **kwargs):
         raise self._exc
 
 

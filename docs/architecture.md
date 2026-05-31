@@ -215,11 +215,19 @@ Important evaluation rules:
 
 ### `src/policynim/settings.py`
 
-- The only module that reads environment variables directly.
 - Exposes validated application settings to the rest of the package, including
   hosted MCP port resolution from explicit app config or Railway `PORT`, plus a
   production-only default bind of `0.0.0.0` when Railway injects `PORT` and
   `POLICYNIM_MCP_HOST` is unset.
+- Remains the typed application-facing config surface; raw env-file discovery
+  and process-env precedence live in `config_discovery.py`.
+
+### `src/policynim/config_discovery.py`
+
+- Discovers checkout, cwd, and standalone env-file precedence.
+- Reads process environment for config-file overrides and hosted detection.
+- Keeps standalone init-path selection and env-file discovery out of the typed
+  settings model.
 
 ### `src/policynim/types.py`
 

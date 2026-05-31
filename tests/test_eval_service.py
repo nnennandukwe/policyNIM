@@ -40,7 +40,6 @@ class MockIngestService:
 
     def run(self):
         self._seen_paths.append(self._settings.index_db_path)
-        return None
 
     def close(self) -> None:
         """Record that live-eval cleanup closed the ingest service."""
@@ -76,7 +75,7 @@ class MockSearchService:
         )
 
     def close(self) -> None:
-        return None
+        pass
 
 
 class MockPreflightService:
