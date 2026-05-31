@@ -85,6 +85,23 @@ def test_release_workflow_uses_pinned_actions_and_trusted_pypi_publish() -> None
     assert "TWINE_PASSWORD" not in text
 
 
+def test_release_workflow_publishes_pypi_after_release_assets() -> None:
+    """Do not let immutable PyPI files publish before release assets pass."""
+    text = _read_text(RELEASE_WORKFLOW)
+
+    publish_pypi_job = re.search(
+        r"publish-pypi:\n(?P<body>.*?)(?=\n  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+        re.S,
+    )
+    assert publish_pypi_job is not None
+    body = publish_pypi_job.group("body")
+
+    assert "needs:\n      - publish-github-release" in body
+    assert "pypa/gh-action-pypi-publish@" in body
+    assert text.index("publish-github-release:") < text.index("publish-pypi:")
+
+
 def test_release_workflow_uploads_expected_install_artifacts() -> None:
     """Lock the public artifact contract used by curl and PowerShell installers."""
     text = _read_text(RELEASE_WORKFLOW)

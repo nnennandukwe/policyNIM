@@ -74,7 +74,9 @@ downloaded asset.
 
 PyPI publishing uses PyPI trusted publishing through GitHub OIDC. Configure the
 PyPI project to trust this repository and the `pypi` GitHub environment before
-using the `publish-pypi` job.
+using the `publish-pypi` job. The release workflow runs `publish-pypi` only
+after the GitHub release asset job succeeds, because PyPI versions are immutable
+once uploaded.
 
 For normal releases, publish PyPI from the final `vX.Y.Z` tag. For manual
 workflow dispatches, leave `publish_pypi=false` unless you intentionally want to
