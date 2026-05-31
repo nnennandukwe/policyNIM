@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import platform
+import re
 import shlex
 import sys
 from collections.abc import Sequence
@@ -67,6 +68,7 @@ _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
 _EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
+_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
 
 app = typer.Typer(
     add_completion=False,
@@ -1941,6 +1943,8 @@ def _normalize_hosted_mcp_url(value: str | None) -> str:
         raise PolicyNIMError(
             "Hosted MCP URL must start with http:// or https:// and include a host."
         )
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        raise PolicyNIMError("Hosted MCP URL must not include embedded credentials.")
     if parsed.path.rstrip("/") != "/mcp":
         raise PolicyNIMError("Hosted MCP URL must point to the /mcp endpoint.")
     return stripped
@@ -2325,13 +2329,15 @@ def _support_bundle_quickstart_summary(
 
 def _redact_support_bundle_paths(bundle: dict[str, object]) -> tuple[dict[str, object], list[str]]:
     """Redact local path prefixes from a support bundle."""
-    replacements = _support_bundle_path_replacements()
+    replacements = _support_bundle_path_replacements(bundle)
     redacted = _replace_local_path_prefixes(bundle, replacements)
     markers = sorted({marker for _, marker in replacements})
     return cast(dict[str, object], redacted), markers
 
 
-def _support_bundle_path_replacements() -> list[tuple[str, str]]:
+def _support_bundle_path_replacements(
+    bundle: dict[str, object] | None = None,
+) -> list[tuple[str, str]]:
     """Return local path prefixes and the markers that should replace them."""
     candidates: list[tuple[Path, str]] = [
         (Path(sys.executable), "<python-executable>"),
@@ -2359,7 +2365,91 @@ def _support_bundle_path_replacements() -> list[tuple[str, str]]:
         ):
             if candidate and candidate != "/":
                 replacements[candidate] = marker
+
+    if bundle is not None:
+        for path_text in _support_bundle_discovered_path_prefixes(bundle, replacements):
+            replacements.setdefault(path_text, "<local-path>")
     return sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True)
+
+
+def _support_bundle_discovered_path_prefixes(
+    bundle: dict[str, object],
+    known_replacements: dict[str, str],
+) -> list[str]:
+    """Find additional local path prefixes embedded in support-bundle values."""
+    prefixes: set[str] = set()
+    for path_text in _support_bundle_absolute_path_strings(bundle):
+        if _support_bundle_path_is_known(path_text, known_replacements):
+            continue
+        path_prefix = _support_bundle_redaction_prefix(path_text)
+        if path_prefix is None or _support_bundle_path_is_known(path_prefix, known_replacements):
+            continue
+        prefixes.add(path_prefix)
+    return sorted(prefixes, key=len, reverse=True)
+
+
+def _support_bundle_absolute_path_strings(value: object) -> list[str]:
+    """Extract path-like absolute strings from a support-bundle value."""
+    paths: set[str] = set()
+    if isinstance(value, str):
+        paths.update(_support_bundle_absolute_path_tokens(value))
+    elif isinstance(value, list):
+        for item in value:
+            paths.update(_support_bundle_absolute_path_strings(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            paths.update(_support_bundle_absolute_path_strings(item))
+    return sorted(paths, key=len, reverse=True)
+
+
+def _support_bundle_absolute_path_tokens(value: str) -> list[str]:
+    """Return absolute path tokens found inside a support-bundle string."""
+    tokens = [value]
+    try:
+        tokens.extend(shlex.split(value))
+    except ValueError:
+        tokens.extend(value.split())
+    tokens.extend(match.group(2) for match in _POSIX_PATH_TOKEN_RE.finditer(value))
+
+    paths: set[str] = set()
+    for token in tokens:
+        candidate = token.strip("`'\".,;:()[]{}")
+        if _support_bundle_token_is_absolute_path(candidate):
+            paths.add(candidate)
+    return sorted(paths, key=len, reverse=True)
+
+
+def _support_bundle_token_is_absolute_path(value: str) -> bool:
+    """Return whether a token looks like an absolute local filesystem path."""
+    if "/ABS/PATH/" in value:
+        return False
+    if value.startswith("/") and not value.startswith("//"):
+        return len(Path(value).parts) >= 3
+    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"\\", "/"}
+
+
+def _support_bundle_redaction_prefix(path_text: str) -> str | None:
+    """Return the parent prefix to redact for an absolute path string."""
+    if path_text.startswith("/"):
+        path = Path(path_text).expanduser()
+        parent = path.parent
+        if parent == path or parent.as_posix() == "/":
+            return None
+        return parent.as_posix()
+    return None
+
+
+def _support_bundle_path_is_known(
+    path_text: str,
+    replacements: dict[str, str],
+) -> bool:
+    """Return whether a path already falls under an existing redaction prefix."""
+    normalized = path_text.rstrip("/")
+    for existing in replacements:
+        prefix = existing.rstrip("/")
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return False
 
 
 def _replace_local_path_prefixes(value: object, replacements: Sequence[tuple[str, str]]) -> object:
@@ -2477,6 +2567,7 @@ def _mcp_stdio_smoke_command_from_config_file(path: Path) -> tuple[list[str], Pa
 def _codex_stdio_command_from_config_payload(
     payload: dict[object, object],
 ) -> tuple[list[str], Path | None]:
+    """Return the launch command and working directory from a Codex MCP config."""
     codex_app = payload.get("codex_app")
     if not isinstance(codex_app, dict):
         raise PolicyNIMError("Codex MCP config file is missing codex_app.")
@@ -2494,6 +2585,7 @@ def _codex_stdio_command_from_config_payload(
 def _claude_stdio_command_from_config_payload(
     payload: dict[object, object],
 ) -> tuple[list[str], Path | None]:
+    """Return the launch command and working directory from a Claude Code MCP config."""
     config = payload.get("config")
     server_name = payload.get("server_name")
     if not isinstance(config, dict) or not isinstance(server_name, str):
@@ -2511,6 +2603,7 @@ def _claude_stdio_command_from_config_payload(
 
 
 def _mcp_stdio_launch_command(command: object, arguments: object) -> list[str]:
+    """Validate and return a local MCP stdio launch command."""
     if not isinstance(command, str) or not command:
         raise PolicyNIMError("MCP config file must include a non-empty stdio command.")
     if not isinstance(arguments, list) or any(
@@ -2521,6 +2614,7 @@ def _mcp_stdio_launch_command(command: object, arguments: object) -> list[str]:
 
 
 def _optional_path(value: object) -> Path | None:
+    """Convert a non-empty string value to a path when present."""
     if not isinstance(value, str) or not value:
         return None
     return Path(value)

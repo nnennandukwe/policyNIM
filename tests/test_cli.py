@@ -1981,6 +1981,32 @@ def test_support_bundle_does_not_label_installed_cwd_as_repo_root(
     assert "workspace" not in result.stdout
 
 
+def test_support_bundle_redacts_custom_absolute_runtime_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Redact absolute runtime path overrides outside default config roots."""
+    _, config_root, _ = configure_standalone_cli_environment(monkeypatch, tmp_path)
+    custom_runtime = tmp_path / "external-runtime"
+    custom_index = custom_runtime / "index.sqlite3"
+    write_env_file(
+        config_root / "config.env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_INDEX_DB_PATH=str(custom_index),
+    )
+    monkeypatch.setattr("policynim.interfaces.cli._resolve_installed_version", lambda: "1.2.3")
+
+    result = runner.invoke(app, ["support-bundle"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["doctor"]["paths"]["index_db_path"] == "<local-path>/index.sqlite3"
+    assert "<local-path>" in payload["redaction"]["path_markers"]
+    assert str(custom_runtime) not in result.stdout
+    assert str(custom_index) not in result.stdout
+    assert "nvapi" not in result.stdout.lower()
+
+
 def test_support_bundle_can_include_local_paths_for_private_triage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3101,6 +3127,24 @@ def test_mcp_config_rejects_non_http_hosted_url() -> None:
 
     assert result.exit_code == 1
     assert "Hosted MCP URL must start with http:// or https://" in result.stderr
+
+
+def test_mcp_config_rejects_hosted_url_userinfo() -> None:
+    """Reject hosted URLs that could echo embedded credentials into setup output."""
+    result = runner.invoke(
+        app,
+        [
+            "mcp-config",
+            "--target",
+            "hosted-http",
+            "--hosted-url",
+            "https://user:pass@policy.example/mcp",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Hosted MCP URL must not include embedded credentials." in result.stderr
+    assert "user:pass" not in result.stdout
 
 
 def test_mcp_config_rejects_hosted_http_with_local_only_options(tmp_path: Path) -> None:
