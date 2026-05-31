@@ -28,7 +28,7 @@ from policynim.services.preflight import PreflightService
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_legacy_index_store
+from policynim.storage import create_index_store
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -311,7 +311,7 @@ class EvalService:
         """Run live eval cases against an isolated temporary index."""
         with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
             temp_settings = self._settings.model_copy(
-                update={"lancedb_uri": Path(temp_dir) / "lancedb"}
+                update={"index_db_path": Path(temp_dir) / "index.sqlite3"}
             )
             ingest_service = create_ingest_service(temp_settings)
             try:
@@ -1259,7 +1259,7 @@ def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> 
 
     return SearchService(
         embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=create_legacy_index_store(settings),
+        index_store=create_index_store(settings),
         reranker=NVIDIAReranker.from_settings(settings) if rerank_enabled else None,
     )
 
@@ -1278,7 +1278,7 @@ def _create_live_preflight_service(
 
     return PreflightService(
         embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=create_legacy_index_store(settings),
+        index_store=create_index_store(settings),
         reranker=(
             NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
         ),
@@ -1330,7 +1330,7 @@ def _create_live_regeneration_service(
     try:
         compiler_service = PolicyCompilerService(
             embedder=NVIDIAEmbedder.from_settings(settings),
-            index_store=create_legacy_index_store(settings),
+            index_store=create_index_store(settings),
             reranker=(
                 NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
             ),

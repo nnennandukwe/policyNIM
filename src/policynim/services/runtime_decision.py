@@ -21,7 +21,7 @@ from policynim.errors import (
 )
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_legacy_index_store
+from policynim.storage import create_index_store
 from policynim.types import (
     Citation,
     CompiledRuntimeRule,
@@ -122,7 +122,7 @@ def create_runtime_decision_service(settings: Settings | None = None) -> Runtime
     """Build the default runtime decision service from application settings."""
     active_settings = settings or get_settings()
     return RuntimeDecisionService(
-        index_store=create_legacy_index_store(active_settings),
+        index_store=create_index_store(active_settings),
         runtime_rules_artifact_path=resolve_runtime_path(
             active_settings.runtime_rules_artifact_path
         ),

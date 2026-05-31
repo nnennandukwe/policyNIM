@@ -34,15 +34,19 @@ def test_runtime_dependencies_do_not_ship_lancedb_backend() -> None:
     assert "lance-namespace-urllib3-client" not in dependencies
 
 
-def test_hosted_legacy_index_extra_pins_temporary_lancedb_backend() -> None:
-    """Let hosted Linux builds keep working until service wiring moves to SQLite."""
+def test_optional_dependencies_do_not_ship_lancedb_backend() -> None:
+    """Keep optional extras from reintroducing the retired LanceDB backend."""
     optional_dependencies = _project()["project"]["optional-dependencies"]
+    dependency_names = {
+        dependency.split("==", maxsplit=1)[0].lower()
+        for dependencies in optional_dependencies.values()
+        for dependency in dependencies
+    }
 
-    assert optional_dependencies["hosted-legacy-index"] == [
-        "lance-namespace==0.6.1",
-        "lance-namespace-urllib3-client==0.6.1",
-        "lancedb==0.27.1",
-    ]
+    assert "hosted-legacy-index" not in optional_dependencies
+    assert "lancedb" not in dependency_names
+    assert "lance-namespace" not in dependency_names
+    assert "lance-namespace-urllib3-client" not in dependency_names
 
 
 def test_package_metadata_is_ready_for_public_install_channels() -> None:

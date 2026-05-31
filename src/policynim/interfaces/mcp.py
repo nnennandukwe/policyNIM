@@ -41,6 +41,7 @@ from policynim.services import (
     format_health_failure_reason,
 )
 from policynim.settings import Settings, get_settings
+from policynim.storage import create_index_store
 from policynim.types import (
     MAX_TOP_K,
     MIN_TOP_K,
@@ -512,6 +513,7 @@ def _register_beta_routes(
 
 def _register_health_route(server: FastMCP, settings: Settings) -> None:
     """Register a public readiness endpoint for hosted HTTP runtimes."""
+    table_name = create_index_store(settings).table_name
     try:
         health_service = create_runtime_health_service(settings)
         fallback_reason = "Local index readiness could not be inspected."
@@ -525,7 +527,7 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
         result = HealthCheckResult(
             status="error",
             ready=False,
-            table_name=settings.lancedb_table,
+            table_name=table_name,
             row_count=0,
             mcp_url=_derive_mcp_url(settings),
             reason=reason,

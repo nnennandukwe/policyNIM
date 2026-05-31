@@ -1,13 +1,13 @@
 """Storage adapters for PolicyNIM."""
 
 from policynim.storage.auth_store import AuthStore
-from policynim.storage.index_store import create_legacy_index_store
-from policynim.storage.lancedb import LanceDBIndexStore
+from policynim.storage.index_store import create_index_store
 from policynim.storage.runtime_evidence import RuntimeEvidenceStore
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
 __all__ = [
     "AuthStore",
-    "LanceDBIndexStore",
     "RuntimeEvidenceStore",
-    "create_legacy_index_store",
+    "SQLiteVecIndexStore",
+    "create_index_store",
 ]

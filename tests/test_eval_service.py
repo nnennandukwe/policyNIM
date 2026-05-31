@@ -39,7 +39,7 @@ class MockIngestService:
         self._closed = closed
 
     def run(self):
-        self._seen_paths.append(self._settings.lancedb_uri)
+        self._seen_paths.append(self._settings.index_db_path)
         return None
 
     def close(self) -> None:
@@ -296,7 +296,7 @@ def test_eval_service_regeneration_runs_for_preflight_cases_only(tmp_path: Path)
 def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
     """Close live ingest while keeping caller index settings unchanged."""
     settings = Settings(
-        lancedb_uri=tmp_path / "caller-index",
+        index_db_path=tmp_path / "caller-index.sqlite3",
         eval_workspace_dir=tmp_path / "workspace",
     )
     seen_paths: list[Path] = []
@@ -322,8 +322,8 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
 
     assert result.mode == "live"
     assert seen_paths
-    assert seen_paths[0] != settings.lancedb_uri
-    assert settings.lancedb_uri == tmp_path / "caller-index"
+    assert seen_paths[0] != settings.index_db_path
+    assert settings.index_db_path == tmp_path / "caller-index.sqlite3"
     assert closed == [True]
 
 
@@ -331,7 +331,7 @@ def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
-        lancedb_uri=tmp_path / "caller-index",
+        index_db_path=tmp_path / "caller-index.sqlite3",
         eval_workspace_dir=tmp_path / "workspace",
     )
     seen_paths: list[Path] = []
@@ -366,7 +366,7 @@ def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
 
     assert result.backend == "nemo"
     assert seen_paths
-    assert seen_paths[0] != settings.lancedb_uri
+    assert seen_paths[0] != settings.index_db_path
     assert closed == [True]
 
 

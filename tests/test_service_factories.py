@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 
 import policynim.services.compiler as compiler_module
+import policynim.services.dump as dump_module
 import policynim.services.eval as eval_module
+import policynim.services.health as health_module
 import policynim.services.ingest as ingest_module
 import policynim.services.preflight as preflight_module
 import policynim.services.router as router_module
@@ -17,6 +19,7 @@ import policynim.services.runtime_execution as runtime_execution_module
 import policynim.services.search as search_module
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,8 +42,8 @@ class MockRuntimeEvidenceStore:
 def mock_index_store_from_settings(settings: Settings) -> MockIndexStore:
     """Build a mock index store from settings using runtime path semantics."""
     return MockIndexStore(
-        uri=resolve_runtime_path(settings.lancedb_uri),
-        table_name=settings.lancedb_table,
+        uri=resolve_runtime_path(settings.index_db_path),
+        table_name=SQLiteVecIndexStore(path=settings.index_db_path).table_name,
     )
 
 
@@ -116,52 +119,25 @@ import policynim.storage
     assert result.returncode == 0, result.stderr
 
 
-def test_legacy_index_factory_reports_missing_backend() -> None:
-    """Fail with ConfigurationError instead of raw ModuleNotFoundError."""
-    script = f"""
-import importlib.abc
-import sys
+def test_create_index_store_resolves_index_db_path(tmp_path: Path) -> None:
+    """Build the canonical SQLite index store from the configured path."""
+    from policynim.storage import create_index_store
 
-sys.path.insert(0, {str(PROJECT_ROOT / "src")!r})
+    store = create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3"))
 
-class BlockLegacyLanceDB(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == "lancedb" or fullname.startswith("lancedb."):
-            raise ModuleNotFoundError(fullname)
-        return None
-
-sys.meta_path.insert(0, BlockLegacyLanceDB())
-
-from policynim.errors import ConfigurationError
-from policynim.settings import Settings
-from policynim.storage import create_legacy_index_store
-
-try:
-    create_legacy_index_store(Settings())
-except ConfigurationError as exc:
-    assert exc.failure_class == "missing_index_backend"
-    assert "hosted-legacy-index" in str(exc)
-else:
-    raise AssertionError("expected ConfigurationError")
-    """
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
+    assert isinstance(store, SQLiteVecIndexStore)
+    assert store.path == (tmp_path / "index.sqlite3").resolve(strict=False)
+    assert store.table_name == "policy_chunks"
 
 
 def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
     mock_embedder = object()
     monkeypatch.setattr(ingest_module, "_create_default_embedder", lambda settings: mock_embedder)
-    monkeypatch.setattr(ingest_module, "create_legacy_index_store", mock_index_store_from_settings)
+    monkeypatch.setattr(ingest_module, "create_index_store", mock_index_store_from_settings)
 
     settings = Settings(
         corpus_dir=tmp_path / "policies",
-        lancedb_uri=tmp_path / "ingest-index",
+        index_db_path=tmp_path / "ingest-index.sqlite3",
         runtime_rules_artifact_path=tmp_path / "runtime" / "rules.json",
         nvidia_embed_model="test-embed-model",
     )
@@ -170,8 +146,8 @@ def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: 
 
     assert service._embedder is mock_embedder
     assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "ingest-index").resolve(strict=False)
-    assert service._index_store.table_name == settings.lancedb_table
+    assert service._index_store.uri == (tmp_path / "ingest-index.sqlite3").resolve(strict=False)
+    assert service._index_store.table_name == "policy_chunks"
     assert service._corpus_root == (tmp_path / "policies").resolve(strict=False)
     assert service._embedding_model == "test-embed-model"
     assert service._runtime_rules_artifact_path == (tmp_path / "runtime" / "rules.json").resolve(
@@ -187,17 +163,17 @@ def test_create_search_service_builds_default_components(monkeypatch, tmp_path: 
         "_create_default_search_components",
         lambda settings: (mock_embedder, mock_reranker),
     )
-    monkeypatch.setattr(search_module, "create_legacy_index_store", mock_index_store_from_settings)
+    monkeypatch.setattr(search_module, "create_index_store", mock_index_store_from_settings)
 
-    settings = Settings(lancedb_uri=tmp_path / "search-index")
+    settings = Settings(index_db_path=tmp_path / "search-index.sqlite3")
 
     service = search_module.create_search_service(settings)
 
     assert service._embedder is mock_embedder
     assert service._reranker is mock_reranker
     assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "search-index").resolve(strict=False)
-    assert service._index_store.table_name == settings.lancedb_table
+    assert service._index_store.uri == (tmp_path / "search-index.sqlite3").resolve(strict=False)
+    assert service._index_store.table_name == "policy_chunks"
 
 
 def test_create_policy_router_service_builds_default_components(
@@ -211,17 +187,17 @@ def test_create_policy_router_service_builds_default_components(
         "_create_default_router_components",
         lambda settings: (mock_embedder, mock_reranker),
     )
-    monkeypatch.setattr(router_module, "create_legacy_index_store", mock_index_store_from_settings)
+    monkeypatch.setattr(router_module, "create_index_store", mock_index_store_from_settings)
 
-    settings = Settings(lancedb_uri=tmp_path / "router-index")
+    settings = Settings(index_db_path=tmp_path / "router-index.sqlite3")
 
     service = router_module.create_policy_router_service(settings)
 
     assert service._embedder is mock_embedder
     assert service._reranker is mock_reranker
     assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "router-index").resolve(strict=False)
-    assert service._index_store.table_name == settings.lancedb_table
+    assert service._index_store.uri == (tmp_path / "router-index.sqlite3").resolve(strict=False)
+    assert service._index_store.table_name == "policy_chunks"
 
 
 def test_create_policy_compiler_service_builds_default_components(
@@ -241,7 +217,7 @@ def test_create_policy_compiler_service_builds_default_components(
         lambda settings: mock_compiler,
     )
 
-    settings = Settings(lancedb_uri=tmp_path / "compiler-index")
+    settings = Settings(index_db_path=tmp_path / "compiler-index.sqlite3")
 
     service = compiler_module.create_policy_compiler_service(settings)
 
@@ -266,7 +242,7 @@ def test_create_preflight_service_builds_default_components(
         lambda settings: mock_generator,
     )
 
-    settings = Settings(lancedb_uri=tmp_path / "preflight-index")
+    settings = Settings(index_db_path=tmp_path / "preflight-index.sqlite3")
 
     service = preflight_module.create_preflight_service(settings)
 
@@ -314,20 +290,20 @@ def test_create_runtime_decision_service_uses_runtime_paths(
 ) -> None:
     monkeypatch.setattr(
         runtime_decision_module,
-        "create_legacy_index_store",
+        "create_index_store",
         mock_index_store_from_settings,
     )
 
     settings = Settings(
-        lancedb_uri=tmp_path / "runtime-index",
+        index_db_path=tmp_path / "runtime-index.sqlite3",
         runtime_rules_artifact_path=tmp_path / "runtime" / "runtime_rules.json",
     )
 
     service = runtime_decision_module.create_runtime_decision_service(settings)
 
     assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "runtime-index").resolve(strict=False)
-    assert service._index_store.table_name == settings.lancedb_table
+    assert service._index_store.uri == (tmp_path / "runtime-index.sqlite3").resolve(strict=False)
+    assert service._index_store.table_name == "policy_chunks"
     assert service._runtime_rules_artifact_path == (
         tmp_path / "runtime" / "runtime_rules.json"
     ).resolve(strict=False)
@@ -339,6 +315,38 @@ def test_create_eval_service_uses_runtime_workspace_path(tmp_path: Path) -> None
     service = eval_module.create_eval_service(settings)
 
     assert service.workspace_path == (tmp_path / "eval-workspace").resolve(strict=False)
+
+
+def test_create_index_dump_service_uses_sqlite_index_factory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Wire index dump service through the canonical SQLite index factory."""
+    monkeypatch.setattr(dump_module, "create_index_store", mock_index_store_from_settings)
+
+    settings = Settings(index_db_path=tmp_path / "dump-index.sqlite3")
+
+    service = dump_module.create_index_dump_service(settings)
+
+    assert isinstance(service._index_store, MockIndexStore)
+    assert service._index_store.uri == (tmp_path / "dump-index.sqlite3").resolve(strict=False)
+    assert service._index_store.table_name == "policy_chunks"
+
+
+def test_create_runtime_health_service_uses_sqlite_index_factory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Wire runtime health service through the canonical SQLite index factory."""
+    monkeypatch.setattr(health_module, "create_index_store", mock_index_store_from_settings)
+
+    settings = Settings(index_db_path=tmp_path / "health-index.sqlite3")
+
+    service = health_module.create_runtime_health_service(settings)
+
+    assert isinstance(service._index_store, MockIndexStore)
+    assert service._index_store.uri == (tmp_path / "health-index.sqlite3").resolve(strict=False)
+    assert service._table_name == "policy_chunks"
 
 
 def test_create_runtime_execution_service_uses_runtime_paths(
@@ -358,7 +366,7 @@ def test_create_runtime_execution_service_uses_runtime_paths(
     )
 
     settings = Settings(
-        lancedb_uri=tmp_path / "runtime-index",
+        index_db_path=tmp_path / "runtime-index.sqlite3",
         runtime_rules_artifact_path=tmp_path / "runtime" / "runtime_rules.json",
         runtime_evidence_db_path=tmp_path / "runtime" / "runtime_evidence.sqlite3",
     )

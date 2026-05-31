@@ -707,18 +707,6 @@ wheels = [
 ]
 
 [[package]]
-name = "deprecation"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/d3/8ae2869247df154b64c1884d7346d412fed0c49df84db635aab2d1c40e62/deprecation-2.1.0.tar.gz", hash = "sha256:72b3bde64e5d778694b0cf68178aed03d15e15477116add3fb773e581f9518ff", size = 173788, upload-time = "2020-04-20T14:23:38.738Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/c3/253a89ee03fc9b9682f1541728eb66db7db22148cd94f89ab22528cd1e1b/deprecation-2.1.0-py2.py3-none-any.whl", hash = "sha256:a10811591210e1fb0e768a8c25517cabeabcba6f0bf96564f8ff45189f90b14a", size = 11178, upload-time = "2020-04-20T14:23:36.581Z" },
-]
-
-[[package]]
 name = "dill"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1391,56 +1379,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
-]
-
-[[package]]
-name = "lance-namespace"
-version = "0.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "lance-namespace-urllib3-client" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/28/9f/7906ba4117df8d965510285eaf07264a77de2fd283b9d44ec7fc63a4a57a/lance_namespace-0.6.1.tar.gz", hash = "sha256:f0deea442bd3f1056a8e2fed056ae2778e3356517ec2e680db049058b824d131", size = 10666, upload-time = "2026-03-17T17:55:44.977Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/91/aee1c0a04d17f2810173bd304bd444eb78332045df1b0c1b07cebd01f530/lance_namespace-0.6.1-py3-none-any.whl", hash = "sha256:9699c9e3f12236e5e08ea979cc4e036a8e3c67ed2f37ae6f25c5353ab908e1be", size = 12498, upload-time = "2026-03-17T17:55:44.062Z" },
-]
-
-[[package]]
-name = "lance-namespace-urllib3-client"
-version = "0.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "python-dateutil" },
-    { name = "typing-extensions" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/63/a1/8706a2be25bd184acccc411e48f1a42a4cbf3b6556cba15b9fcf4c15cfcc/lance_namespace_urllib3_client-0.6.1.tar.gz", hash = "sha256:31fbd058ce1ea0bf49045cdeaa756360ece0bc61e9e10276f41af6d217debe87", size = 182567, upload-time = "2026-03-17T17:55:46.87Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/c7/cb9580602dec25f0fdd6005c1c9ba1d4c8c0c3dc8d543107e5a9f248bba8/lance_namespace_urllib3_client-0.6.1-py3-none-any.whl", hash = "sha256:b9c103e1377ad46d2bd70eec894bfec0b1e2133dae0964d7e4de543c6e16293b", size = 317111, upload-time = "2026-03-17T17:55:45.546Z" },
-]
-
-[[package]]
-name = "lancedb"
-version = "0.27.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "deprecation" },
-    { name = "lance-namespace" },
-    { name = "numpy" },
-    { name = "overrides", marker = "python_full_version < '3.12'" },
-    { name = "packaging" },
-    { name = "pyarrow" },
-    { name = "pydantic" },
-    { name = "tqdm" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/35/135ee7e3de58389074ad49b389adb8f431dc3f0034afbed1a9122c223c68/lancedb-0.27.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:8aea87c3002850e98e4ac095c165dd819edd69f7c50e418f13f5917d1b9e0dcb", size = 43540316, upload-time = "2026-01-26T23:56:19.228Z" },
-    { url = "https://files.pythonhosted.org/packages/16/cf/ea458fa50ef29c1a0653e1af6ea0599e532180267f49ca0bcf0049b0d8e3/lancedb-0.27.1-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:382666cddfb8b87d1efef4797bbc92cb1c3263b9b40894e5194ed5ed4e4486d4", size = 45409178, upload-time = "2026-01-27T03:25:09.932Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/cd/30714b878ec876eda3ce88637d6ef8da44484a065ec050dcfba3ad888465/lancedb-0.27.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7835e84d92631ddc7e269c8a18691ec16f24fe32f0fd14138d76951f530c28b9", size = 48484253, upload-time = "2026-01-27T03:28:16.048Z" },
-    { url = "https://files.pythonhosted.org/packages/69/c2/19c1b8b7b36a0445e31fa532619bb75c4e76a91fff0514439dea2c4194d6/lancedb-0.27.1-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:5996f7e36ae4cf580693fae33f560a21f29640b1ae0e923dcd8efea65ee8a78e", size = 45427415, upload-time = "2026-01-27T03:23:26.822Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/f1/794e9bc8d2adc9130c55695979afb66b0121c9d2abacdd19ce112e201879/lancedb-0.27.1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:37e80565729555f6fc390a623da4f26392c463ba35e7634b2e706c1f9ac77e47", size = 48531937, upload-time = "2026-01-27T03:27:57.455Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/96/fa3cb37a6ffe7b81073d8c74f7cb95204d0922ac1668b264685aa34add20/lancedb-0.27.1-cp39-abi3-win_amd64.whl", hash = "sha256:f2150a66758ce6fe3cff226ac1ffcac2d5f5e2c9b35bc4c2d5923abcebef98cc", size = 53374010, upload-time = "2026-01-27T03:57:13.434Z" },
 ]
 
 [[package]]
@@ -2656,15 +2594,6 @@ wheels = [
 ]
 
 [[package]]
-name = "overrides"
-version = "7.7.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/36/86/b585f53236dec60aba864e050778b25045f857e17f6e5ea0ae95fe80edd2/overrides-7.7.0.tar.gz", hash = "sha256:55158fa3d93b98cc75299b1e67078ad9003ca27945c76162c1c0766d6f91820a", size = 22812, upload-time = "2024-01-27T21:01:33.423Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/ab/fc8290c6a4c722e5514d80f62b2dc4c4df1a68a41d1364e625c35990fcf3/overrides-7.7.0-py3-none-any.whl", hash = "sha256:c7ed9d062f78b8e4c1a7b70bd8796b35ead4d9f510227ef9c5dc7626c60d7e49", size = 17832, upload-time = "2024-01-27T21:01:31.393Z" },
-]
-
-[[package]]
 name = "packaging"
 version = "26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2827,11 +2756,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-hosted-legacy-index = [
-    { name = "lance-namespace" },
-    { name = "lance-namespace-urllib3-client" },
-    { name = "lancedb" },
-]
 nvidia-eval = [
     { name = "nemo-evaluator" },
     { name = "nvidia-nat-eval" },
@@ -2865,9 +2789,6 @@ requires-dist = [
     { name = "httpx", specifier = "==0.27.2" },
     { name = "itsdangerous", specifier = "==2.2.0" },
     { name = "jinja2", specifier = "==3.1.6" },
-    { name = "lance-namespace", marker = "extra == 'hosted-legacy-index'", specifier = "==0.6.1" },
-    { name = "lance-namespace-urllib3-client", marker = "extra == 'hosted-legacy-index'", specifier = "==0.6.1" },
-    { name = "lancedb", marker = "extra == 'hosted-legacy-index'", specifier = "==0.27.1" },
     { name = "markdown-it-py", specifier = "==4.0.0" },
     { name = "mcp", extras = ["cli"], specifier = "==1.26.0" },
     { name = "nemo-evaluator", marker = "extra == 'nvidia-eval'", specifier = "==0.2.5" },
@@ -2884,7 +2805,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = "==0.1.9" },
     { name = "typer", specifier = "==0.24.1" },
 ]
-provides-extras = ["hosted-legacy-index", "nvidia-guardrails", "nvidia-eval", "nvidia-eval-launcher"]
+provides-extras = ["nvidia-guardrails", "nvidia-eval", "nvidia-eval-launcher"]
 
 [package.metadata.requires-dev]
 dev = [
