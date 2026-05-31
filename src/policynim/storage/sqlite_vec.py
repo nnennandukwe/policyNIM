@@ -13,6 +13,7 @@ class SQLiteVecIndexStore(IndexStore):
     """Day 1 skeleton for the future sqlite-vec-backed index store."""
 
     def __init__(self, *, path: Path) -> None:
+        """Record the SQLite index database path for future store operations."""
         self._path = path
 
     @property

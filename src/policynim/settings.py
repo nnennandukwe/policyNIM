@@ -36,6 +36,7 @@ class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
         return None, field_name, False
 
     def __call__(self) -> dict[str, Any]:
+        """Return standalone path defaults outside source checkouts."""
         if _should_use_repo_relative_defaults():
             return {}
 

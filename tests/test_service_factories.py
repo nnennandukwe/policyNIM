@@ -15,6 +15,7 @@ import policynim.services.runtime_decision as runtime_decision_module
 import policynim.services.runtime_evidence_report as runtime_evidence_report_module
 import policynim.services.runtime_execution as runtime_execution_module
 import policynim.services.search as search_module
+from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,14 @@ class MockRuntimeEvidenceStore:
 
     def __init__(self, *, path: Path) -> None:
         self.path = path
+
+
+def mock_index_store_from_settings(settings: Settings) -> MockIndexStore:
+    """Build a mock index store from settings using runtime path semantics."""
+    return MockIndexStore(
+        uri=resolve_runtime_path(settings.lancedb_uri),
+        table_name=settings.lancedb_table,
+    )
 
 
 def test_service_modules_import_without_provider_package() -> None:
@@ -72,6 +81,7 @@ import policynim.services.runtime_execution
 
 
 def test_service_modules_import_without_legacy_lancedb_backend() -> None:
+    """Import service modules when the transition-era LanceDB backend is absent."""
     script = f"""
 import importlib.abc
 import sys
@@ -106,10 +116,48 @@ import policynim.storage
     assert result.returncode == 0, result.stderr
 
 
+def test_legacy_index_factory_reports_missing_backend() -> None:
+    """Fail with ConfigurationError instead of raw ModuleNotFoundError."""
+    script = f"""
+import importlib.abc
+import sys
+
+sys.path.insert(0, {str(PROJECT_ROOT / "src")!r})
+
+class BlockLegacyLanceDB(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "lancedb" or fullname.startswith("lancedb."):
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockLegacyLanceDB())
+
+from policynim.errors import ConfigurationError
+from policynim.settings import Settings
+from policynim.storage import create_legacy_index_store
+
+try:
+    create_legacy_index_store(Settings())
+except ConfigurationError as exc:
+    assert exc.failure_class == "missing_index_backend"
+    assert "hosted-legacy-index" in str(exc)
+else:
+    raise AssertionError("expected ConfigurationError")
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
     mock_embedder = object()
     monkeypatch.setattr(ingest_module, "_create_default_embedder", lambda settings: mock_embedder)
-    monkeypatch.setattr(ingest_module, "LanceDBIndexStore", MockIndexStore)
+    monkeypatch.setattr(ingest_module, "create_legacy_index_store", mock_index_store_from_settings)
 
     settings = Settings(
         corpus_dir=tmp_path / "policies",
@@ -139,7 +187,7 @@ def test_create_search_service_builds_default_components(monkeypatch, tmp_path: 
         "_create_default_search_components",
         lambda settings: (mock_embedder, mock_reranker),
     )
-    monkeypatch.setattr(search_module, "LanceDBIndexStore", MockIndexStore)
+    monkeypatch.setattr(search_module, "create_legacy_index_store", mock_index_store_from_settings)
 
     settings = Settings(lancedb_uri=tmp_path / "search-index")
 
@@ -163,7 +211,7 @@ def test_create_policy_router_service_builds_default_components(
         "_create_default_router_components",
         lambda settings: (mock_embedder, mock_reranker),
     )
-    monkeypatch.setattr(router_module, "LanceDBIndexStore", MockIndexStore)
+    monkeypatch.setattr(router_module, "create_legacy_index_store", mock_index_store_from_settings)
 
     settings = Settings(lancedb_uri=tmp_path / "router-index")
 
@@ -264,7 +312,11 @@ def test_create_runtime_decision_service_uses_runtime_paths(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime_decision_module, "LanceDBIndexStore", MockIndexStore)
+    monkeypatch.setattr(
+        runtime_decision_module,
+        "create_legacy_index_store",
+        mock_index_store_from_settings,
+    )
 
     settings = Settings(
         lancedb_uri=tmp_path / "runtime-index",

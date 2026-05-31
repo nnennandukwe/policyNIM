@@ -16,6 +16,7 @@ class LanceDBIndexStore(IndexStore):
     """Stores embedded policy chunks in a local LanceDB table."""
 
     def __init__(self, *, uri: Path, table_name: str) -> None:
+        """Connect to the configured LanceDB table location."""
         self._uri = uri
         self._table_name = table_name
         self._uri.mkdir(parents=True, exist_ok=True)

@@ -13,7 +13,7 @@ from policynim.contracts import Embedder
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.settings import Settings, get_settings
-from policynim.storage import LanceDBIndexStore
+from policynim.storage import create_legacy_index_store
 from policynim.types import (
     CompiledRuntimeRule,
     EmbeddedChunk,
@@ -115,10 +115,7 @@ def create_ingest_service(settings: Settings | None = None) -> IngestService:
     active_settings = settings or get_settings()
     return IngestService(
         embedder=_create_default_embedder(active_settings),
-        index_store=LanceDBIndexStore(
-            uri=resolve_runtime_path(active_settings.lancedb_uri),
-            table_name=active_settings.lancedb_table,
-        ),
+        index_store=create_legacy_index_store(active_settings),
         corpus_root=resolve_corpus_root(active_settings.corpus_dir),
         embedding_model=active_settings.nvidia_embed_model,
         runtime_rules_artifact_path=resolve_runtime_path(
