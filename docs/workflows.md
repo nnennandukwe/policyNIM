@@ -7,6 +7,8 @@ reference that used to live in the root README.
 
 ### CLI
 
+- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
+- `policynim doctor [--format text|json]`
 - `policynim init`
 - `policynim ingest`
 - `policynim dump-index [--count-only]`
@@ -21,6 +23,10 @@ reference that used to live in the root README.
 - `policynim runtime execute --input <path|->`
 - `policynim evidence report --session-id <id>`
 - `policynim evidence report --session-id <id> --format markdown --output reports/<id>.md`
+- `policynim mcp-config [--target local-stdio|hosted-http]`
+- `policynim mcp-smoke [--mcp-config-file <path>]`
+- `policynim support-bundle [--include-mcp-smoke]`
+- `policynim beta-admin list-accounts|suspend|resume|revoke-key|audit-log`
 
 ### MCP Tools
 
@@ -46,6 +52,13 @@ reference that used to live in the root README.
 
 `policynim init` writes the local config file interactively when you want the
 CLI to prompt for `NVIDIA_API_KEY` and an optional custom corpus directory.
+
+Use `policynim quickstart` when you want the safest no-network first-run path
+for hosted MCP, local CLI, or local MCP.
+
+Use `policynim doctor` when you want a local-only setup report that checks the
+config file, credentials, index path, runtime rules artifact, and MCP launch
+hints.
 
 ## Core Workflows
 
@@ -79,7 +92,7 @@ What this does:
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
-- rebuilds the local LanceDB table
+- rebuilds the local SQLite index
 
 Typical output includes the chunk count, document count, embedding model, and
 index location.
@@ -361,7 +374,7 @@ Hosted HTTP notes:
 - `stdio` ignores the hosted auth settings completely
 - when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
   defaults to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
-- the baked-image workflow uses `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+- the baked-image workflow uses `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
   as the fast path. Hosted startup only falls back to `policynim ingest` when
   that local index is missing or empty
 - if that automatic rebuild path runs without a runtime `NVIDIA_API_KEY`, hosted
@@ -378,6 +391,20 @@ For hosted-first client setup examples, see:
 
 - [../examples/codex/README.md](../examples/codex/README.md)
 - [../examples/claude-code/README.md](../examples/claude-code/README.md)
+
+### 9. Use The First-Run And Support Helpers
+
+```bash
+uv run policynim quickstart --target hosted-mcp --client codex
+uv run policynim doctor --format json
+uv run policynim mcp-config --target local-stdio --client codex --format json
+uv run policynim mcp-smoke --format json
+uv run policynim support-bundle --include-mcp-smoke
+```
+
+Use these commands when you want the no-network first-run plan, a local setup
+health check, copyable MCP client config, a stdio tool-registration smoke test,
+or a redacted support bundle for an issue report.
 
 ## Runtime Decisions And Evidence
 
@@ -505,7 +532,7 @@ PolicyNIM keeps the retrieval stack explicit:
 
 1. chunk Markdown policies with stable IDs and line spans
 2. embed query and document text with NVIDIA-hosted embeddings
-3. retrieve dense candidates from LanceDB
+3. retrieve dense candidates from the local SQLite index
 4. rerank candidates with NVIDIA
 5. route retained evidence into selected-policy packets
 6. compile selected policy evidence into constraint packets

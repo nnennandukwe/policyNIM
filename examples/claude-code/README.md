@@ -3,6 +3,9 @@
 This example connects Claude Code to the hosted PolicyNIM Railway MCP over HTTP.
 Use the local `stdio` fallback only if you need to run PolicyNIM from a clone.
 
+If you want PolicyNIM to print the exact setup command for this client, run
+`uv run policynim quickstart --target hosted-mcp --client claude-code`.
+
 ## Hosted Railway MCP
 
 1. Open `https://<railway-domain>/beta`, sign in with GitHub, and generate or

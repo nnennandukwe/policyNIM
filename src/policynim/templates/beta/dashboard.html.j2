@@ -126,5 +126,19 @@
       {% endfor %}
     </div>
   </section>
+
+  <section class="beta-section">
+    <div class="beta-section__header">
+      <p class="beta-kicker">Agent workflows</p>
+      <h2 class="beta-section-title">Use PolicyNIM where policy context changes the code</h2>
+    </div>
+    <div class="beta-card-grid beta-card-grid--commands">
+      {% for command_card in workflow_cards %}
+        {% with command=command_card %}
+          {% include "beta/partials/command_card.html.j2" %}
+        {% endwith %}
+      {% endfor %}
+    </div>
+  </section>
 </main>
 {% endblock %}

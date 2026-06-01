@@ -19,6 +19,10 @@ codex mcp add policynim --url https://<railway-domain>/mcp --bearer-token-env-va
 claude mcp add --transport http policynim https://<railway-domain>/mcp --header "Authorization: Bearer $POLICYNIM_TOKEN"
 ```
 
+If you want PolicyNIM to print the exact hosted setup command for one client,
+run `uv run policynim quickstart --target hosted-mcp --client codex` or
+`uv run policynim quickstart --target hosted-mcp --client claude-code`.
+
 Then ask your client to call the MCP tools directly:
 
 - `Use policy_preflight for: Implement a refresh-token cleanup background job.`
@@ -107,7 +111,7 @@ GitHub Actions smoke:
   for detailed index path, volume, or file-permission failures
 - if `/healthz` says the local index is missing or empty, confirm the latest
   build received `NVIDIA_API_KEY`, rerun the deploy so `policynim ingest` bakes
-  the index, and confirm `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+  the index, and confirm `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
 - if the live smoke passes `/healthz` but fails `policy_search` or
   `policy_preflight`, inspect hosted MCP logs for `upstream_failure_class`
   before rotating auth tokens or rebuilding the image
@@ -125,8 +129,8 @@ DOCKER_BUILDKIT=1 docker build \
 
 Important container defaults:
 
-- the image bakes the LanceDB index at `/app/data/lancedb-baked`
-- the image sets `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+- the image bakes the SQLite index at `/app/data/index.sqlite3`
+- the image sets `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
 - the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the
   container
 - the builder stage reads the bake-time key from the temporary BuildKit secret
@@ -200,7 +204,7 @@ Recommended beta setup:
 3. Set at least these Railway service variables:
    - `NVIDIA_API_KEY`
    - `POLICYNIM_ENV=production`
-   - `POLICYNIM_LANCEDB_URI=/app/data/lancedb-baked`
+   - `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
    - `POLICYNIM_MCP_HOST=0.0.0.0`
 4. Deploy once so the service becomes healthy on `/healthz`.
 5. Generate a Railway public domain for that service.

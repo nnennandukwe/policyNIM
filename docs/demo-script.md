@@ -36,7 +36,7 @@ What to look for:
 - a non-zero document count
 - a non-zero chunk count
 - the configured embedding model
-- the local LanceDB path and table name
+- the local SQLite index path and table name
 
 What this proves:
 

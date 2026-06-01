@@ -27,10 +27,16 @@ def test_workflows_guide_documents_runtime_request_shapes_and_sqlite_usage() -> 
     text = _read_text(WORKFLOWS_GUIDE)
 
     for token in (
+        "policynim quickstart [--target hosted-mcp|local-cli|local-mcp]",
+        "policynim doctor [--format text|json]",
         "policynim runtime decide --input <path|->",
         "policynim runtime execute --input <path|->",
         "policynim evidence report --session-id <id>",
         "policynim evidence report --session-id <id> --format markdown --output reports/<id>.md",
+        "policynim mcp-config [--target local-stdio|hosted-http]",
+        "policynim mcp-smoke [--mcp-config-file <path>]",
+        "policynim support-bundle [--include-mcp-smoke]",
+        "policynim beta-admin list-accounts|suspend|resume|revoke-key|audit-log",
         '"kind": "shell_command"',
         '"kind": "file_write"',
         '"kind": "http_request"',
@@ -70,6 +76,32 @@ def test_standalone_setup_docs_use_installed_cli_entrypoint() -> None:
     for path in STANDALONE_SETUP_DOCS:
         text = _read_text(path)
         assert "policynim init" in text, f"{path.name} should document standalone init"
+
+
+def test_first_run_docs_cover_quickstart_and_doctor() -> None:
+    """Keep the no-network first-run path documented in the main entry points."""
+    readme_text = _read_text(README)
+    workflows_text = _read_text(WORKFLOWS_GUIDE)
+    contributor_text = _read_text(CONTRIBUTOR_GUIDE)
+
+    for token in (
+        "policynim quickstart --target hosted-mcp",
+        "policynim quickstart --target local-cli",
+        "policynim quickstart --target local-mcp",
+    ):
+        assert token in readme_text
+
+    for token in (
+        "policynim quickstart [--target hosted-mcp|local-cli|local-mcp]",
+        "policynim doctor [--format text|json]",
+    ):
+        assert token in workflows_text
+
+    for token in (
+        "uv run policynim doctor",
+        "uv run policynim mcp-smoke --format json",
+    ):
+        assert token in contributor_text
 
 
 def test_source_checkout_setup_docs_state_init_writes_checkout_dotenv() -> None:
@@ -119,6 +151,8 @@ def test_hosted_operations_documents_operator_beta_release_gate() -> None:
 
     for token in (
         "90-Day Operator Beta Release Gate",
+        "policynim quickstart --target hosted-mcp --client codex",
+        "POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3",
         "uv run ruff check .",
         "uv run pyright",
         'uv run pytest -q -m "not live and not docker_live"',

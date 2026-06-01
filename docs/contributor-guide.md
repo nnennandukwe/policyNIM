@@ -44,6 +44,10 @@ server:
 uv run policynim ingest
 ```
 
+After the first ingest, `uv run policynim doctor` reports whether the local
+setup is ready, and `uv run policynim mcp-smoke --format json` verifies the
+stdio MCP tool registration.
+
 ## Standalone Install
 
 If you are using an installed copy instead of a source checkout, initialize the

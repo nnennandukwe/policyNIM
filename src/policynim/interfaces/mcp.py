@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
     ConfigurationError,
     InvalidPolicyDocumentError,
@@ -609,8 +610,10 @@ def _beta_command_card_context(
     description: str,
     command: str,
     button_label: str = "Copy command",
+    eyebrow: str = "Client setup",
 ) -> dict[str, str]:
     return {
+        "eyebrow": eyebrow,
         "title": title,
         "description": description,
         "command": command,
@@ -755,7 +758,7 @@ def _render_beta_dashboard(
         )
     new_key_context: dict[str, str] | None = None
     if new_api_key is not None:
-        export_command = f"export POLICYNIM_TOKEN={new_api_key}"
+        export_command = f"export POLICYNIM_TOKEN='{new_api_key}'"
         new_key_context = {
             "button_label": "Copy export",
             "export_command": export_command,
@@ -801,6 +804,16 @@ def _render_beta_dashboard(
                     ),
                     command=claude_command,
                 ),
+            ],
+            "workflow_cards": [
+                _beta_command_card_context(
+                    eyebrow="Agent workflow",
+                    title=workflow["title"],
+                    description=workflow["description"],
+                    command=workflow["prompt"],
+                    button_label="Copy prompt",
+                )
+                for workflow in agent_workflow_cards()
             ],
         }
     )
@@ -889,11 +902,13 @@ class _BearerProtectedASGIApp:
         protected_path: str,
         valid_tokens: list[str],
         beta_auth_service: BetaAuthService | None,
+        beta_portal_url: str | None,
     ) -> None:
         self._app = app
         self._protected_path = protected_path
         self._valid_tokens = set(valid_tokens)
         self._beta_auth_service = beta_auth_service
+        self._beta_portal_url = beta_portal_url
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Authorize protected MCP HTTP requests before delegating to the app."""
@@ -903,7 +918,7 @@ class _BearerProtectedASGIApp:
 
         token = _extract_bearer_token(scope)
         auth_result: str | None = None
-        response: JSONResponse | None = None
+        response: Response | None = None
         if token is not None and token in self._valid_tokens:
             auth_result = "authorized"
         elif self._beta_auth_service is not None:
@@ -918,14 +933,12 @@ class _BearerProtectedASGIApp:
                 response = JSONResponse({"error": "Quota exceeded."}, status_code=429)
             else:
                 auth_result = "unauthorized"
-                response = JSONResponse({"error": "Unauthorized."}, status_code=401)
         else:
             auth_result = "unauthorized"
-            response = JSONResponse({"error": "Unauthorized."}, status_code=401)
 
         if auth_result != "authorized":
             if response is None:
-                response = JSONResponse({"error": "Unauthorized."}, status_code=401)
+                response = self._unauthorized_response(scope)
             _emit_hosted_event(
                 "mcp.auth",
                 auth_result=auth_result or "unauthorized",
@@ -943,6 +956,12 @@ class _BearerProtectedASGIApp:
         finally:
             _HOSTED_AUTH_RESULT.reset(token_state)
 
+    def _unauthorized_response(self, scope: Scope) -> Response:
+        """Return onboarding for browser visits and JSON for MCP clients."""
+        if self._beta_portal_url is not None and _is_browser_mcp_visit(scope):
+            return RedirectResponse(self._beta_portal_url, status_code=303)
+        return JSONResponse({"error": "Unauthorized."}, status_code=401)
+
 
 def _extract_bearer_token(scope: Scope) -> str | None:
     """Return the bearer token from the HTTP Authorization header, if valid."""
@@ -958,6 +977,14 @@ def _extract_bearer_token(scope: Scope) -> str | None:
     if scheme.lower() != "bearer":
         return None
     return token.strip() or None
+
+
+def _is_browser_mcp_visit(scope: Scope) -> bool:
+    """Return true when a human likely opened /mcp in a browser."""
+    headers = Headers(scope=scope)
+    if headers.get("authorization") is not None:
+        return False
+    return "text/html" in headers.get("accept", "")
 
 
 def _build_streamable_http_app(settings: Settings) -> ASGIApp:
@@ -985,6 +1012,7 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
         protected_path=server.settings.streamable_http_path,
         valid_tokens=settings.mcp_bearer_tokens,
         beta_auth_service=beta_auth_service,
+        beta_portal_url=_derive_beta_url(settings) if settings.beta_signup_enabled else None,
     )
 
 

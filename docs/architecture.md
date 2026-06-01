@@ -45,7 +45,7 @@ Ingest flow:
 5. compile any `runtime_rules` frontmatter into the persisted runtime rules artifact
 6. build deterministic chunk IDs
 7. embed chunk text through NVIDIA-hosted embeddings
-8. replace the local LanceDB table with the new embedded rows
+8. replace the local SQLite index with the new embedded rows
 
 Important ingest rules:
 
@@ -63,14 +63,14 @@ Retrieval flow:
 
 1. validate runtime settings
 2. embed the user query through NVIDIA-hosted embeddings
-3. retrieve dense candidates from the local LanceDB table
+3. retrieve dense candidates from the local SQLite index
 4. optionally filter by policy domain
 5. rerank candidates through NVIDIA-hosted reranking
 6. return a JSON-first `SearchResult`
 
 Current retrieval design choices:
 
-- one local LanceDB table stores all indexed chunks
+- one local SQLite index stores all indexed chunks
 - ingest replaces the whole table instead of incrementally merging rows
 - the same embedding model is used for document and query vectors
 - reranking is part of the normal search path, not a separate experimental mode
@@ -85,7 +85,7 @@ Routing flow:
 1. validate the route request and optional task-type override
 2. infer a deterministic `TaskProfile` from task text when no override is present
 3. embed the original task through NVIDIA-hosted embeddings
-4. retrieve broad dense candidates from the local LanceDB table
+4. retrieve broad dense candidates from the local SQLite index
 5. rerank candidates against the task plus task-profile signals
 6. retain bounded policy evidence with source chunk IDs and line spans
 7. return a JSON-first `PolicySelectionPacket`
@@ -189,7 +189,7 @@ Important evaluation rules:
 
 - offline mode is the default contributor path
 - live mode is opt-in and requires `NVIDIA_API_KEY`
-- live mode uses an isolated temporary LanceDB path
+- live mode uses an isolated temporary SQLite index path
 - the default backend is code-scored and does not use LLM-as-judge behavior
 - the `nemo` backend adds deterministic conformance checks plus final-adherence
   judgment for preflight cases
@@ -209,7 +209,7 @@ Important evaluation rules:
 
 ### Repo Root
 
-- `Dockerfile` builds the hosted image and bakes the LanceDB index into it.
+- `Dockerfile` builds the hosted image and bakes the SQLite index into it.
 - `railway.toml` pins the hosted Railway deploy contract to Dockerfile build
   plus `/healthz` health checks.
 
@@ -245,7 +245,7 @@ Important evaluation rules:
 
 ### `src/policynim/storage/`
 
-- Owns LanceDB persistence, runtime evidence storage, row mapping, replacement,
+- Owns SQLite index persistence, runtime evidence storage, row mapping,
   and search behavior.
 - Must not read environment variables directly.
 
@@ -304,6 +304,8 @@ Important evaluation rules:
 
 ### CLI
 
+- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
+- `policynim doctor [--format text|json]`
 - `policynim init`
 - `policynim ingest`
 - `policynim dump-index [--count-only]`
@@ -317,7 +319,10 @@ Important evaluation rules:
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
 - `policynim evidence report --session-id <id>`
-- `policynim beta-admin list-accounts|suspend|resume|revoke-key`
+- `policynim mcp-config [--target local-stdio|hosted-http]`
+- `policynim mcp-smoke [--mcp-config-file <path>]`
+- `policynim support-bundle [--include-mcp-smoke]`
+- `policynim beta-admin list-accounts|suspend|resume|revoke-key|audit-log`
 
 ### MCP Tools
 
@@ -407,7 +412,7 @@ Local runtime components own:
 - chunk assembly and citation spans
 - compiled runtime rules artifacts
 - runtime execution evidence in SQLite
-- LanceDB persistence and dense candidate lookup
+- SQLite index persistence and dense candidate lookup
 - baked-index startup validation for hosted HTTP images
 - offline eval execution
 - local artifact persistence under `data/`
