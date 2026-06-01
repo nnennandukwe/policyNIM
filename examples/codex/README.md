@@ -3,6 +3,9 @@
 This example connects Codex to the hosted PolicyNIM Railway MCP over HTTP. Use
 the local `stdio` fallback only if you need to run PolicyNIM from a clone.
 
+If you want PolicyNIM to print the exact setup command for this client, run
+`uv run policynim quickstart --target hosted-mcp --client codex`.
+
 ## Hosted Railway MCP
 
 1. Open `https://<railway-domain>/beta`, sign in with GitHub, and generate or
@@ -106,7 +109,7 @@ Why the repo path appears twice:
 
 - `--directory /ABS/PATH/TO/policyNIM` tells `uv` which project to run
 - `Working directory: /ABS/PATH/TO/policyNIM` makes relative paths such as `.env`
-  and `data/lancedb` resolve from the repo root
+  and `data/index.sqlite3` resolve from the repo root
 
 Using the same repo path in both places is the least error-prone setup for this
 project. If you keep `--directory`, the app working directory is mostly

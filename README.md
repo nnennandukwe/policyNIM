@@ -32,7 +32,7 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Deterministic Markdown ingest with heading-aware chunking and source line spans.
 - Ingest-time compilation of `runtime_rules` frontmatter into the persisted runtime rules artifact.
 - NVIDIA-hosted embeddings and reranking for retrieval.
-- Local LanceDB storage for the retrievable policy index.
+- Local sqlite-vec storage for the retrievable policy index.
 - Task-aware policy routing with citation-preserving selected-policy packets.
 - Policy compilation into citation-backed planning and generation constraints.
 - Grounded preflight synthesis with compiled plan steps, citation validation, and
@@ -47,17 +47,18 @@ PolicyNIM currently ships with two main user-facing surfaces:
   artifacts and local Phoenix reporting for non-headless runs.
 - Runtime-rule decisions plus SQLite-backed evidence for allowed, confirmed,
   blocked, and failed runtime actions.
-- Interactive `init` setup plus JSON-first CLI commands for `ingest`,
-  `dump-index`, `search`, `route`, `compile`, `preflight`, `eval`, `mcp`,
-  `runtime`, and `evidence`.
+- Interactive `init`, `quickstart`, and `doctor` setup plus JSON-first CLI
+  commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
+  `preflight`, `eval`, `mcp`, `mcp-config`, `mcp-smoke`, `support-bundle`,
+  `beta-admin`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
 
 ## What To Run First
 
-If you want the shortest path to a real preflight run, start with the hosted
-beta instead of cloning the repo.
+If you want the shortest path to a real preflight run, start with
+`policynim quickstart --target hosted-mcp` instead of cloning the repo.
 
 ### Install The CLI Without Cloning
 
@@ -93,6 +94,14 @@ irm https://github.com/nnennandukwe/policyNIM/releases/latest/download/install.p
 Both installer paths verify release checksums before installing. After install,
 run `policynim init`, then `policynim ingest`, then `policynim --help` whenever
 you need to confirm the entrypoint is available.
+
+If you want the CLI to print a no-network first-run plan for your setup, run:
+
+```bash
+policynim quickstart --target hosted-mcp
+policynim quickstart --target local-cli
+policynim quickstart --target local-mcp
+```
 
 ### Self-Serve Hosted Beta
 
@@ -148,6 +157,13 @@ In a source checkout, `init` writes the checkout `.env` file that PolicyNIM
 loads by default. Installed copies should keep using the direct `policynim init`
 entrypoint described below.
 
+If you want a quick local readiness check after setup, run:
+
+```bash
+uv run policynim doctor
+uv run policynim mcp-smoke --format json
+```
+
 If you prefer to manage `.env` manually, copy the template first:
 
 ```bash
@@ -186,9 +202,9 @@ Start here when you want the longer version of a specific path:
 - [docs/index.md](docs/index.md): documentation hub by audience and task
 - [docs/contributor-guide.md](docs/contributor-guide.md): local setup, env vars,
   model references, and quality gates
-- [docs/workflows.md](docs/workflows.md): CLI surfaces,
-  ingest/search/route/compile/preflight, eval, MCP, runtime/evidence, and
-  troubleshooting
+- [docs/workflows.md](docs/workflows.md): CLI surfaces, first-run
+  quickstart/diagnostics, ingest/search/route/compile/preflight, eval, MCP,
+  runtime/evidence, and troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
 - [docs/release.md](docs/release.md): CLI packaging, GitHub release, PyPI

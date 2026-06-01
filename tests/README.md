@@ -4,7 +4,7 @@ Current automated coverage includes:
 
 - Markdown policy parsing, metadata normalization, and deterministic chunking
 - Additional chunking edge cases around blank sections and repeated nested headings
-- Ingest orchestration with local LanceDB rebuild behavior
+- Ingest orchestration with local SQLite index rebuild behavior
 - Search orchestration with domain filters and missing-index handling
 - Runtime decision orchestration with compiled runtime rules and evidence-linked citations
 - Runtime execution orchestration with confirmation handling, redaction, and durable evidence persistence

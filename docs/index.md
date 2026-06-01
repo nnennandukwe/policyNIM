@@ -6,11 +6,11 @@ operations into separate pages so the root README can stay short.
 ## Start Here
 
 - [../README.md](../README.md): concise project overview, current capabilities,
-  quickstart, and links outward
+  quickstart, local diagnostics, and links outward
 - [contributor-guide.md](contributor-guide.md): local setup, standalone init,
   env templates, important settings, model references, and quality gates
-- [workflows.md](workflows.md): CLI, route/preflight, MCP, runtime/evidence, eval, and
-  troubleshooting handbook
+- [workflows.md](workflows.md): CLI, quickstart, diagnostics, route/preflight,
+  MCP, runtime/evidence, eval, and troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,
   recovery, container build flow, and Railway deployment notes
 - [release.md](release.md): package, GitHub release, PyPI, and standalone

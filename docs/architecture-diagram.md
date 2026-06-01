@@ -42,7 +42,7 @@ flowchart LR
         direction TB
         IngestPkg["ingest/<br/>loader, parser, chunking"]
         NvidiaAdapter["providers/nvidia.py"]
-        LanceStore["storage/lancedb.py"]
+        SQLiteStore["storage/sqlite_vec.py"]
         RuntimeEvidenceStore["storage/runtime_evidence.py"]
     end
 
@@ -93,20 +93,20 @@ flowchart LR
     CompilerSvc --> NvidiaAdapter
     PreflightSvc --> NvidiaAdapter
     RegenSvc --> NvidiaAdapter
-    RuntimeDecisionSvc --> LanceStore
+    RuntimeDecisionSvc --> SQLiteStore
     RuntimeExecSvc --> RuntimeDecisionSvc
     RuntimeExecSvc --> RuntimeEvidenceStore
-    IngestSvc --> LanceStore
-    SearchSvc --> LanceStore
-    RouterSvc --> LanceStore
-    CompilerSvc --> LanceStore
-    PreflightSvc --> LanceStore
+    IngestSvc --> SQLiteStore
+    SearchSvc --> SQLiteStore
+    RouterSvc --> SQLiteStore
+    CompilerSvc --> SQLiteStore
+    PreflightSvc --> SQLiteStore
     PreflightSvc --> RouterSvc
     PreflightSvc --> CompilerSvc
     RegenSvc --> CompilerSvc
     RegenSvc --> EvidenceTraceSvc
-    DumpSvc --> LanceStore
-    HealthSvc --> LanceStore
+    DumpSvc --> SQLiteStore
+    HealthSvc --> SQLiteStore
 
     EvalSvc --> IngestSvc
     EvalSvc --> SearchSvc
@@ -151,7 +151,7 @@ flowchart LR
 
     class CLI,MCP iface
     class IngestSvc,SearchSvc,RouterSvc,CompilerSvc,PreflightSvc,RegenSvc,RuntimeDecisionSvc,RuntimeExecSvc,EvalSvc,EvidenceTraceSvc,DumpSvc,HealthSvc service
-    class IngestPkg,NvidiaAdapter,LanceStore,RuntimeEvidenceStore adapter
+    class IngestPkg,NvidiaAdapter,SQLiteStore,RuntimeEvidenceStore adapter
     class Settings,Types,Contracts shared
     class Policies,EvalSuite,RuntimeRules,RuntimeEvidenceDB local
     class Embed,Rerank,Ground nvidia
@@ -176,7 +176,7 @@ flowchart TB
         CompileRules --> RuntimeRules
         Parse --> Chunk["Chunk by section and line span"]
         Chunk --> EmbedDocs["Embed documents"]
-        EmbedDocs --> Index["Local LanceDB index"]
+        EmbedDocs --> Index["Local SQLite index"]
     end
 
     subgraph Search["Search Request"]
