@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+WORKFLOWS = (CI_WORKFLOW, HOSTED_SMOKE_WORKFLOW, RELEASE_WORKFLOW)
 
 
 def _read_text(path: Path) -> str:
@@ -22,6 +23,38 @@ def test_ci_pytest_gate_excludes_all_live_markers() -> None:
 
     assert 'uv run pytest -q -m "not live and not docker_live"' in text
     assert 'uv run pytest -q -m "not live"\n' not in text
+
+
+def test_workflows_opt_into_node24_javascript_actions() -> None:
+    """Exercise the Node 24 runner default without allowing the Node 20 fallback."""
+    for workflow in WORKFLOWS:
+        text = _read_text(workflow)
+
+        assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in text
+        assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in text
+
+
+def test_workflows_use_approved_node24_migration_action_pins() -> None:
+    """Keep migrated GitHub action lines on approved major versions and SHA pins."""
+    text = "\n".join(_read_text(workflow) for workflow in WORKFLOWS)
+
+    expected_refs = (
+        r"actions/checkout@[0-9a-f]{40} # v5",
+        r"actions/setup-python@[0-9a-f]{40} # v6",
+        r"astral-sh/setup-uv@[0-9a-f]{40} # v6\.8\.0",
+        r"actions/upload-artifact@[0-9a-f]{40} # v5",
+        r"actions/download-artifact@[0-9a-f]{40} # v5",
+    )
+    for ref_pattern in expected_refs:
+        assert re.search(ref_pattern, text), ref_pattern
+
+    for legacy_ref in (
+        "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+        "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    ):
+        assert legacy_ref not in text
 
 
 def test_hosted_smoke_workflow_is_manual_and_secret_gated() -> None:
