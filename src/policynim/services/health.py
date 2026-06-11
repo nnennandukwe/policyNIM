@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from policynim.contracts import IndexStore
@@ -13,6 +14,11 @@ from policynim.storage import create_index_store
 from policynim.types import HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
+_LOCAL_PATH_PATTERN = re.compile(r"(?<![\w.:])/(?:[^\s,;:'\")]+/?)+")
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"\b(api[_-]?key|token|bearer|secret|password|key)\s*[:=]\s*[^\s,;]+",
+    re.IGNORECASE,
+)
 
 
 class RuntimeHealthService:
@@ -199,10 +205,17 @@ def _single_line_message(message: str | None) -> str | None:
     """Return a compact sanitized exception message, if one is available."""
     if message is None:
         return None
-    message = " ".join(message.split()).strip().rstrip(".")
+    message = " ".join(message.split()).strip()
+    message = _redact_public_exception_message(message).rstrip(".")
     if message:
         return message
     return None
+
+
+def _redact_public_exception_message(message: str) -> str:
+    """Remove path and secret details before exposing exception text publicly."""
+    message = _LOCAL_PATH_PATTERN.sub("<local-path>", message)
+    return _SECRET_ASSIGNMENT_PATTERN.sub(lambda match: f"{match.group(1)}=[redacted]", message)
 
 
 def _format_hosted_runtime_error(*, index_path: Path | str, table_name: str, reason: str) -> str:
