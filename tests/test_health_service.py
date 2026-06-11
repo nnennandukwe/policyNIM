@@ -129,6 +129,8 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
 
 
 def test_format_health_failure_reason_redacts_sensitive_message_parts() -> None:
+    """Sanitize exception text before emitting public/operator-facing readiness reasons."""
+
     reason = health_module.format_health_failure_reason(
         PermissionError(
             13,

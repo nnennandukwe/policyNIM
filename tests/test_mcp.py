@@ -811,6 +811,8 @@ def test_healthz_returns_fallback_payload_when_service_construction_fails(monkey
 
 
 def test_healthz_redacts_sensitive_fallback_reason_parts(monkeypatch) -> None:
+    """Redact local paths and secret-like assignments in fallback readiness reasons."""
+
     monkeypatch.setattr(
         mcp_module,
         "create_runtime_health_service",
