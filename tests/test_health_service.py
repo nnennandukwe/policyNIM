@@ -128,6 +128,26 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
     assert "/tmp/key" not in result.reason
 
 
+def test_format_health_failure_reason_redacts_sensitive_message_parts() -> None:
+    reason = health_module.format_health_failure_reason(
+        PermissionError(
+            13,
+            "permission denied for /Users/operator/policynim/index.sqlite "
+            "with token=pnm_super_secret and api_key=nvapi-secret-value",
+            "/Users/operator/policynim/index.sqlite",
+        )
+    )
+
+    assert reason == (
+        "Local index readiness could not be inspected: PermissionError: "
+        "permission denied for <local-path> with token=[redacted] and api_key=[redacted]."
+    )
+    assert "permission denied" in reason
+    assert "/Users/operator" not in reason
+    assert "pnm_super_secret" not in reason
+    assert "nvapi-secret-value" not in reason
+
+
 def test_ensure_hosted_runtime_ready_accepts_ready_index(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         health_module,
