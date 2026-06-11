@@ -187,21 +187,38 @@ def _derive_mcp_url(settings: Settings) -> str | None:
 
 
 def format_health_failure_reason(exc: Exception) -> str:
-    """Return an operator-safe reason for readiness inspection failures."""
-    message = _single_line_message(str(exc))
+    """Return an operator-safe reason for readiness inspection failures.
+
+    The readiness endpoint is public. Do not include sensitive exception details
+    (like filesystem paths) in the returned reason. Full details are still
+    available in logs via the surrounding LOGGER.exception calls.
+    """
+
+    message: str | None = None
+
+    # OSError (including PermissionError) stringification often includes the
+    # filename/path; prefer the sanitized strerror instead.
+    if isinstance(exc, OSError):
+        message = _single_line_message(exc.strerror)
+
     if message:
         return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
     return f"Local index readiness could not be inspected: {type(exc).__name__}."
 
 
-def _single_line_message(message: str | None) -> str | None:
-    """Return a compact sanitized exception message, if one is available."""
+def _single_line_message(message: str | None, *, max_length: int = 200) -> str | None:
+    """Return a compact sanitized exception message, if one is available.
+
+    The output is intended for public readiness payloads.
+    """
     if message is None:
         return None
-    message = " ".join(message.split()).strip().rstrip(".")
-    if message:
-        return message
-    return None
+    sanitized = " ".join(message.split()).strip().rstrip(".")
+    if not sanitized:
+        return None
+    if max_length > 0 and len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip()
+    return sanitized
 
 
 def _format_hosted_runtime_error(*, index_path: Path | str, table_name: str, reason: str) -> str:
