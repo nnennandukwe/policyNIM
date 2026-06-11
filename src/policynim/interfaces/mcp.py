@@ -519,9 +519,10 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
         health_service = create_runtime_health_service(settings)
         fallback_reason = "Local index readiness could not be inspected."
     except Exception as exc:
-        LOGGER.exception("Could not construct runtime health service.")
-        health_service = None
         fallback_reason = format_health_failure_reason(exc)
+        # Avoid logging raw exception messages (may contain local paths or secrets).
+        LOGGER.error("Could not construct runtime health service: %s", fallback_reason)
+        health_service = None
 
     def _fallback_result(reason: str = fallback_reason) -> JSONResponse:
         """Return the public not-ready response for fallback health failures."""
@@ -543,8 +544,10 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
         try:
             result = await asyncio.to_thread(health_service.check)
         except Exception as exc:
-            LOGGER.exception("Runtime health probe failed.")
-            return _fallback_result(format_health_failure_reason(exc))
+            reason = format_health_failure_reason(exc)
+            # Avoid logging raw exception messages (may contain local paths or secrets).
+            LOGGER.error("Runtime health probe failed: %s", reason)
+            return _fallback_result(reason)
 
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)

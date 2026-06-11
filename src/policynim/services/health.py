@@ -56,8 +56,10 @@ class RuntimeHealthService:
                 reason=None,
             )
         except Exception as exc:
-            LOGGER.exception("Runtime health check failed.")
-            return self._not_ready(format_health_failure_reason(exc))
+            reason = format_health_failure_reason(exc)
+            # Avoid logging raw exception messages (may contain local paths or secrets).
+            LOGGER.error("Runtime health check failed: %s", reason)
+            return self._not_ready(reason)
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
         return HealthCheckResult(
