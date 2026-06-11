@@ -191,6 +191,8 @@ def format_health_failure_reason(exc: Exception) -> str:
     if isinstance(exc, OSError):
         message = _single_line_message(exc.strerror)
         if message:
+            if exc.errno is not None:
+                message = f"{message} (errno {exc.errno})"
             return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
     return f"Local index readiness could not be inspected: {type(exc).__name__}."
 
