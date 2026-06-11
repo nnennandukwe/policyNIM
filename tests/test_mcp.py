@@ -810,6 +810,32 @@ def test_healthz_returns_fallback_payload_when_service_construction_fails(monkey
     assert "index_uri" not in payload
 
 
+def test_healthz_includes_errno_for_os_readiness_failures(monkeypatch) -> None:
+    """Keep public readiness failures more actionable for OS-level errors."""
+    monkeypatch.setattr(
+        mcp_module,
+        "create_runtime_health_service",
+        lambda settings: (_ for _ in ()).throw(
+            PermissionError(13, "permission denied", "/tmp/policynim/index.sqlite")
+        ),
+    )
+
+    app = mcp_module._build_streamable_http_app(
+        Settings.model_validate({"mcp_public_base_url": "https://beta.example.com"})
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["reason"] == (
+        "Local index readiness could not be inspected: PermissionError: "
+        "permission denied (errno 13)."
+    )
+    assert "/tmp/policynim" not in payload["reason"]
+
+
 def test_healthz_returns_fallback_payload_when_probe_fails(monkeypatch) -> None:
     """Return a sanitized public fallback reason when health checks raise later."""
 
