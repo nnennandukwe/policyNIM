@@ -128,6 +128,18 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
     )
 
 
+def test_format_health_failure_reason_preserves_runtime_detail() -> None:
+    """Show formatter output keeps detailed runtime failure context."""
+    failure = RuntimeError("probe failed for /tmp/policynim/index.sqlite bearer=debug-value")
+
+    reason = health_module.format_health_failure_reason(failure)
+
+    assert reason == (
+        "Local index readiness could not be inspected: RuntimeError: "
+        "probe failed for /tmp/policynim/index.sqlite bearer=debug-value."
+    )
+
+
 def test_ensure_hosted_runtime_ready_accepts_ready_index(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         health_module,
