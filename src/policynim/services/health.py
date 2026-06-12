@@ -29,8 +29,12 @@ class RuntimeHealthService:
         self._table_name = table_name
         self._mcp_url = mcp_url
 
-    def check(self) -> HealthCheckResult:
-        """Return a readiness payload for the hosted HTTP runtime."""
+    def check(self, *, public: bool = False) -> HealthCheckResult:
+        """Return a readiness payload for the hosted HTTP runtime.
+
+        When ``public`` is True, the returned ``reason`` is safe for unauthenticated
+        callers of the public ``/healthz`` endpoint.
+        """
         try:
             if not self._index_store.exists():
                 return self._not_ready(f"Local index table {self._table_name!r} does not exist.")
@@ -51,7 +55,10 @@ class RuntimeHealthService:
             )
         except Exception as exc:
             LOGGER.exception("Runtime health check failed.")
-            return self._not_ready(format_health_failure_reason(exc))
+            formatter = (
+                format_public_health_failure_reason if public else format_health_failure_reason
+            )
+            return self._not_ready(formatter(exc))
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
         return HealthCheckResult(
@@ -184,6 +191,22 @@ def _derive_mcp_url(settings: Settings) -> str | None:
     if settings.mcp_public_base_url is None:
         return None
     return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+
+
+def format_public_health_failure_reason(exc: Exception) -> str:
+    """Return a public-safe reason for readiness inspection failures.
+
+    The returned string is suitable for unauthenticated callers (e.g. ``/healthz``)
+    and should not include sensitive runtime details such as filesystem paths.
+    """
+    if isinstance(exc, OSError):
+        message = _single_line_message(exc.strerror)
+        if message:
+            return (
+                "Local index readiness could not be inspected: "
+                f"{type(exc).__name__}: {message}."
+            )
+    return f"Local index readiness could not be inspected: {type(exc).__name__}."
 
 
 def format_health_failure_reason(exc: Exception) -> str:

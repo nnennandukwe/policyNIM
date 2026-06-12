@@ -39,7 +39,7 @@ from policynim.services import (
     create_runtime_health_service,
     create_search_service,
     ensure_hosted_runtime_ready,
-    format_health_failure_reason,
+    format_public_health_failure_reason,
 )
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -521,7 +521,7 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
     except Exception as exc:
         LOGGER.exception("Could not construct runtime health service.")
         health_service = None
-        fallback_reason = format_health_failure_reason(exc)
+        fallback_reason = format_public_health_failure_reason(exc)
 
     def _fallback_result(reason: str = fallback_reason) -> JSONResponse:
         """Return the public not-ready response for fallback health failures."""
@@ -541,10 +541,10 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
             return _fallback_result()
 
         try:
-            result = await asyncio.to_thread(health_service.check)
+            result = await asyncio.to_thread(health_service.check, public=True)
         except Exception as exc:
             LOGGER.exception("Runtime health probe failed.")
-            return _fallback_result(format_health_failure_reason(exc))
+            return _fallback_result(format_public_health_failure_reason(exc))
 
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)
