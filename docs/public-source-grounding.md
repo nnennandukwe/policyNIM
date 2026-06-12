@@ -89,6 +89,18 @@ how the repo uses that source material.
   - The repo policy combines public guidance on secret storage, redaction, and
     safe diagnostics into one practical handling standard for application teams.
 
+### `SEC-PUBLIC-ENDPOINT-002`
+
+- Path: `policies/security/public-endpoint-safety.md`
+- Public grounding:
+  - OWASP Error Handling Cheat Sheet
+  - OWASP Logging Cheat Sheet
+  - The Twelve-Factor App config guidance
+- Provenance note:
+  - The repo policy adapts public error-handling, logging, and configuration
+    guidance into review expectations for public readiness endpoints and
+    operator-safe diagnostics.
+
 ### `SEC-SESSION-001`
 
 - Path: `policies/security/session-lifetime-and-token-boundaries.md`
