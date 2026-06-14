@@ -30,7 +30,10 @@ from policynim.errors import (
     InvalidPolicyDocumentError,
     PolicyNIMError,
     ProviderError,
+    failure_class_from_error,
+    format_validation_error,
 )
+from policynim.lifecycle import close_owned_resource
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -123,18 +126,6 @@ def _validate_top_k(top_k: int) -> None:
         raise ValueError(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
 
 
-def _format_validation_error(label: str, exc: ValidationError) -> str:
-    error = exc.errors()[0]
-    location = ".".join(str(part) for part in error["loc"]) or "request"
-    return f"{label} is invalid at {location}: {error['msg']}."
-
-
-def _close_service(service: object | None) -> None:
-    close = getattr(service, "close", None)
-    if callable(close):
-        close()
-
-
 def _configure_hosted_logger() -> None:
     """Emit hosted MCP telemetry as one JSON object per line."""
     logger = logging.getLogger(_HOSTED_LOGGER_NAME)
@@ -172,16 +163,6 @@ def _emit_hosted_event(
 
 def _elapsed_ms(start_time: float) -> float:
     return round((time.perf_counter() - start_time) * 1000, 2)
-
-
-def _failure_class_from_error(exc: BaseException) -> str | None:
-    current: BaseException | None = exc
-    while current is not None:
-        failure_class = getattr(current, "failure_class", None)
-        if isinstance(failure_class, str) and failure_class:
-            return failure_class
-        current = current.__cause__ or current.__context__
-    return None
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
@@ -227,9 +208,9 @@ def _run_policy_preflight(
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
         return result.model_dump(mode="json")
     except ValidationError as exc:
-        raise ValueError(_format_validation_error("Preflight request", exc)) from exc
+        raise ValueError(format_validation_error("Preflight request", exc)) from exc
     finally:
-        _close_service(service)
+        close_owned_resource(service)
 
 
 def policy_preflight(
@@ -253,7 +234,7 @@ def _run_policy_search(
         result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
         return result.model_dump(mode="json")
     finally:
-        _close_service(service)
+        close_owned_resource(service)
 
 
 def policy_search(
@@ -282,7 +263,7 @@ def _run_logged_tool(
             auth_result=auth_result,
             tool_name=tool_name,
             latency_ms=_elapsed_ms(start_time),
-            upstream_failure_class=_failure_class_from_error(exc),
+            upstream_failure_class=failure_class_from_error(exc),
             request_id=request_id,
         )
         raise

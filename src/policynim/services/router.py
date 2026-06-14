@@ -9,6 +9,7 @@ from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.errors import MissingIndexError
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
 from policynim.types import (
@@ -347,12 +348,6 @@ def _empty_route_result(request: RouteRequest, profile: TaskProfile) -> RouteRes
         ),
         retained_context=[],
     )
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = ["PolicyRouterService", "create_policy_router_service", "profile_task"]

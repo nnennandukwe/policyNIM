@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Generator
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.services.compiler import create_policy_compiler_service
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import (
@@ -638,12 +639,6 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

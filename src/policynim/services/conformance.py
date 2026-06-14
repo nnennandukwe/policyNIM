@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import PolicyConformanceEvaluator
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.types import (
     CompiledPolicyConstraint,
     EvalBackend,
@@ -310,12 +311,6 @@ def _average(values: Sequence[float]) -> float:
     if not values:
         return 0.0
     return sum(values) / len(values)
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

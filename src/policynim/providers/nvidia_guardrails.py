@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import Generator
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.settings import Settings
 from policynim.types import (
@@ -372,12 +373,6 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = ["NeMoGuardrailsPreflightGenerator"]

@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
 from policynim.services.router import PolicyRouterService
 from policynim.settings import Settings, get_settings
@@ -390,12 +391,6 @@ def _trace_step(
         summary=summary.strip() or kind,
         citation_ids=_ordered_unique(list(citation_ids)),
     )
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

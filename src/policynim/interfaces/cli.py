@@ -25,8 +25,14 @@ from pydantic import TypeAdapter, ValidationError
 
 import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
-from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
+from policynim.errors import (
+    ConfigurationError,
+    MissingIndexError,
+    PolicyNIMError,
+    format_validation_error,
+)
 from policynim.interfaces.mcp import run_server
+from policynim.lifecycle import close_owned_resource
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
     create_beta_auth_service,
@@ -1189,10 +1195,7 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
     return target
 
 
-def _format_validation_error(label: str, exc: ValidationError) -> str:
-    error = exc.errors()[0]
-    location = ".".join(str(part) for part in error["loc"]) or "request"
-    return f"{label} is invalid at {location}: {error['msg']}."
+_format_validation_error = format_validation_error
 
 
 def _read_json_input(input_value: str) -> object:
@@ -3064,10 +3067,7 @@ def _is_standalone_local_runtime() -> bool:
     )
 
 
-def _close_service(service: object | None) -> None:
-    close = getattr(service, "close", None)
-    if callable(close):
-        close()
+_close_service = close_owned_resource
 
 
 if __name__ == "__main__":
