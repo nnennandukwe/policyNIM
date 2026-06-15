@@ -4,6 +4,11 @@ This page gives a visual map of the current PolicyNIM architecture. For the
 detailed design notes, package rules, and runtime constraints, see
 [architecture.md](architecture.md).
 
+An internal `QueryLog` helper also records recent search requests in a local
+SQLite `query_log.db` file for analytics. It is intentionally omitted from the
+flow graphs below because it does not sit on the public CLI or MCP request
+path.
+
 ## Module Boundary Map
 
 ```mermaid

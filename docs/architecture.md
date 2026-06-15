@@ -254,6 +254,9 @@ Important evaluation rules:
 - Owns application orchestration.
 - `IngestService` handles parse, chunk, embed, and rebuild.
 - `SearchService` handles query embedding, retrieval, and reranking.
+- `QueryLog` records recent search requests in a local SQLite `query_log.db`
+  file for internal analytics, but it is not part of the public CLI or MCP
+  surface.
 - `PolicyRouterService` handles deterministic task profiling, broad retrieval,
   reranking, selected-policy grouping, and citation-preserving route packets.
 - `PolicyCompilerService` handles routed evidence selection, constraint
