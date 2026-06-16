@@ -9,11 +9,41 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+NODE24_ACTION_PINS = {
+    "actions/checkout": ("93cb6efe18208431cddfb8368fd83d5badbf9bfd", "v5.0.1"),
+    "actions/setup-python": ("a309ff8b426b58ec0e2a45f0f869d46889d02405", "v6.2.0"),
+    "actions/upload-artifact": ("b7c566a772e6b6bfb58ed0dc250532a479d7789f", "v6.0.0"),
+    "actions/download-artifact": ("37930b1c2abaa49bbe596cd826c3c89aef350131", "v7.0.0"),
+    "astral-sh/setup-uv": ("37802adc94f370d6bfd71619e3f0bf239e1f3b78", "v7.6.0"),
+}
 
 
 def _read_text(path: Path) -> str:
     """Read a workflow file as UTF-8 text."""
     return path.read_text(encoding="utf-8")
+
+
+def _workflow_texts() -> list[str]:
+    """Return all workflow files that participate in the CI/release contract."""
+    return [
+        _read_text(CI_WORKFLOW),
+        _read_text(HOSTED_SMOKE_WORKFLOW),
+        _read_text(RELEASE_WORKFLOW),
+    ]
+
+
+def test_workflows_use_node24_compatible_action_pins() -> None:
+    """Lock GitHub Actions to approved commits whose action metadata runs on Node 24."""
+    combined_text = "\n".join(_workflow_texts())
+
+    assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in combined_text
+    for action_name, (expected_ref, expected_version) in NODE24_ACTION_PINS.items():
+        pattern = rf"uses: {re.escape(action_name)}@([0-9a-f]{{40}})\s+#\s+([^\n]+)"
+        matches = re.findall(pattern, combined_text)
+        assert matches, action_name
+        for actual_ref, actual_version in matches:
+            assert actual_ref == expected_ref
+            assert actual_version == expected_version
 
 
 def test_ci_pytest_gate_excludes_all_live_markers() -> None:
