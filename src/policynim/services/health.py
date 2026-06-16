@@ -187,10 +187,21 @@ def _derive_mcp_url(settings: Settings) -> str | None:
 
 
 def format_health_failure_reason(exc: Exception) -> str:
-    """Return an operator-safe reason for readiness inspection failures."""
-    message = _single_line_message(str(exc))
-    if message:
-        return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
+    """Return a public-safe reason for readiness inspection failures.
+
+    This value is surfaced in the public `/healthz` response. Do not include raw
+    exception strings, which may contain filesystem paths, tokens, or other
+    sensitive data.
+    """
+
+    if isinstance(exc, OSError) and exc.errno is not None:
+        message = _single_line_message(exc.strerror)
+        if message:
+            return (
+                "Local index readiness could not be inspected: "
+                f"{type(exc).__name__}: {message}."
+            )
+
     return f"Local index readiness could not be inspected: {type(exc).__name__}."
 
 
