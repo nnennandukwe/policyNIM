@@ -148,6 +148,7 @@ def test_tests_readme_mentions_runtime_and_docs_parity_coverage() -> None:
 
 
 def test_architecture_docs_note_internal_query_logging_helper() -> None:
+    """Require architecture docs to note the internal query logging helper."""
     architecture_text = _read_text(ARCHITECTURE_GUIDE)
     diagram_text = _read_text(ARCHITECTURE_DIAGRAM)
 
