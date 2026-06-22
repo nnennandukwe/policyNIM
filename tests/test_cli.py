@@ -22,6 +22,7 @@ from policynim.services.runtime_evidence_report import RuntimeEvidenceReportServ
 from policynim.services.runtime_execution import RuntimeExecutionService
 from policynim.settings import Settings, get_settings
 from policynim.storage import RuntimeEvidenceStore
+from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.types import (
     BetaAccount,
     BetaAuditEvent,
@@ -1718,6 +1719,54 @@ def test_doctor_flags_invalid_sqlite_index_file(
             "and runtime rules artifact."
         )
     ]
+
+
+def test_doctor_surfaces_unreadable_sqlite_index_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Report unreadable SQLite indexes as permission/path issues, not missing data."""
+
+    class UnreadableDoctorIndexStore:
+        """Doctor-only index-store stub with an unreadable readiness state."""
+
+        def inspect_readiness(self) -> IndexReadinessReport:
+            """Return an unreadable readiness report for doctor assertions."""
+            return IndexReadinessReport(
+                state="unreadable",
+                error=PermissionError(13, "permission denied"),
+            )
+
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    runtime_rules_path = checkout_root / "data" / "runtime" / "runtime_rules.json"
+    runtime_rules_path.parent.mkdir(parents=True)
+    runtime_rules_path.write_text("{}", encoding="utf-8")
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_INDEX_DB_PATH="data/index.sqlite3",
+        POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH="data/runtime/runtime_rules.json",
+    )
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_index_store",
+        lambda settings: UnreadableDoctorIndexStore(),
+    )
+
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    local_index_check = next(
+        check for check in payload["checks"] if check["name"] == "local_index_path"
+    )
+    assert local_index_check["status"] == "action_required"
+    assert "could not be read" in local_index_check["message"]
+    assert "PermissionError: permission denied" in local_index_check["message"]
+    assert (
+        "Fix the local SQLite index file permissions or point "
+        "`POLICYNIM_INDEX_DB_PATH` at a readable SQLite file, then run "
+        "`uv run policynim ingest`."
+    ) in payload["next_steps"]
 
 
 def test_doctor_flags_legacy_lancedb_directory_index_path(
@@ -4230,6 +4279,52 @@ def test_evidence_report_command_rejects_empty_output(
 
     assert result.exit_code == 1
     assert "must not be empty" in result.stderr
+
+
+def test_evidence_report_command_surfaces_staged_cleanup_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Include staged-file cleanup failures in the returned CLI error."""
+    service = MockRuntimeEvidenceReportService(_cli_evidence_summary())
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.create_runtime_evidence_report_service",
+        lambda settings: service,
+        raising=False,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "policynim.interfaces.cli.os.replace",
+        lambda src, dst: (_ for _ in ()).throw(PermissionError("permission denied")),
+    )
+
+    original_unlink = Path.unlink
+
+    def fail_unlink(self: Path, *, missing_ok: bool = False) -> None:
+        """Fail staged-file cleanup to verify the surfaced CLI error text."""
+        del missing_ok
+        if self.suffix == ".tmp":
+            raise OSError("cleanup failed")
+        original_unlink(self, missing_ok=False)
+
+    monkeypatch.setattr("policynim.interfaces.cli.Path.unlink", fail_unlink)
+
+    result = runner.invoke(
+        app,
+        [
+            "evidence",
+            "report",
+            "--session-id",
+            "session-1",
+            "--output",
+            str(Path("reports") / "session-1.json"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Cleanup of staged file" in result.stderr
+    assert "cleanup failed" in result.stderr
+    assert list((tmp_path / "reports").glob("*.tmp"))
 
 
 def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) -> None:

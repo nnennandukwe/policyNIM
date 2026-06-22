@@ -728,11 +728,9 @@ def _looks_like_non_string_yaml_scalar(value: str) -> bool:
         return True
     if _NUMERIC_YAML_SCALAR_RE.match(value):
         return True
-    if (value.startswith("{") and value.endswith("}")) or (
+    return (value.startswith("{") and value.endswith("}")) or (
         value.startswith("[") and value.endswith("]")
-    ):
-        return True
-    return False
+    )
 
 
 def _frontmatter_line_number(index: int) -> int:

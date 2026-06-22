@@ -78,10 +78,9 @@ def discover_config_files(
     env_files: list[Path] = []
     active_config_file: Path | None = None
 
-    if source_root is None and not is_hosted_process:
-        if standalone.config_file.is_file():
-            env_files.append(standalone.config_file)
-            active_config_file = standalone.config_file
+    if source_root is None and not is_hosted_process and standalone.config_file.is_file():
+        env_files.append(standalone.config_file)
+        active_config_file = standalone.config_file
 
     if source_root is not None and not is_hosted_process:
         checkout_env_file = source_root / ".env"

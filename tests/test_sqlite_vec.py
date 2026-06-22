@@ -171,6 +171,23 @@ def test_sqlite_vec_store_rejects_directory_path_without_partial_index(tmp_path:
     assert store.exists() is False
 
 
+def test_sqlite_vec_store_inspect_readiness_reports_invalid_database_file(tmp_path: Path) -> None:
+    """Classify placeholder files as invalid SQLite indexes instead of missing ones."""
+    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+
+    index_path = tmp_path / "index.sqlite3"
+    index_path.write_text("not a sqlite database", encoding="utf-8")
+    store = SQLiteVecIndexStore(path=index_path)
+
+    readiness = store.inspect_readiness()
+
+    assert readiness.state == "invalid"
+    assert readiness.row_count == 0
+    assert readiness.error is not None
+    assert store.exists() is False
+    assert store.count() == 0
+
+
 def test_sqlite_vec_store_supports_injected_ingest_and_search_round_trip(
     tmp_path: Path,
 ) -> None:

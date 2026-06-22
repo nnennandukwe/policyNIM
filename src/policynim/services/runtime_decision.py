@@ -22,6 +22,11 @@ from policynim.errors import (
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import (
+    IndexReadinessReport,
+    format_index_readiness_detail,
+    inspect_index_readiness,
+)
 from policynim.types import (
     Citation,
     CompiledRuntimeRule,
@@ -206,8 +211,42 @@ def _load_indexed_chunk_spans(index_store: IndexStore) -> list[_IndexedChunkSpan
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
     """Require a non-empty local index before runtime decisions can proceed."""
-    if not index_store.exists() or index_store.count() == 0:
-        raise MissingIndexError("Run `policynim ingest` before using runtime decisions.")
+    readiness = inspect_index_readiness(index_store)
+    if readiness.state == "ready":
+        return
+    raise MissingIndexError(
+        _index_not_ready_message(
+            readiness,
+            action="using runtime decisions",
+        )
+    )
+
+
+def _index_not_ready_message(readiness: IndexReadinessReport, *, action: str) -> str:
+    """Return runtime-decision guidance for a non-ready local index."""
+    if readiness.state in {"missing", "empty"}:
+        return f"Run `policynim ingest` before {action}."
+    if readiness.state == "directory":
+        return (
+            "Local SQLite index path points to a directory, not a SQLite file. "
+            "Set `POLICYNIM_INDEX_DB_PATH` to a SQLite file path, then run "
+            f"`policynim ingest` before {action}."
+        )
+
+    detail = format_index_readiness_detail(readiness.error)
+    if readiness.state == "unreadable":
+        detail_suffix = f" ({detail})" if detail is not None else ""
+        return (
+            f"Local SQLite index could not be read{detail_suffix}. "
+            "Fix file permissions or `POLICYNIM_INDEX_DB_PATH`, then run "
+            f"`policynim ingest` before {action}."
+        )
+
+    detail_suffix = f" ({detail})" if detail is not None else ""
+    return (
+        f"Local SQLite index is not a readable PolicyNIM sqlite-vec database{detail_suffix}. "
+        f"Rebuild it with `policynim ingest` before {action}."
+    )
 
 
 def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRuntimeAction:

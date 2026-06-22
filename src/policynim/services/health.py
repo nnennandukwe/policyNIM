@@ -10,6 +10,11 @@ from policynim.errors import ConfigurationError
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import (
+    IndexReadinessReport,
+    format_index_readiness_detail,
+    inspect_index_readiness,
+)
 from policynim.types import HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
@@ -32,26 +37,20 @@ class RuntimeHealthService:
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
         try:
-            if not self._index_store.exists():
-                return self._not_ready(f"Local index table {self._table_name!r} does not exist.")
-
-            row_count = self._index_store.count()
-            if row_count <= 0:
-                return self._not_ready(
-                    f"Local index table {self._table_name!r} exists but contains no rows."
-                )
-
+            readiness = inspect_index_readiness(self._index_store)
+        except Exception as exc:
+            LOGGER.exception("Runtime health check failed.")
+            return self._not_ready(format_health_failure_reason(exc))
+        if readiness.state == "ready":
             return HealthCheckResult(
                 status="ok",
                 ready=True,
                 table_name=self._table_name,
-                row_count=row_count,
+                row_count=readiness.row_count,
                 mcp_url=self._mcp_url,
                 reason=None,
             )
-        except Exception as exc:
-            LOGGER.exception("Runtime health check failed.")
-            return self._not_ready(format_health_failure_reason(exc))
+        return self._not_ready(_health_not_ready_reason(readiness, table_name=self._table_name))
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
         return HealthCheckResult(
@@ -184,6 +183,23 @@ def _derive_mcp_url(settings: Settings) -> str | None:
     if settings.mcp_public_base_url is None:
         return None
     return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+
+
+def _health_not_ready_reason(readiness: IndexReadinessReport, *, table_name: str) -> str:
+    """Return a public readiness reason for one non-ready index state."""
+    if readiness.state == "missing":
+        return f"Local index table {table_name!r} does not exist."
+    if readiness.state == "empty":
+        return f"Local index table {table_name!r} exists but contains no rows."
+    if readiness.state == "directory":
+        return "Local index path points to a directory, not a SQLite file."
+    if readiness.state == "invalid":
+        return "Local index file is not a readable PolicyNIM sqlite-vec database."
+
+    detail = format_index_readiness_detail(readiness.error)
+    if detail is None:
+        return "Local index readiness could not be inspected."
+    return f"Local index readiness could not be inspected: {detail}."
 
 
 def format_health_failure_reason(exc: Exception) -> str:

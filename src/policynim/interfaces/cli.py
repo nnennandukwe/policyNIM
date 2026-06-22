@@ -45,6 +45,10 @@ from policynim.services import (
 )
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import (
+    format_index_readiness_detail,
+    inspect_index_readiness,
+)
 from policynim.types import (
     MAX_TOP_K,
     CompileRequest,
@@ -1178,13 +1182,14 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
             temp_file.write("\n")
         os.replace(temp_path, target)
     except OSError as exc:
+        cleanup_note = ""
         if temp_path is not None:
             try:
                 Path(temp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as cleanup_exc:
+                cleanup_note = f" Cleanup of staged file {temp_path} also failed: {cleanup_exc}."
         raise PolicyNIMError(
-            f"Could not write runtime evidence report to {target}: {exc}."
+            f"Could not write runtime evidence report to {target}: {exc}.{cleanup_note}"
         ) from exc
     return target
 
@@ -2773,7 +2778,8 @@ def _build_doctor_report() -> dict[str, object]:
 
     legacy_lancedb_alias_configured = _doctor_legacy_lancedb_alias_configured(discovery)
     index_recovery_step_added = False
-    if index_path.is_dir():
+    index_readiness = inspect_index_readiness(create_index_store(settings))
+    if index_readiness.state == "directory":
         checks.append(
             {
                 "name": "local_index_path",
@@ -2791,29 +2797,26 @@ def _build_doctor_report() -> dict[str, object]:
             )
         )
         index_recovery_step_added = True
-    elif index_path.exists():
-        if _doctor_local_index_ready(settings):
-            checks.append(
-                {
-                    "name": "local_index_path",
-                    "status": "ok",
-                    "message": "A populated local SQLite index exists.",
-                }
-            )
-        else:
-            checks.append(
-                {
-                    "name": "local_index_path",
-                    "status": "action_required",
-                    "message": (
-                        "Configured local SQLite index file is not a populated "
-                        "PolicyNIM sqlite-vec index."
-                    ),
-                }
-            )
-            next_steps.append(_doctor_ingest_next_step())
-            index_recovery_step_added = True
-    else:
+    elif index_readiness.state == "ready":
+        checks.append(
+            {
+                "name": "local_index_path",
+                "status": "ok",
+                "message": "A populated local SQLite index exists.",
+            }
+        )
+    elif index_readiness.state == "unreadable":
+        detail = format_index_readiness_detail(index_readiness.error) or "PermissionError"
+        checks.append(
+            {
+                "name": "local_index_path",
+                "status": "action_required",
+                "message": f"Configured local SQLite index file could not be read ({detail}).",
+            }
+        )
+        next_steps.append(_doctor_index_unreadable_next_step())
+        index_recovery_step_added = True
+    elif index_readiness.state == "missing":
         checks.append(
             {
                 "name": "local_index_path",
@@ -2822,6 +2825,19 @@ def _build_doctor_report() -> dict[str, object]:
             }
         )
         next_steps.append(_doctor_ingest_next_step())
+    else:
+        checks.append(
+            {
+                "name": "local_index_path",
+                "status": "action_required",
+                "message": (
+                    "Configured local SQLite index file is not a populated "
+                    "PolicyNIM sqlite-vec index."
+                ),
+            }
+        )
+        next_steps.append(_doctor_ingest_next_step())
+        index_recovery_step_added = True
 
     if runtime_rules_path.exists():
         checks.append(
@@ -2888,14 +2904,6 @@ def _doctor_ingest_next_step() -> str:
     )
 
 
-def _doctor_local_index_ready(settings: Settings) -> bool:
-    """Return whether the configured local SQLite index is ready for runtime use."""
-    try:
-        return create_index_store(settings).exists()
-    except Exception:
-        return False
-
-
 def _doctor_index_directory_next_step(*, legacy_lancedb_alias_configured: bool) -> str:
     """Return recovery guidance for SQLite index paths that point at directories."""
     if legacy_lancedb_alias_configured:
@@ -2906,6 +2914,15 @@ def _doctor_index_directory_next_step(*, legacy_lancedb_alias_configured: bool) 
         )
     return (
         "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run "
+        f"`{_doctor_cli_command('ingest')}`."
+    )
+
+
+def _doctor_index_unreadable_next_step() -> str:
+    """Return recovery guidance for unreadable SQLite index files."""
+    return (
+        "Fix the local SQLite index file permissions or point "
+        "`POLICYNIM_INDEX_DB_PATH` at a readable SQLite file, then run "
         f"`{_doctor_cli_command('ingest')}`."
     )
 

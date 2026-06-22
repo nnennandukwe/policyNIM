@@ -11,6 +11,11 @@ from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.errors import MissingIndexError
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import (
+    IndexReadinessReport,
+    format_index_readiness_detail,
+    inspect_index_readiness,
+)
 from policynim.types import (
     PolicyMetadata,
     PolicySelectionPacket,
@@ -217,8 +222,42 @@ def _create_default_router_components(settings: Settings) -> tuple[Embedder, Rer
 
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
-    if not index_store.exists() or index_store.count() == 0:
-        raise MissingIndexError("Run `policynim ingest` before routing policy selection.")
+    readiness = inspect_index_readiness(index_store)
+    if readiness.state == "ready":
+        return
+    raise MissingIndexError(
+        _index_not_ready_message(
+            readiness,
+            action="routing policy selection",
+        )
+    )
+
+
+def _index_not_ready_message(readiness: IndexReadinessReport, *, action: str) -> str:
+    """Return routing guidance for a non-ready local index."""
+    if readiness.state in {"missing", "empty"}:
+        return f"Run `policynim ingest` before {action}."
+    if readiness.state == "directory":
+        return (
+            "Local SQLite index path points to a directory, not a SQLite file. "
+            "Set `POLICYNIM_INDEX_DB_PATH` to a SQLite file path, then run "
+            f"`policynim ingest` before {action}."
+        )
+
+    detail = format_index_readiness_detail(readiness.error)
+    if readiness.state == "unreadable":
+        detail_suffix = f" ({detail})" if detail is not None else ""
+        return (
+            f"Local SQLite index could not be read{detail_suffix}. "
+            "Fix file permissions or `POLICYNIM_INDEX_DB_PATH`, then run "
+            f"`policynim ingest` before {action}."
+        )
+
+    detail_suffix = f" ({detail})" if detail is not None else ""
+    return (
+        f"Local SQLite index is not a readable PolicyNIM sqlite-vec database{detail_suffix}. "
+        f"Rebuild it with `policynim ingest` before {action}."
+    )
 
 
 def _matching_signals(text: str, patterns: Sequence[_TaskPattern]) -> list[str]:
