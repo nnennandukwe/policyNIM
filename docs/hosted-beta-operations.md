@@ -7,8 +7,8 @@ recovery notes, or operator deployment checklist.
 
 The hosted beta is the fastest path for a new user:
 
-1. Open `https://<railway-domain>/beta`.
-2. Sign in with GitHub.
+1. Open `https://<railway-domain>/mcp` in a browser.
+2. Follow the redirect to `/beta` and sign in with GitHub.
 3. Mint or rotate an API key.
 4. Export the generated bearer token in your client shell.
 5. Add the hosted MCP server to Codex or Claude Code.
@@ -31,8 +31,8 @@ Then ask your client to call the MCP tools directly:
 Hosted beta notes:
 
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
-- self-serve users should start from `https://<railway-domain>/beta`, not from
-  an operator-issued secret
+- self-serve users should start from `https://<railway-domain>/mcp` in a
+  browser; it redirects to `/beta`, not from an operator-issued secret
 - `POLICYNIM_TOKEN` is a client-side shell variable only. It is not a
   PolicyNIM app setting
 - `POLICYNIM_MCP_BEARER_TOKENS` is optional and reserved for operator
@@ -81,8 +81,8 @@ GitHub Actions smoke:
 
 - expect `401 {"error":"Unauthorized."}` from `/mcp` for a missing or invalid
   bearer token
-- re-check `POLICYNIM_TOKEN`, then revisit `/beta` and rotate the hosted API key
-  if needed
+- re-check `POLICYNIM_TOKEN`, then revisit `/mcp` in a browser and rotate the
+  hosted API key if needed
 
 ### Temporary Upstream NVIDIA Failure
 

@@ -8,8 +8,8 @@ If you want PolicyNIM to print the exact setup command for this client, run
 
 ## Hosted Railway MCP
 
-1. Open `https://<railway-domain>/beta`, sign in with GitHub, and generate or
-   rotate your hosted API key.
+1. Open `https://<railway-domain>/mcp` in a browser, follow the redirect to
+   `/beta`, sign in with GitHub, and generate or rotate your hosted API key.
 
 2. Export the generated beta token:
 
@@ -40,7 +40,7 @@ Example prompts:
 ## Recovery
 
 - Invalid token: if Codex gets `401 {"error":"Unauthorized."}`, re-check
-  `POLICYNIM_TOKEN` or rotate the hosted key again from `/beta`.
+  `POLICYNIM_TOKEN` or rotate the hosted key again from `/mcp`.
 - Temporary upstream NVIDIA failure: retry after a short delay; if it keeps
   failing, the operator should inspect hosted logs for the classified upstream
   failure.

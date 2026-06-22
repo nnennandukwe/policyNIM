@@ -65,8 +65,9 @@ Current automated coverage includes:
 
 Hosted onboarding versus live smoke env vars:
 
-- Beta users follow the docs by visiting `/beta`, generating a key, and exporting
-  `POLICYNIM_TOKEN` as the client-side bearer token env var.
+- Beta users follow the docs by visiting `/mcp` in a browser, which redirects
+  to `/beta`, generating a key, and exporting `POLICYNIM_TOKEN` as the
+  client-side bearer token env var.
 - Operators and maintainers use `POLICYNIM_BETA_MCP_URL` and `POLICYNIM_BETA_MCP_TOKEN`
   only for the deployed-service smoke harness.
 

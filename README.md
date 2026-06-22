@@ -52,8 +52,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
   `preflight`, `eval`, `mcp`, `mcp-config`, `mcp-smoke`, `support-bundle`,
   `beta-admin`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
-- Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
-  and bearer auth on `/mcp`.
+- Hosted HTTP `streamable-http` with `/healthz`, a browser redirect from
+  `/mcp` to `/beta` for hosted sign-in, and optional bearer auth on `/mcp`.
 
 ## What To Run First
 
@@ -113,8 +113,8 @@ policynim quickstart --target local-mcp
   >
 </p>
 
-1. Open `https://<railway-domain>/beta`.
-2. Sign in with GitHub.
+1. Open `https://<railway-domain>/mcp` in a browser.
+2. Follow the redirect to `/beta` and sign in with GitHub.
 3. Generate or rotate your hosted API key.
 4. Export the token and add the hosted MCP server to your client.
 
