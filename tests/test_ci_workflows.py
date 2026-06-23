@@ -9,11 +9,52 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+WORKFLOW_FILES = (CI_WORKFLOW, HOSTED_SMOKE_WORKFLOW, RELEASE_WORKFLOW)
+USES_LINE = re.compile(
+    r"uses: (?P<action>[^@\s]+)@(?P<ref>[0-9a-f]{40}|v[0-9][^\s#]*)"
+    r"(?:\s+#\s*(?P<version>v[0-9][^\s#]*))?"
+)
+NODE24_ACTION_MAJOR_COMMENTS = {
+    "actions/checkout": {"v5", "v6", "v7"},
+    "actions/setup-python": {"v6"},
+    "actions/upload-artifact": {"v6", "v7"},
+    "actions/download-artifact": {"v7", "v8"},
+    "astral-sh/setup-uv": {"v8"},
+}
 
 
 def _read_text(path: Path) -> str:
     """Read a workflow file as UTF-8 text."""
     return path.read_text(encoding="utf-8")
+
+
+def _workflow_uses(path: Path) -> list[tuple[str, str, str | None]]:
+    """Return action, ref, and version comment from workflow uses lines."""
+    return [
+        (
+            match.group("action"),
+            match.group("ref"),
+            match.group("version"),
+        )
+        for match in USES_LINE.finditer(_read_text(path))
+    ]
+
+
+def test_workflows_pin_node24_compatible_actions() -> None:
+    """Keep JavaScript actions on Node 24-capable pinned generations."""
+    for path in WORKFLOW_FILES:
+        for action, ref, version in _workflow_uses(path):
+            if action == "pypa/gh-action-pypi-publish":
+                continue
+
+            assert re.fullmatch(r"[0-9a-f]{40}", ref), (path, action, ref)
+            assert version is not None, (path, action)
+            assert version.split(".")[0] in NODE24_ACTION_MAJOR_COMMENTS[action], (
+                path,
+                action,
+                version,
+            )
+        assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in _read_text(path)
 
 
 def test_ci_pytest_gate_excludes_all_live_markers() -> None:
