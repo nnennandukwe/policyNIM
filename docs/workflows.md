@@ -7,7 +7,7 @@ reference that used to live in the root README.
 
 ### CLI
 
-- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
+- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--hosted-url <url>] [--bearer-token-env-var <name>] [--repo-root <path>] [--format text|json]`
 - `policynim doctor [--format text|json]`
 - `policynim init`
 - `policynim ingest`
@@ -23,9 +23,9 @@ reference that used to live in the root README.
 - `policynim runtime execute --input <path|->`
 - `policynim evidence report --session-id <id>`
 - `policynim evidence report --session-id <id> --format markdown --output reports/<id>.md`
-- `policynim mcp-config [--target local-stdio|hosted-http]`
+- `policynim mcp-config [--client codex|claude-code] [--target local-stdio|hosted-http] [--hosted-url <url>] [--bearer-token-env-var <name>] [--repo-root <path>] [--server-name <name>] [--uv-command <path>] [--format text|json]`
 - `policynim mcp-smoke [--mcp-config-file <path>]`
-- `policynim support-bundle [--include-mcp-smoke]`
+- `policynim support-bundle [--format json|markdown] [--include-mcp-smoke] [--mcp-timeout-seconds <seconds>] [--include-local-paths]`
 - `policynim beta-admin list-accounts|suspend|resume|revoke-key|audit-log`
 
 ### MCP Tools

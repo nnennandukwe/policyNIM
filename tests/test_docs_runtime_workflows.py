@@ -27,15 +27,22 @@ def test_workflows_guide_documents_runtime_request_shapes_and_sqlite_usage() -> 
     text = _read_text(WORKFLOWS_GUIDE)
 
     for token in (
-        "policynim quickstart [--target hosted-mcp|local-cli|local-mcp]",
+        "policynim quickstart [--target hosted-mcp|local-cli|local-mcp] "
+        "[--client codex|claude-code] [--hosted-url <url>] "
+        "[--bearer-token-env-var <name>] [--repo-root <path>] [--format text|json]",
         "policynim doctor [--format text|json]",
         "policynim runtime decide --input <path|->",
         "policynim runtime execute --input <path|->",
         "policynim evidence report --session-id <id>",
         "policynim evidence report --session-id <id> --format markdown --output reports/<id>.md",
-        "policynim mcp-config [--target local-stdio|hosted-http]",
+        "policynim mcp-config [--client codex|claude-code] "
+        "[--target local-stdio|hosted-http] [--hosted-url <url>] "
+        "[--bearer-token-env-var <name>] [--repo-root <path>] "
+        "[--server-name <name>] [--uv-command <path>] [--format text|json]",
         "policynim mcp-smoke [--mcp-config-file <path>]",
-        "policynim support-bundle [--include-mcp-smoke]",
+        "policynim support-bundle [--format json|markdown] "
+        "[--include-mcp-smoke] [--mcp-timeout-seconds <seconds>] "
+        "[--include-local-paths]",
         "policynim beta-admin list-accounts|suspend|resume|revoke-key|audit-log",
         '"kind": "shell_command"',
         '"kind": "file_write"',
