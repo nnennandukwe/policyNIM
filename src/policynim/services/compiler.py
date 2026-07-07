@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, PolicyCompiler, Reranker
+from policynim.iterables import ordered_unique
 from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -156,7 +157,7 @@ def _materialize_compiled_packet(
     if not all_constraints:
         return _insufficient_packet_from_selection(selection_packet)
 
-    citation_ids = _ordered_unique(
+    citation_ids = ordered_unique(
         [citation_id for constraint in all_constraints for citation_id in constraint.citation_ids]
     )
     citations = [_citation_from_chunk(context_by_id[citation_id]) for citation_id in citation_ids]
@@ -188,7 +189,7 @@ def _compile_constraint_list(
     compiled_constraints: list[CompiledPolicyConstraint] = []
     for generated_constraint in generated_constraints:
         statement = generated_constraint.statement.strip()
-        citation_ids = _ordered_unique(
+        citation_ids = ordered_unique(
             [citation_id.strip() for citation_id in generated_constraint.citation_ids]
         )
         if not statement or not citation_ids:
@@ -196,7 +197,7 @@ def _compile_constraint_list(
         if any(citation_id not in context_by_id for citation_id in citation_ids):
             return None
 
-        source_policy_ids = _ordered_unique(
+        source_policy_ids = ordered_unique(
             [context_by_id[citation_id].policy.policy_id for citation_id in citation_ids]
         )
         compiled_constraints.append(
@@ -239,17 +240,6 @@ def _citation_from_chunk(chunk: ScoredChunk) -> Citation:
         lines=chunk.lines,
         chunk_id=chunk.chunk_id,
     )
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def _close_component(component: object | None) -> None:

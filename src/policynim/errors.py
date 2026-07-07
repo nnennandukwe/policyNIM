@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+
+from pydantic import ValidationError
+
 
 class PolicyNIMError(Exception):
     """Base error for PolicyNIM."""
@@ -41,3 +45,31 @@ class RuntimeCitationLinkError(PolicyNIMError):
 
 class RuntimeEvidencePersistenceError(PolicyNIMError):
     """Raised when runtime execution evidence cannot be persisted durably."""
+
+
+def format_validation_error(
+    label: str,
+    exc: ValidationError,
+    *,
+    location_fallback: str = "request",
+) -> str:
+    """Render the first Pydantic validation error in the CLI/MCP house style."""
+    error = exc.errors()[0]
+    location = ".".join(str(part) for part in error["loc"]) or location_fallback
+    return f"{label} is invalid at {location}: {error['msg']}."
+
+
+def find_failure_class(exc: BaseException) -> str | None:
+    """Walk chained exceptions until a populated failure class is found."""
+    current: BaseException | None = exc
+    while current is not None:
+        failure_class = getattr(current, "failure_class", None)
+        if isinstance(failure_class, str) and failure_class:
+            return failure_class
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def elapsed_ms(start_time: float) -> float:
+    """Return elapsed milliseconds rounded for structured output."""
+    return round((perf_counter() - start_time) * 1000, 2)
