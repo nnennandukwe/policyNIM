@@ -13,6 +13,7 @@ class _Payload(BaseModel):
 
 
 def test_format_validation_error_uses_first_location() -> None:
+    """Ensure formatted validation errors use the first location entry."""
     with pytest.raises(ValidationError) as excinfo:
         _Payload.model_validate({})
 
@@ -22,6 +23,7 @@ def test_format_validation_error_uses_first_location() -> None:
 
 
 def test_find_failure_class_walks_exception_causes() -> None:
+    """Find failure_class even when the error is wrapped via exception causes."""
     try:
         raise PolicyNIMError("upstream timeout", failure_class="timeout")
     except PolicyNIMError as exc:
@@ -32,6 +34,7 @@ def test_find_failure_class_walks_exception_causes() -> None:
 
 
 def test_elapsed_ms_returns_non_negative_float() -> None:
+    """elapsed_ms should always return a non-negative float."""
     value = elapsed_ms(perf_counter())
 
     assert isinstance(value, float)
