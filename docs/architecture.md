@@ -338,7 +338,7 @@ Important evaluation rules:
 - `POST /beta/api-key/regenerate` rotates the active hosted beta API key.
 - `POST /beta/logout` clears the hosted beta session cookie.
 - Unauthenticated browser visits to `/mcp` redirect to `/beta` when hosted
-  bearer auth is enabled.
+  bearer auth and self-serve beta signup are enabled.
 - `/healthz` is public even when hosted bearer auth is enabled for `/mcp`.
 - Hosted beta deployments on Railway use a generated public domain, and the MCP
   URL is always `<POLICYNIM_MCP_PUBLIC_BASE_URL>/mcp`.

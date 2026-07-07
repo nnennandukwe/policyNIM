@@ -53,7 +53,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
   `beta-admin`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
 - Hosted HTTP `streamable-http` with `/healthz`, a browser redirect from
-  `/mcp` to `/beta` for hosted sign-in, and optional bearer auth on `/mcp`.
+  `/mcp` to `/beta` for self-serve hosted sign-in when beta signup is enabled,
+  and optional bearer auth on `/mcp`.
 
 ## What To Run First
 

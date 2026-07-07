@@ -46,7 +46,8 @@ reference that used to live in the root README.
 - `GET /healthz` reports local index readiness when using `streamable-http`
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
 - `/beta` stays as the self-serve signup and key-management surface, and
-  browser visits to `/mcp` redirect there when hosted auth is enabled
+  browser visits to `/mcp` redirect there when hosted auth and beta signup are
+  enabled
 - hosted `streamable-http` startup fails fast when
   `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
   missing or empty
