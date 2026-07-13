@@ -408,6 +408,10 @@ Use these commands when you want the no-network first-run plan, a local setup
 health check, copyable MCP client config, a stdio tool-registration smoke test,
 or a redacted support bundle for an issue report.
 
+`policynim support-bundle --include-local-paths` is reserved for private
+maintainer triage. Public issue bundles keep exact local path prefixes redacted
+by default.
+
 ## Runtime Decisions And Evidence
 
 PolicyNIM compiles `runtime_rules` frontmatter from the policy corpus into a
