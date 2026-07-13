@@ -11,6 +11,7 @@ from typing import Protocol
 
 from policynim.contracts import Embedder
 from policynim.ingest import chunk_policy_documents, load_policy_documents
+from policynim.lifecycle import close_if_supported
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -75,7 +76,7 @@ class IngestService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._embedder)
+        close_if_supported(self._embedder)
 
     def run(self) -> IngestResult:
         """Load, chunk, embed, and persist the policy corpus."""
@@ -205,10 +206,3 @@ def _finalize_runtime_rules_artifact(staged_path: Path, destination: Path) -> No
 def _cleanup_staged_runtime_rules_artifact(staged_path: Path) -> None:
     """Best-effort cleanup for staged artifact files after a failed ingest."""
     staged_path.unlink(missing_ok=True)
-
-
-def _close_component(component: object | None) -> None:
-    """Close an optional owned component when it exposes a close hook."""
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()

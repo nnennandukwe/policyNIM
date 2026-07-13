@@ -23,6 +23,8 @@ from pydantic import ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.iterables import ordered_unique
+from policynim.lifecycle import close_if_supported
 from policynim.settings import Settings
 from policynim.types import (
     CompiledPolicyConstraint,
@@ -91,7 +93,7 @@ class NVIDIAEmbedder(Embedder):
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
         if self._owns_client:
-            _close_client(self._client)
+            close_if_supported(self._client)
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed policy chunk text in batches."""
@@ -401,7 +403,7 @@ class NVIDIAGenerator(Generator):
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
         if self._owns_client:
-            _close_client(self._client)
+            close_if_supported(self._client)
 
 
 class NVIDIAPolicyCompiler:
@@ -466,7 +468,7 @@ class NVIDIAPolicyCompiler:
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
         if self._owns_client:
-            _close_client(self._client)
+            close_if_supported(self._client)
 
 
 class NVIDIAPolicyConformanceEvaluator:
@@ -531,7 +533,7 @@ class NVIDIAPolicyConformanceEvaluator:
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
         if self._owns_client:
-            _close_client(self._client)
+            close_if_supported(self._client)
 
 
 def _request_chat_completion(
@@ -1082,18 +1084,7 @@ def _allowed_policy_conformance_chunk_ids(
     trace_chunk_ids = [
         citation_id for step in request.trace_steps for citation_id in step.citation_ids
     ]
-    return _ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+    return ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
 
 
 def _parse_json_object_response(content: str, *, operation: str) -> dict[str, Any]:
@@ -1127,9 +1118,3 @@ def _extract_embedded_json_object(content: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
-
-
-def _close_client(client: object) -> None:
-    close = getattr(client, "close", None)
-    if callable(close):
-        close()

@@ -19,6 +19,7 @@ from policynim.errors import (
     RuntimeRulesArtifactInvalidError,
     RuntimeRulesArtifactMissingError,
 )
+from policynim.iterables import ordered_unique
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -253,7 +254,7 @@ def _normalize_file_write_paths(request: FileWriteActionRequest) -> tuple[str, .
 
     candidate_paths.append(lexical_target.as_posix())
     candidate_paths.append(resolved_target.as_posix())
-    return tuple(_ordered_unique(candidate_paths))
+    return tuple(ordered_unique(candidate_paths))
 
 
 def _resolve_from_base(path: Path, *, base: Path) -> Path:
@@ -298,18 +299,6 @@ def _relative_posix_path(path: Path, *, root: Path) -> str | None:
         return path.relative_to(root).as_posix()
     except ValueError:
         return None
-
-
-def _ordered_unique(values: list[str]) -> list[str]:
-    """Keep first-seen string order while dropping duplicates."""
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        ordered.append(value)
-        seen.add(value)
-    return ordered
 
 
 def _rule_matches(

@@ -31,6 +31,8 @@ from policynim.errors import (
     PolicyNIMError,
     ProviderError,
 )
+from policynim.lifecycle import close_if_supported
+from policynim.public_urls import public_base_url_uses_https, public_url
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -129,12 +131,6 @@ def _format_validation_error(label: str, exc: ValidationError) -> str:
     return f"{label} is invalid at {location}: {error['msg']}."
 
 
-def _close_service(service: object | None) -> None:
-    close = getattr(service, "close", None)
-    if callable(close):
-        close()
-
-
 def _configure_hosted_logger() -> None:
     """Emit hosted MCP telemetry as one JSON object per line."""
     logger = logging.getLogger(_HOSTED_LOGGER_NAME)
@@ -229,7 +225,7 @@ def _run_policy_preflight(
     except ValidationError as exc:
         raise ValueError(_format_validation_error("Preflight request", exc)) from exc
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
 
 def policy_preflight(
@@ -253,7 +249,7 @@ def _run_policy_search(
         result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
         return result.model_dump(mode="json")
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
 
 def policy_search(
@@ -363,7 +359,7 @@ def _register_beta_routes(
         max_attempts=settings.beta_auth_rate_limit_max_attempts,
         window_seconds=settings.beta_auth_rate_limit_window_seconds,
     )
-    trust_forwarded_headers = _beta_session_https_only(settings)
+    trust_forwarded_headers = public_base_url_uses_https(settings)
 
     def _rate_limited(request: Request) -> HTMLResponse | None:
         client_ip = _client_address(
@@ -530,7 +526,7 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
             ready=False,
             table_name=table_name,
             row_count=0,
-            mcp_url=_derive_mcp_url(settings),
+            mcp_url=public_url(settings, _STREAMABLE_HTTP_PATH),
             reason=reason,
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=503)
@@ -548,18 +544,6 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
 
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)
-
-
-def _derive_mcp_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
-
-
-def _derive_beta_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + _BETA_PATH
 
 
 def _beta_asset_path(filename: str) -> Path:
@@ -654,8 +638,8 @@ def _render_beta_landing(
     message: str | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
-    portal_url = _derive_beta_url(settings) or _BETA_PATH
-    mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
+    portal_url = public_url(settings, _BETA_PATH) or _BETA_PATH
+    mcp_url = public_url(settings, _STREAMABLE_HTTP_PATH) or _STREAMABLE_HTTP_PATH
     notices: list[dict[str, str]] = []
     if message:
         notices.append(
@@ -721,8 +705,8 @@ def _render_beta_dashboard(
     message: str | None = None,
     message_tone: str = "warning",
 ) -> HTMLResponse:
-    portal_url = _derive_beta_url(settings) or _BETA_PATH
-    mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
+    portal_url = public_url(settings, _BETA_PATH) or _BETA_PATH
+    mcp_url = public_url(settings, _STREAMABLE_HTTP_PATH) or _STREAMABLE_HTTP_PATH
     current_key = account.api_key_prefix or "No active key"
     current_key_created = (
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
@@ -866,13 +850,6 @@ def _require_beta_session_account_id(request: Request) -> int | None:
         return None
 
 
-def _beta_session_https_only(settings: Settings) -> bool:
-    """Use secure beta session cookies for HTTPS-hosted deployments."""
-    if settings.mcp_public_base_url is None:
-        return False
-    return settings.mcp_public_base_url.scheme == "https"
-
-
 def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
     if not settings.beta_signup_enabled and not settings.mcp_require_auth:
         return None
@@ -1003,7 +980,7 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
             app,
             secret_key=session_secret,
             same_site="lax",
-            https_only=_beta_session_https_only(settings),
+            https_only=public_base_url_uses_https(settings),
         )
     if not settings.mcp_require_auth:
         return app
@@ -1012,7 +989,7 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
         protected_path=server.settings.streamable_http_path,
         valid_tokens=settings.mcp_bearer_tokens,
         beta_auth_service=beta_auth_service,
-        beta_portal_url=_derive_beta_url(settings) if settings.beta_signup_enabled else None,
+        beta_portal_url=public_url(settings, _BETA_PATH) if settings.beta_signup_enabled else None,
     )
 
 

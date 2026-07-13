@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 
+from policynim.iterables import ordered_unique
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -107,7 +108,7 @@ def _trace_policies(compiled_packet: CompiledPolicyPacket) -> list[PolicyEvidenc
             policy_id=policy.policy_id,
             title=policy.title,
             reason=policy.reason,
-            supporting_chunk_ids=_ordered_unique(
+            supporting_chunk_ids=ordered_unique(
                 [evidence.chunk_id for evidence in policy.evidence]
             ),
         )
@@ -188,7 +189,7 @@ def _trace_text_outputs(
                 index=index,
                 text=text,
                 constraint_ids=[constraint.constraint_id for constraint in linked_constraints],
-                chunk_ids=_ordered_unique(
+                chunk_ids=ordered_unique(
                     [
                         chunk_id
                         for constraint in linked_constraints
@@ -209,7 +210,7 @@ def _trace_conformance_checks(
 
     constraints_by_category = _constraints_by_category(constraints)
     all_constraint_ids = [constraint.constraint_id for constraint in constraints]
-    all_chunk_ids = _ordered_unique(
+    all_chunk_ids = ordered_unique(
         [chunk_id for constraint in constraints for chunk_id in constraint.citation_ids]
     )
     checks: list[PolicyEvidenceTraceConformanceCheck] = []
@@ -330,20 +331,9 @@ def _metric_chunk_ids(
         constraints = constraints_by_category["forbidden_patterns"]
     else:
         constraints = []
-    return _ordered_unique(
+    return ordered_unique(
         [chunk_id for constraint in constraints for chunk_id in constraint.citation_ids]
     )
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 __all__ = [

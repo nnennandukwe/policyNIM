@@ -27,6 +27,7 @@ import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.mcp import run_server
+from policynim.lifecycle import close_if_supported
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
     create_beta_auth_service,
@@ -266,7 +267,7 @@ def ingest() -> None:
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
     typer.echo(f"Model: {result.embedding_model}")
@@ -298,7 +299,7 @@ def dump_index(
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(f"Indexed chunks: {len(chunks)}")
     if count_only:
@@ -398,7 +399,7 @@ def preflight(
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(result.model_dump_json(indent=2))
 
@@ -435,7 +436,7 @@ def search(
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(result.model_dump_json(indent=2))
 
@@ -490,7 +491,7 @@ def route(
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(result.packet.model_dump_json(indent=2))
 
@@ -545,7 +546,7 @@ def compile(
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(result.packet.model_dump_json(indent=2))
 
@@ -569,7 +570,7 @@ def runtime_decide(
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(result.model_dump_json(indent=2))
 
@@ -596,7 +597,7 @@ def runtime_execute(
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(result.model_dump_json(indent=2))
     exit_code = _exit_code_for_runtime_execution(result.execution_outcome)
@@ -641,7 +642,7 @@ def evidence_report(
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     if output is not None and written_path is not None:
         typer.echo(f"Wrote runtime evidence report to {written_path}.")
@@ -714,7 +715,7 @@ def eval(
     except ValueError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     if any(run.metrics.passed_count != run.metrics.case_count for run in result.runs):
         raise typer.Exit(code=1)
@@ -954,7 +955,7 @@ def beta_admin_list_accounts() -> None:
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(
         json.dumps(
@@ -979,7 +980,7 @@ def beta_admin_suspend(
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(account.model_dump_json(indent=2))
 
@@ -999,7 +1000,7 @@ def beta_admin_resume(
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(account.model_dump_json(indent=2))
 
@@ -1019,7 +1020,7 @@ def beta_admin_revoke_key(
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(account.model_dump_json(indent=2))
 
@@ -1051,7 +1052,7 @@ def beta_admin_audit_log(
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     finally:
-        _close_service(service)
+        close_if_supported(service)
 
     typer.echo(json.dumps([event.model_dump(mode="json") for event in events], indent=2))
 
@@ -2890,10 +2891,7 @@ def _doctor_ingest_next_step() -> str:
 
 def _doctor_local_index_ready(settings: Settings) -> bool:
     """Return whether the configured local SQLite index is ready for runtime use."""
-    try:
-        return create_index_store(settings).exists()
-    except Exception:
-        return False
+    return create_index_store(settings).exists()
 
 
 def _doctor_index_directory_next_step(*, legacy_lancedb_alias_configured: bool) -> str:
@@ -3062,12 +3060,6 @@ def _is_standalone_local_runtime() -> bool:
         not config_discovery.is_source_checkout()
         and not config_discovery.is_hosted_process_environment()
     )
-
-
-def _close_service(service: object | None) -> None:
-    close = getattr(service, "close", None)
-    if callable(close):
-        close()
 
 
 if __name__ == "__main__":
