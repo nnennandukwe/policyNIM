@@ -82,6 +82,13 @@ commands load by default. Then use the later `uv run policynim ...` examples
 inside the uv-managed project environment. Installed copies should keep using
 the direct `policynim ...` entrypoint.
 
+If you need PolicyNIM to read or write a different env file, set
+`POLICYNIM_CONFIG_FILE=/abs/path/to/custom.env` before running `policynim init`.
+Source checkouts still default to `.env`; installed standalone runtimes still
+default to `config.env` under the platform config directory. The older
+`POLICYNIM_LANCEDB_URI` name remains a deprecated alias for
+`POLICYNIM_INDEX_DB_PATH`, so new configs should use the SQLite path variable.
+
 ### 1. Build The Local Index
 
 ```bash

@@ -60,6 +60,8 @@ def test_contributor_guide_and_env_examples_include_runtime_settings() -> None:
         "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
         "POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS",
+        "POLICYNIM_CONFIG_FILE",
+        "POLICYNIM_LANCEDB_URI",
     ):
         assert token in guide_text
 
@@ -79,6 +81,7 @@ def test_standalone_setup_docs_use_installed_cli_entrypoint() -> None:
     assert "policynim init\npolicynim ingest" in workflows_text
     assert "Installed copies should keep using" in workflows_text
     assert "the direct `policynim ...` entrypoint" in workflows_text
+    assert "POLICYNIM_CONFIG_FILE" in _read_text(README)
 
     for path in STANDALONE_SETUP_DOCS:
         text = _read_text(path)

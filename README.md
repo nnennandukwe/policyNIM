@@ -158,6 +158,11 @@ In a source checkout, `init` writes the checkout `.env` file that PolicyNIM
 loads by default. Installed copies should keep using the direct `policynim init`
 entrypoint described below.
 
+If you need PolicyNIM to read or write a different env file, set
+`POLICYNIM_CONFIG_FILE=/abs/path/to/custom.env` before running `policynim init`.
+Source checkouts still default to `.env`, and installed copies still default to
+`config.env` under the platform config directory.
+
 If you want a quick local readiness check after setup, run:
 
 ```bash
