@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from types import TracebackType
 from typing import Protocol
 
+from policynim.atomic_files import stage_text_artifact
 from policynim.contracts import Embedder
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
@@ -84,17 +85,34 @@ class IngestService:
         chunks = chunk_policy_documents(documents)
         vectors = self._embedder.embed_documents([chunk.text for chunk in chunks])
         embedded_chunks = _attach_embeddings(chunks, vectors)
+        previous_runtime_rules_artifact = _read_existing_runtime_rules_artifact(
+            self._runtime_rules_artifact_path
+        )
         staged_artifact_path = _stage_runtime_rules_artifact(
             runtime_rules_artifact,
             self._runtime_rules_artifact_path,
         )
 
         try:
-            self._index_store.replace(embedded_chunks)
             _finalize_runtime_rules_artifact(
                 staged_artifact_path,
                 self._runtime_rules_artifact_path,
             )
+            try:
+                self._index_store.replace(embedded_chunks)
+            except Exception as exc:
+                try:
+                    _restore_runtime_rules_artifact(
+                        self._runtime_rules_artifact_path,
+                        previous_runtime_rules_artifact,
+                    )
+                except OSError as restore_exc:
+                    raise OSError(
+                        "Index replacement failed and PolicyNIM could not restore the previous "
+                        f"runtime rules artifact at {self._runtime_rules_artifact_path}: "
+                        f"{restore_exc}."
+                    ) from exc
+                raise
         except Exception:
             _cleanup_staged_runtime_rules_artifact(staged_artifact_path)
             raise
@@ -185,16 +203,20 @@ def _stage_runtime_rules_artifact(
         indent=2,
         sort_keys=False,
     )
-    with NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=destination.parent,
-        prefix=f".{destination.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as handle:
-        handle.write(f"{serialized}\n")
-        return Path(handle.name)
+    return stage_text_artifact(
+        destination,
+        content=serialized,
+        ensure_trailing_newline=True,
+    )
+
+
+def _read_existing_runtime_rules_artifact(destination: Path) -> str | None:
+    """Capture the current artifact so ingest can restore it on later failures."""
+    if not destination.exists():
+        return None
+    if destination.is_dir():
+        raise OSError(f"Runtime rules artifact path {destination} must not be a directory.")
+    return destination.read_text(encoding="utf-8")
 
 
 def _finalize_runtime_rules_artifact(staged_path: Path, destination: Path) -> None:
@@ -205,6 +227,20 @@ def _finalize_runtime_rules_artifact(staged_path: Path, destination: Path) -> No
 def _cleanup_staged_runtime_rules_artifact(staged_path: Path) -> None:
     """Best-effort cleanup for staged artifact files after a failed ingest."""
     staged_path.unlink(missing_ok=True)
+
+
+def _restore_runtime_rules_artifact(destination: Path, previous_content: str | None) -> None:
+    """Restore the prior artifact when index replacement fails after promotion."""
+    if previous_content is None:
+        destination.unlink(missing_ok=True)
+        return
+    staged_restore_path = stage_text_artifact(destination, content=previous_content)
+    try:
+        staged_restore_path.replace(destination)
+    except OSError:
+        with suppress(OSError):
+            staged_restore_path.unlink(missing_ok=True)
+        raise
 
 
 def _close_component(component: object | None) -> None:

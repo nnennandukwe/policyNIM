@@ -36,7 +36,7 @@ async def _authenticated_session() -> AsyncIterator[ClientSession]:
                 yield session
 
 
-def _structured_payload(result) -> dict[str, object]:  # noqa: ANN001
+def _structured_payload(result) -> dict[str, object]:
     payload = result.structuredContent
     assert isinstance(payload, dict)
     return payload
