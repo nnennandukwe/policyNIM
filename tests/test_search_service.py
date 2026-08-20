@@ -8,6 +8,7 @@ import pytest
 
 from policynim.errors import MissingIndexError
 from policynim.services.search import SearchService
+from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.types import EmbeddedChunk, PolicyChunk, PolicyMetadata, ScoredChunk, SearchRequest
 
 
@@ -222,6 +223,31 @@ def test_search_service_requires_existing_index() -> None:
 
     with pytest.raises(MissingIndexError):
         service.search(SearchRequest(query="backend logs", top_k=1))
+
+
+def test_search_service_surfaces_unreadable_index_guidance() -> None:
+    """Return actionable recovery text when the local index cannot be read."""
+
+    class UnreadableIndexStore(MockIndexStore):
+        """Search-store stub that reports an unreadable backing SQLite file."""
+
+        def inspect_readiness(self) -> IndexReadinessReport:
+            """Return the unreadable local-index state for the search preflight."""
+            return IndexReadinessReport(
+                state="unreadable",
+                error=PermissionError(13, "permission denied"),
+            )
+
+    service = SearchService(
+        embedder=MockEmbedder(),
+        index_store=UnreadableIndexStore([make_chunk(chunk_id="BACKEND-1", domain="backend")]),
+        reranker=MockReranker(),
+    )
+
+    with pytest.raises(MissingIndexError, match="permission denied") as exc_info:
+        service.search(SearchRequest(query="backend logs", top_k=1))
+
+    assert "Fix file permissions" in str(exc_info.value)
 
 
 def test_search_service_close_closes_embedder_and_reranker() -> None:

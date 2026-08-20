@@ -10,6 +10,7 @@ from policynim.errors import ConfigurationError
 from policynim.services import health as health_module
 from policynim.services.health import RuntimeHealthService
 from policynim.settings import Settings
+from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.types import HealthCheckResult
 
 
@@ -23,11 +24,13 @@ class StubIndexStore:
         row_count: int = 1,
         exists_error: Exception | None = None,
         count_error: Exception | None = None,
+        readiness: IndexReadinessReport | None = None,
     ) -> None:
         self._exists = exists
         self._row_count = row_count
         self._exists_error = exists_error
         self._count_error = count_error
+        self._readiness = readiness
 
     def replace(self, chunks) -> None:  # pragma: no cover - protocol filler for tests
         raise NotImplementedError
@@ -47,6 +50,20 @@ class StubIndexStore:
 
     def search(self, query_embedding, *, top_k: int, domain: str | None = None):  # pragma: no cover
         raise NotImplementedError
+
+    def inspect_readiness(self) -> IndexReadinessReport:
+        """Return an optional explicit readiness report for health-service tests."""
+        if self._readiness is not None:
+            return self._readiness
+        if self._exists_error is not None:
+            return IndexReadinessReport(state="unreadable", error=self._exists_error)
+        if self._count_error is not None:
+            return IndexReadinessReport(state="unreadable", error=self._count_error)
+        if not self._exists:
+            return IndexReadinessReport(state="missing")
+        if self._row_count <= 0:
+            return IndexReadinessReport(state="empty")
+        return IndexReadinessReport(state="ready", row_count=self._row_count)
 
 
 class StaticHealthService:
@@ -126,6 +143,27 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
         "Local index readiness could not be inspected: PermissionError: permission denied."
     )
     assert "/tmp/key" not in result.reason
+
+
+def test_runtime_health_service_reports_invalid_database_file() -> None:
+    """Expose invalid SQLite files as invalid databases instead of missing tables."""
+    service = RuntimeHealthService(
+        index_store=StubIndexStore(
+            readiness=IndexReadinessReport(
+                state="invalid",
+                error=RuntimeError("file is not a database"),
+            )
+        ),
+        table_name="policy_chunks",
+        mcp_url=None,
+    )
+
+    result = service.check()
+
+    assert result.status == "error"
+    assert result.ready is False
+    assert result.row_count == 0
+    assert result.reason == "Local index file is not a readable PolicyNIM sqlite-vec database."
 
 
 def test_ensure_hosted_runtime_ready_accepts_ready_index(monkeypatch: pytest.MonkeyPatch) -> None:

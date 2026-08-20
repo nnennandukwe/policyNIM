@@ -13,6 +13,7 @@ import sqlite_vec
 
 from policynim.contracts import IndexStore
 from policynim.errors import MissingIndexError
+from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.types import EmbeddedChunk, PolicyChunk, PolicyMetadata, ScoredChunk
 
 _SCHEMA_VERSION = "1"
@@ -72,25 +73,14 @@ class SQLiteVecIndexStore(IndexStore):
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
-        if not self._path.exists() or self._path.is_dir():
-            return False
-        try:
-            with closing(_connect(self._path)) as conn:
-                return _has_required_schema(conn) and _count_chunks(conn) > 0
-        except (OSError, sqlite3.DatabaseError):
-            return False
+        return self.inspect_readiness().state == "ready"
 
     def count(self) -> int:
         """Return the number of rows in the local index."""
-        if not self._path.exists() or self._path.is_dir():
+        readiness = self.inspect_readiness()
+        if readiness.state != "ready":
             return 0
-        try:
-            with closing(_connect(self._path)) as conn:
-                if not _has_required_schema(conn):
-                    return 0
-                return _count_chunks(conn)
-        except (OSError, sqlite3.DatabaseError):
-            return 0
+        return readiness.row_count
 
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
@@ -177,6 +167,27 @@ class SQLiteVecIndexStore(IndexStore):
     def reset_for_tests(self) -> None:
         """Reset the backing SQLite file and WAL sidecars for deterministic tests."""
         _cleanup_database_files(self._path)
+
+    def inspect_readiness(self) -> IndexReadinessReport:
+        """Describe whether the local SQLite index is ready for retrieval use."""
+        if not self._path.exists():
+            return IndexReadinessReport(state="missing")
+        if self._path.is_dir():
+            return IndexReadinessReport(state="directory")
+
+        try:
+            with closing(_connect(self._path)) as conn:
+                if not _has_required_schema(conn):
+                    return IndexReadinessReport(state="invalid")
+                row_count = _count_chunks(conn)
+        except OSError as exc:
+            return IndexReadinessReport(state="unreadable", error=exc)
+        except sqlite3.DatabaseError as exc:
+            return IndexReadinessReport(state="invalid", error=exc)
+
+        if row_count <= 0:
+            return IndexReadinessReport(state="empty")
+        return IndexReadinessReport(state="ready", row_count=row_count)
 
     def _require_connection(self) -> sqlite3.Connection:
         """Open a validated SQLite connection or fail with missing-index guidance."""
