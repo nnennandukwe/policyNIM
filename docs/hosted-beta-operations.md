@@ -264,7 +264,7 @@ operator. The default checks stay offline and deterministic:
 
 ```bash
 uv run ruff check .
-uv run pyright
+uv run --group test --group dev pyright
 uv run pytest -q -m "not live and not docker_live"
 git diff --check
 ```

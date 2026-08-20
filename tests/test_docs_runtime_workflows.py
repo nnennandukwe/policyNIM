@@ -11,6 +11,7 @@ CONTRIBUTOR_GUIDE = REPO_ROOT / "docs" / "contributor-guide.md"
 POLICY_TEMPLATE = REPO_ROOT / "policies" / "TEMPLATE.md"
 TESTS_README = REPO_ROOT / "tests" / "README.md"
 RELEASE_GUIDE = REPO_ROOT / "docs" / "release.md"
+ARCHITECTURE_GUIDE = REPO_ROOT / "docs" / "architecture.md"
 STANDALONE_SETUP_DOCS = (README, WORKFLOWS_GUIDE, CONTRIBUTOR_GUIDE)
 ENV_EXAMPLES = (
     REPO_ROOT / ".env.example",
@@ -154,7 +155,7 @@ def test_hosted_operations_documents_operator_beta_release_gate() -> None:
         "policynim quickstart --target hosted-mcp --client codex",
         "POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3",
         "uv run ruff check .",
-        "uv run pyright",
+        "uv run --group test --group dev pyright",
         'uv run pytest -q -m "not live and not docker_live"',
         "uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py",
         "POLICYNIM_RUN_DOCKER_TESTS=1 uv run --group test pytest -q -m docker_live",
@@ -203,3 +204,15 @@ def test_release_guide_documents_publish_checklist() -> None:
         "Hosted Beta Smoke",
     ):
         assert token in release_text
+
+
+def test_architecture_guide_documents_config_discovery_boundary() -> None:
+    """Explain which modules own environment-backed config discovery."""
+    text = _read_text(ARCHITECTURE_GUIDE)
+
+    for token in (
+        "src/policynim/config_discovery.py",
+        "Discovers checkout, cwd, and standalone env-file precedence.",
+        "Reads process environment for config-file overrides and hosted detection.",
+    ):
+        assert token in text

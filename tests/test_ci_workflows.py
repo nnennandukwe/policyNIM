@@ -56,7 +56,7 @@ def test_release_workflow_runs_offline_verification_before_release_artifacts() -
         '- "v*.*.*"',
         "uv lock --check",
         "uv run ruff check .",
-        "uv run pyright",
+        "uv run --group test --group dev pyright",
         'uv run pytest -q -m "not live and not docker_live"',
         "uv build --out-dir dist",
         "wheel-smoke:",

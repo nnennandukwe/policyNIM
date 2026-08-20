@@ -31,6 +31,15 @@ from policynim.errors import (
     PolicyNIMError,
     ProviderError,
 )
+from policynim.hosted_urls import (
+    AUTH_GITHUB_CALLBACK_PATH,
+    AUTH_GITHUB_START_PATH,
+    BETA_PATH,
+    HEALTH_PATH,
+    STREAMABLE_HTTP_PATH,
+    optional_hosted_mcp_url,
+    optional_hosted_portal_url,
+)
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -54,12 +63,7 @@ from policynim.types import (
 )
 
 SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
-_STREAMABLE_HTTP_PATH = "/mcp"
-_HEALTH_PATH = "/healthz"
-_BETA_PATH = "/beta"
 _FAVICON_PATH = "/favicon.ico"
-_AUTH_GITHUB_START_PATH = "/auth/github/start"
-_AUTH_GITHUB_CALLBACK_PATH = "/auth/github/callback"
 _BETA_API_KEY_REGENERATE_PATH = "/beta/api-key/regenerate"
 _BETA_LOGOUT_PATH = "/beta/logout"
 _BETA_ASSET_PATH = "/beta/assets"
@@ -344,7 +348,7 @@ def _create_mcp_server(
         json_response=True,
         host=settings.mcp_host,
         port=settings.mcp_port,
-        streamable_http_path=_STREAMABLE_HTTP_PATH,
+        streamable_http_path=STREAMABLE_HTTP_PATH,
     )
     _register_tools(server)
     _register_health_route(server, settings)
@@ -405,7 +409,7 @@ def _register_beta_routes(
     async def favicon(_: Request) -> Response:
         return _render_beta_asset(_BETA_LIGHT_LOGO_FILENAME, media_type="image/png")
 
-    @server.custom_route(_BETA_PATH, methods=["GET"], include_in_schema=False)
+    @server.custom_route(BETA_PATH, methods=["GET"], include_in_schema=False)
     async def beta_dashboard(request: Request) -> Response:
         account_id = _require_beta_session_account_id(request)
         if account_id is None:
@@ -421,7 +425,7 @@ def _register_beta_routes(
         usage = beta_auth_service.get_portal_usage(account_id)
         return _render_beta_dashboard(settings, account=account, usage=usage)
 
-    @server.custom_route(_AUTH_GITHUB_START_PATH, methods=["GET"], include_in_schema=False)
+    @server.custom_route(AUTH_GITHUB_START_PATH, methods=["GET"], include_in_schema=False)
     async def github_start(request: Request) -> Response:
         blocked = _rate_limited(request)
         if blocked is not None:
@@ -433,7 +437,7 @@ def _register_beta_routes(
             status_code=302,
         )
 
-    @server.custom_route(_AUTH_GITHUB_CALLBACK_PATH, methods=["GET"], include_in_schema=False)
+    @server.custom_route(AUTH_GITHUB_CALLBACK_PATH, methods=["GET"], include_in_schema=False)
     async def github_callback(request: Request) -> Response:
         blocked = _rate_limited(request)
         if blocked is not None:
@@ -475,17 +479,17 @@ def _register_beta_routes(
             )
 
         request.session[_BETA_ACCOUNT_SESSION_KEY] = account.account_id
-        return RedirectResponse(_BETA_PATH, status_code=302)
+        return RedirectResponse(BETA_PATH, status_code=302)
 
     @server.custom_route(_BETA_API_KEY_REGENERATE_PATH, methods=["POST"], include_in_schema=False)
     async def beta_regenerate_api_key(request: Request) -> Response:
         account_id = _require_beta_session_account_id(request)
         if account_id is None:
-            return RedirectResponse(_BETA_PATH, status_code=302)
+            return RedirectResponse(BETA_PATH, status_code=302)
         account = beta_auth_service.get_account(account_id)
         if account is None:
             request.session.clear()
-            return RedirectResponse(_BETA_PATH, status_code=302)
+            return RedirectResponse(BETA_PATH, status_code=302)
         try:
             issued_key = beta_auth_service.issue_api_key(account_id=account_id)
         except PolicyNIMError as exc:
@@ -509,7 +513,7 @@ def _register_beta_routes(
     @server.custom_route(_BETA_LOGOUT_PATH, methods=["POST"], include_in_schema=False)
     async def beta_logout(request: Request) -> Response:
         request.session.clear()
-        return RedirectResponse(_BETA_PATH, status_code=302)
+        return RedirectResponse(BETA_PATH, status_code=302)
 
 
 def _register_health_route(server: FastMCP, settings: Settings) -> None:
@@ -530,12 +534,12 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
             ready=False,
             table_name=table_name,
             row_count=0,
-            mcp_url=_derive_mcp_url(settings),
+            mcp_url=optional_hosted_mcp_url(settings),
             reason=reason,
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=503)
 
-    @server.custom_route(_HEALTH_PATH, methods=["GET"], include_in_schema=False)
+    @server.custom_route(HEALTH_PATH, methods=["GET"], include_in_schema=False)
     async def healthz(_: Request) -> Response:
         if health_service is None:
             return _fallback_result()
@@ -548,18 +552,6 @@ def _register_health_route(server: FastMCP, settings: Settings) -> None:
 
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)
-
-
-def _derive_mcp_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
-
-
-def _derive_beta_url(settings: Settings) -> str | None:
-    if settings.mcp_public_base_url is None:
-        return None
-    return str(settings.mcp_public_base_url).rstrip("/") + _BETA_PATH
 
 
 def _beta_asset_path(filename: str) -> Path:
@@ -654,8 +646,8 @@ def _render_beta_landing(
     message: str | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
-    portal_url = _derive_beta_url(settings) or _BETA_PATH
-    mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
+    portal_url = optional_hosted_portal_url(settings) or BETA_PATH
+    mcp_url = optional_hosted_mcp_url(settings) or STREAMABLE_HTTP_PATH
     notices: list[dict[str, str]] = []
     if message:
         notices.append(
@@ -670,7 +662,7 @@ def _render_beta_landing(
         {
             "portal_url": portal_url,
             "mcp_url": mcp_url,
-            "github_start_path": _AUTH_GITHUB_START_PATH,
+            "github_start_path": AUTH_GITHUB_START_PATH,
             "notices": notices,
             "steps": [
                 {
@@ -721,8 +713,8 @@ def _render_beta_dashboard(
     message: str | None = None,
     message_tone: str = "warning",
 ) -> HTMLResponse:
-    portal_url = _derive_beta_url(settings) or _BETA_PATH
-    mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
+    portal_url = optional_hosted_portal_url(settings) or BETA_PATH
+    mcp_url = optional_hosted_mcp_url(settings) or STREAMABLE_HTTP_PATH
     current_key = account.api_key_prefix or "No active key"
     current_key_created = (
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
