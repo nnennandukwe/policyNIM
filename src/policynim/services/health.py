@@ -187,16 +187,15 @@ def _derive_mcp_url(settings: Settings) -> str | None:
 
 
 def format_health_failure_reason(exc: Exception) -> str:
-    """Return an operator-safe reason for readiness inspection failures."""
-    if isinstance(exc, OSError):
-        message = _single_line_message(exc.strerror)
-        if message:
-            return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
+    """Return an operator-facing reason for readiness inspection failures."""
+    message = _single_line_message(str(exc))
+    if message:
+        return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
     return f"Local index readiness could not be inspected: {type(exc).__name__}."
 
 
 def _single_line_message(message: str | None) -> str | None:
-    """Return a compact sanitized exception message, if one is available."""
+    """Return a compact single-line exception message, if one is available."""
     if message is None:
         return None
     message = " ".join(message.split()).strip().rstrip(".")
