@@ -31,7 +31,7 @@ class RaisingEmbeddingsClient:
         self.embeddings = self
         self._exc = exc
 
-    def create(self, **kwargs):  # noqa: ANN003
+    def create(self, **kwargs):
         raise self._exc
 
 

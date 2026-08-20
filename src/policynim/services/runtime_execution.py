@@ -6,15 +6,16 @@ import logging
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from types import TracebackType
 from uuid import uuid4
 
 import httpx
 
+from policynim.atomic_files import stage_text_artifact
 from policynim.contracts import (
     HTTPRequestClientProtocol,
     RuntimeDecisionServiceProtocol,
@@ -347,27 +348,12 @@ def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:
     encoded = request.content.encode("utf-8")
     staged_path: Path | None = None
     try:
-        with NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=target_path.parent,
-            prefix=f".{target_path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            handle.write(request.content)
-            staged_path = Path(handle.name)
+        staged_path = stage_text_artifact(target_path, content=request.content)
         staged_path.replace(target_path)
     except OSError:
         if staged_path is not None:
-            try:
+            with suppress(OSError):
                 staged_path.unlink(missing_ok=True)
-            except OSError as cleanup_exc:
-                LOGGER.warning(
-                    "Could not remove staged runtime file-write temp file %s: %s",
-                    staged_path,
-                    cleanup_exc,
-                )
         return _ActionExecutionResult(
             succeeded=False,
             metadata=FileWriteExecutionMetadata(path=target_path, bytes_written=0),

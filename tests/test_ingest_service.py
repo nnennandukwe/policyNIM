@@ -63,6 +63,14 @@ class RecordingIndexStore:
         return 0
 
 
+class FailingIndexStore(RecordingIndexStore):
+    """Index store that fails after the runtime rules artifact is promoted."""
+
+    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+        self.replace_calls += 1
+        raise RuntimeError("index replace failed")
+
+
 def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
     """Build and rebuild the default SQLite index."""
     policies_dir = tmp_path / "policies"
@@ -225,6 +233,54 @@ def test_ingest_service_does_not_leave_staged_runtime_rule_artifacts_on_embed_fa
         service.run()
 
     assert not runtime_dir.exists()
+
+
+def test_ingest_service_restores_previous_runtime_rules_artifact_when_index_replace_fails(
+    tmp_path: Path,
+) -> None:
+    policies_dir = tmp_path / "policies"
+    runtime_dir = tmp_path / "runtime"
+    artifact_path = runtime_dir / "runtime_rules.json"
+    runtime_dir.mkdir(parents=True)
+    previous_artifact = '{"schema_version":1,"rules":[{"policy_id":"LEGACY-1"}]}\n'
+    artifact_path.write_text(previous_artifact, encoding="utf-8")
+    write_policy(
+        policies_dir / "backend" / "logging.md",
+        """
+        ---
+        policy_id: BACKEND-LOG-001
+        title: Logging
+        domain: backend
+        runtime_rules:
+          - action: shell_command
+            effect: confirm
+            reason: Review deploy commands.
+            command_regexes:
+              - "^deploy:"
+        ---
+        # Logging
+
+        ## Rules
+
+        Log with context.
+        """,
+    )
+
+    store = FailingIndexStore(uri=tmp_path / "index.sqlite3", table_name="policy_chunks")
+    service = IngestService(
+        embedder=MockEmbedder(),
+        index_store=store,
+        corpus_root=policies_dir,
+        embedding_model="mock-embedder",
+        runtime_rules_artifact_path=artifact_path,
+    )
+
+    with pytest.raises(RuntimeError, match="index replace failed"):
+        service.run()
+
+    assert store.replace_calls == 1
+    assert artifact_path.read_text(encoding="utf-8") == previous_artifact
+    assert not list(runtime_dir.glob(".runtime_rules.json.*.tmp"))
 
 
 def test_ingest_service_rejects_directory_runtime_rules_artifact_before_index_replace(

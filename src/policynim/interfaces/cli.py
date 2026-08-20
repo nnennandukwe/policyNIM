@@ -10,11 +10,12 @@ import re
 import shlex
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import datetime, timedelta
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryFile
+from tempfile import TemporaryFile
 from typing import Annotated, Literal, NoReturn, cast
 from urllib.parse import urlparse
 
@@ -25,6 +26,7 @@ from pydantic import TypeAdapter, ValidationError
 
 import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
+from policynim.atomic_files import stage_text_artifact
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
 from policynim.interfaces.mcp import run_server
 from policynim.runtime_paths import resolve_runtime_path
@@ -1162,27 +1164,18 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
     if target.exists() and target.is_dir():
         raise PolicyNIMError(f"Runtime evidence report output must be a file path: {target}.")
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temp_path: str | None = None
+    staged_path: Path | None = None
     try:
-        with NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=target.parent,
-            prefix=f".{target.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_path = temp_file.name
-            temp_file.write(content)
-            temp_file.write("\n")
-        os.replace(temp_path, target)
+        staged_path = stage_text_artifact(
+            target,
+            content=content,
+            ensure_trailing_newline=True,
+        )
+        staged_path.replace(target)
     except OSError as exc:
-        if temp_path is not None:
-            try:
-                Path(temp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+        if staged_path is not None:
+            with suppress(OSError):
+                staged_path.unlink(missing_ok=True)
         raise PolicyNIMError(
             f"Could not write runtime evidence report to {target}: {exc}."
         ) from exc
