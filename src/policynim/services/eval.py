@@ -17,8 +17,11 @@ from tempfile import TemporaryDirectory
 from types import TracebackType
 from typing import Any, cast
 
+import httpx
+
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
@@ -1045,7 +1048,9 @@ def _publish_eval_result_to_phoenix(result: EvalRunResult, *, endpoint: str) -> 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
     try:
         client.projects.get(project_name=project_name)
-    except Exception:
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
         client.projects.create(name=project_name)
 
 
@@ -1351,12 +1356,6 @@ def _create_live_regeneration_service(
         _close_component(generator)
         _close_component(compiler_service)
         raise
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 class _PassThroughReranker(Reranker):

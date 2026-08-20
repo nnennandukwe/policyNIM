@@ -33,8 +33,6 @@ class ConfigDiscovery:
 
     env_files: tuple[Path, ...]
     active_config_file: Path | None
-    user_config_file: Path
-    has_discovered_config: bool
 
 
 def standalone_paths() -> StandalonePaths:
@@ -103,8 +101,6 @@ def discover_config_files(
     return ConfigDiscovery(
         env_files=tuple(env_files),
         active_config_file=active_config_file,
-        user_config_file=standalone.config_file,
-        has_discovered_config=active_config_file is not None,
     )
 
 

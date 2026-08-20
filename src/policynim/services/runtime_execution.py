@@ -20,7 +20,8 @@ from policynim.contracts import (
     RuntimeDecisionServiceProtocol,
     RuntimeEvidenceStoreProtocol,
 )
-from policynim.errors import RuntimeEvidencePersistenceError
+from policynim.errors import RuntimeEvidencePersistenceError, failure_class_from_error
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.runtime_decision import create_runtime_decision_service
 from policynim.settings import Settings, get_settings
@@ -555,21 +556,8 @@ def _residual_uncertainty_for_decision(decision_result: RuntimeDecisionResult) -
     return None
 
 
-def _failure_class_from_error(exc: BaseException) -> str | None:
-    current: BaseException | None = exc
-    while current is not None:
-        failure_class = getattr(current, "failure_class", None)
-        if isinstance(failure_class, str) and failure_class:
-            return failure_class
-        current = current.__cause__ or current.__context__
-    return None
+_failure_class_from_error = failure_class_from_error
 
 
 def _elapsed_ms(start_time: float) -> float:
     return round((time.perf_counter() - start_time) * 1000, 2)
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()

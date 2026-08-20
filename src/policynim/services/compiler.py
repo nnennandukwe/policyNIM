@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, PolicyCompiler, Reranker
+from policynim.lifecycle import close_owned_resource as _close_component
 from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -250,12 +251,6 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import ValidationError
+
 
 class PolicyNIMError(Exception):
     """Base error for PolicyNIM."""
@@ -41,3 +43,21 @@ class RuntimeCitationLinkError(PolicyNIMError):
 
 class RuntimeEvidencePersistenceError(PolicyNIMError):
     """Raised when runtime execution evidence cannot be persisted durably."""
+
+
+def format_validation_error(label: str, exc: ValidationError) -> str:
+    """Render a stable public message from a Pydantic validation error."""
+    error = exc.errors()[0]
+    location = ".".join(str(part) for part in error["loc"]) or "request"
+    return f"{label} is invalid at {location}: {error['msg']}."
+
+
+def failure_class_from_error(exc: BaseException) -> str | None:
+    """Return the first non-empty failure_class found in an exception chain."""
+    current: BaseException | None = exc
+    while current is not None:
+        failure_class = getattr(current, "failure_class", None)
+        if isinstance(failure_class, str) and failure_class:
+            return failure_class
+        current = current.__cause__ or current.__context__
+    return None

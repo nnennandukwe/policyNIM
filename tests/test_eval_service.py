@@ -7,10 +7,11 @@ import sys
 import types
 from pathlib import Path
 
+import httpx
 import pytest
 
 from policynim.errors import PolicyNIMError
-from policynim.services.eval import EvalService
+from policynim.services.eval import EvalService, _ensure_phoenix_project
 from policynim.settings import Settings
 from policynim.types import (
     CompiledPolicyPacket,
@@ -452,7 +453,9 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
 
     class MockPhoenixProjects:
         def get(self, *, project_name: str) -> None:
-            raise RuntimeError(f"missing project {project_name}")
+            request = httpx.Request("GET", f"http://127.0.0.1:8123/v1/projects/{project_name}")
+            response = httpx.Response(status_code=404, request=request)
+            raise httpx.HTTPStatusError("missing project", request=request, response=response)
 
         def create(self, *, name: str) -> dict[str, str]:
             return {"name": name}
@@ -513,3 +516,25 @@ def test_eval_service_publish_to_ui_surfaces_phoenix_endpoint_and_log_path(
         service.publish_to_ui(result, port=8124)
 
     assert "phoenix.log" in str(exc_info.value)
+
+
+def test_ensure_phoenix_project_reraises_non_404_errors() -> None:
+    class MockProjects:
+        def __init__(self) -> None:
+            self.create_called = False
+
+        def get(self, *, project_name: str) -> None:
+            request = httpx.Request("GET", f"http://127.0.0.1:8123/v1/projects/{project_name}")
+            response = httpx.Response(status_code=500, request=request)
+            raise httpx.HTTPStatusError("server error", request=request, response=response)
+
+        def create(self, *, name: str) -> dict[str, str]:
+            self.create_called = True
+            return {"name": name}
+
+    client = types.SimpleNamespace(projects=MockProjects())
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _ensure_phoenix_project(client, "PolicyNIM Eval")
+
+    assert client.projects.create_called is False
