@@ -8,6 +8,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "README.md"
 WORKFLOWS_GUIDE = REPO_ROOT / "docs" / "workflows.md"
 CONTRIBUTOR_GUIDE = REPO_ROOT / "docs" / "contributor-guide.md"
+ARCHITECTURE_GUIDE = REPO_ROOT / "docs" / "architecture.md"
+ARCHITECTURE_DIAGRAM = REPO_ROOT / "docs" / "architecture-diagram.md"
 POLICY_TEMPLATE = REPO_ROOT / "policies" / "TEMPLATE.md"
 TESTS_README = REPO_ROOT / "tests" / "README.md"
 RELEASE_GUIDE = REPO_ROOT / "docs" / "release.md"
@@ -143,6 +145,24 @@ def test_tests_readme_mentions_runtime_and_docs_parity_coverage() -> None:
         "Runtime docs parity",
     ):
         assert token in text
+
+
+def test_architecture_docs_note_internal_query_logging_helper() -> None:
+    architecture_text = _read_text(ARCHITECTURE_GUIDE)
+    diagram_text = _read_text(ARCHITECTURE_DIAGRAM)
+
+    for token in (
+        "QueryLog",
+        "query_log.db",
+        "internal analytics",
+    ):
+        assert token in architecture_text, token
+
+    for token in (
+        "QueryLog",
+        "public CLI or MCP",
+    ):
+        assert token in diagram_text, token
 
 
 def test_hosted_operations_documents_operator_beta_release_gate() -> None:
