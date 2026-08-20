@@ -25,7 +25,12 @@ from pydantic import TypeAdapter, ValidationError
 
 import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
-from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
+from policynim.errors import (
+    ConfigurationError,
+    MissingIndexError,
+    PolicyNIMError,
+    format_validation_error,
+)
 from policynim.interfaces.mcp import run_server
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
@@ -392,7 +397,7 @@ def preflight(
             else:
                 result = preflight_service.preflight(request)
     except ValidationError as exc:
-        _exit_with_error(_format_validation_error("Preflight request", exc))
+        _exit_with_error(format_validation_error("Preflight request", exc))
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
@@ -484,7 +489,7 @@ def route(
         service = create_policy_router_service(settings)
         result = service.route(request)
     except ValidationError as exc:
-        _exit_with_error(_format_validation_error("Route request", exc))
+        _exit_with_error(format_validation_error("Route request", exc))
     except PolicyNIMError as exc:
         _exit_with_error(str(exc))
     except ValueError as exc:
@@ -539,7 +544,7 @@ def compile(
         service = create_policy_compiler_service(settings)
         result = service.compile(request)
     except ValidationError as exc:
-        _exit_with_error(_format_validation_error("Compile request", exc))
+        _exit_with_error(format_validation_error("Compile request", exc))
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
@@ -1189,12 +1194,6 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
     return target
 
 
-def _format_validation_error(label: str, exc: ValidationError) -> str:
-    error = exc.errors()[0]
-    location = ".".join(str(part) for part in error["loc"]) or "request"
-    return f"{label} is invalid at {location}: {error['msg']}."
-
-
 def _read_json_input(input_value: str) -> object:
     source_label = _describe_runtime_input_source(input_value)
     try:
@@ -1229,7 +1228,7 @@ def _load_runtime_request_payload(input_value: str) -> RuntimeActionRequest:
     try:
         return _RUNTIME_REQUEST_ADAPTER.validate_python(payload)
     except ValidationError as exc:
-        raise PolicyNIMError(_format_validation_error("Runtime input", exc)) from exc
+        raise PolicyNIMError(format_validation_error("Runtime input", exc)) from exc
 
 
 def _build_cli_confirmer():
@@ -1294,7 +1293,7 @@ def _build_quickstart_payload(
 ) -> dict[str, object]:
     """Build offline first-run guidance for the requested workflow target."""
     normalized_hosted_url = _normalize_hosted_mcp_url(
-        _normalize_quickstart_value(hosted_url, label="Hosted MCP URL")
+        _normalize_required_cli_value(hosted_url, label="Hosted MCP URL")
     )
     normalized_token_env_var = _normalize_env_var_name(bearer_token_env_var)
 
@@ -1649,7 +1648,7 @@ def _build_mcp_config_payload(
         bearer_token_env_var=bearer_token_env_var,
         uv_command=uv_command,
     )
-    normalized_server_name = _normalize_mcp_config_value(
+    normalized_server_name = _normalize_required_cli_value(
         server_name,
         label="MCP server name",
     )
@@ -1778,7 +1777,7 @@ def _resolve_local_mcp_launch(
             ],
         }
 
-    normalized_uv_command = _normalize_mcp_config_value(uv_command, label="uv command")
+    normalized_uv_command = _normalize_required_cli_value(uv_command, label="uv command")
     return {
         "mode": "source-checkout",
         "command": normalized_uv_command,
@@ -1912,7 +1911,7 @@ def _resolve_mcp_config_repo_root(repo_root: Path | None) -> Path | None:
     else:
         candidate = repo_root
     resolved = candidate.expanduser().resolve(strict=False)
-    if not _looks_like_policynim_checkout(resolved):
+    if not config_discovery.looks_like_source_checkout(resolved):
         raise PolicyNIMError(
             "--repo-root must point to a PolicyNIM source checkout. "
             "Omit --repo-root to launch the installed CLI."
@@ -1920,13 +1919,8 @@ def _resolve_mcp_config_repo_root(repo_root: Path | None) -> Path | None:
     return resolved
 
 
-def _looks_like_policynim_checkout(path: Path) -> bool:
-    """Return whether a path has the expected PolicyNIM checkout shape."""
-    return (path / "pyproject.toml").is_file() and (path / "src" / "policynim").is_dir()
-
-
-def _normalize_mcp_config_value(value: str, *, label: str) -> str:
-    """Trim and validate a required MCP config string value."""
+def _normalize_required_cli_value(value: str, *, label: str) -> str:
+    """Trim and validate a required CLI string value."""
     stripped = value.strip()
     if not stripped:
         raise PolicyNIMError(f"{label} cannot be empty.")
@@ -1961,14 +1955,6 @@ def _normalize_env_var_name(value: str) -> str:
         raise PolicyNIMError(
             "Bearer token env var must contain only letters, numbers, and underscores."
         )
-    return stripped
-
-
-def _normalize_quickstart_value(value: str, *, label: str) -> str:
-    """Trim and validate a required quickstart string value."""
-    stripped = value.strip()
-    if not stripped:
-        raise PolicyNIMError(f"{label} cannot be empty.")
     return stripped
 
 

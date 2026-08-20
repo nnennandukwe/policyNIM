@@ -30,6 +30,9 @@ from policynim.errors import (
     InvalidPolicyDocumentError,
     PolicyNIMError,
     ProviderError,
+    elapsed_ms,
+    find_failure_class,
+    format_validation_error,
 )
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
@@ -123,12 +126,6 @@ def _validate_top_k(top_k: int) -> None:
         raise ValueError(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
 
 
-def _format_validation_error(label: str, exc: ValidationError) -> str:
-    error = exc.errors()[0]
-    location = ".".join(str(part) for part in error["loc"]) or "request"
-    return f"{label} is invalid at {location}: {error['msg']}."
-
-
 def _close_service(service: object | None) -> None:
     close = getattr(service, "close", None)
     if callable(close):
@@ -168,20 +165,6 @@ def _emit_hosted_event(
         "request_id": request_id,
     }
     logging.getLogger(_HOSTED_LOGGER_NAME).info(json.dumps(payload, sort_keys=True))
-
-
-def _elapsed_ms(start_time: float) -> float:
-    return round((time.perf_counter() - start_time) * 1000, 2)
-
-
-def _failure_class_from_error(exc: BaseException) -> str | None:
-    current: BaseException | None = exc
-    while current is not None:
-        failure_class = getattr(current, "failure_class", None)
-        if isinstance(failure_class, str) and failure_class:
-            return failure_class
-        current = current.__cause__ or current.__context__
-    return None
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
@@ -227,7 +210,7 @@ def _run_policy_preflight(
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
         return result.model_dump(mode="json")
     except ValidationError as exc:
-        raise ValueError(_format_validation_error("Preflight request", exc)) from exc
+        raise ValueError(format_validation_error("Preflight request", exc)) from exc
     finally:
         _close_service(service)
 
@@ -281,8 +264,8 @@ def _run_logged_tool(
             "mcp.tool",
             auth_result=auth_result,
             tool_name=tool_name,
-            latency_ms=_elapsed_ms(start_time),
-            upstream_failure_class=_failure_class_from_error(exc),
+            latency_ms=elapsed_ms(start_time),
+            upstream_failure_class=find_failure_class(exc),
             request_id=request_id,
         )
         raise
@@ -291,7 +274,7 @@ def _run_logged_tool(
         "mcp.tool",
         auth_result=auth_result,
         tool_name=tool_name,
-        latency_ms=_elapsed_ms(start_time),
+        latency_ms=elapsed_ms(start_time),
         upstream_failure_class=None,
         request_id=request_id,
     )

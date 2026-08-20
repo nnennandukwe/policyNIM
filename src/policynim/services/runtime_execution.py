@@ -20,7 +20,7 @@ from policynim.contracts import (
     RuntimeDecisionServiceProtocol,
     RuntimeEvidenceStoreProtocol,
 )
-from policynim.errors import RuntimeEvidencePersistenceError
+from policynim.errors import RuntimeEvidencePersistenceError, elapsed_ms, find_failure_class
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.runtime_decision import create_runtime_decision_service
 from policynim.settings import Settings, get_settings
@@ -269,7 +269,7 @@ def _run_confirmation(
     try:
         accepted = bool(confirmer(decision_result))
     except Exception as exc:
-        return "unavailable", _failure_class_from_error(exc) or "confirmation_error"
+        return "unavailable", find_failure_class(exc) or "confirmation_error"
     if not accepted:
         return "refused", None
     return "confirmed", None
@@ -309,7 +309,7 @@ def _run_shell_command(
             succeeded=False,
             metadata=ShellCommandExecutionMetadata(
                 exit_code=None,
-                duration_ms=_elapsed_ms(start),
+                duration_ms=elapsed_ms(start),
             ),
             failure_class="timeout",
         )
@@ -321,7 +321,7 @@ def _run_shell_command(
         )
     metadata = ShellCommandExecutionMetadata(
         exit_code=completed.returncode,
-        duration_ms=_elapsed_ms(start),
+        duration_ms=elapsed_ms(start),
     )
     if completed.returncode != 0:
         return _ActionExecutionResult(
@@ -391,7 +391,7 @@ def _run_http_request(
             succeeded=False,
             metadata=HTTPRequestExecutionMetadata(
                 status_code=None,
-                duration_ms=_elapsed_ms(start),
+                duration_ms=elapsed_ms(start),
             ),
             failure_class="timeout",
         )
@@ -400,7 +400,7 @@ def _run_http_request(
             succeeded=False,
             metadata=HTTPRequestExecutionMetadata(
                 status_code=None,
-                duration_ms=_elapsed_ms(start),
+                duration_ms=elapsed_ms(start),
             ),
             failure_class="connection",
         )
@@ -409,14 +409,14 @@ def _run_http_request(
             succeeded=False,
             metadata=HTTPRequestExecutionMetadata(
                 status_code=None,
-                duration_ms=_elapsed_ms(start),
+                duration_ms=elapsed_ms(start),
             ),
             failure_class="unexpected",
         )
 
     metadata = HTTPRequestExecutionMetadata(
         status_code=response.status_code,
-        duration_ms=_elapsed_ms(start),
+        duration_ms=elapsed_ms(start),
     )
     if response.status_code >= 400:
         return _ActionExecutionResult(
@@ -553,20 +553,6 @@ def _residual_uncertainty_for_decision(decision_result: RuntimeDecisionResult) -
     if decision_result.decision == "confirm":
         return "Execution required explicit confirmation before side effects."
     return None
-
-
-def _failure_class_from_error(exc: BaseException) -> str | None:
-    current: BaseException | None = exc
-    while current is not None:
-        failure_class = getattr(current, "failure_class", None)
-        if isinstance(failure_class, str) and failure_class:
-            return failure_class
-        current = current.__cause__ or current.__context__
-    return None
-
-
-def _elapsed_ms(start_time: float) -> float:
-    return round((time.perf_counter() - start_time) * 1000, 2)
 
 
 def _close_component(component: object | None) -> None:

@@ -230,7 +230,7 @@ def find_source_checkout_root(*, cwd: Path | None = None) -> Path | None:
             if resolved in seen:
                 continue
             seen.add(resolved)
-            if _looks_like_source_checkout(resolved):
+            if looks_like_source_checkout(resolved):
                 return resolved
 
     return None
@@ -305,5 +305,6 @@ def _quote_env_value(value: str) -> str:
     return f"'{escaped}'"
 
 
-def _looks_like_source_checkout(path: Path) -> bool:
+def looks_like_source_checkout(path: Path) -> bool:
+    """Return whether a path has the expected PolicyNIM checkout shape."""
     return (path / "pyproject.toml").is_file() and (path / "src" / "policynim").is_dir()

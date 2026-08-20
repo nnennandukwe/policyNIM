@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Generator
+from policynim.iterables import ordered_unique
 from policynim.services.compiler import create_policy_compiler_service
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import (
@@ -580,7 +581,7 @@ def _all_constraint_ids(compiled_packet: CompiledPolicyPacket) -> list[str]:
 
 
 def _all_constraint_chunk_ids(compiled_packet: CompiledPolicyPacket) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [
             citation_id
             for _category_name, constraints in _constraint_categories(compiled_packet)
@@ -605,7 +606,7 @@ def _constraint_categories(
 def _constraint_chunk_ids(
     constraints: Sequence[CompiledPolicyConstraint],
 ) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [citation_id for constraint in constraints for citation_id in constraint.citation_ids]
     )
 
@@ -627,17 +628,6 @@ def _dedupe_triggers(triggers: Sequence[RegenerationTrigger]) -> list[Regenerati
         seen.add(key)
         deduped.append(trigger)
     return deduped
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def _close_component(component: object | None) -> None:
