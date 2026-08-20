@@ -23,6 +23,11 @@ settings loader reads that file on subsequent `uv run policynim ...` commands.
 In an installed standalone runtime, `init` writes the user config path printed in
 the command output.
 
+If you need PolicyNIM to read or write a different env file, set
+`POLICYNIM_CONFIG_FILE=/abs/path/to/custom.env` before running `policynim init`.
+Source checkouts still default to `.env`; installed standalone runtimes still
+default to `config.env` under the platform config directory.
+
 Otherwise, copy the development example environment file:
 
 ```bash
@@ -82,9 +87,9 @@ policynim ingest
 If your default Python is already supported, the shorter
 `pipx install policynim` and `uv tool install policynim` forms are also valid.
 
-Use `--python 3.12` instead when Python 3.12 is your managed runtime. If your
-machine does not expose `3.11` or `3.12` by name, pass the full path to that
-Python executable.
+Use `pipx install --python 3.12 policynim` and `uv tool install --python 3.12
+policynim` when Python 3.12 is your managed runtime. If your machine does not
+expose `3.11` or `3.12` by name, pass the full path to that Python executable.
 
 Use the GitHub release installers when you want a standalone binary bundle:
 
@@ -116,13 +121,17 @@ Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
 Core retrieval and grounding:
 
 - `NVIDIA_API_KEY`
+- `POLICYNIM_CONFIG_FILE`
 - `POLICYNIM_CORPUS_DIR`
 - `POLICYNIM_INDEX_DB_PATH`
+- `POLICYNIM_LANCEDB_URI`
 - `POLICYNIM_DEFAULT_TOP_K`
 - `POLICYNIM_NVIDIA_CHAT_MODEL`
 - `POLICYNIM_NVIDIA_BASE_URL`
 - `POLICYNIM_NVIDIA_TIMEOUT_SECONDS`
 - `POLICYNIM_NVIDIA_MAX_RETRIES`
+
+`POLICYNIM_LANCEDB_URI` is a deprecated alias for `POLICYNIM_INDEX_DB_PATH`.
 
 Hosted MCP and beta portal:
 

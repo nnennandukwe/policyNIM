@@ -52,8 +52,9 @@ PolicyNIM currently ships with two main user-facing surfaces:
   `preflight`, `eval`, `mcp`, `mcp-config`, `mcp-smoke`, `support-bundle`,
   `beta-admin`, `runtime`, and `evidence`.
 - MCP tools for `policy_preflight` and `policy_search`.
-- Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
-  and bearer auth on `/mcp`.
+- Hosted HTTP `streamable-http` with `/healthz`, a browser redirect from
+  `/mcp` to `/beta` for self-serve hosted sign-in when beta signup is enabled,
+  and optional bearer auth on `/mcp`.
 
 ## What To Run First
 
@@ -113,8 +114,8 @@ policynim quickstart --target local-mcp
   >
 </p>
 
-1. Open `https://<railway-domain>/beta`.
-2. Sign in with GitHub.
+1. Open `https://<railway-domain>/mcp` in a browser.
+2. Follow the redirect to `/beta` and sign in with GitHub.
 3. Generate or rotate your hosted API key.
 4. Export the token and add the hosted MCP server to your client.
 
@@ -156,6 +157,11 @@ uv run policynim init
 In a source checkout, `init` writes the checkout `.env` file that PolicyNIM
 loads by default. Installed copies should keep using the direct `policynim init`
 entrypoint described below.
+
+If you need PolicyNIM to read or write a different env file, set
+`POLICYNIM_CONFIG_FILE=/abs/path/to/custom.env` before running `policynim init`.
+Source checkouts still default to `.env`, and installed copies still default to
+`config.env` under the platform config directory.
 
 If you want a quick local readiness check after setup, run:
 

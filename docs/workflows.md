@@ -7,7 +7,7 @@ reference that used to live in the root README.
 
 ### CLI
 
-- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
+- `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--hosted-url <url>] [--bearer-token-env-var <name>] [--repo-root <path>] [--format text|json]`
 - `policynim doctor [--format text|json]`
 - `policynim init`
 - `policynim ingest`
@@ -23,9 +23,9 @@ reference that used to live in the root README.
 - `policynim runtime execute --input <path|->`
 - `policynim evidence report --session-id <id>`
 - `policynim evidence report --session-id <id> --format markdown --output reports/<id>.md`
-- `policynim mcp-config [--target local-stdio|hosted-http]`
+- `policynim mcp-config [--client codex|claude-code] [--target local-stdio|hosted-http] [--hosted-url <url>] [--bearer-token-env-var <name>] [--repo-root <path>] [--server-name <name>] [--uv-command <path>] [--format text|json]`
 - `policynim mcp-smoke [--mcp-config-file <path>]`
-- `policynim support-bundle [--include-mcp-smoke]`
+- `policynim support-bundle [--format json|markdown] [--include-mcp-smoke] [--mcp-timeout-seconds <seconds>] [--include-local-paths]`
 - `policynim beta-admin list-accounts|suspend|resume|revoke-key|audit-log`
 
 ### MCP Tools
@@ -45,7 +45,9 @@ reference that used to live in the root README.
 
 - `GET /healthz` reports local index readiness when using `streamable-http`
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
-- `/beta` stays as the self-serve signup and key-management surface
+- `/beta` stays as the self-serve signup and key-management surface, and
+  browser visits to `/mcp` redirect there when hosted auth and beta signup are
+  enabled
 - hosted `streamable-http` startup fails fast when
   `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
   missing or empty
@@ -79,6 +81,13 @@ Source checkouts can either copy `.env.development.example` to `.env` or run
 commands load by default. Then use the later `uv run policynim ...` examples
 inside the uv-managed project environment. Installed copies should keep using
 the direct `policynim ...` entrypoint.
+
+If you need PolicyNIM to read or write a different env file, set
+`POLICYNIM_CONFIG_FILE=/abs/path/to/custom.env` before running `policynim init`.
+Source checkouts still default to `.env`; installed standalone runtimes still
+default to `config.env` under the platform config directory. The older
+`POLICYNIM_LANCEDB_URI` name remains a deprecated alias for
+`POLICYNIM_INDEX_DB_PATH`, so new configs should use the SQLite path variable.
 
 ### 1. Build The Local Index
 
@@ -405,6 +414,10 @@ uv run policynim support-bundle --include-mcp-smoke
 Use these commands when you want the no-network first-run plan, a local setup
 health check, copyable MCP client config, a stdio tool-registration smoke test,
 or a redacted support bundle for an issue report.
+
+`policynim support-bundle --include-local-paths` is reserved for private
+maintainer triage. Public issue bundles keep exact local path prefixes redacted
+by default.
 
 ## Runtime Decisions And Evidence
 
