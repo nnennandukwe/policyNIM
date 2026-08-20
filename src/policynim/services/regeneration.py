@@ -7,6 +7,8 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Generator
+from policynim.iterables import ordered_unique
+from policynim.lifecycle import close_if_supported
 from policynim.services.compiler import create_policy_compiler_service
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import (
@@ -103,9 +105,9 @@ class PolicyRegenerationService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._compiler_service)
-        _close_component(self._generator)
-        _close_component(self._conformance_service)
+        close_if_supported(self._compiler_service)
+        close_if_supported(self._generator)
+        close_if_supported(self._conformance_service)
 
     def regenerate(
         self,
@@ -323,9 +325,9 @@ def create_policy_regeneration_service(
             conformance_service=conformance_service,
         )
     except Exception:
-        _close_component(conformance_service)
-        _close_component(generator)
-        _close_component(compiler_service)
+        close_if_supported(conformance_service)
+        close_if_supported(generator)
+        close_if_supported(compiler_service)
         raise
 
 
@@ -580,7 +582,7 @@ def _all_constraint_ids(compiled_packet: CompiledPolicyPacket) -> list[str]:
 
 
 def _all_constraint_chunk_ids(compiled_packet: CompiledPolicyPacket) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [
             citation_id
             for _category_name, constraints in _constraint_categories(compiled_packet)
@@ -605,7 +607,7 @@ def _constraint_categories(
 def _constraint_chunk_ids(
     constraints: Sequence[CompiledPolicyConstraint],
 ) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [citation_id for constraint in constraints for citation_id in constraint.citation_ids]
     )
 
@@ -627,23 +629,6 @@ def _dedupe_triggers(triggers: Sequence[RegenerationTrigger]) -> list[Regenerati
         seen.add(key)
         deduped.append(trigger)
     return deduped
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import PolicyConformanceEvaluator
+from policynim.iterables import ordered_unique
+from policynim.lifecycle import close_if_supported
 from policynim.types import (
     CompiledPolicyConstraint,
     EvalBackend,
@@ -39,7 +41,7 @@ class PolicyConformanceService:
 
     def close(self) -> None:
         """Release owned evaluator resources."""
-        _close_component(self._evaluator)
+        close_if_supported(self._evaluator)
 
     def evaluate(
         self,
@@ -201,7 +203,7 @@ def _forbidden_pattern_metric(
 def _citation_support_metric(
     request: PolicyConformanceRequest,
 ) -> PolicyConformanceMetric:
-    expected_chunk_ids = _ordered_unique(
+    expected_chunk_ids = ordered_unique(
         [
             citation_id
             for constraints in (
@@ -215,7 +217,7 @@ def _citation_support_metric(
             for citation_id in constraint.citation_ids
         ]
     )
-    actual_chunk_ids = _ordered_unique([citation.chunk_id for citation in request.result.citations])
+    actual_chunk_ids = ordered_unique([citation.chunk_id for citation in request.result.citations])
     if not expected_chunk_ids:
         return PolicyConformanceMetric(
             name="citation_support",
@@ -295,27 +297,10 @@ def _normalize_for_matching(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
 
 
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
-
-
 def _average(values: Sequence[float]) -> float:
     if not values:
         return 0.0
     return sum(values) / len(values)
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

@@ -14,6 +14,8 @@ from pydantic import ValidationError
 
 from policynim.contracts import Generator
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.iterables import ordered_unique
+from policynim.lifecycle import close_if_supported
 from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.settings import Settings
 from policynim.types import (
@@ -63,7 +65,7 @@ class NeMoGuardrailsPreflightGenerator(Generator):
                     model=model or _DEFAULT_GUARDRAILS_MODEL
                 )
             except ConfigurationError:
-                _close_component(base_generator)
+                close_if_supported(base_generator)
                 raise
             owns_rails = True
 
@@ -87,8 +89,8 @@ class NeMoGuardrailsPreflightGenerator(Generator):
                 owns_rails=True,
             )
         except Exception:
-            _close_component(base_generator)
-            _close_component(rails)
+            close_if_supported(base_generator)
+            close_if_supported(rails)
             raise
 
     def generate_preflight(
@@ -118,9 +120,9 @@ class NeMoGuardrailsPreflightGenerator(Generator):
 
     def close(self) -> None:
         """Release owned generator and Guardrails resources."""
-        _close_component(self._base_generator)
+        close_if_supported(self._base_generator)
         if self._owns_rails:
-            _close_component(self._rails)
+            close_if_supported(self._rails)
 
     def _check_output_rails(self, draft: GeneratedPreflightDraft) -> str:
         content = json.dumps(draft.model_dump(mode="json"), sort_keys=True)
@@ -312,7 +314,7 @@ def _validate_guardrailed_draft(
     if unsupported_citation_ids:
         raise ProviderError(
             "NeMo Guardrails output rails returned unsupported citation ids: "
-            f"{', '.join(_ordered_unique(unsupported_citation_ids))}.",
+            f"{', '.join(ordered_unique(unsupported_citation_ids))}.",
             failure_class="invalid_response",
         )
 
@@ -328,13 +330,13 @@ def _validate_guardrailed_draft(
     if unsupported_trigger_chunk_ids:
         raise ProviderError(
             "Regeneration context referenced chunk ids outside the retained context: "
-            f"{', '.join(_ordered_unique(unsupported_trigger_chunk_ids))}.",
+            f"{', '.join(ordered_unique(unsupported_trigger_chunk_ids))}.",
             failure_class="invalid_response",
         )
 
 
 def _draft_citation_ids(draft: GeneratedPreflightDraft) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [
             *draft.citation_ids,
             *[
@@ -361,23 +363,6 @@ def _rail_result_content(result: Any) -> Any:
     if isinstance(result, Mapping):
         return result.get("content")
     return getattr(result, "content", None)
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = ["NeMoGuardrailsPreflightGenerator"]

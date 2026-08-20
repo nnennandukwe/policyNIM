@@ -21,6 +21,7 @@ from policynim.contracts import (
     RuntimeEvidenceStoreProtocol,
 )
 from policynim.errors import RuntimeEvidencePersistenceError
+from policynim.lifecycle import close_if_supported
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.runtime_decision import create_runtime_decision_service
 from policynim.settings import Settings, get_settings
@@ -98,8 +99,8 @@ class RuntimeExecutionService:
 
     def close(self) -> None:
         """Release owned resources held by this service."""
-        _close_component(self._decision_service)
-        _close_component(self._evidence_store)
+        close_if_supported(self._decision_service)
+        close_if_supported(self._evidence_store)
         if self._owns_http_client:
             self._http_client.close()
 
@@ -567,9 +568,3 @@ def _failure_class_from_error(exc: BaseException) -> str | None:
 
 def _elapsed_ms(start_time: float) -> float:
     return round((time.perf_counter() - start_time) * 1000, 2)
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()

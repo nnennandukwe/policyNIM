@@ -19,6 +19,7 @@ from typing import Any, cast
 
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
+from policynim.lifecycle import close_if_supported
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
@@ -296,8 +297,8 @@ class EvalService:
         finally:
             search_service.close()
             preflight_service.close()
-            _close_component(regeneration_service)
-            _close_component(conformance_service)
+            close_if_supported(regeneration_service)
+            close_if_supported(conformance_service)
 
     def _run_live_suite(
         self,
@@ -317,7 +318,7 @@ class EvalService:
             try:
                 ingest_service.run()
             finally:
-                _close_component(ingest_service)
+                close_if_supported(ingest_service)
 
             search_service = _create_live_search_service(
                 temp_settings,
@@ -355,8 +356,8 @@ class EvalService:
             finally:
                 search_service.close()
                 preflight_service.close()
-                _close_component(conformance_service)
-                _close_component(regeneration_service)
+                close_if_supported(conformance_service)
+                close_if_supported(regeneration_service)
 
     def _persist_mode_run(
         self,
@@ -1347,16 +1348,10 @@ def _create_live_regeneration_service(
             conformance_service=conformance_service,
         )
     except Exception:
-        _close_component(conformance_service)
-        _close_component(generator)
-        _close_component(compiler_service)
+        close_if_supported(conformance_service)
+        close_if_supported(generator)
+        close_if_supported(compiler_service)
         raise
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 class _PassThroughReranker(Reranker):

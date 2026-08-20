@@ -6,6 +6,7 @@ from types import TracebackType
 
 from policynim.contracts import RuntimeEvidenceStoreProtocol
 from policynim.errors import PolicyNIMError
+from policynim.lifecycle import close_if_supported
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import RuntimeEvidenceStore
@@ -36,9 +37,7 @@ class RuntimeEvidenceReportService:
 
     def close(self) -> None:
         """Release owned resources held by this service."""
-        close = getattr(self._evidence_store, "close", None)
-        if callable(close):
-            close()
+        close_if_supported(self._evidence_store)
 
     def report_session(self, session_id: str) -> RuntimeEvidenceSessionSummary:
         """Return one typed summary over the persisted session evidence."""
