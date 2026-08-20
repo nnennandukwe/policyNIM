@@ -123,7 +123,8 @@ def test_runtime_health_service_reports_unreadable_index() -> None:
     assert result.row_count == 0
     assert result.reason is not None
     assert result.reason == (
-        "Local index readiness could not be inspected: PermissionError: permission denied."
+        "Local index readiness could not be inspected: PermissionError: "
+        "permission denied (errno 13)."
     )
     assert "/tmp/key" not in result.reason
 
