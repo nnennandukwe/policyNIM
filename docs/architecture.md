@@ -347,9 +347,10 @@ the slot until that worker and its cleanup finish. This is a per-process bound,
 not a distributed quota or a measured production capacity claim.
 
 The HTTP transport is stateless for both modern and legacy clients. Host and
-Origin checks allow loopback, a concrete configured bind host at its exact HTTP
-port, and the configured public service origin. Wildcard binds grant no remote
-trust; remote access through them requires an explicit public origin. Other hosts,
+Origin checks allow loopback and the configured public service origin. When
+HTTP authentication is disabled, a concrete configured bind host is also allowed
+at its exact HTTP port. Wildcard binds grant no remote trust; remote access
+through them requires an explicit public origin. Other hosts,
 ports, and supplied origins are rejected. Hosted HTTP must run at the service
 root: nonempty ASGI `root_path` or mount prefixes are rejected before authentication
 or provider work, keeping advertised MCP, beta, and OAuth URLs consistent.

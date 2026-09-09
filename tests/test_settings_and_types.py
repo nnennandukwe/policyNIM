@@ -144,8 +144,6 @@ def test_settings_still_allows_constructor_field_names() -> None:
         ("::", "::"),
         ("::1", "::1"),
         ("2001:0DB8:0000:0000:0000:0000:0000:0001", "2001:0db8:0000:0000:0000:0000:0000:0001"),
-        ("::FFFF:C000:0201", "::ffff:c000:0201"),
-        ("::ffff:0:0", "::ffff:0:0"),
         ("LOCALHOST", "localhost"),
         ("Policy-Server.Example", "policy-server.example"),
         ("Policy-Server.Example.", "policy-server.example."),
@@ -202,8 +200,6 @@ def test_mcp_host_normalizes_addresses_and_dns_names(
         "127.1.",
         "256.0.0.1",
         "255.255.255.255",
-        "::ffff:255.255.255.255",
-        "::ffff:ffff:ffff",
         "4294967296",
     ],
 )
@@ -218,6 +214,40 @@ def test_mcp_host_rejects_ambiguous_or_malformed_bind_values(
     monkeypatch.setenv("POLICYNIM_MCP_HOST", host)
     with pytest.raises(ValidationError, match="POLICYNIM_MCP_HOST"):
         load_settings_without_env_file()
+
+
+@pytest.mark.parametrize(
+    ("host", "ipv4_address"),
+    [
+        ("::ffff:127.0.0.1", "127.0.0.1"),
+        ("::FFFF:C000:0201", "192.0.2.1"),
+        ("0:0:0:0:0:FFFF:7f00:1", "127.0.0.1"),
+        ("::ffff:0:0", "0.0.0.0"),
+        ("::ffff:0.0.0.0", "0.0.0.0"),
+        ("::ffff:255.255.255.255", "255.255.255.255"),
+        ("::ffff:ffff:ffff", "255.255.255.255"),
+    ],
+)
+def test_mcp_host_rejects_ipv4_mapped_ipv6_with_ipv4_guidance(
+    monkeypatch: pytest.MonkeyPatch, host: str, ipv4_address: str
+) -> None:
+    """Reject unsupported mapped binds and identify an actionable IPv4 alternative."""
+    with pytest.raises(ValidationError, match="POLICYNIM_MCP_HOST") as direct_error:
+        load_settings_without_env_file(mcp_host=host)
+    error_message = str(direct_error.value)
+    assert "IPv4-mapped IPv6 bind addresses are not supported" in error_message
+    assert "equivalent IPv4 address" in error_message
+    assert ipv4_address in error_message
+    if ipv4_address == "255.255.255.255":
+        assert "choose 127.0.0.1 or 0.0.0.0 instead" in error_message
+    else:
+        assert f"Use the equivalent IPv4 address {ipv4_address}" in error_message
+
+    monkeypatch.setenv("POLICYNIM_MCP_HOST", host)
+    with pytest.raises(ValidationError, match="IPv4-mapped IPv6") as environment_error:
+        load_settings_without_env_file()
+    assert "POLICYNIM_MCP_HOST" in str(environment_error.value)
+    assert ipv4_address in str(environment_error.value)
 
 
 def test_mcp_host_preserves_constructor_environment_and_dotenv_precedence(

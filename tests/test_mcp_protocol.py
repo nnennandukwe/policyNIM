@@ -345,7 +345,6 @@ def test_http_auth_and_origin_guards_apply_to_real_mcp_paths(path: str) -> None:
         ("2001:db8::20", 8000, None, "[2001:db8::20]:8000", "http://[2001:db8::20]:8000", 200),
         ("2001:db8:0:0:0:0:0:20", 8000, None, "[2001:db8::20]:8000", None, 200),
         ("2001:db8:0:0:0:0:0:20", 8000, None, "[2001:db8:0:0:0:0:0:20]:8000", None, 200),
-        ("::ffff:192.0.2.20", 8000, None, "[::ffff:192.0.2.20]:8000", None, 200),
         ("MCP.Example", 8000, None, "mcp.example:8000", "http://mcp.example:8000", 200),
         ("mcp.example.", 8000, None, "mcp.example.:8000", "http://mcp.example.:8000", 200),
         ("192.0.2.20", 80, None, "192.0.2.20", "http://192.0.2.20", 200),
@@ -362,7 +361,6 @@ def test_http_auth_and_origin_guards_apply_to_real_mcp_paths(path: str) -> None:
         ("0.0.0.0", 8000, None, "0.0.0.0:8000", None, 421),
         ("::", 8000, None, "[2001:db8::20]:8000", None, 421),
         ("0:0:0:0:0:0:0:0", 8000, None, "[::]:8000", None, 421),
-        ("::ffff:0.0.0.0", 8000, None, "[::ffff:0:0]:8000", None, 421),
         ("0.0.0.0", 8000, None, "localhost:8000", "http://localhost:8000", 200),
         ("::", 8000, None, "[::1]:8000", "http://[::1]:8000", 200),
         ("0.0.0.0", 8000, "https://mcp.example", "mcp.example", "https://mcp.example", 200),
@@ -443,4 +441,59 @@ def test_broadcast_bind_does_not_confer_http_trust(bind_host: str) -> None:
             response = client.post("/mcp", headers={"Host": request_host}, json={})
     assert response.status_code == 421
     assert response.text == "Invalid Host header"
+    assert events == []
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+@pytest.mark.parametrize(
+    ("request_host", "origin", "expected_status"),
+    [
+        ("192.0.2.20:8000", None, 421),
+        ("192.0.2.20:8000", "http://192.0.2.20:8000", 421),
+        ("policynim.example", "http://192.0.2.20:8000", 403),
+    ],
+)
+def test_authenticated_http_requires_explicit_remote_origin(
+    path: str, request_host: str, origin: str | None, expected_status: int
+) -> None:
+    """Preserve public-origin auth access without automatically trusting a plaintext bind."""
+    settings = _settings().model_copy(update={"mcp_host": "192.0.2.20", "mcp_port": 8000})
+    headers = {
+        "Host": "policynim.example",
+        "Origin": "https://policynim.example",
+        "Authorization": f"Bearer {_TOKEN}",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "policy_search",
+        "Accept": "application/json, text/event-stream",
+    }
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "policy_search",
+            "arguments": {"query": "authenticated host regression"},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    with offline_services(settings) as events:
+        app = mcp_module._build_streamable_http_app(settings)
+        with TestClient(app, base_url="http://localhost") as client:
+            allowed = client.post("/mcp", headers=headers, json=request)
+            assert allowed.status_code == 200
+            assert events == ["search.created", "search.closed"]
+            events.clear()
+            headers["Host"] = request_host
+            headers.pop("Origin")
+            if origin is not None:
+                headers["Origin"] = origin
+            rejected = client.post(path, headers=headers, json=request, follow_redirects=False)
+    assert rejected.status_code == expected_status
+    assert rejected.text == (
+        "Invalid Host header" if expected_status == 421 else "Invalid Origin header"
+    )
     assert events == []

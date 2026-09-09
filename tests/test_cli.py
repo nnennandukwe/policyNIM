@@ -1681,7 +1681,7 @@ def test_doctor_reports_configured_mcp_operation_limit(
     assert "- concurrent operations: 3" in text_result.stdout
 
 
-@pytest.mark.parametrize("host", ["::1", "2001:db8::1", "::ffff:192.0.2.1"])
+@pytest.mark.parametrize("host", ["::1", "2001:db8::1"])
 def test_doctor_formats_ipv6_http_authorities(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1704,6 +1704,46 @@ def test_doctor_formats_ipv6_http_authorities(
     assert json.loads(json_result.stdout)["mcp"]["streamable_http_url"] == expected_url
     assert text_result.exit_code == 0
     assert f"- streamable-http: {expected_url}" in text_result.stdout
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "public_origin", "auth_required", "expected_url"),
+    [
+        ("10.23.45.6", "https://policy.example", True, "https://policy.example/mcp"),
+        ("0.0.0.0", "https://policy.example:9443/", True, "https://policy.example:9443/mcp"),
+        ("127.0.0.1", "http://policy.example:8123", False, "http://policy.example:8123/mcp"),
+    ],
+)
+def test_doctor_prefers_configured_public_mcp_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bind_host: str,
+    public_origin: str,
+    auth_required: bool,
+    expected_url: str,
+) -> None:
+    """Show the client endpoint instead of an internal bind URL in both output formats."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_HOST=bind_host,
+        POLICYNIM_MCP_PORT="8123",
+        POLICYNIM_MCP_PUBLIC_BASE_URL=public_origin,
+        POLICYNIM_MCP_REQUIRE_AUTH=str(auth_required).lower(),
+        POLICYNIM_MCP_BEARER_TOKENS='["doctor-fixture-token"]',
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.stdout)
+    assert payload["mcp"]["streamable_http_url"] == expected_url
+    assert payload["mcp"]["auth_required"] is auth_required
+    assert text_result.exit_code == 0
+    assert f"- streamable-http: {expected_url}" in text_result.stdout
+    assert "doctor-fixture-token" not in json_result.stdout + text_result.stdout
 
 
 def test_doctor_source_checkout_recovery_uses_uv_run_commands(

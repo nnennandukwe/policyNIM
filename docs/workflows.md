@@ -348,10 +348,11 @@ uv run policynim mcp --transport streamable-http
 ```
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other
-than the default development bind `127.0.0.1:8000`. A concrete bind address also
-permits its exact HTTP authority: with `POLICYNIM_MCP_HOST=192.168.1.20` and
+than the default development bind `127.0.0.1:8000`. When authentication is disabled,
+a concrete bind address also permits its exact HTTP authority. With
+`POLICYNIM_MCP_HOST=192.168.1.20` and
 `POLICYNIM_MCP_PORT=8000`, clients can use `http://192.168.1.20:8000/mcp` without
-setting a public origin when authentication is disabled. Other remote ports and
+setting a public origin. Other remote ports and
 hostnames are not implicitly trusted. Port 80 accepts both omitted and explicit
 `:80` forms.
 
@@ -364,7 +365,9 @@ Empty hosts, URL syntax, wildcard DNS names, IPv6 zone identifiers, and legacy
 numeric IPv4 forms such as `127.1` are rejected. Use a standard dotted-decimal
 IPv4 address instead. The limited-broadcast address `255.255.255.255` and its
 IPv4-mapped IPv6 forms are also rejected; use a concrete interface or an explicit
-wildcard bind with a public origin.
+wildcard bind with a public origin. IPv4-mapped IPv6 bind syntax (for example,
+`::ffff:192.168.1.20`) is unsupported by the IPv6-only listener; set the equivalent
+IPv4 address (`192.168.1.20`) directly.
 
 Wildcard binds such as `0.0.0.0` or `::` grant no remote Host/Origin permissions.
 For remote access through a wildcard bind, explicitly set
@@ -411,9 +414,11 @@ Hosted HTTP notes:
   URL, and must not contain credentials, a query, or a fragment
 - Set that public origin for remote access through wildcard binds or a proxy,
   including when bearer auth is disabled. Authentication always requires it.
-  MCP Host and Origin checks allow loopback, the concrete HTTP bind authority,
-  and the configured public origin. An absent Origin header is allowed for
-  non-browser clients.
+  Authenticated MCP Host and Origin checks allow loopback and that explicit
+  public origin; the concrete plaintext bind is not automatically trusted.
+  Without authentication, the concrete HTTP bind authority is also allowed.
+  `policynim doctor` prefers the public origin when reporting the MCP URL.
+  An absent Origin header is allowed for non-browser clients.
   Proxy requests must preserve an allowed Host header. Authentication also covers
   `/mcp` trailing-slash variants.
 - Host the HTTP app at the service root. ASGI `root_path` and mounted path prefixes

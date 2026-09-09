@@ -1240,8 +1240,9 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
         bind_hosts.append(str(bind_address))
     if isinstance(bind_address, IPv6Address) and bind_address.ipv4_mapped is not None:
         bind_address = bind_address.ipv4_mapped
-    if bind_address is None or (
-        not bind_address.is_unspecified and str(bind_address) != "255.255.255.255"
+    if not settings.mcp_require_auth and (
+        bind_address is None
+        or (not bind_address.is_unspecified and str(bind_address) != "255.255.255.255")
     ):
         for host in bind_hosts:
             hostname = f"[{host}]" if ":" in host else host

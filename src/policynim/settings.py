@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     @field_validator("mcp_host", mode="before")
     @classmethod
     def validate_mcp_host(cls, value: Any) -> str:
-        """Normalize bare bind hosts without admitting URL syntax or numeric aliases."""
+        """Normalize supported bare bind hosts and reject ambiguous or unsupported forms."""
         remedy = (
             "POLICYNIM_MCP_HOST must be a bare IPv4/IPv6 address or an ASCII DNS hostname. "
             "Use 127.0.0.1, ::1, or policy.example; set POLICYNIM_MCP_PORT separately."
@@ -209,10 +209,18 @@ class Settings(BaseSettings):
         except ValueError:
             address = None
         if address is not None:
-            effective_address = address
             if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-                effective_address = address.ipv4_mapped
-            if str(effective_address) == "255.255.255.255":
+                mapped_address = str(address.ipv4_mapped)
+                mapped_remedy = f"Use the equivalent IPv4 address {mapped_address} directly."
+                if mapped_address == "255.255.255.255":
+                    mapped_remedy = (
+                        f"The equivalent IPv4 address {mapped_address} is also unsupported; "
+                        "choose 127.0.0.1 or 0.0.0.0 instead."
+                    )
+                raise ValueError(
+                    remedy + " IPv4-mapped IPv6 bind addresses are not supported. " + mapped_remedy
+                )
+            if str(address) == "255.255.255.255":
                 raise ValueError(remedy + " Broadcast addresses are not supported.")
             return value.lower()
 
