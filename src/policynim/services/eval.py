@@ -311,7 +311,10 @@ class EvalService:
         """Run live eval cases against an isolated temporary index."""
         with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
             temp_settings = self._settings.model_copy(
-                update={"index_db_path": Path(temp_dir) / "index.sqlite3"}
+                update={
+                    "index_db_path": Path(temp_dir) / "index.sqlite3",
+                    "runtime_rules_artifact_path": Path(temp_dir) / "runtime_rules.json",
+                }
             )
             ingest_service = create_ingest_service(temp_settings)
             try:
@@ -1402,8 +1405,12 @@ class _OfflineIndexStore(IndexStore):
             tuple([float(index)]): query for index, query in enumerate(candidates_by_query, start=1)
         }
 
-    def replace(self, chunks: Sequence[Any]) -> None:
-        return None
+    def validate_identity(self) -> None:
+        """Offline candidates and query vectors are paired within this fixture."""
+
+    def replace(self, chunks: Sequence[Any], *, complete: bool = True) -> str:
+        """Reject writes to deterministic offline eval fixtures."""
+        raise NotImplementedError("Offline eval candidates cannot be replaced.")
 
     def exists(self) -> bool:
         return True

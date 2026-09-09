@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -30,6 +31,76 @@ class StrictModel(BaseModel):
     """Base model for explicit API contracts."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+def normalize_provider_endpoint(value: str) -> str:
+    """Require credential-free HTTPS and canonicalize the embedding-space endpoint."""
+    try:
+        value = value.strip()
+        if "\\" in value or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        ):
+            raise ValueError
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError
+        # urlsplit alone accepts malformed hostnames; use the same validated URL
+        # spelling for persisted identity and every provider client.
+        parts = urlsplit(str(AnyHttpUrl(value)))
+        if not parts.hostname:
+            raise ValueError
+    except ValueError:
+        raise ValueError(
+            "Provider endpoint must use a valid HTTPS URL, without credentials or query data."
+        ) from None
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = parts.port
+    if port is not None and port != (443 if parts.scheme == "https" else 80):
+        host += f":{port}"
+    return urlunsplit((parts.scheme, host, parts.path.rstrip("/"), "", ""))
+
+
+class EmbeddingIdentity(StrictModel):
+    """Credential-free identity of one embedding space, independent of vector length."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    provider: Literal["nvidia"] = "nvidia"
+    model: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        """Require a nonempty, single-line model identifier and normalize whitespace."""
+        value = value.strip()
+        if not value or any(character in value for character in "\r\n"):
+            raise ValueError("Embedding model must be nonempty and single-line.")
+        return value
+
+    @field_validator("endpoint")
+    @classmethod
+    def normalize_endpoint(cls, value: str) -> str:
+        """Canonicalize the credential-free HTTPS endpoint stored with vectors."""
+        return normalize_provider_endpoint(value)
+
+
+class IndexIdentity(StrictModel):
+    """Persisted model, shape, and completion evidence for one database build."""
+
+    embedding: EmbeddingIdentity
+    dimension: int = Field(gt=0)
+    build_id: str = Field(min_length=1)
+    complete: bool
 
 
 class PolicyMetadata(StrictModel):

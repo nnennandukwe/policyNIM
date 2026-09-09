@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -10,6 +12,7 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Embedder
+from policynim.errors import IndexCompatibilityError
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.settings import Settings, get_settings
@@ -37,8 +40,16 @@ class _IngestIndexStore(Protocol):
         """Return the configured table name."""
         ...
 
-    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+    def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
         """Replace the local index contents with embedded chunks."""
+        ...
+
+    def validate_replacement(self) -> None:
+        """Check destination identity before making provider requests."""
+        ...
+
+    def complete_ingest(self, build_id: str) -> None:
+        """Mark the matching database ready only after rules finalization."""
         ...
 
 
@@ -79,6 +90,30 @@ class IngestService:
 
     def run(self) -> IngestResult:
         """Load, chunk, embed, and persist the policy corpus."""
+        self._index_store.validate_replacement()
+        rules_path = self._runtime_rules_artifact_path
+        if rules_path.resolve() == self._index_store.uri.resolve() or rules_path.is_symlink():
+            raise IndexCompatibilityError(
+                "Index and runtime-rules destinations must be distinct files."
+            )
+        if rules_path.is_dir():
+            raise OSError("Runtime rules artifact path must not be a directory.")
+        if not self._index_store.uri.exists() and rules_path.exists():
+            raise IndexCompatibilityError(
+                "Fresh index builds require a separate runtime-rules destination."
+            )
+        if any(
+            output.resolve().is_relative_to(self._corpus_root.resolve())
+            for output in (self._index_store.uri, rules_path)
+        ):
+            raise IndexCompatibilityError("Output destinations must be outside policy sources.")
+        observed_index = _artifact_identity(self._index_store.uri)
+        observed_rules = _artifact_identity(rules_path)
+        if observed_index is not None or observed_rules is not None:
+            raise IndexCompatibilityError(
+                "Ingestion requires new index and runtime-rules destinations, "
+                "even for the same model."
+            )
         documents = load_policy_documents(self._corpus_root)
         runtime_rules_artifact = _compile_runtime_rules_artifact(documents)
         chunks = chunk_policy_documents(documents)
@@ -90,14 +125,17 @@ class IngestService:
         )
 
         try:
-            self._index_store.replace(embedded_chunks)
+            if _artifact_identity(self._index_store.uri) != observed_index:
+                raise IndexCompatibilityError("Index destination changed during ingestion.")
+            build_id = self._index_store.replace(embedded_chunks, complete=False)
             _finalize_runtime_rules_artifact(
                 staged_artifact_path,
                 self._runtime_rules_artifact_path,
+                observed_rules,
             )
-        except Exception:
+            self._index_store.complete_ingest(build_id)
+        finally:
             _cleanup_staged_runtime_rules_artifact(staged_artifact_path)
-            raise
 
         return IngestResult(
             corpus_path=self._corpus_root.as_posix(),
@@ -113,10 +151,12 @@ class IngestService:
 def create_ingest_service(settings: Settings | None = None) -> IngestService:
     """Build the default ingest service from application settings."""
     active_settings = settings or get_settings()
+    index_store = create_index_store(active_settings)
+    corpus_root = resolve_corpus_root(active_settings.corpus_dir)
     return IngestService(
         embedder=_create_default_embedder(active_settings),
-        index_store=create_index_store(active_settings),
-        corpus_root=resolve_corpus_root(active_settings.corpus_dir),
+        index_store=index_store,
+        corpus_root=corpus_root,
         embedding_model=active_settings.nvidia_embed_model,
         runtime_rules_artifact_path=resolve_runtime_path(
             active_settings.runtime_rules_artifact_path
@@ -185,26 +225,50 @@ def _stage_runtime_rules_artifact(
         indent=2,
         sort_keys=False,
     )
-    with NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=destination.parent,
-        prefix=f".{destination.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as handle:
-        handle.write(f"{serialized}\n")
-        return Path(handle.name)
+    staged_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            staged_path = Path(handle.name)
+            handle.write(f"{serialized}\n")
+        return staged_path
+    except BaseException:
+        if staged_path is not None:
+            _cleanup_staged_runtime_rules_artifact(staged_path)
+        raise
 
 
-def _finalize_runtime_rules_artifact(staged_path: Path, destination: Path) -> None:
-    """Atomically move a staged artifact into its final location."""
-    staged_path.replace(destination)
+def _finalize_runtime_rules_artifact(
+    staged_path: Path, destination: Path, observed: tuple[int, int, int, int] | None
+) -> None:
+    """Publish staged rules without overwriting an existing artifact."""
+    if observed is not None or _artifact_identity(destination) != observed:
+        raise IndexCompatibilityError("Runtime-rules destination changed during ingestion.")
+    os.link(staged_path, destination)
+    _cleanup_staged_runtime_rules_artifact(staged_path)
 
 
 def _cleanup_staged_runtime_rules_artifact(staged_path: Path) -> None:
     """Best-effort cleanup for staged artifact files after a failed ingest."""
-    staged_path.unlink(missing_ok=True)
+    try:
+        staged_path.unlink(missing_ok=True)
+    except OSError:
+        logging.getLogger(__name__).warning("Could not remove owned runtime-rules staging file.")
+
+
+def _artifact_identity(path: Path) -> tuple[int, int, int, int] | None:
+    """Identify a rules destination so finalization cannot silently replace a changed file."""
+    try:
+        stat = path.lstat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size
 
 
 def _close_component(component: object | None) -> None:

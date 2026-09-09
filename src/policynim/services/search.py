@@ -78,10 +78,11 @@ class SearchService:
 def create_search_service(settings: Settings | None = None) -> SearchService:
     """Build the default search service from application settings."""
     active_settings = settings or get_settings()
+    index_store = create_index_store(active_settings)
     embedder, reranker = _create_default_search_components(active_settings)
     return SearchService(
         embedder=embedder,
-        index_store=create_index_store(active_settings),
+        index_store=index_store,
         reranker=reranker,
     )
 
@@ -96,8 +97,10 @@ def _create_default_search_components(settings: Settings) -> tuple[Embedder, Rer
 
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
+    """Reject missing or incompatible vectors before contacting the embedding provider."""
     if not index_store.exists() or index_store.count() == 0:
         raise MissingIndexError("Run `policynim ingest` before searching the policy corpus.")
+    index_store.validate_identity()
 
 
 def _close_component(component: object | None) -> None:

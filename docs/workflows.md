@@ -92,7 +92,8 @@ What this does:
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
-- rebuilds the local SQLite index
+- builds a new local SQLite index; refreshes require separate, absent index and
+  runtime-rules paths as described in [provider recovery](hosted-provider-recovery.md)
 
 Typical output includes the chunk count, document count, embedding model, and
 index location.

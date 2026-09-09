@@ -141,6 +141,11 @@ Use [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md) for:
 - container build and local hosted-image checks
 - Railway deploy setup and smoke-test notes
 
+Existing installations changing embedding models must follow the
+[source-preserving provider recovery runbook](docs/hosted-provider-recovery.md).
+Every ingestion build, including a same-model refresh, requires separate, absent
+index and runtime-rules output paths; existing installations are preserved.
+
 ## Local Contributor Setup
 
 Use this path only if you want to run PolicyNIM from a local checkout.

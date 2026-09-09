@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Sequence
 from types import TracebackType
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 import httpx
 from openai import (
     APIConnectionError,
+    APIResponseValidationError,
     APIStatusError,
     APITimeoutError,
     AuthenticationError,
@@ -36,6 +38,7 @@ from policynim.types import (
     PreflightRequest,
     RegenerationContext,
     ScoredChunk,
+    normalize_provider_endpoint,
 )
 
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -62,6 +65,7 @@ class NVIDIAEmbedder(Embedder):
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._batch_size = batch_size
         self._max_retries = max_retries
@@ -117,6 +121,7 @@ class NVIDIAEmbedder(Embedder):
         *,
         input_type: str,
     ) -> list[list[float]]:
+        """Request passage or query vectors with bounded retries and sanitized failures."""
         for attempt in range(self._max_retries + 1):
             try:
                 response = self._client.embeddings.create(
@@ -128,12 +133,20 @@ class NVIDIAEmbedder(Embedder):
                         "truncate": "NONE",
                     },
                 )
-                return _validate_embeddings_response(response.data, expected_count=len(texts))
+                return _validate_embeddings_response(
+                    getattr(response, "data", None), expected_count=len(texts)
+                )
+            except (APIResponseValidationError, json.JSONDecodeError) as exc:
+                raise ProviderError(
+                    "NVIDIA embeddings response was invalid.",
+                    failure_class="invalid_response",
+                ) from exc
             except AuthenticationError as exc:
                 raise _auth_error("embeddings") from exc
             except BadRequestError as exc:
                 raise ProviderError(
-                    f"NVIDIA embeddings request was rejected: {exc}",
+                    "NVIDIA embeddings request was rejected. "
+                    "Check the model and input configuration.",
                     failure_class="bad_request",
                 ) from exc
             except RateLimitError as exc:
@@ -144,6 +157,8 @@ class NVIDIAEmbedder(Embedder):
                     failure_class="rate_limit",
                 ) from exc
             except APIStatusError as exc:
+                if exc.status_code == 410:
+                    raise _endpoint_unavailable("embeddings", "EMBED", "BASE_URL") from exc
                 if exc.status_code in {401, 403}:
                     raise _auth_error("embeddings") from exc
                 if exc.status_code == 429:
@@ -173,6 +188,8 @@ class NVIDIAEmbedder(Embedder):
                     "NVIDIA embeddings request failed after retries.",
                     failure_class="connection",
                 ) from exc
+            except ProviderError:
+                raise
             except Exception as exc:  # pragma: no cover - defensive guard.
                 raise ProviderError(
                     "Unexpected NVIDIA embeddings failure.",
@@ -203,6 +220,7 @@ class NVIDIAReranker(Reranker):
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for reranking.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -267,17 +285,19 @@ class NVIDIAReranker(Reranker):
         response = self._request_ranking(payload)
         scores = _extract_rerank_scores(response, expected_count=len(candidates))
 
-        ranked = [
-            candidate.model_copy(update={"score": float(score)})
-            for candidate, score in zip(candidates, scores, strict=True)
+        if not all(math.isfinite(score) for score in scores):
+            raise ProviderError(
+                "NVIDIA reranking response returned a non-finite score.",
+                failure_class="invalid_response",
+            )
+        ranked = sorted(zip(candidates, scores, strict=True), key=lambda row: row[1], reverse=True)
+        return [
+            candidate.model_copy(update={"score": _rerank_score(score, model=self._model)})
+            for candidate, score in ranked[:top_k]
         ]
-        ranked.sort(
-            key=lambda chunk: chunk.score if chunk.score is not None else float("-inf"),
-            reverse=True,
-        )
-        return ranked[:top_k]
 
     def _request_ranking(self, payload: dict[str, object]) -> Any:
+        """Request passage rankings and classify failures without exposing response bodies."""
         endpoint = f"{self._model}/reranking"
         for attempt in range(self._max_retries + 1):
             try:
@@ -286,6 +306,10 @@ class NVIDIAReranker(Reranker):
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
+                if status_code == 410:
+                    raise _endpoint_unavailable(
+                        "reranking", "RERANK", "RETRIEVAL_BASE_URL"
+                    ) from exc
                 if status_code in {401, 403}:
                     raise _auth_error("reranking") from exc
                 if status_code == 429:
@@ -350,6 +374,7 @@ class NVIDIAGenerator(Generator):
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for grounded generation.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -422,6 +447,7 @@ class NVIDIAPolicyCompiler:
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for policy compilation.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -489,6 +515,7 @@ class NVIDIAPolicyConformanceEvaluator:
                 "NVIDIA_API_KEY is required for policy conformance evaluation."
             )
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -542,20 +569,28 @@ def _request_chat_completion(
     max_retries: int,
     operation: str,
 ) -> str:
+    """Request structured chat output and sanitize provider failures."""
+    options: dict[str, Any] = {"temperature": 0, "top_p": 1}
+    if model == "nvidia/nemotron-3-super-120b-a12b":
+        options = {
+            "temperature": 1,
+            "top_p": 0.95,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0,
-                top_p=1,
+                **options,
             )
             return _extract_chat_content(response, operation=operation)
         except AuthenticationError as exc:
             raise _auth_error(operation) from exc
         except BadRequestError as exc:
             raise ProviderError(
-                f"NVIDIA {operation} request was rejected: {exc}",
+                f"NVIDIA {operation} request was rejected. "
+                "Check the model and input configuration.",
                 failure_class="bad_request",
             ) from exc
         except RateLimitError as exc:
@@ -566,6 +601,8 @@ def _request_chat_completion(
                 failure_class="rate_limit",
             ) from exc
         except APIStatusError as exc:
+            if exc.status_code == 410:
+                raise _endpoint_unavailable(operation, "CHAT", "BASE_URL") from exc
             if exc.status_code in {401, 403}:
                 raise _auth_error(operation) from exc
             if exc.status_code == 429:
@@ -609,6 +646,37 @@ def _request_chat_completion(
     )
 
 
+def _require_provider_endpoint(base_url: str) -> str:
+    """Validate direct adapter construction as well as environment-backed settings."""
+    try:
+        return normalize_provider_endpoint(base_url)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "NVIDIA endpoints must use HTTPS without URL credentials, query parameters, "
+            "or fragments. Verify POLICYNIM_NVIDIA_BASE_URL and "
+            "POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL."
+        ) from exc
+
+
+def _endpoint_unavailable(
+    operation: str, model_setting: str, endpoint_setting: str
+) -> ProviderError:
+    """Describe HTTP 410 without exposing upstream bodies or configured credentials."""
+    recovery = (
+        " Rebuild the complete corpus into separate index and runtime-rules paths when changing "
+        "the embedding model; preserve the old index and sources."
+        if model_setting == "EMBED"
+        else ""
+    )
+    return ProviderError(
+        f"NVIDIA {operation} endpoint is unavailable (HTTP 410); do not retry unchanged requests. "
+        f"Verify POLICYNIM_NVIDIA_{model_setting}_MODEL and POLICYNIM_NVIDIA_{endpoint_setting} "
+        "against the current NVIDIA API catalog. For Docker ingestion, configure build arguments "
+        "separately from runtime service variables." + recovery,
+        failure_class="endpoint_unavailable",
+    )
+
+
 def _auth_error(operation: str) -> ConfigurationError:
     return ConfigurationError(
         f"NVIDIA authentication failed during {operation}. Verify NVIDIA_API_KEY is valid.",
@@ -628,23 +696,41 @@ def _normalize_text(text: str, *, field_name: str) -> str:
 
 
 def _validate_embeddings_response(
-    data: Sequence[Any],
+    data: object,
     *,
     expected_count: int,
 ) -> list[list[float]]:
+    """Require one finite, consistently sized vector for each requested input."""
+    if not isinstance(data, list):
+        raise ProviderError(
+            "NVIDIA embeddings response did not contain embedding data.",
+            failure_class="invalid_response",
+        )
     if len(data) != expected_count:
         raise ProviderError(
             "NVIDIA embeddings response count did not match the number of inputs.",
             failure_class="invalid_response",
         )
 
-    embeddings: list[list[float]] = []
+    embeddings: dict[int, list[float]] = {}
     dimension: int | None = None
     for item in data:
-        embedding = list(getattr(item, "embedding", []))
-        if not embedding:
+        index = getattr(item, "index", None)
+        if type(index) is not int or index < 0 or index >= expected_count or index in embeddings:
             raise ProviderError(
-                "NVIDIA embeddings response returned an empty vector.",
+                "NVIDIA embeddings response returned invalid or duplicate input indices.",
+                failure_class="invalid_response",
+            )
+        try:
+            embedding = [float(value) for value in item.embedding]
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ProviderError(
+                "NVIDIA embeddings response returned an invalid vector.",
+                failure_class="invalid_response",
+            ) from exc
+        if not embedding or not all(math.isfinite(value) for value in embedding):
+            raise ProviderError(
+                "NVIDIA embeddings response returned an empty or non-finite vector.",
                 failure_class="invalid_response",
             )
         if dimension is None:
@@ -654,9 +740,19 @@ def _validate_embeddings_response(
                 "NVIDIA embeddings response returned mixed vector dimensions.",
                 failure_class="invalid_response",
             )
-        embeddings.append([float(value) for value in embedding])
+        embeddings[index] = embedding
 
-    return embeddings
+    return [embeddings[index] for index in range(expected_count)]
+
+
+def _rerank_score(logit: float, *, model: str) -> float:
+    """Apply NVIDIA's documented sigmoid for the selected model, preserving custom scores."""
+    if model != "nvidia/llama-nemotron-rerank-vl-1b-v2":
+        return logit
+    if logit >= 0:
+        return 1.0 / (1.0 + math.exp(-logit))
+    exponent = math.exp(logit)
+    return exponent / (1.0 + exponent)
 
 
 def _extract_rerank_scores(payload: Any, *, expected_count: int) -> list[float]:
@@ -768,7 +864,8 @@ def _build_generation_messages(
         "}\n"
         "Rules:\n"
         "- Cite only by chunk_id values that appear in the provided context.\n"
-        "- Do not invent new chunk IDs.\n"
+        "- Do not invent new chunk IDs. A policy_id is not a citation. Copy the entire "
+        "chunk_id, including any colon and section suffix, from Allowed citation_ids.\n"
         "- If the evidence is insufficient, set insufficient_context to true and "
         "keep the lists empty.\n"
         "- When compiled policy constraints are provided, use them as the main "
@@ -791,6 +888,8 @@ def _build_generation_messages(
         f"{compiled_constraints}\n"
         "Regeneration context:\n"
         f"{_format_regeneration_context(regeneration_context)}\n"
+        "Allowed citation_ids (copy exactly):\n"
+        f"{json.dumps([chunk.chunk_id for chunk in context])}\n"
         "Retrieved context:\n"
         f"{_format_generation_context(context)}"
     )
@@ -851,6 +950,8 @@ def _build_policy_compiler_messages(
         "Rules:\n"
         "- Cite only by chunk_id values that appear in the provided retained context.\n"
         "- Do not invent chunk IDs, policy IDs, files, or requirements.\n"
+        "- A policy_id is not a citation. Copy the entire chunk_id, including any "
+        "colon and section suffix, from Allowed citation_ids.\n"
         "- Include a constraint only when the retained evidence directly supports it.\n"
         "- If evidence is weak or unsupported, set insufficient_context to true and "
         "leave every constraint list empty.\n"
@@ -863,6 +964,8 @@ def _build_policy_compiler_messages(
         f"Task type: {selection_packet.task_type}\n"
         "Selected policy packet:\n"
         f"{selection_packet.model_dump_json(indent=2)}\n"
+        "Allowed citation_ids (copy exactly):\n"
+        f"{json.dumps([chunk.chunk_id for chunk in context])}\n"
         "Retained context:\n"
         f"{_format_generation_context(context)}"
     )

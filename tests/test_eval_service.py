@@ -327,6 +327,56 @@ def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: 
     assert closed == [True]
 
 
+@pytest.mark.parametrize("existing_rules", [False, True])
+def test_live_eval_real_ingestion_keeps_both_outputs_isolated(
+    monkeypatch, tmp_path: Path, existing_rules: bool
+) -> None:
+    """Exercise live-mode orchestration offline without touching installation artifacts."""
+    from test_index_identity import SpyEmbedder, settings_for
+
+    from policynim.services.ingest import create_ingest_service
+
+    index = tmp_path / "installed.sqlite3"
+    rules = tmp_path / "installed-rules.json"
+    index.write_bytes(b"preserved installation index")
+    if existing_rules:
+        rules.write_bytes(b"preserved installation rules")
+    settings = settings_for(
+        index, runtime_rules_artifact_path=rules, eval_workspace_dir=tmp_path / "workspace"
+    )
+    captured: list[Settings] = []
+    embedder = SpyEmbedder()
+
+    def capture_ingest(active_settings: Settings):
+        """Capture the actual temporary settings while retaining real SQLite ingestion."""
+        captured.append(active_settings)
+        return create_ingest_service(active_settings)
+
+    monkeypatch.setattr("policynim.services.eval.create_ingest_service", capture_ingest)
+    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", lambda _: embedder)
+    monkeypatch.setattr(
+        "policynim.services.eval._create_live_search_service",
+        lambda active_settings, rerank_enabled: MockSearchService(),
+    )
+    monkeypatch.setattr(
+        "policynim.services.eval._create_live_preflight_service",
+        lambda active_settings, rerank_enabled: MockPreflightService(),
+    )
+
+    result = EvalService(settings=settings).run(mode="live", compare_rerank=False)
+
+    assert result.runs and captured and embedder.calls == 1 and embedder.closed
+    candidate = captured[0]
+    assert candidate.runtime_rules_artifact_path.parent == candidate.index_db_path.parent
+    assert candidate.runtime_rules_artifact_path != rules
+    assert not candidate.index_db_path.parent.exists()
+    assert index.read_bytes() == b"preserved installation index"
+    if existing_rules:
+        assert rules.read_bytes() == b"preserved installation rules"
+    else:
+        assert not rules.exists()
+
+
 def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
     monkeypatch, tmp_path: Path
 ) -> None:

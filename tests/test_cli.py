@@ -91,9 +91,9 @@ def write_env_file(path: Path, **values: str) -> None:
 
 def write_ready_sqlite_index(path: Path) -> None:
     """Write a minimal populated PolicyNIM sqlite-vec index for doctor tests."""
-    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+    from policynim.storage import create_index_store
 
-    SQLiteVecIndexStore(path=path).replace(
+    create_index_store(Settings(index_db_path=path)).replace(
         [
             EmbeddedChunk(
                 chunk_id="DOCTOR-READY-1",
@@ -1795,7 +1795,9 @@ def test_doctor_source_checkout_recovery_uses_uv_run_commands(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert (
-        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
+        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact. "
+        "If either output exists, choose separate POLICYNIM_INDEX_DB_PATH and "
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
     ) in payload["next_steps"]
     assert (
         "Run `policynim ingest` to build the local policy index and runtime rules artifact."
@@ -1834,15 +1836,11 @@ def test_doctor_flags_invalid_sqlite_index_file(
         "name": "local_index_path",
         "status": "action_required",
         "message": (
-            "Configured local SQLite index file is not a populated PolicyNIM sqlite-vec index."
+            "Configured local SQLite index is missing valid embedding identity, "
+            "is incomplete, or does not match the configured embedding model."
         ),
     }
-    assert payload["next_steps"] == [
-        (
-            "Run `uv run policynim ingest` to build the local policy index "
-            "and runtime rules artifact."
-        )
-    ]
+    assert "separate POLICYNIM_INDEX_DB_PATH" in " ".join(payload["next_steps"])
 
 
 def test_doctor_flags_legacy_lancedb_directory_index_path(
@@ -4462,3 +4460,96 @@ def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) ->
 
     assert result.exit_code == 1
     assert "missing-session" in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["legacy", "model", "incomplete", "compatible"])
+def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_path, mutation):
+    """Verify doctor reports index identity without provider calls."""
+    import sqlite3
+
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    path = checkout / "data" / "index.sqlite3"
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="doctor-secret-sentinel")
+    write_ready_sqlite_index(path)
+    with sqlite3.connect(path) as conn:
+        if mutation != "compatible":
+            key, value = {
+                "legacy": ("schema_version", "1"),
+                "model": ("embedding_model", "another/same-dimension-model"),
+                "incomplete": ("ingest_complete", "false"),
+            }[mutation]
+            conn.execute("UPDATE index_metadata SET value=? WHERE key=?", (value, key))
+    before = path.read_bytes()
+    monkeypatch.setattr(
+        "policynim.providers.nvidia.OpenAI",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("doctor must stay offline")),
+    )
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+    assert result.exit_code == 0
+    report = json.loads(result.stdout)
+    check = next(entry for entry in report["checks"] if entry["name"] == "local_index_path")
+    assert check["status"] == ("ok" if mutation == "compatible" else "action_required")
+    assert report["index"]["compatible"] is (mutation == "compatible")
+    if mutation == "compatible":
+        assert report["index"]["identity"]["embedding"]["model"] == Settings().nvidia_embed_model
+        assert report["index"]["identity"]["dimension"] == 2
+    else:
+        assert "separate" in " ".join(report["next_steps"])
+    assert "doctor-secret-sentinel" not in result.stdout
+    assert path.read_bytes() == before
+
+
+def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tmp_path):
+    """Use the real ingest command to reject corrupt data with operator guidance."""
+    from test_index_identity import SpyEmbedder
+
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    path = checkout / "data" / "index.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"private-corrupt-index-sentinel")
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="secret-key-sentinel")
+    embedder = SpyEmbedder()
+    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", lambda _: embedder)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "separate" in result.stderr
+    assert "sentinel" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert embedder.calls == 0 and embedder.closed
+    assert path.read_bytes() == b"private-corrupt-index-sentinel"
+
+
+@pytest.mark.parametrize(
+    "setting", ["POLICYNIM_NVIDIA_BASE_URL", "POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL"]
+)
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://user:password-sentinel@example.invalid/v1",
+        "https://example.invalid/v1?key=key-sentinel",
+    ],
+)
+def test_invalid_provider_endpoint_does_not_echo_credentials(
+    monkeypatch, tmp_path, setting, endpoint
+):
+    """Reject endpoint configuration through the real CLI without echoing its input."""
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="configured-key-sentinel")
+    monkeypatch.setenv(setting, endpoint)
+
+    def client_must_not_be_created(**kwargs):
+        """Fail if invalid settings reach provider client construction."""
+        raise AssertionError("Provider client must not be created")
+
+    monkeypatch.setattr("policynim.providers.nvidia.OpenAI", client_must_not_be_created)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "sentinel" not in result.stderr
+    assert endpoint not in result.stderr
+    assert "input_value" not in result.stderr
+    assert "Provider client must not be created" not in result.stderr
+    assert "endpoint" in result.stderr.lower() or "credentials" in result.stderr.lower()
