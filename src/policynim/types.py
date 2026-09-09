@@ -673,6 +673,16 @@ class BetaUsageSnapshot(StrictModel):
     remaining: int = Field(ge=0)
 
 
+class ApiKeyQuotaResult(StrictModel):
+    """Account and quota facts observed or written by one committed transaction."""
+
+    model_config = ConfigDict(frozen=True)
+
+    account: BetaAccount | None
+    usage: BetaUsageSnapshot | None
+    quota_consumed: bool
+
+
 class BetaIssuedApiKey(StrictModel):
     """One newly issued hosted beta API key."""
 

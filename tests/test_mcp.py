@@ -3,23 +3,45 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import os
 import socket
-from collections.abc import Sequence
+import subprocess
+import sys
+import textwrap
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime
+from importlib.metadata import version
+from threading import Event, Lock, get_ident
 
+import anyio
+import httpx
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp import Client
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
-from policynim.errors import ConfigurationError, MissingIndexError, ProviderError
+from policynim.errors import (
+    ConfigurationError,
+    InvalidPolicyDocumentError,
+    MissingIndexError,
+    PolicyNIMError,
+    ProviderError,
+)
 from policynim.interfaces import mcp as mcp_module
 from policynim.services.preflight import PreflightService
 from policynim.settings import Settings
 from policynim.types import (
+    BetaAccount,
     BetaAuthDecision,
+    BetaIssuedApiKey,
+    BetaUsageSnapshot,
     Citation,
     EmbeddedChunk,
     GeneratedCompiledPolicyDraft,
@@ -132,7 +154,8 @@ class StreamableHTTPStubServer:
     def run(self, *, transport: str) -> None:
         self.run_calls.append(transport)
 
-    def streamable_http_app(self) -> ASGIApp:
+    def streamable_http_app(self, **kwargs: object) -> ASGIApp:
+        """Return the stub app while accepting the SDK transport options."""
         return self._app
 
 
@@ -148,6 +171,82 @@ class StaticBetaAuthService:
         return self._decision
 
 
+class ControlledKeyRotationService:
+    """Expose issuance barriers and failures behind the real portal session routes."""
+
+    def __init__(self, *, block_first: bool = True, failure_stage: str | None = None) -> None:
+        """Create two independent accounts and controls for the first account's rotation."""
+        self.started = Event()
+        self.release = Event()
+        self.block_first = block_first
+        self.failure_stage = failure_stage
+        self.issue_calls: list[int] = []
+        self.account_reads: list[int] = []
+        self._lock = Lock()
+        self.accounts = {
+            account_id: BetaAccount(
+                account_id=account_id,
+                github_user_id=account_id,
+                github_login=f"fixture-user-{account_id}",
+                status="active",
+                created_at=datetime(2026, 4, 5, tzinfo=UTC),
+                last_login_at=datetime(2026, 4, 5, tzinfo=UTC),
+            )
+            for account_id in (1, 2)
+        }
+        self.usage = BetaUsageSnapshot(
+            usage_date=date(2026, 4, 5), request_count=0, quota=500, remaining=500
+        )
+
+    def build_github_authorize_url(self, *, state: str) -> str:
+        """Preserve the actual signed-session state without contacting GitHub."""
+        return f"https://github.example/authorize?state={state}"
+
+    def complete_github_oauth(self, *, code: str) -> BetaAccount:
+        """Choose an account through the fixture's OAuth code."""
+        return self.accounts[int(code)]
+
+    def get_account(self, account_id: int) -> BetaAccount:
+        """Record reads and optionally fail the first admitted request before issuance."""
+        self.account_reads.append(account_id)
+        if self.failure_stage == "account":
+            self.failure_stage = None
+            raise ValueError("fixture account failure")
+        return self.accounts[account_id]
+
+    def get_portal_usage(self, account_id: int) -> BetaUsageSnapshot:
+        """Return a stable snapshot without storage access."""
+        return self.usage
+
+    def issue_api_key(self, *, account_id: int) -> BetaIssuedApiKey:
+        """Block only the first rotation while allowing other accounts to make progress."""
+        with self._lock:
+            self.issue_calls.append(account_id)
+            generation = self.issue_calls.count(account_id)
+        if self.failure_stage == "issue":
+            self.failure_stage = None
+            raise ValueError("fixture issuance failure")
+        if self.block_first and account_id == 1 and generation == 1:
+            self.started.set()
+            assert self.release.wait(5), "test did not release key issuance"
+        return BetaIssuedApiKey(
+            account=self.accounts[account_id],
+            api_key=f"fixture-key-{account_id}-{generation}",
+            usage=self.usage,
+        )
+
+
+async def _login_for_key_rotation(client: httpx.AsyncClient, account_id: int) -> None:
+    """Establish a real signed portal session before exercising rotation requests."""
+    start = await client.get("/auth/github/start")
+    assert start.status_code == 302
+    state = start.headers["location"].partition("state=")[2]
+    callback = await client.get(
+        "/auth/github/callback", params={"state": state, "code": str(account_id)}
+    )
+    assert callback.status_code == 302
+
+
 def _ok_starlette_app() -> ASGIApp:
     async def ok_endpoint(request) -> JSONResponse:
         return JSONResponse({"ok": True}, status_code=200)
@@ -156,11 +255,11 @@ def _ok_starlette_app() -> ASGIApp:
 
 
 def _call_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
+    """Read the SDK's structured result from a direct tool invocation."""
     result = asyncio.run(mcp_module.mcp.call_tool(name, arguments))
-    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
-        return result[1]
-    assert isinstance(result, dict)
-    return result
+    assert isinstance(result, CallToolResult)
+    assert isinstance(result.structured_content, dict)
+    return result.structured_content
 
 
 def _search_payload(payload: dict[str, object]) -> SearchResult:
@@ -278,7 +377,7 @@ def test_policy_preflight_surfaces_missing_index_errors(monkeypatch) -> None:
         lambda settings: (_ for _ in ()).throw(MissingIndexError("Run `policynim ingest` first.")),
     )
 
-    with pytest.raises(ToolError, match="Run `policynim ingest` first"):
+    with pytest.raises(ToolError, match="run `policynim ingest`.*index configuration"):
         _call_tool("policy_preflight", {"task": "refresh token cleanup"})
 
 
@@ -309,7 +408,7 @@ def test_policy_search_surfaces_configuration_errors(monkeypatch) -> None:
         lambda settings: (_ for _ in ()).throw(ConfigurationError("missing NVIDIA key")),
     )
 
-    with pytest.raises(ToolError, match="missing NVIDIA key"):
+    with pytest.raises(ToolError, match="configuration is invalid.*server settings"):
         _call_tool("policy_search", {"query": "background cleanup"})
 
 
@@ -448,6 +547,7 @@ def test_run_server_surfaces_hosted_startup_readiness_errors(monkeypatch) -> Non
 
 
 def test_streamable_http_port_probe_rejects_in_use_port() -> None:
+    """Reject an occupied IPv4 listener with actionable port recovery guidance."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -455,6 +555,181 @@ def test_streamable_http_port_probe_rejects_in_use_port() -> None:
 
         with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_PORT"):
             mcp_module._ensure_streamable_http_port_available(host, port)
+
+
+@pytest.mark.parametrize("resolution_code", [socket.EAI_NONAME, socket.EAI_AGAIN])
+def test_streamable_http_dns_failure_stops_startup_with_host_guidance(
+    monkeypatch: pytest.MonkeyPatch, resolution_code: int
+) -> None:
+    """Translate permanent and temporary DNS failures before runtime or provider setup."""
+    settings = Settings(mcp_host="missing.example", mcp_port=9001)
+    resolution_error = socket.gaierror(resolution_code, "Synthetic resolution failure")
+
+    def get_settings() -> Settings:
+        """Return the configured DNS bind host without reading external configuration."""
+        return settings
+
+    def fail_resolution(host: str, port: int, **kwargs: object) -> None:
+        """Fail the configured hostname lookup without accessing DNS."""
+        assert (host, port) == ("missing.example", 9001)
+        raise resolution_error
+
+    def forbid_startup(*args: object, **kwargs: object) -> None:
+        """Reject socket creation, runtime preparation or HTTP startup after DNS failure."""
+        pytest.fail("DNS failure must stop socket, runtime and provider preparation")
+
+    monkeypatch.setattr(mcp_module, "get_settings", get_settings)
+    monkeypatch.setattr(mcp_module.socket, "getaddrinfo", fail_resolution)
+    monkeypatch.setattr(mcp_module.socket, "socket", forbid_startup)
+    monkeypatch.setattr(mcp_module, "ensure_hosted_runtime_ready", forbid_startup)
+    monkeypatch.setattr(mcp_module, "_build_streamable_http_app", forbid_startup)
+    monkeypatch.setattr(mcp_module, "_run_streamable_http_app", forbid_startup)
+
+    with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_HOST") as caught:
+        mcp_module.run_server("streamable-http")
+
+    assert caught.value.__cause__ is resolution_error
+    assert "missing.example" in str(caught.value)
+    assert "resolve" in str(caught.value)
+    assert "binding" in str(caught.value)
+    assert "local IP address" in str(caught.value)
+
+
+def test_streamable_http_ipv6_startup_checks_port_before_runtime_work(monkeypatch) -> None:
+    """Permit IPv6 startup, but reject an occupied listener before runtime work."""
+    if not socket.has_ipv6:
+        pytest.skip("This platform does not support IPv6 sockets.")
+    try:
+        listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    except OSError as exc:
+        pytest.skip(f"IPv6 sockets are unavailable: {exc}")
+    with listener:
+        try:
+            listener.bind(("::1", 0))
+            listener.listen()
+        except OSError as exc:
+            pytest.skip(f"IPv6 loopback is unavailable: {exc}")
+        port = listener.getsockname()[1]
+        monkeypatch.setattr(
+            mcp_module, "get_settings", lambda: Settings(mcp_host="::1", mcp_port=port)
+        )
+        monkeypatch.setattr(
+            mcp_module,
+            "ensure_hosted_runtime_ready",
+            lambda *args, **kwargs: pytest.fail("An occupied port must block runtime preparation"),
+        )
+        monkeypatch.setattr(
+            mcp_module,
+            "_build_streamable_http_app",
+            lambda settings: pytest.fail("An occupied port must block HTTP app construction"),
+        )
+        with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_PORT"):
+            mcp_module.run_server("streamable-http")
+
+    mcp_module._ensure_streamable_http_port_available("::1", port)
+
+
+@pytest.mark.parametrize(
+    (
+        "address_families",
+        "unsupported_family",
+        "unavailable_family",
+        "occupied_family",
+        "expected_error",
+    ),
+    [
+        ([socket.AF_INET], None, None, None, None),
+        ([socket.AF_INET6], None, None, None, None),
+        ([socket.AF_INET6, socket.AF_INET, socket.AF_INET6], None, None, None, None),
+        ([socket.AF_INET6, socket.AF_INET], socket.AF_INET6, None, None, None),
+        ([socket.AF_INET6, socket.AF_INET], None, socket.AF_INET6, None, None),
+        ([socket.AF_INET6, socket.AF_INET], None, None, socket.AF_INET, "POLICYNIM_MCP_PORT"),
+        ([socket.AF_INET6], socket.AF_INET6, None, None, "Could not reserve"),
+        ([socket.AF_INET6], None, socket.AF_INET6, None, "Could not reserve"),
+    ],
+)
+def test_streamable_http_port_probe_checks_resolved_addresses(
+    monkeypatch,
+    address_families,
+    unsupported_family,
+    unavailable_family,
+    occupied_family,
+    expected_error,
+) -> None:
+    """Check every supported DNS address while preserving bind failures and cleanup."""
+    addresses = {
+        socket.AF_INET: ("127.0.0.1", 9001),
+        socket.AF_INET6: ("::1", 9001, 0, 0),
+    }
+    resolutions = [
+        (family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", addresses[family])
+        for family in address_families
+    ]
+    resolution_calls = []
+    socket_attempts = []
+    probes = []
+
+    def resolve(host, port, *args, **kwargs):
+        """Resolve a synthetic hostname without accessing DNS."""
+        resolution_calls.append((host, port))
+        return resolutions
+
+    class Probe:
+        """Record socket-family selection and deterministic startup cleanup."""
+
+        def __init__(self, family, socket_type, protocol=0):
+            """Capture the resolved socket parameters without opening a socket."""
+            socket_attempts.append(family)
+            if family == unsupported_family:
+                raise OSError(errno.EAFNOSUPPORT, "Address family unsupported")
+            self.family = family
+            self.socket_type = socket_type
+            self.protocol = protocol
+            self.options = []
+            self.bound_address = None
+            self.closed = False
+            probes.append(self)
+
+        def __enter__(self):
+            """Return this probe for deterministic cleanup."""
+            return self
+
+        def __exit__(self, *args):
+            """Close the probe on either successful or failed binding."""
+            self.closed = True
+
+        def setsockopt(self, *option):
+            """Record options that keep IPv4 and IPv6 binds independent."""
+            self.options.append(option)
+
+        def bind(self, address):
+            """Bind only a resolved address or reproduce an operating-system failure."""
+            assert address == addresses[self.family]
+            self.bound_address = address
+            if self.family == unavailable_family:
+                raise OSError(errno.EADDRNOTAVAIL, "Address unavailable")
+            if self.family == occupied_family:
+                raise OSError(errno.EADDRINUSE, "Address in use")
+
+    monkeypatch.setattr(mcp_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(mcp_module.socket, "socket", Probe)
+    monkeypatch.setattr(mcp_module.socket, "has_ipv6", True)
+    if expected_error is None:
+        mcp_module._ensure_streamable_http_port_available("mcp.example", 9001)
+    else:
+        with pytest.raises(ConfigurationError, match=expected_error):
+            mcp_module._ensure_streamable_http_port_available("mcp.example", 9001)
+
+    assert resolution_calls == [("mcp.example", 9001)]
+    assert socket_attempts == list(dict.fromkeys(address_families))
+    assert [probe.family for probe in probes] == [
+        family for family in dict.fromkeys(address_families) if family != unsupported_family
+    ]
+    assert all(probe.closed for probe in probes)
+    assert all(probe.protocol == socket.IPPROTO_TCP for probe in probes)
+    for probe in probes:
+        if probe.family == socket.AF_INET6:
+            assert (socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1) in probe.options
 
 
 def test_run_server_surfaces_streamable_http_port_conflicts(monkeypatch) -> None:
@@ -483,6 +758,372 @@ def test_run_server_surfaces_streamable_http_port_conflicts(monkeypatch) -> None
 def test_mcp_registers_both_public_tools() -> None:
     tools = asyncio.run(mcp_module.mcp.list_tools())
     assert {tool.name for tool in tools} == {"policy_preflight", "policy_search"}
+
+
+def test_mcp_describes_typed_results_and_bounded_inputs() -> None:
+    """Advertise usable schemas and the application identity to MCP clients."""
+
+    async def inspect() -> None:
+        """Inspect discovery through the SDK client rather than private fields."""
+        server = mcp_module._register_tools(mcp_module._new_mcp_server())
+        async with Client(server) as client:
+            discovered = await client.list_tools()
+            by_name = {tool.name: tool for tool in discovered.tools}
+            for name, result_field in (
+                ("policy_search", "hits"),
+                ("policy_preflight", "citations"),
+            ):
+                tool = by_name[name]
+                assert tool.description
+                assert tool.output_schema is not None
+                assert result_field in tool.output_schema["properties"]
+                assert tool.annotations is not None
+                assert tool.annotations.read_only_hint is True
+                assert tool.annotations.destructive_hint is False
+                choices = tool.input_schema["properties"]["top_k"]["anyOf"]
+                assert any(
+                    choice.get("minimum") == 1 and choice.get("maximum") == 20 for choice in choices
+                )
+        assert server.version == version("policynim")
+
+    asyncio.run(inspect())
+
+
+async def _wait_until_set(event: Event) -> None:
+    """Bound fixture synchronization without consuming a worker thread."""
+
+    async def wait() -> None:
+        """Yield while the worker reaches the required fixture boundary."""
+        while not event.is_set():
+            await asyncio.sleep(0.001)
+
+    await asyncio.wait_for(wait(), timeout=5)
+
+
+def test_mcp_rejects_eleventh_operation_before_provider_construction(monkeypatch) -> None:
+    """Ten active operations share one immediate gate across both public tools."""
+    all_started = Event()
+    release = Event()
+    lock = Lock()
+    factory_threads: list[int] = []
+    closed = 0
+
+    class BlockingSearchService(MockSearchService):
+        def search(self, request: SearchRequest) -> SearchResult:
+            """Block provider work until the admission assertions finish."""
+            assert release.wait(5), "test did not release blocked provider work"
+            return super().search(request)
+
+        def close(self) -> None:
+            """Count cleanup while still executing in the owned worker."""
+            nonlocal closed
+            with lock:
+                closed += 1
+            super().close()
+
+    def build_service(settings: Settings) -> BlockingSearchService:
+        """Record provider construction before waiting inside its operation."""
+        with lock:
+            factory_threads.append(get_ident())
+            if len(factory_threads) == 10:
+                all_started.set()
+        return BlockingSearchService()
+
+    monkeypatch.setattr(mcp_module, "create_search_service", build_service)
+    monkeypatch.setattr(
+        mcp_module,
+        "create_runtime_health_service",
+        lambda settings: StaticHealthService(
+            HealthCheckResult(status="ok", ready=True, table_name="policy_chunks", row_count=1)
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_module,
+        "create_preflight_service",
+        lambda settings: pytest.fail("Rejected preflight must not construct providers"),
+    )
+
+    async def exercise() -> None:
+        """Exercise admission and responsiveness against registered handlers."""
+        server = mcp_module._create_mcp_server(Settings(mcp_max_concurrent_operations=10))
+        app = server.streamable_http_app()
+        requests = [
+            asyncio.create_task(server.call_tool("policy_search", {"query": str(index)}))
+            for index in range(10)
+        ]
+        try:
+            await _wait_until_set(all_started)
+            assert all(thread != get_ident() for thread in factory_threads)
+            assert len(await asyncio.wait_for(server.list_tools(), timeout=0.5)) == 2
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+            ) as client:
+                health = await asyncio.wait_for(client.get("/healthz"), timeout=0.5)
+                assert health.status_code == 200
+                assert health.json()["ready"] is True
+            with pytest.raises(ToolError, match="server_busy.*Retry later"):
+                await asyncio.wait_for(
+                    server.call_tool("policy_preflight", {"task": "blocked"}), timeout=0.5
+                )
+            assert len(factory_threads) == 10
+        finally:
+            release.set()
+            results = await asyncio.gather(*requests)
+        assert all(isinstance(result, CallToolResult) for result in results)
+        assert closed == 10
+        await server.call_tool("policy_search", {"query": "recovered"})
+        assert closed == 11
+
+    asyncio.run(exercise())
+
+
+def test_exported_mcp_resolves_configured_capacity_once_on_first_tool_call(tmp_path) -> None:
+    """Import stays configuration-free and the exported server honors its first runtime limit."""
+    config_file = tmp_path / "offline.env"
+    config_file.write_text("", encoding="utf-8")
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import os
+        from threading import Event
+        from unittest.mock import patch
+
+        from mcp.server.mcpserver.exceptions import ToolError
+        from policynim import settings
+        from policynim.types import SearchResult
+
+        with patch.object(settings, 'get_settings', side_effect=AssertionError('import settings')):
+            from policynim.interfaces import mcp as module
+        module.get_settings = settings.get_settings
+        os.environ['POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS'] = '1'
+        started = Event()
+        release = Event()
+        created = []
+
+        class Service:
+            def search(self, request):
+                '''Block only the first admitted operation.'''
+                if request.query == 'first':
+                    started.set()
+                    assert release.wait(5)
+                return SearchResult(query=request.query, top_k=request.top_k, hits=[])
+
+            def close(self):
+                '''The fixture owns no external client.'''
+                pass
+
+        def create_service(runtime_settings):
+            '''Track the effective settings when each service is allocated.'''
+            created.append(runtime_settings.mcp_max_concurrent_operations)
+            return Service()
+
+        async def exercise():
+            '''Keep the first configured admission limit across settings reloads.'''
+            running = asyncio.create_task(module.mcp.call_tool('policy_search', {'query': 'first'}))
+            try:
+                async with asyncio.timeout(5):
+                    while not started.is_set():
+                        await asyncio.sleep(0.001)
+                os.environ['POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS'] = '2'
+                settings.get_settings.cache_clear()
+                try:
+                    await module.mcp.call_tool('policy_search', {'query': 'excess'})
+                except ToolError as error:
+                    assert 'server_busy' in str(error)
+                else:
+                    raise AssertionError('exported server ignored its first configured capacity')
+                assert created == [1]
+            finally:
+                release.set()
+                await running
+            await module.mcp.call_tool('policy_search', {'query': 'recovered'})
+            assert created == [1, 2]
+
+        with patch.object(module, 'create_search_service', create_service):
+            asyncio.run(exercise())
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "POLICYNIM_CONFIG_FILE": str(config_file)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("cancellation_kind", ["asyncio", "anyio"])
+@pytest.mark.parametrize("worker_outcome", ["success", "operation_failure", "cleanup_failure"])
+def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
+    monkeypatch, cancellation_kind, worker_outcome
+) -> None:
+    """Cancellation drains work and cleanup, propagates, and records no success event."""
+    started = Event()
+    release_work = Event()
+    cleanup_started = Event()
+    release_cleanup = Event()
+    service_threads: list[int] = []
+    events: list[dict[str, object]] = []
+
+    class BlockingSearchService(MockSearchService):
+        def search(self, request: SearchRequest) -> SearchResult:
+            """Expose a cancellable request whose underlying work is synchronous."""
+            service_threads.append(get_ident())
+            started.set()
+            assert release_work.wait(5), "test did not release provider work"
+            if worker_outcome == "operation_failure":
+                raise ValueError("private-operation-failure")
+            return super().search(request)
+
+        def close(self) -> None:
+            """Keep the slot occupied through deterministic client cleanup."""
+            service_threads.append(get_ident())
+            cleanup_started.set()
+            assert release_cleanup.wait(5), "test did not release cleanup"
+            super().close()
+            if worker_outcome == "cleanup_failure":
+                raise ValueError("private-cleanup-failure")
+
+    service = BlockingSearchService()
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
+    monkeypatch.setattr(
+        mcp_module,
+        "_emit_hosted_event",
+        lambda event, **fields: events.append({"event": event, **fields}),
+    )
+
+    async def exercise() -> None:
+        """Cancel using both native asyncio and the SDK's structured scopes."""
+        server = mcp_module._create_mcp_server(Settings(mcp_max_concurrent_operations=1))
+        scopes: list[anyio.CancelScope] = []
+        cancellations: list[bool] = []
+        results: list[object] = []
+
+        async def call() -> None:
+            """Record whether the handler propagated cancellation or returned a result."""
+            try:
+                results.append(await server.call_tool("policy_search", {"query": "first"}))
+            except asyncio.CancelledError:
+                cancellations.append(True)
+                raise
+
+        async def invoke() -> None:
+            """Use the cancellation mechanism selected for this regression."""
+            if cancellation_kind == "anyio":
+                with anyio.CancelScope() as scope:
+                    scopes.append(scope)
+                    await call()
+            else:
+                await call()
+
+        request = asyncio.create_task(invoke())
+        try:
+            await _wait_until_set(started)
+            if cancellation_kind == "anyio":
+                scopes[0].cancel()
+            else:
+                request.cancel()
+            await asyncio.sleep(0)
+            assert not request.done()
+            with pytest.raises(ToolError, match="server_busy"):
+                await server.call_tool("policy_search", {"query": "during work"})
+            release_work.set()
+            await _wait_until_set(cleanup_started)
+            with pytest.raises(ToolError, match="server_busy"):
+                await server.call_tool("policy_search", {"query": "during cleanup"})
+            assert not any(event["upstream_failure_class"] == "cancelled" for event in events)
+            events.clear()
+        finally:
+            release_work.set()
+            release_cleanup.set()
+            await asyncio.gather(request, return_exceptions=True)
+        assert service.closed
+        assert len(set(service_threads)) == 1
+        assert cancellations == [True]
+        assert results == []
+        if cancellation_kind == "asyncio":
+            assert request.cancelled()
+        else:
+            assert scopes[0].cancelled_caught
+        assert len(events) == 1
+        assert events[0]["event"] == "mcp.tool"
+        assert events[0]["tool_name"] == "policy_search"
+        assert events[0]["upstream_failure_class"] == "cancelled"
+        assert "private-" not in str(events)
+        monkeypatch.setattr(
+            mcp_module, "create_search_service", lambda settings: MockSearchService()
+        )
+        await server.call_tool("policy_search", {"query": "after cleanup"})
+
+    asyncio.run(exercise())
+
+
+def test_mcp_sanitizes_unexpected_failure_and_releases_capacity(monkeypatch) -> None:
+    """A crash cannot leak its message or keep subsequent operations blocked."""
+
+    class CrashingSearchService(MockSearchService):
+        def search(self, request: SearchRequest) -> SearchResult:
+            """Fail unexpectedly with text that must never reach a client."""
+            raise ValueError("private-provider-secret")
+
+    service = CrashingSearchService()
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
+
+    async def exercise() -> None:
+        """Verify wire-style tool errors and subsequent reuse of the only slot."""
+        server = mcp_module._register_tools(mcp_module._new_mcp_server(), capacity=1)
+        async with Client(server) as client:
+            result = await client.call_tool("policy_search", {"query": "fail"})
+            assert isinstance(result, CallToolResult)
+            assert result.is_error is True
+            assert "private-provider-secret" not in result.model_dump_json()
+            assert "Error executing tool policy_search" in result.model_dump_json()
+            assert service.closed
+            monkeypatch.setattr(
+                mcp_module, "create_search_service", lambda settings: MockSearchService()
+            )
+            result = await client.call_tool("policy_search", {"query": "recover"})
+            assert isinstance(result, CallToolResult)
+            assert not result.is_error
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_guidance"),
+    [
+        (MissingIndexError, "run `policynim ingest`"),
+        (InvalidPolicyDocumentError, "validate the policy corpus"),
+        (ConfigurationError, "check the server settings"),
+        (ProviderError, "inspect provider health"),
+        (PolicyNIMError, "inspect the server logs"),
+    ],
+)
+def test_mcp_sanitizes_domain_errors(monkeypatch, error_type, expected_guidance) -> None:
+    """Expected error classes do not make arbitrary messages safe for remote callers."""
+    private_message = "/private/operator/policies token=provider-secret"
+
+    def fail_construction(settings: Settings) -> MockSearchService:
+        """Raise a domain error carrying representative sensitive context."""
+        raise error_type(private_message)
+
+    monkeypatch.setattr(mcp_module, "create_search_service", fail_construction)
+
+    async def exercise() -> None:
+        """Inspect only client-visible error content after SDK serialization."""
+        server = mcp_module._register_tools(mcp_module._new_mcp_server())
+        async with Client(server) as client:
+            result = await client.call_tool("policy_search", {"query": "policy question"})
+        assert isinstance(result, CallToolResult)
+        assert result.is_error is True
+        serialized = result.model_dump_json()
+        assert expected_guidance in serialized
+        assert "/private" not in serialized
+        assert "provider-secret" not in serialized
+
+    asyncio.run(exercise())
 
 
 def test_call_tool_runs_minimal_stdio_path(monkeypatch) -> None:
@@ -553,7 +1194,7 @@ def test_call_tool_logs_failure_class_when_tool_raises(monkeypatch) -> None:
 
     class FailingSearchService:
         def search(self, request: SearchRequest) -> SearchResult:
-            raise ConfigurationError("upstream timeout", failure_class="timeout")
+            raise ProviderError("upstream timeout", failure_class="timeout")
 
     monkeypatch.setattr(
         mcp_module,
@@ -566,7 +1207,7 @@ def test_call_tool_logs_failure_class_when_tool_raises(monkeypatch) -> None:
         lambda event, **fields: events.append({"event": event, **fields}),
     )
 
-    with pytest.raises(ToolError, match="upstream timeout"):
+    with pytest.raises(ToolError, match="provider timed out.*Retry later"):
         _call_tool("policy_search", {"query": "background cleanup", "top_k": 1})
 
     assert events == [
@@ -689,7 +1330,7 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
         lambda event, **fields: events.append({"event": event, **fields}),
     )
 
-    with pytest.raises(ToolError, match="upstream timeout"):
+    with pytest.raises(ToolError, match="provider timed out.*Retry later"):
         _call_tool("policy_preflight", {"task": "refresh token cleanup", "top_k": 1})
 
     assert events == [
@@ -726,7 +1367,7 @@ def test_healthz_returns_ready_payload(monkeypatch) -> None:
         Settings.model_validate({"mcp_public_base_url": "https://beta.example.com"})
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/healthz")
 
     assert response.status_code == 200
@@ -753,7 +1394,7 @@ def test_healthz_returns_not_ready_payload(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(Settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/healthz")
 
     assert response.status_code == 503
@@ -780,7 +1421,7 @@ def test_healthz_stays_public_when_auth_is_enabled(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/healthz")
 
     assert response.status_code == 200
@@ -799,7 +1440,7 @@ def test_healthz_returns_fallback_payload_when_service_construction_fails(monkey
         Settings.model_validate({"mcp_public_base_url": "https://beta.example.com"})
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/healthz")
 
     assert response.status_code == 503
@@ -828,7 +1469,7 @@ def test_healthz_returns_fallback_payload_when_probe_fails(monkeypatch) -> None:
         Settings.model_validate({"mcp_public_base_url": "https://beta.example.com"})
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/healthz")
 
     assert response.status_code == 503
@@ -869,7 +1510,7 @@ def test_healthz_constructs_service_once_and_runs_check_off_thread(monkeypatch) 
 
     app = mcp_module._build_streamable_http_app(Settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         first = client.get("/healthz")
         second = client.get("/healthz")
 
@@ -884,7 +1525,7 @@ def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> N
 
     app = mcp_module._build_streamable_http_app(Settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp")
 
     assert response.status_code == 200
@@ -915,7 +1556,7 @@ def test_streamable_http_app_rejects_missing_bearer_token(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp")
 
     assert response.status_code == 401
@@ -928,7 +1569,7 @@ def test_streamable_http_app_redirects_browser_mcp_visits_to_beta_portal(monkeyp
 
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
-    with TestClient(app, base_url="https://testserver") as client:
+    with TestClient(app, base_url="https://beta.example.com") as client:
         response = client.get(
             "/mcp",
             headers={"accept": "text/html"},
@@ -947,7 +1588,7 @@ def test_streamable_http_app_keeps_bad_bearer_header_json_for_browser_accept(
 
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
-    with TestClient(app, base_url="https://testserver") as client:
+    with TestClient(app, base_url="https://beta.example.com") as client:
         response = client.get(
             "/mcp",
             headers={"accept": "text/html", "authorization": "Token wrong"},
@@ -970,7 +1611,7 @@ def test_streamable_http_app_logs_auth_rejection(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp")
 
     assert response.status_code == 401
@@ -991,7 +1632,7 @@ def test_streamable_http_app_rejects_malformed_bearer_header(monkeypatch) -> Non
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp", headers={"Authorization": "Token secret-token"})
 
     assert response.status_code == 401
@@ -1004,7 +1645,7 @@ def test_streamable_http_app_rejects_invalid_bearer_token(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp", headers={"Authorization": "Bearer wrong-token"})
 
     assert response.status_code == 401
@@ -1017,11 +1658,103 @@ def test_streamable_http_app_accepts_valid_bearer_token(monkeypatch) -> None:
 
     app = mcp_module._build_streamable_http_app(_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp", headers={"Authorization": "Bearer secret-token"})
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+@pytest.mark.parametrize("path", ["/gateway/mcp", "/gateway/mcp/"])
+@pytest.mark.parametrize("deployment", ["root_path", "mount"])
+def test_prefixed_hosting_is_rejected_before_auth_or_provider_work(
+    monkeypatch: pytest.MonkeyPatch, path: str, deployment: str
+) -> None:
+    """Proxy prefixes and mounts fail closed because all hosted URLs assume an origin root."""
+    services: list[MockSearchService] = []
+    auth_service = StaticBetaAuthService(BetaAuthDecision(status="authorized", source="api_key"))
+
+    def create_service(settings: Settings) -> MockSearchService:
+        """Record provider construction only after the complete boundary admits a call."""
+        service = MockSearchService()
+        services.append(service)
+        return service
+
+    settings = _hosted_settings()
+    monkeypatch.setattr(mcp_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(mcp_module, "create_search_service", create_service)
+    monkeypatch.setattr(mcp_module, "_build_beta_auth_service", lambda settings: auth_service)
+    server = mcp_module._create_mcp_server(settings)
+    monkeypatch.setattr(
+        mcp_module, "_create_mcp_server", lambda settings, beta_auth_service=None: server
+    )
+    app = mcp_module._build_streamable_http_app(settings)
+    root_path = "/gateway"
+    if deployment == "mount":
+
+        @asynccontextmanager
+        async def mounted_lifespan(application: Starlette) -> AsyncIterator[None]:
+            """Start the SDK session manager on the enclosing app's event loop."""
+            async with server.session_manager.run():
+                yield
+
+        app = Starlette(routes=[Mount(root_path, app=app)], lifespan=mounted_lifespan)
+        root_path = ""
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "policy_search",
+    }
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "policy_search",
+            "arguments": {"query": "background cleanup"},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    with TestClient(app, base_url="http://localhost", root_path=root_path) as client:
+        for authorization in (
+            None,
+            "Token secret-token",
+            "Bearer wrong-token",
+            "Bearer secret-token",
+        ):
+            supplied = dict(headers)
+            if authorization is not None:
+                supplied["Authorization"] = authorization
+            response = client.post(path, headers=supplied, json=request, follow_redirects=False)
+            assert response.status_code == 400
+            assert "hosted at the origin root" in response.json()["error"]
+            assert services == []
+            assert auth_service.seen_tokens == []
+
+        authorized = {**headers, "Authorization": "Bearer secret-token"}
+        for overrides in (
+            {"Host": "untrusted.example"},
+            {"Origin": "https://untrusted.example"},
+        ):
+            response = client.post(
+                path, headers={**authorized, **overrides}, json=request, follow_redirects=False
+            )
+            assert response.status_code == 400
+            assert "hosted at the origin root" in response.json()["error"]
+            assert services == []
+            assert auth_service.seen_tokens == []
+
+        for public_path in ("/gateway/healthz", "/gateway/beta", "/gateway/auth/github/start"):
+            response = client.get(public_path, follow_redirects=False)
+            assert response.status_code == 400
+            assert "hosted at the origin root" in response.json()["error"]
+        assert services == []
+        assert auth_service.seen_tokens == []
 
 
 def test_streamable_http_app_accepts_valid_db_backed_api_key(monkeypatch) -> None:
@@ -1030,7 +1763,7 @@ def test_streamable_http_app_accepts_valid_db_backed_api_key(monkeypatch) -> Non
 
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp", headers={"Authorization": "Bearer db-secret"})
 
     assert response.status_code == 200
@@ -1044,7 +1777,7 @@ def test_streamable_http_app_returns_403_for_suspended_beta_account(monkeypatch)
 
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp", headers={"Authorization": "Bearer suspended-secret"})
 
     assert response.status_code == 403
@@ -1059,8 +1792,242 @@ def test_streamable_http_app_returns_429_for_quota_exhausted_beta_account(monkey
 
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/mcp", headers={"Authorization": "Bearer quota-secret"})
 
     assert response.status_code == 429
     assert response.json() == {"error": "Quota exceeded."}
+
+
+def test_key_regeneration_rejects_account_overlap_and_keeps_other_accounts_independent(
+    monkeypatch,
+) -> None:
+    """One slow issuance rejects duplicate POSTs without blocking a different account."""
+    service = ControlledKeyRotationService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Keep two authenticated sessions active while the first account's worker waits."""
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+            ) as first_client,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+            ) as second_client,
+        ):
+            await _login_for_key_rotation(first_client, 1)
+            await _login_for_key_rotation(second_client, 2)
+            first = asyncio.create_task(first_client.post("/beta/api-key/regenerate"))
+            try:
+                await _wait_until_set(service.started)
+                duplicate = await asyncio.wait_for(
+                    first_client.post("/beta/api-key/regenerate"), timeout=0.5
+                )
+                assert duplicate.status_code == 409
+                assert "already in progress" in duplicate.text
+                assert "refresh /beta" in duplicate.text
+                assert "fixture-key" not in duplicate.text
+                assert service.issue_calls == [1]
+                assert service.account_reads == [1]
+                independent = await asyncio.wait_for(
+                    second_client.post("/beta/api-key/regenerate"), timeout=0.5
+                )
+                assert independent.status_code == 200
+                assert "fixture-key-2-1" in independent.text
+                assert not first.done()
+            finally:
+                service.release.set()
+                result = await first
+            assert result.status_code == 200
+            assert "fixture-key-1-1" in result.text
+            assert service.issue_calls == [1, 2]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure_stage", ["account", "issue", "render"])
+def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, failure_stage) -> None:
+    """Account reads, issuance failures, and rendering failures cannot strand the guard."""
+    service = ControlledKeyRotationService(block_first=False, failure_stage=failure_stage)
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
+    if failure_stage == "render":
+        render_dashboard = mcp_module._render_beta_dashboard
+
+        def fail_first_render(*args, **kwargs):
+            """Fail after mutation to verify the final rendering boundary also releases."""
+            if service.failure_stage == "render":
+                service.failure_stage = None
+                raise ValueError("fixture rendering failure")
+            return render_dashboard(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_module, "_render_beta_dashboard", fail_first_render)
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Retry through the same authenticated browser session after a failed request."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+        ) as client:
+            await _login_for_key_rotation(client, 1)
+            with pytest.raises(ValueError, match="fixture .* failure"):
+                await client.post("/beta/api-key/regenerate")
+            recovered = await client.post("/beta/api-key/regenerate")
+            assert recovered.status_code == 200
+            assert "API key generated" in recovered.text
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("cancellation_kind", ["asyncio", "anyio"])
+def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
+    monkeypatch, cancellation_kind
+) -> None:
+    """Disconnect cancellation cannot permit another rotation while issuance still runs."""
+    service = ControlledKeyRotationService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Cancel the response, reject overlap, and retry after the worker drains."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+        ) as client:
+            await _login_for_key_rotation(client, 1)
+            scopes: list[anyio.CancelScope] = []
+            responses: list[httpx.Response] = []
+
+            async def invoke() -> None:
+                """Cancel through the selected mechanism while the real route is active."""
+                if cancellation_kind == "anyio":
+                    with anyio.CancelScope() as scope:
+                        scopes.append(scope)
+                        responses.append(await client.post("/beta/api-key/regenerate"))
+                else:
+                    responses.append(await client.post("/beta/api-key/regenerate"))
+
+            request = asyncio.create_task(invoke())
+            try:
+                await _wait_until_set(service.started)
+                if cancellation_kind == "anyio":
+                    scopes[0].cancel()
+                else:
+                    request.cancel()
+                await asyncio.sleep(0)
+                assert not request.done()
+                duplicate = await asyncio.wait_for(
+                    client.post("/beta/api-key/regenerate"), timeout=0.5
+                )
+                assert duplicate.status_code == 409
+                assert service.issue_calls == [1]
+            finally:
+                service.release.set()
+                await asyncio.gather(request, return_exceptions=True)
+            assert responses == []
+            if cancellation_kind == "anyio":
+                assert scopes[0].cancelled_caught
+            else:
+                assert request.cancelled()
+            recovered = await client.post("/beta/api-key/regenerate")
+            assert recovered.status_code == 200
+            assert "fixture-key-1-2" in recovered.text
+            assert service.issue_calls == [1, 1]
+
+    asyncio.run(exercise())
+
+
+def test_slow_api_key_authentication_does_not_block_public_requests(monkeypatch) -> None:
+    """SQLite/auth latency stays off the event loop serving public health traffic."""
+    started = Event()
+    release = Event()
+    worker_threads: list[int] = []
+
+    class SlowAuthService(StaticBetaAuthService):
+        def authenticate_api_key(self, *, token: str | None) -> BetaAuthDecision:
+            """Simulate blocking account and quota storage without a live database."""
+            worker_threads.append(get_ident())
+            started.set()
+            assert release.wait(5), "test did not release auth work"
+            return super().authenticate_api_key(token=token)
+
+    async def ok(request) -> JSONResponse:
+        """Serve a lightweight public route while authentication is blocked."""
+        return JSONResponse({"ok": True})
+
+    service = SlowAuthService(BetaAuthDecision(status="authorized", source="api_key"))
+    stub = StreamableHTTPStubServer(Starlette(routes=[Route("/mcp", ok), Route("/healthz", ok)]))
+    monkeypatch.setattr(mcp_module, "_create_mcp_server", lambda *args, **kwargs: stub)
+    monkeypatch.setattr(mcp_module, "_build_beta_auth_service", lambda settings: service)
+    app = mcp_module._build_streamable_http_app(_hosted_settings())
+
+    async def exercise() -> None:
+        """Use concurrent ASGI requests to prove the authentication boundary yields."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client:
+            request = asyncio.create_task(
+                client.get("/mcp", headers={"Authorization": "Bearer db-token"})
+            )
+            try:
+                await _wait_until_set(started)
+                health = await asyncio.wait_for(client.get("/healthz"), timeout=0.5)
+                assert health.status_code == 200
+                assert len(worker_threads) == 1
+                assert worker_threads[0] != get_ident()
+            finally:
+                release.set()
+                result = await request
+            assert result.status_code == 200
+
+    asyncio.run(exercise())
+
+
+def test_slow_github_callback_does_not_block_portal_requests(monkeypatch) -> None:
+    """A blocked OAuth exchange leaves the browser session and other routes responsive."""
+    started = Event()
+    release = Event()
+    worker_threads: list[int] = []
+    oauth_states: list[str] = []
+
+    class SlowGithubService:
+        def build_github_authorize_url(self, *, state: str) -> str:
+            """Capture the real session state for a valid callback request."""
+            oauth_states.append(state)
+            return "https://github.example/authorize"
+
+        def complete_github_oauth(self, *, code: str):
+            """Block before returning a deliberate provider failure to the browser."""
+            worker_threads.append(get_ident())
+            started.set()
+            assert release.wait(5), "test did not release GitHub exchange"
+            raise ProviderError("GitHub is unavailable")
+
+    monkeypatch.setattr(
+        mcp_module, "create_beta_auth_service", lambda settings: SlowGithubService()
+    )
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Keep the actual session middleware and callback validation in the test."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+        ) as client:
+            start = await client.get("/auth/github/start")
+            assert start.status_code == 302
+            request = asyncio.create_task(
+                client.get(
+                    "/auth/github/callback", params={"state": oauth_states[0], "code": "fixture"}
+                )
+            )
+            try:
+                await _wait_until_set(started)
+                landing = await asyncio.wait_for(client.get("/beta"), timeout=0.5)
+                assert landing.status_code == 200
+                assert worker_threads[0] != get_ident()
+            finally:
+                release.set()
+                result = await request
+            assert result.status_code == 502
+
+    asyncio.run(exercise())

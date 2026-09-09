@@ -12,12 +12,25 @@ import sys
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
-from functools import lru_cache
+from functools import lru_cache, partial
+from importlib.metadata import PackageNotFoundError, version
+from ipaddress import IPv6Address, ip_address
 from pathlib import Path
+from threading import BoundedSemaphore
+from typing import Annotated, TypeVar
+from urllib.parse import urlsplit
 
+import anyio
+from anyio import to_thread
+from anyio.lowlevel import checkpoint_if_cancelled
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from mcp.server.fastmcp import Context, FastMCP
-from pydantic import ValidationError
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
+from mcp.types import ToolAnnotations
+from pydantic import Field, ValidationError
+from starlette._utils import get_route_path
 from starlette.datastructures import Headers
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
@@ -28,6 +41,7 @@ from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
     ConfigurationError,
     InvalidPolicyDocumentError,
+    MissingIndexError,
     PolicyNIMError,
     ProviderError,
 )
@@ -50,7 +64,10 @@ from policynim.types import (
     BetaUsageSnapshot,
     HealthCheckResult,
     PreflightRequest,
+    PreflightResult,
     SearchRequest,
+    SearchResult,
+    TopK,
 )
 
 SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
@@ -81,6 +98,56 @@ _HOSTED_AUTH_RESULT: ContextVar[str] = ContextVar(
     "policynim_hosted_auth_result",
     default="not_required",
 )
+_OperationResult = TypeVar("_OperationResult")
+
+
+class _InvalidToolRequest(ValueError):
+    """An anticipated request validation failure safe to return to a caller."""
+
+
+async def _run_sync_until_complete(
+    operation: Callable[[], _OperationResult],
+    *,
+    limiter: anyio.CapacityLimiter | None = None,
+) -> _OperationResult:
+    """Drain synchronous work and its cleanup before propagating cancellation."""
+    worker = asyncio.create_task(
+        to_thread.run_sync(operation, limiter=limiter, abandon_on_cancel=False)
+    )
+    cancellation: asyncio.CancelledError | None = None
+    with anyio.CancelScope(shield=True):
+        while True:
+            try:
+                await asyncio.shield(worker)
+                break
+            except asyncio.CancelledError as exc:
+                if worker.cancelled():
+                    break
+                cancellation = exc
+            except Exception:
+                break
+    await checkpoint_if_cancelled()
+    if cancellation is not None:
+        raise cancellation
+    return worker.result()
+
+
+class _ToolExecutor:
+    """Admit tool work immediately and retain its slot through worker cleanup."""
+
+    def __init__(self, capacity: int) -> None:
+        """Allocate independent admission and worker limits for one server."""
+        self._admission = BoundedSemaphore(capacity)
+        self._workers = anyio.CapacityLimiter(capacity)
+
+    async def run(self, operation: Callable[[], _OperationResult]) -> _OperationResult:
+        """Run admitted work or reject overload before dispatching a worker."""
+        if not self._admission.acquire(blocking=False):
+            raise ToolError("server_busy: PolicyNIM is at capacity. Retry later.")
+        try:
+            return await _run_sync_until_complete(operation, limiter=self._workers)
+        finally:
+            self._admission.release()
 
 
 class _InMemoryRateLimiter:
@@ -120,7 +187,7 @@ def _resolve_top_k(top_k: int | None) -> int:
 def _validate_top_k(top_k: int) -> None:
     """Validate top_k across MCP tools."""
     if not MIN_TOP_K <= top_k <= MAX_TOP_K:
-        raise ValueError(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
+        raise _InvalidToolRequest(f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}.")
 
 
 def _format_validation_error(label: str, exc: ValidationError) -> str:
@@ -202,11 +269,37 @@ def _streamable_http_port_in_use_message(host: str, port: int) -> str:
 
 
 def _ensure_streamable_http_port_available(host: str, port: int) -> None:
-    """Fail early with a clear error when the HTTP MCP port is already occupied."""
+    """Probe listener addresses and report actionable resolution or binding failures."""
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind((host, port))
+        addresses = socket.getaddrinfo(
+            host, port, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE
+        )
+        bound_any_address = False
+        for family, socket_type, protocol, _, address in dict.fromkeys(addresses):
+            try:
+                probe = socket.socket(family, socket_type, protocol)
+            except OSError:
+                # asyncio.create_server also skips unsupported socket families.
+                continue
+            with probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if socket.has_ipv6 and family == socket.AF_INET6:
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                try:
+                    probe.bind(address)
+                except OSError as exc:
+                    if exc.errno == errno.EADDRNOTAVAIL:
+                        # Uvicorn can use another address when this one is unavailable.
+                        continue
+                    raise
+                bound_any_address = True
+        if not bound_any_address:
+            raise OSError(errno.EADDRNOTAVAIL, "No resolved address is available for binding")
+    except socket.gaierror as exc:
+        raise ConfigurationError(
+            f"Could not resolve configured MCP host {host!r} for binding. "
+            "Check `POLICYNIM_MCP_HOST` or use a concrete local IP address, such as 127.0.0.1."
+        ) from exc
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE:
             raise ConfigurationError(_streamable_http_port_in_use_message(host, port)) from exc
@@ -227,7 +320,7 @@ def _run_policy_preflight(
         result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
         return result.model_dump(mode="json")
     except ValidationError as exc:
-        raise ValueError(_format_validation_error("Preflight request", exc)) from exc
+        raise _InvalidToolRequest(_format_validation_error("Preflight request", exc)) from exc
     finally:
         _close_service(service)
 
@@ -265,17 +358,29 @@ def policy_search(
     return _run_policy_search(query=query, domain=domain, top_k=top_k)
 
 
-def _run_logged_tool(
+async def _run_logged_tool(
     tool_name: str,
     operation: Callable[[], dict[str, object]],
     *,
     ctx: Context,
+    executor: _ToolExecutor,
 ) -> dict[str, object]:
+    """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
     auth_result = _HOSTED_AUTH_RESULT.get()
     request_id = _request_id_from_context(ctx)
     try:
-        result = operation()
+        result = await executor.run(operation)
+    except asyncio.CancelledError:
+        _emit_hosted_event(
+            "mcp.tool",
+            auth_result=auth_result,
+            tool_name=tool_name,
+            latency_ms=_elapsed_ms(start_time),
+            upstream_failure_class="cancelled",
+            request_id=request_id,
+        )
+        raise
     except Exception as exc:
         _emit_hosted_event(
             "mcp.tool",
@@ -285,6 +390,10 @@ def _run_logged_tool(
             upstream_failure_class=_failure_class_from_error(exc),
             request_id=request_id,
         )
+        if isinstance(exc, PolicyNIMError):
+            raise ToolError(_safe_tool_error(exc)) from exc
+        if isinstance(exc, _InvalidToolRequest):
+            raise ToolError(str(exc)) from exc
         raise
 
     _emit_hosted_event(
@@ -298,55 +407,121 @@ def _run_logged_tool(
     return result
 
 
-def _policy_preflight_tool(
-    task: str,
-    domain: str | None = None,
-    top_k: int | None = None,
-    *,
-    ctx: Context,
-) -> dict[str, object]:
-    return _run_logged_tool(
-        "policy_preflight",
-        lambda: _run_policy_preflight(task=task, domain=domain, top_k=top_k),
-        ctx=ctx,
+def _safe_tool_error(exc: PolicyNIMError) -> str:
+    """Describe recoverable failures without disclosing paths or upstream content."""
+    if isinstance(exc, MissingIndexError):
+        return (
+            "The policy index is unavailable. Ask the operator to run `policynim ingest` "
+            "and check the index configuration."
+        )
+    if isinstance(exc, InvalidPolicyDocumentError):
+        return "Policy sources could not be loaded. Ask the operator to validate the policy corpus."
+    if isinstance(exc, ConfigurationError):
+        return "PolicyNIM configuration is invalid. Ask the operator to check the server settings."
+    if isinstance(exc, ProviderError):
+        messages = {
+            "timeout": "The policy model provider timed out. Retry later.",
+            "rate_limit": "The policy model provider is rate limited. Retry later.",
+            "connection": "The policy model provider is unavailable. Retry later.",
+            "auth": "Policy model authentication failed. Ask the operator to check credentials.",
+            "invalid_response": (
+                "The policy model response was invalid. Retry or contact the operator."
+            ),
+        }
+        return messages.get(
+            exc.failure_class or "",
+            "The policy model request failed. "
+            "Retry or ask the operator to inspect provider health.",
+        )
+    return (
+        "PolicyNIM could not complete this operation. Ask the operator to inspect the server logs."
     )
 
 
-def _policy_search_tool(
-    query: str,
-    domain: str | None = None,
-    top_k: int | None = None,
-    *,
-    ctx: Context,
-) -> dict[str, object]:
-    return _run_logged_tool(
-        "policy_search",
-        lambda: _run_policy_search(query=query, domain=domain, top_k=top_k),
-        ctx=ctx,
+def _register_tools(server: MCPServer, *, capacity: int | None = None) -> MCPServer:
+    """Register tools, resolving an omitted capacity once when the first tool runs."""
+    executor = _ToolExecutor(capacity) if capacity is not None else None
+
+    def get_executor() -> _ToolExecutor:
+        """Initialize the server's fixed limit without import-time settings side effects."""
+        nonlocal executor
+        if executor is None:
+            executor = _ToolExecutor(get_settings().mcp_max_concurrent_operations)
+        return executor
+
+    annotations = ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     )
 
+    @server.tool(name="policy_preflight", annotations=annotations)
+    async def preflight_tool(
+        task: Annotated[str, Field(description="The coding task requiring policy guidance.")],
+        domain: Annotated[str | None, Field(description="Optional policy domain filter.")] = None,
+        top_k: Annotated[
+            TopK | None,
+            Field(description="Chunks to retrieve, from 1 to 20; omitted uses runtime default."),
+        ] = None,
+        *,
+        ctx: Context,
+    ) -> PreflightResult:
+        """Get citation-backed policy guidance, review flags and tests for a coding task."""
+        result = await _run_logged_tool(
+            "policy_preflight",
+            lambda: _run_policy_preflight(task=task, domain=domain, top_k=top_k),
+            ctx=ctx,
+            executor=get_executor(),
+        )
+        return PreflightResult.model_validate(result)
 
-def _register_tools(server: FastMCP) -> FastMCP:
-    """Register the public MCP tools on the supplied server instance."""
-    server.tool(name="policy_preflight")(_policy_preflight_tool)
-    server.tool(name="policy_search")(_policy_search_tool)
+    @server.tool(name="policy_search", annotations=annotations)
+    async def search_tool(
+        query: Annotated[str, Field(description="The policy question or search terms.")],
+        domain: Annotated[str | None, Field(description="Optional policy domain filter.")] = None,
+        top_k: Annotated[
+            TopK | None,
+            Field(description="Chunks to retrieve, from 1 to 20; omitted uses runtime default."),
+        ] = None,
+        *,
+        ctx: Context,
+    ) -> SearchResult:
+        """Search the policy corpus for relevant source chunks and their citations."""
+        result = await _run_logged_tool(
+            "policy_search",
+            lambda: _run_policy_search(query=query, domain=domain, top_k=top_k),
+            ctx=ctx,
+            executor=get_executor(),
+        )
+        return SearchResult.model_validate(result)
+
     return server
+
+
+def _new_mcp_server() -> MCPServer:
+    """Identify the application independently from its MCP SDK version."""
+    try:
+        application_version = version("policynim")
+    except PackageNotFoundError:
+        application_version = "unknown"
+    return MCPServer(
+        "PolicyNIM",
+        version=application_version,
+        instructions=(
+            "Search policy sources or request citation-backed guidance before coding. "
+            "Treat insufficient_context as missing evidence; guidance does not execute changes."
+        ),
+    )
 
 
 def _create_mcp_server(
     settings: Settings,
     *,
     beta_auth_service: BetaAuthService | None = None,
-) -> FastMCP:
+) -> MCPServer:
     """Create a fresh MCP server configured from runtime settings."""
-    server = FastMCP(
-        "PolicyNIM",
-        json_response=True,
-        host=settings.mcp_host,
-        port=settings.mcp_port,
-        streamable_http_path=_STREAMABLE_HTTP_PATH,
-    )
-    _register_tools(server)
+    server = _register_tools(_new_mcp_server(), capacity=settings.mcp_max_concurrent_operations)
     _register_health_route(server, settings)
     if settings.beta_signup_enabled and beta_auth_service is not None:
         _register_beta_routes(server, settings, beta_auth_service)
@@ -354,11 +529,12 @@ def _create_mcp_server(
 
 
 def _register_beta_routes(
-    server: FastMCP,
+    server: MCPServer,
     settings: Settings,
     beta_auth_service: BetaAuthService,
 ) -> None:
-    """Register the hosted beta portal routes."""
+    """Register portal routes with a process-local guard for overlapping key rotations."""
+    regenerating_accounts: set[int] = set()
     limiter = _InMemoryRateLimiter(
         max_attempts=settings.beta_auth_rate_limit_max_attempts,
         window_seconds=settings.beta_auth_rate_limit_window_seconds,
@@ -407,18 +583,21 @@ def _register_beta_routes(
 
     @server.custom_route(_BETA_PATH, methods=["GET"], include_in_schema=False)
     async def beta_dashboard(request: Request) -> Response:
+        """Render portal state after reading the account and usage off the event loop."""
         account_id = _require_beta_session_account_id(request)
         if account_id is None:
             return _render_beta_landing(settings)
 
-        account = beta_auth_service.get_account(account_id)
+        account = await _run_sync_until_complete(partial(beta_auth_service.get_account, account_id))
         if account is None:
             request.session.clear()
             return _render_beta_landing(
                 settings,
                 message="Your hosted beta session expired. Sign in again to continue.",
             )
-        usage = beta_auth_service.get_portal_usage(account_id)
+        usage = await _run_sync_until_complete(
+            partial(beta_auth_service.get_portal_usage, account_id)
+        )
         return _render_beta_dashboard(settings, account=account, usage=usage)
 
     @server.custom_route(_AUTH_GITHUB_START_PATH, methods=["GET"], include_in_schema=False)
@@ -435,6 +614,7 @@ def _register_beta_routes(
 
     @server.custom_route(_AUTH_GITHUB_CALLBACK_PATH, methods=["GET"], include_in_schema=False)
     async def github_callback(request: Request) -> Response:
+        """Validate browser state before exchanging GitHub credentials in a worker."""
         blocked = _rate_limited(request)
         if blocked is not None:
             return blocked
@@ -460,7 +640,9 @@ def _register_beta_routes(
 
         code = str(request.query_params.get("code") or "").strip()
         try:
-            account = beta_auth_service.complete_github_oauth(code=code)
+            account = await _run_sync_until_complete(
+                partial(beta_auth_service.complete_github_oauth, code=code)
+            )
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
         except Exception:
@@ -479,32 +661,54 @@ def _register_beta_routes(
 
     @server.custom_route(_BETA_API_KEY_REGENERATE_PATH, methods=["POST"], include_in_schema=False)
     async def beta_regenerate_api_key(request: Request) -> Response:
+        """Admit one rotation per account until work, cancellation drain, and rendering finish."""
         account_id = _require_beta_session_account_id(request)
         if account_id is None:
             return RedirectResponse(_BETA_PATH, status_code=302)
-        account = beta_auth_service.get_account(account_id)
-        if account is None:
-            request.session.clear()
-            return RedirectResponse(_BETA_PATH, status_code=302)
+        if account_id in regenerating_accounts:
+            return _render_beta_landing(
+                settings,
+                message=(
+                    "API key generation is already in progress for this account. "
+                    "Wait for that request to finish, then refresh /beta before trying again."
+                ),
+                status_code=409,
+            )
+        regenerating_accounts.add(account_id)
         try:
-            issued_key = beta_auth_service.issue_api_key(account_id=account_id)
-        except PolicyNIMError as exc:
-            usage = beta_auth_service.get_portal_usage(account_id)
+            account = await _run_sync_until_complete(
+                partial(beta_auth_service.get_account, account_id)
+            )
+            if account is None:
+                request.session.clear()
+                return RedirectResponse(_BETA_PATH, status_code=302)
+            try:
+                issued_key = await _run_sync_until_complete(
+                    partial(beta_auth_service.issue_api_key, account_id=account_id)
+                )
+            except PolicyNIMError as exc:
+                usage = await _run_sync_until_complete(
+                    partial(beta_auth_service.get_portal_usage, account_id)
+                )
+                return _render_beta_dashboard(
+                    settings,
+                    account=account,
+                    usage=usage,
+                    message=str(exc),
+                    message_tone="error",
+                )
             return _render_beta_dashboard(
                 settings,
-                account=account,
-                usage=usage,
-                message=str(exc),
-                message_tone="error",
+                account=issued_key.account,
+                usage=issued_key.usage,
+                new_api_key=issued_key.api_key,
+                message=(
+                    "API key generated. Export `POLICYNIM_TOKEN` before connecting your client."
+                ),
+                message_tone="success",
             )
-        return _render_beta_dashboard(
-            settings,
-            account=issued_key.account,
-            usage=issued_key.usage,
-            new_api_key=issued_key.api_key,
-            message="API key generated. Export `POLICYNIM_TOKEN` before connecting your client.",
-            message_tone="success",
-        )
+        finally:
+            regenerating_accounts.remove(account_id)
 
     @server.custom_route(_BETA_LOGOUT_PATH, methods=["POST"], include_in_schema=False)
     async def beta_logout(request: Request) -> Response:
@@ -512,7 +716,7 @@ def _register_beta_routes(
         return RedirectResponse(_BETA_PATH, status_code=302)
 
 
-def _register_health_route(server: FastMCP, settings: Settings) -> None:
+def _register_health_route(server: MCPServer, settings: Settings) -> None:
     """Register a public readiness endpoint for hosted HTTP runtimes."""
     table_name = create_index_store(settings).table_name
     try:
@@ -892,6 +1096,11 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
         return None
 
 
+def _is_protected_mcp_request(scope: Scope, protected_path: str) -> bool:
+    """Match Starlette's route path after proxy or mount prefixes are removed."""
+    return scope["type"] == "http" and get_route_path(scope).rstrip("/") == protected_path
+
+
 class _BearerProtectedASGIApp:
     """Protect the MCP HTTP route with exact-match bearer token auth."""
 
@@ -912,7 +1121,7 @@ class _BearerProtectedASGIApp:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Authorize protected MCP HTTP requests before delegating to the app."""
-        if scope["type"] != "http" or scope.get("path") != self._protected_path:
+        if not _is_protected_mcp_request(scope, self._protected_path):
             await self._app(scope, receive, send)
             return
 
@@ -922,7 +1131,9 @@ class _BearerProtectedASGIApp:
         if token is not None and token in self._valid_tokens:
             auth_result = "authorized"
         elif self._beta_auth_service is not None:
-            decision = self._beta_auth_service.authenticate_api_key(token=token)
+            decision = await _run_sync_until_complete(
+                partial(self._beta_auth_service.authenticate_api_key, token=token)
+            )
             if decision.status == "authorized":
                 auth_result = "authorized"
             elif decision.status == "suspended":
@@ -963,6 +1174,36 @@ class _BearerProtectedASGIApp:
         return JSONResponse({"error": "Unauthorized."}, status_code=401)
 
 
+class _MCPHostOriginApp:
+    """Enforce root hosting and validate MCP before authentication or slash redirects."""
+
+    def __init__(self, app: ASGIApp, settings: TransportSecuritySettings) -> None:
+        """Reuse the SDK's Host/Origin validation ahead of the ASGI router."""
+        self._app = app
+        self._security = TransportSecurityMiddleware(settings)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Reject mounted hosting and untrusted MCP hosts/origins before routing."""
+        if scope["type"] == "http" and scope.get("root_path"):
+            response = JSONResponse(
+                {
+                    "error": (
+                        "PolicyNIM must be hosted at the origin root. Remove the ASGI root_path "
+                        "or URL mount prefix and use /mcp and /beta."
+                    )
+                },
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
+        if _is_protected_mcp_request(scope, _STREAMABLE_HTTP_PATH):
+            response = await self._security.validate_request(Request(scope))
+            if response is not None:
+                await response(scope, receive, send)
+                return
+        await self._app(scope, receive, send)
+
+
 def _extract_bearer_token(scope: Scope) -> str | None:
     """Return the bearer token from the HTTP Authorization header, if valid."""
     headers = Headers(scope=scope)
@@ -987,11 +1228,65 @@ def _is_browser_mcp_visit(scope: Scope) -> bool:
     return "text/html" in headers.get("accept", "")
 
 
+def _transport_security(settings: Settings) -> TransportSecuritySettings:
+    """Trust loopback, concrete bind authorities, and the explicit public service origin."""
+    loopback_hosts = ["127.0.0.1", "localhost", "[::1]"]
+    allowed_hosts = [entry for host in loopback_hosts for entry in (host, f"{host}:*")]
+    allowed_origins = [
+        entry for host in loopback_hosts for entry in (f"http://{host}", f"http://{host}:*")
+    ]
+    bind_host = settings.mcp_host
+    try:
+        bind_address = ip_address(bind_host)
+    except ValueError:
+        bind_address = None
+    bind_hosts = [bind_host]
+    if bind_address is not None:
+        bind_hosts.append(str(bind_address))
+    if isinstance(bind_address, IPv6Address) and bind_address.ipv4_mapped is not None:
+        bind_address = bind_address.ipv4_mapped
+    if not settings.mcp_require_auth and (
+        bind_address is None
+        or (not bind_address.is_unspecified and str(bind_address) != "255.255.255.255")
+    ):
+        for host in bind_hosts:
+            hostname = f"[{host}]" if ":" in host else host
+            authority = f"{hostname}:{settings.mcp_port}"
+            allowed_hosts.append(authority)
+            allowed_origins.append(f"http://{authority}")
+            if settings.mcp_port == 80:
+                allowed_hosts.append(hostname)
+                allowed_origins.append(f"http://{hostname}")
+    if settings.mcp_public_base_url is not None:
+        public_url = urlsplit(str(settings.mcp_public_base_url))
+        hostname = public_url.hostname or ""
+        if ":" in hostname:
+            hostname = f"[{hostname}]"
+        default_port = 443 if public_url.scheme == "https" else 80
+        port = public_url.port or default_port
+        authority = hostname if port == default_port else f"{hostname}:{port}"
+        allowed_hosts.append(f"{hostname}:{port}")
+        allowed_hosts.append(authority)
+        allowed_origins.append(f"{public_url.scheme}://{authority}")
+        allowed_origins.append(f"{public_url.scheme}://{hostname}:{port}")
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(dict.fromkeys(allowed_hosts)),
+        allowed_origins=list(dict.fromkeys(allowed_origins)),
+    )
+
+
 def _build_streamable_http_app(settings: Settings) -> ASGIApp:
     """Create the streamable-http ASGI app, wrapping auth only when required."""
     beta_auth_service = _build_beta_auth_service(settings)
     server = _create_mcp_server(settings, beta_auth_service=beta_auth_service)
-    app = server.streamable_http_app()
+    security = _transport_security(settings)
+    app = server.streamable_http_app(
+        streamable_http_path=_STREAMABLE_HTTP_PATH,
+        json_response=True,
+        stateless_http=True,
+        transport_security=security,
+    )
     if settings.beta_signup_enabled:
         session_secret = settings.beta_session_secret
         if session_secret is None or not session_secret.strip():
@@ -1006,14 +1301,15 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
             https_only=_beta_session_https_only(settings),
         )
     if not settings.mcp_require_auth:
-        return app
-    return _BearerProtectedASGIApp(
+        return _MCPHostOriginApp(app, security)
+    app = _BearerProtectedASGIApp(
         app,
-        protected_path=server.settings.streamable_http_path,
+        protected_path=_STREAMABLE_HTTP_PATH,
         valid_tokens=settings.mcp_bearer_tokens,
         beta_auth_service=beta_auth_service,
         beta_portal_url=_derive_beta_url(settings) if settings.beta_signup_enabled else None,
     )
+    return _MCPHostOriginApp(app, security)
 
 
 def _run_streamable_http_app(
@@ -1054,10 +1350,10 @@ def run_server(transport: str = "stdio") -> None:
         return
 
     server = _create_mcp_server(settings)
-    server.run(transport=transport)
+    server.run(transport="stdio")
 
 
-mcp = _register_tools(FastMCP("PolicyNIM", json_response=True))
+mcp = _register_tools(_new_mcp_server())
 
 
 if __name__ == "__main__":

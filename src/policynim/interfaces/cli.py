@@ -10,9 +10,10 @@ import re
 import shlex
 import sys
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
+from ipaddress import ip_address
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryFile
 from typing import Annotated, Literal, NoReturn, cast
@@ -2516,7 +2517,7 @@ async def _run_mcp_stdio_smoke(
                 async with ClientSession(
                     read_stream,
                     write_stream,
-                    read_timeout_seconds=timedelta(seconds=timeout_seconds),
+                    read_timeout_seconds=timeout_seconds,
                 ) as session:
                     await session.initialize()
                     tool_result = await session.list_tools()
@@ -2843,12 +2844,27 @@ def _build_doctor_report() -> dict[str, object]:
         if not index_recovery_step_added and ingest_next_step not in next_steps:
             next_steps.append(ingest_next_step)
 
+    http_host = settings.mcp_host
+    try:
+        bind_address = ip_address(http_host)
+    except ValueError:
+        bind_address = None
+    if bind_address is not None and bind_address.is_unspecified:
+        http_host = "127.0.0.1" if bind_address.version == 4 else "::1"
+    if ":" in http_host:
+        http_host = f"[{http_host}]"
+    http_base_url = (
+        str(settings.mcp_public_base_url).rstrip("/")
+        if settings.mcp_public_base_url is not None
+        else f"http://{http_host}:{settings.mcp_port}"
+    )
     report["mcp"] = {
         "stdio_command": _doctor_mcp_command("mcp --transport stdio"),
         "smoke_command": _doctor_mcp_command("mcp-smoke --format json"),
         "local_stdio_config_commands": _doctor_mcp_config_commands(),
-        "streamable_http_url": f"http://{settings.mcp_host}:{settings.mcp_port}/mcp",
+        "streamable_http_url": f"{http_base_url}/mcp",
         "auth_required": settings.mcp_require_auth,
+        "max_concurrent_operations": settings.mcp_max_concurrent_operations,
     }
     if not next_steps:
         search_command = _doctor_cli_command('search --query "refresh token cleanup" --top-k 5')
@@ -3026,6 +3042,7 @@ def _render_doctor_report(report: dict[str, object]) -> list[str]:
             for client, command in config_commands.items():
                 lines.append(f"- {client} config: {command}")
         lines.append(f"- streamable-http: {mcp.get('streamable_http_url')}")
+        lines.append(f"- concurrent operations: {mcp.get('max_concurrent_operations')}")
     next_steps = report["next_steps"]
     if isinstance(next_steps, list) and next_steps:
         lines.append("")

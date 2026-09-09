@@ -329,6 +329,50 @@ Important evaluation rules:
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
 
+The MCP interface uses the official Python SDK `2.2.0` and supports the stable
+`2026-07-28` protocol alongside the SDK's legacy protocol adapter, over both
+stdio and Streamable HTTP. Current clients use `server/discover`; legacy clients
+initialize before listing or calling tools. The application version is reported
+explicitly. Tool output schemas describe `SearchResult` and `PreflightResult`,
+with equivalent JSON text content for existing clients. Both tools constrain
+`top_k` to `1..20` and advertise read-only, non-destructive access that can contact
+external NVIDIA services.
+
+Each server admits at most `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` expensive
+tool operations (default `10`, minimum `1`). Admission happens on the event loop
+before worker dispatch. Excess calls return a tool error asking the caller to
+retry later, without constructing a provider. An admitted operation constructs,
+uses, and closes its synchronous service on a worker thread. Cancellation retains
+the slot until that worker and its cleanup finish. This is a per-process bound,
+not a distributed quota or a measured production capacity claim.
+
+The HTTP transport is stateless for both modern and legacy clients. Host and
+Origin checks allow loopback and the configured public service origin. When
+HTTP authentication is disabled, a concrete configured bind host is also allowed
+at its exact HTTP port. Wildcard binds grant no remote trust; remote access
+through them requires an explicit public origin. Other hosts,
+ports, and supplied origins are rejected. Hosted HTTP must run at the service
+root: nonempty ASGI `root_path` or mount prefixes are rejected before authentication
+or provider work, keeping advertised MCP, beta, and OAuth URLs consistent.
+Hosted SQLite authentication and GitHub requests run off the event loop while
+session and rate-limit state stay on it. API-key validation, account-status checks,
+and quota consumption share one SQLite write transaction, serializing admission
+with key rotation, revocation, and suspension. Later revocation does not cancel
+requests already admitted by a committed transaction.
+The bearer-token beta flow remains the current authorization model; standards-based
+MCP OAuth is tracked separately in [#97](https://github.com/nnennandukwe/policyNIM/issues/97).
+
+SDK migration references: [official migration guide](https://py.sdk.modelcontextprotocol.io/migration/)
+and [protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/).
+
+The SDK's [tagged package manifest](https://raw.githubusercontent.com/modelcontextprotocol/python-sdk/v2.2.0/pyproject.toml)
+requires HTTPX2. [Pydantic maintains HTTPX2 and HTTPcore2](https://github.com/pydantic/httpx2/tree/v2.6.0);
+the pinned `2.6.0` wheels have PyPI publishing attestations from that repository.
+PolicyNIM retains HTTPX `0.27.2` for NVIDIA's optional evaluator dependencies and
+pins HTTPX2 `2.6.0` to keep compatibility with their AnyIO `4.9.0` constraint.
+See the [HTTPX2](https://pypi.org/project/httpx2/2.6.0/#files) and
+[HTTPcore2](https://pypi.org/project/httpcore2/2.6.0/#files) artifact provenance.
+
 ### Hosted HTTP Endpoint
 
 - `GET /healthz` returns a JSON readiness payload for the hosted HTTP runtime.
@@ -363,7 +407,7 @@ Shared interface guarantees:
   evidence store.
 - top-k validation is shared and explicit.
 - runtime setup failures are not masked as insufficient context.
-- hosted HTTP auth applies only to `/mcp`, never to `stdio`.
+- hosted HTTP auth applies to `/mcp` and its trailing-slash variants, never to `stdio`.
 - hosted beta auth stores one active API key per account in a local SQLite file
   mounted on the Railway auth volume.
 - hosted tool logs emit JSON lines with auth result, tool name, latency, and

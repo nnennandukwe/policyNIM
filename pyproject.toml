@@ -20,19 +20,22 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
+  "anyio==4.9.0",
   "arize-phoenix==13.21.0",
   "arize-phoenix-evals==2.12.0",
   "httpx==0.27.2",
+  "httpx2==2.6.0",
   "itsdangerous==2.2.0",
   "jinja2==3.1.6",
   "markdown-it-py==4.0.0",
-  "mcp[cli]==1.26.0",
+  "mcp[cli]==2.2.0",
   "openai==2.29.0",
   "pandas==2.2.3",
   "platformdirs==4.5.0",
   "pydantic==2.12.5",
   "pydantic-settings==2.13.1",
   "sqlite-vec==0.1.9",
+  "starlette==0.52.1",
   "typer==0.24.1",
 ]
 

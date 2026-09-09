@@ -8,10 +8,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
+import httpx2
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import CallToolResult
 
 from policynim.types import HealthCheckResult, PreflightResult, SearchResult
 
@@ -27,17 +28,20 @@ pytestmark = [
 
 @asynccontextmanager
 async def _authenticated_session() -> AsyncIterator[ClientSession]:
+    """Open an initialized hosted MCP session using the configured beta bearer token."""
     headers = {"Authorization": f"Bearer {_BETA_TOKEN}"}
-    timeout = httpx.Timeout(30.0, read=300.0)
-    async with httpx.AsyncClient(headers=headers, timeout=timeout) as http_client:
-        async with streamable_http_client(_BETA_URL, http_client=http_client) as (read, write, _):
+    timeout = httpx2.Timeout(30.0, read=300.0)
+    async with httpx2.AsyncClient(headers=headers, timeout=timeout) as http_client:
+        async with streamable_http_client(_BETA_URL, http_client=http_client) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session
 
 
-def _structured_payload(result) -> dict[str, object]:  # noqa: ANN001
-    payload = result.structuredContent
+def _structured_payload(result: CallToolResult) -> dict[str, object]:
+    """Require a successful tool result and return its structured object payload."""
+    assert not result.is_error
+    payload = result.structured_content
     assert isinstance(payload, dict)
     return payload
 
@@ -64,7 +68,7 @@ def _health_url() -> str:
 
 def test_hosted_healthz_reports_ready_index_live() -> None:
     """Verify the deployed beta exposes a ready health payload with an indexed corpus."""
-    response = httpx.get(_health_url(), timeout=30.0)
+    response = httpx2.get(_health_url(), timeout=30.0)
 
     assert response.status_code == 200
     payload = HealthCheckResult.model_validate(response.json())
@@ -117,7 +121,7 @@ def test_hosted_policy_preflight_live() -> None:
 
 
 def test_hosted_mcp_rejects_invalid_token_live() -> None:
-    response = httpx.get(
+    response = httpx2.get(
         _expected_mcp_url(),
         headers={
             "Accept": "text/event-stream",

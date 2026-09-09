@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
+import socket
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -91,6 +94,7 @@ class Settings(BaseSettings):
             validation_alias=AliasChoices("POLICYNIM_MCP_PORT", "PORT"),
         ),
     ] = 8000
+    mcp_max_concurrent_operations: Annotated[int, Field(ge=1)] = 10
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None
@@ -183,6 +187,60 @@ class Settings(BaseSettings):
             raise ValueError("POLICYNIM_INDEX_DB_PATH must not be empty.")
         return value
 
+    @field_validator("mcp_host", mode="before")
+    @classmethod
+    def validate_mcp_host(cls, value: Any) -> str:
+        """Normalize supported bare bind hosts and reject ambiguous or unsupported forms."""
+        remedy = (
+            "POLICYNIM_MCP_HOST must be a bare IPv4/IPv6 address or an ASCII DNS hostname. "
+            "Use 127.0.0.1, ::1, or policy.example; set POLICYNIM_MCP_PORT separately."
+        )
+        if (
+            not isinstance(value, str)
+            or not value
+            or not value.isascii()
+            or any(character.isspace() for character in value)
+            or "%" in value
+        ):
+            raise ValueError(remedy)
+
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            address = None
+        if address is not None:
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+                mapped_address = str(address.ipv4_mapped)
+                mapped_remedy = f"Use the equivalent IPv4 address {mapped_address} directly."
+                if mapped_address == "255.255.255.255":
+                    mapped_remedy = (
+                        f"The equivalent IPv4 address {mapped_address} is also unsupported; "
+                        "choose 127.0.0.1 or 0.0.0.0 instead."
+                    )
+                raise ValueError(
+                    remedy + " IPv4-mapped IPv6 bind addresses are not supported. " + mapped_remedy
+                )
+            if str(address) == "255.255.255.255":
+                raise ValueError(remedy + " Broadcast addresses are not supported.")
+            return value.lower()
+
+        normalized = value.lower()
+        dns_name = normalized.removesuffix(".")
+        if (
+            len(dns_name) > 253
+            or re.fullmatch(r"[0-9.]+", dns_name) is not None
+            or any(
+                re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                for label in dns_name.split(".")
+            )
+        ):
+            raise ValueError(remedy)
+        try:
+            socket.inet_aton(dns_name)
+        except OSError:
+            return normalized
+        raise ValueError(remedy + " Legacy numeric IPv4 aliases are not supported.")
+
     @field_validator("mcp_bearer_tokens", mode="before")
     @classmethod
     def normalize_bearer_tokens(cls, value: Any) -> Any:
@@ -261,6 +319,8 @@ class Settings(BaseSettings):
     def validate_hosted_mcp_settings(self) -> Settings:
         """Validate hosted-only MCP settings without affecting stdio defaults."""
         if self.mcp_public_base_url is not None:
+            if self.mcp_public_base_url.username or self.mcp_public_base_url.password:
+                raise ValueError("POLICYNIM_MCP_PUBLIC_BASE_URL must not include credentials.")
             if self.mcp_public_base_url.path not in ("", "/"):
                 raise ValueError(
                     "POLICYNIM_MCP_PUBLIC_BASE_URL must be a service origin like "

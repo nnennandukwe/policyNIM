@@ -157,30 +157,22 @@ class BetaAuthService:
         if token is None or not token.strip():
             return BetaAuthDecision(status="unauthorized")
 
-        account = self._store.authenticate_api_key(key_hash=_hash_api_key(token.strip()))
-        if account is None:
-            return BetaAuthDecision(status="unauthorized")
-        if account.status != "active":
-            return BetaAuthDecision(status="suspended", source="api_key", account=account)
-
-        usage, allowed = self._store.consume_daily_quota(
-            account_id=account.account_id,
-            usage_date=self._utc_now().date(),
+        now = self._utc_now()
+        result = self._store.consume_quota_for_api_key(
+            key_hash=_hash_api_key(token.strip()),
+            usage_date=now.date(),
             quota=self._settings.beta_daily_request_quota,
-            now=self._utc_now(),
+            now=now,
         )
-        if not allowed:
-            return BetaAuthDecision(
-                status="quota_exceeded",
-                source="api_key",
-                account=account,
-                usage=usage,
-            )
+        if result.account is None:
+            return BetaAuthDecision(status="unauthorized")
+        if result.account.status != "active":
+            return BetaAuthDecision(status="suspended", source="api_key", account=result.account)
         return BetaAuthDecision(
-            status="authorized",
+            status="authorized" if result.quota_consumed else "quota_exceeded",
             source="api_key",
-            account=account,
-            usage=usage,
+            account=result.account,
+            usage=result.usage,
         )
 
     def suspend_account(self, *, github_login: str) -> BetaAccount:

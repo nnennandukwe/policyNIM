@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from policynim.errors import PolicyNIMError
-from policynim.types import BetaAccount, BetaAccountStatus, BetaAuditEvent, BetaUsageSnapshot
+from policynim.types import (
+    ApiKeyQuotaResult,
+    BetaAccount,
+    BetaAccountStatus,
+    BetaAuditEvent,
+    BetaUsageSnapshot,
+)
 
 _ACTIVE_STATUS = "active"
 _SUSPENDED_STATUS = "suspended"
@@ -319,18 +325,48 @@ class AuthStore:
     def authenticate_api_key(self, *, key_hash: str) -> BetaAccount | None:
         """Return the owning account for one active API key hash."""
         with closing(self._connect()) as conn:
-            row = conn.execute(
-                _ACCOUNT_SELECT
-                + """
-                JOIN api_keys k ON k.account_id = a.id
-                WHERE k.key_hash = ? AND k.revoked_at IS NULL
-                LIMIT 1
-                """,
-                (key_hash,),
-            ).fetchone()
-            if row is None:
-                return None
-            return _account_from_row(row)
+            return self._fetch_account_by_key_hash(conn, key_hash)
+
+    def consume_quota_for_api_key(
+        self,
+        *,
+        key_hash: str,
+        usage_date: date,
+        quota: int,
+        now: datetime,
+    ) -> ApiKeyQuotaResult:
+        """Consume quota for an active key/account in the same write transaction.
+
+        Rotation, revocation, and suspension cannot commit between key lookup and
+        quota consumption. Account and usage snapshots are validated before commit;
+        the result describes that committed state even after later mutations.
+        A preliminary read rejects absent keys without competing for a writer lock.
+        """
+        with closing(self._connect()) as conn:
+            if self._fetch_account_by_key_hash(conn, key_hash) is None:
+                return ApiKeyQuotaResult(account=None, usage=None, quota_consumed=False)
+            _begin_immediate(conn)
+            try:
+                # The preliminary read cannot authorize; recheck under the writer lock.
+                account = self._fetch_account_by_key_hash(conn, key_hash)
+                usage = None
+                quota_consumed = False
+                if account is not None and account.status == _ACTIVE_STATUS:
+                    usage, quota_consumed = self._consume_daily_quota(
+                        conn,
+                        account_id=account.account_id,
+                        usage_date=usage_date,
+                        quota=quota,
+                        now=now,
+                    )
+                result = ApiKeyQuotaResult(
+                    account=account, usage=usage, quota_consumed=quota_consumed
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return result
 
     def consume_daily_quota(
         self,
@@ -345,55 +381,68 @@ class AuthStore:
             _begin_immediate(conn)
             try:
                 self._require_account(conn, account_id)
-                row = conn.execute(
-                    "SELECT request_count FROM daily_usage WHERE account_id = ? AND usage_date = ?",
-                    (account_id, usage_date.isoformat()),
-                ).fetchone()
-                current = int(row["request_count"]) if row is not None else 0
-                if current >= quota:
-                    snapshot = _usage_snapshot(
-                        usage_date=usage_date,
-                        request_count=current,
-                        quota=quota,
-                    )
-                    self._insert_audit_event(
-                        conn,
-                        account_id=account_id,
-                        event_type="quota_exceeded",
-                        details={"usage_date": usage_date.isoformat(), "request_count": current},
-                        now=now,
-                    )
-                    conn.execute("COMMIT")
-                    return snapshot, False
-
-                next_count = current + 1
-                if row is None:
-                    conn.execute(
-                        """
-                        INSERT INTO daily_usage (account_id, usage_date, request_count)
-                        VALUES (?, ?, ?)
-                        """,
-                        (account_id, usage_date.isoformat(), next_count),
-                    )
-                else:
-                    conn.execute(
-                        """
-                        UPDATE daily_usage
-                        SET request_count = ?
-                        WHERE account_id = ? AND usage_date = ?
-                        """,
-                        (next_count, account_id, usage_date.isoformat()),
-                    )
-                snapshot = _usage_snapshot(
+                result = self._consume_daily_quota(
+                    conn,
+                    account_id=account_id,
                     usage_date=usage_date,
-                    request_count=next_count,
                     quota=quota,
+                    now=now,
                 )
                 conn.execute("COMMIT")
-                return snapshot, True
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
+        return result
+
+    def _consume_daily_quota(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        account_id: int,
+        usage_date: date,
+        quota: int,
+        now: datetime,
+    ) -> tuple[BetaUsageSnapshot, bool]:
+        """Consume quota or audit exhaustion within the caller's write transaction."""
+        row = conn.execute(
+            "SELECT request_count FROM daily_usage WHERE account_id = ? AND usage_date = ?",
+            (account_id, usage_date.isoformat()),
+        ).fetchone()
+        current = int(row["request_count"]) if row is not None else 0
+        if current >= quota:
+            snapshot = _usage_snapshot(
+                usage_date=usage_date,
+                request_count=current,
+                quota=quota,
+            )
+            self._insert_audit_event(
+                conn,
+                account_id=account_id,
+                event_type="quota_exceeded",
+                details={"usage_date": usage_date.isoformat(), "request_count": current},
+                now=now,
+            )
+            return snapshot, False
+
+        next_count = current + 1
+        if row is None:
+            conn.execute(
+                """
+                INSERT INTO daily_usage (account_id, usage_date, request_count)
+                VALUES (?, ?, ?)
+                """,
+                (account_id, usage_date.isoformat(), next_count),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE daily_usage
+                SET request_count = ?
+                WHERE account_id = ? AND usage_date = ?
+                """,
+                (next_count, account_id, usage_date.isoformat()),
+            )
+        return _usage_snapshot(usage_date=usage_date, request_count=next_count, quota=quota), True
 
     def get_usage_snapshot(
         self,
@@ -480,6 +529,23 @@ class AuthStore:
         row = conn.execute(
             _ACCOUNT_SELECT + f" WHERE {column} = ? LIMIT 1",
             (value,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _account_from_row(row)
+
+    def _fetch_account_by_key_hash(
+        self, conn: sqlite3.Connection, key_hash: str
+    ) -> BetaAccount | None:
+        """Read an active key's owning account through the supplied connection."""
+        row = conn.execute(
+            _ACCOUNT_SELECT
+            + """
+            JOIN api_keys k ON k.account_id = a.id
+            WHERE k.key_hash = ? AND k.revoked_at IS NULL
+            LIMIT 1
+            """,
+            (key_hash,),
         ).fetchone()
         if row is None:
             return None

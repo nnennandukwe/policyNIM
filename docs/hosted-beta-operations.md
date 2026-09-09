@@ -30,6 +30,21 @@ Then ask your client to call the MCP tools directly:
 
 Hosted beta notes:
 
+- The server uses Python MCP SDK `2.2.0`, serving MCP `2026-07-28` and legacy
+  clients over stateless HTTP. Beta API keys remain the authorization mechanism;
+  the SDK upgrade does not introduce standards-based MCP OAuth.
+- Set `POLICYNIM_MCP_PUBLIC_BASE_URL` to the deployed origin so MCP Host and
+  Origin checks allow the public endpoint. Reverse proxies must preserve an
+  allowed Host header; clients without an Origin header remain supported.
+- Deploy at the service root. ASGI `root_path` and mount prefixes are rejected
+  so generated MCP, beta, and OAuth links always address the served routes.
+- `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` defaults to `10` per server process.
+  Saturated calls return a retry-later tool error before provider work starts.
+  Cancellation retains capacity until the operation and its cleanup finish.
+- A server process admits one key-regeneration request per account at a time.
+  An overlapping request receives HTTP `409`; wait for the first request and
+  refresh `/beta` before trying again. Later deliberate rotations still revoke
+  the previous key. This guard does not coordinate independent server processes.
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret
