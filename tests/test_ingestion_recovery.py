@@ -208,6 +208,89 @@ def test_corrupt_index_has_sanitized_migration_guidance(tmp_path):
     assert path.read_bytes() == b"private-corrupt-index-sentinel"
 
 
+@pytest.mark.parametrize("substitution", ["copy", "symlink"])
+def test_completion_rejects_substituted_matching_database(tmp_path, monkeypatch, substitution):
+    """A matching build ID cannot authorize completion of an unowned physical file."""
+    settings, service, _ = make_ingest(tmp_path)
+    copied_path = tmp_path / "copied.sqlite3"
+    finalize = ingest_module._finalize_runtime_rules_artifact
+
+    def substitute_after_rules(*args):
+        """Replace the published file with a copy after runtime rules are finalized."""
+        finalize(*args)
+        copied_path.write_bytes(settings.index_db_path.read_bytes())
+        settings.index_db_path.unlink()
+        if substitution == "symlink":
+            settings.index_db_path.symlink_to(copied_path)
+        else:
+            copied_path.replace(settings.index_db_path)
+
+    monkeypatch.setattr(ingest_module, "_finalize_runtime_rules_artifact", substitute_after_rules)
+    with pytest.raises(MissingIndexError, match="changed"):
+        service.run()
+    assert not create_index_store(settings).inspect_identity().complete
+    assert not create_runtime_health_service(settings).check().ready
+
+
+def test_completion_does_not_switch_published_database_journal_mode(tmp_path, monkeypatch):
+    """A reader that exits before the completion transaction must not block opening it."""
+    import sqlite3
+
+    path = tmp_path / "index.sqlite3"
+    store = create_index_store(settings_for(path))
+    build_id = store.replace([chunk()], complete=False)
+    reader = sqlite3.connect(path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT * FROM index_metadata").fetchall()
+    begin = storage_module._begin_immediate
+
+    def release_before_write(conn):
+        """Release the real reader before the writer starts its completion transaction."""
+        reader.close()
+        begin(conn)
+
+    monkeypatch.setattr(storage_module, "_begin_immediate", release_before_write)
+    try:
+        store.complete_ingest(build_id)
+    finally:
+        reader.close()
+    assert store.inspect_identity().complete
+
+
+def test_reopened_store_cannot_complete_another_producers_candidate(tmp_path):
+    """Persisted build metadata alone does not grant publication ownership after restart."""
+    settings = settings_for(tmp_path / "index.sqlite3")
+    producer = create_index_store(settings)
+    build_id = producer.replace([chunk()], complete=False)
+    reopened = create_index_store(settings)
+    with pytest.raises(MissingIndexError, match="changed"):
+        reopened.complete_ingest(build_id)
+    assert not reopened.inspect_identity().complete
+    producer.complete_ingest(build_id)
+    assert reopened.inspect_identity().complete
+
+
+def test_completion_rechecks_file_after_connection_open(tmp_path, monkeypatch):
+    """Reject a matching copy substituted between the first check and connection open."""
+    path = tmp_path / "index.sqlite3"
+    store = create_index_store(settings_for(path))
+    build_id = store.replace([chunk()], complete=False)
+    connect = storage_module._connect
+
+    def substitute_on_open(destination, **kwargs):
+        """Open a substituted copy without changing its completion metadata."""
+        if kwargs.get("configure_wal") is False:
+            copy = tmp_path / "substitution.sqlite3"
+            copy.write_bytes(destination.read_bytes())
+            copy.replace(destination)
+        return connect(destination, **kwargs)
+
+    monkeypatch.setattr(storage_module, "_connect", substitute_on_open)
+    with pytest.raises(MissingIndexError, match="changed"):
+        store.complete_ingest(build_id)
+    assert not store.inspect_identity().complete
+
+
 @pytest.mark.parametrize("published", [False, True])
 def test_cleanup_error_never_misreports_publication(tmp_path, monkeypatch, caplog, published):
     """Verify cleanup error never misreports publication."""

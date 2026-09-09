@@ -143,12 +143,19 @@ Invariants:
 - Store identity, dimensions, build identifier, and completion status together
   with vectors. Validate identity again on the connection used for retrieval.
 - Never query an incomplete candidate or complete a different build by mistake.
+- Complete only the physical database published by the active ingestion. Copied
+  build metadata cannot resume completion after path substitution or process restart.
 - Preserve original sources and old index/rules during migration and every
   migration failure. Reject a pre-existing rules output for a fresh migration.
 - Never rebuild an incompatible index as a side effect of health, doctor, or
   startup. Diagnostics use read-only database connections.
 - Clean up only uniquely owned staging files. Do not erase a concurrent writer's
   destination or its sidecars.
+
+Hosted server startup retains Foundation's automatic ingestion for a truly absent
+index; that path can contact NVIDIA and belongs inside an approved deployment.
+It refuses existing empty, corrupt, incomplete, or incompatible files. The health
+inspector and `doctor` themselves never ingest or contact providers.
 
 ## Fault and lifecycle evidence required
 

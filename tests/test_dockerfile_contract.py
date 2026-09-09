@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from policynim.settings import Settings
-
-NO_ENV: dict[str, Any] = {"_env_file": None}
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "Dockerfile"
@@ -75,13 +72,14 @@ def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
 
 def test_ingestion_build_arguments_match_runtime_defaults_and_publish_rules() -> None:
     """Verify ingestion build arguments match runtime defaults and publish rules."""
-    settings = Settings(**NO_ENV)
     expected = {
-        "POLICYNIM_NVIDIA_EMBED_MODEL": settings.nvidia_embed_model,
-        "POLICYNIM_NVIDIA_BASE_URL": settings.nvidia_base_url,
-        "POLICYNIM_EMBED_BATCH_SIZE": str(settings.embed_batch_size),
-        "POLICYNIM_NVIDIA_TIMEOUT_SECONDS": str(settings.nvidia_timeout_seconds),
-        "POLICYNIM_NVIDIA_MAX_RETRIES": str(settings.nvidia_max_retries),
+        "POLICYNIM_NVIDIA_EMBED_MODEL": Settings.model_fields["nvidia_embed_model"].default,
+        "POLICYNIM_NVIDIA_BASE_URL": Settings.model_fields["nvidia_base_url"].default,
+        "POLICYNIM_EMBED_BATCH_SIZE": str(Settings.model_fields["embed_batch_size"].default),
+        "POLICYNIM_NVIDIA_TIMEOUT_SECONDS": str(
+            Settings.model_fields["nvidia_timeout_seconds"].default
+        ),
+        "POLICYNIM_NVIDIA_MAX_RETRIES": str(Settings.model_fields["nvidia_max_retries"].default),
     }
     for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
         text = _read_text(path)
