@@ -232,3 +232,10 @@ supply the explicit allowed chunk IDs and distinguish them from policy metadata.
 Citation validation remains strict: a policy ID is never silently expanded or
 accepted as a chunk citation. Live acceptance must verify this contract separately
 from endpoint access.
+
+Railway still supplies the ingestion key through its supported build ARG. The
+ingestion command reads that inherited environment value without inline expansion,
+so the key is not embedded in the displayed RUN command. This does not turn build
+ARGs into BuildKit secrets: restrict access to Railway build metadata and rotate
+any key previously rendered in legacy build logs. The generic Dockerfile continues
+to use a BuildKit secret.

@@ -94,3 +94,11 @@ def test_ingestion_build_arguments_match_runtime_defaults_and_publish_rules() ->
         assert (
             "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json" in runtime
         )
+
+
+def test_railway_ingestion_command_does_not_expand_key_into_build_log() -> None:
+    """Keep the supported build ARG out of the displayed ingestion command."""
+    text = _read_text(RAILWAY_DOCKERFILE)
+    run_commands = [line for line in text.splitlines() if line.startswith("RUN ")]
+    assert all("NVIDIA_API_KEY" not in command for command in run_commands)
+    assert "RUN uv run --no-sync policynim ingest" in run_commands
