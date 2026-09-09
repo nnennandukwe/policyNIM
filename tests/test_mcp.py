@@ -10,6 +10,7 @@ import sys
 import textwrap
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime
 from importlib.metadata import version
 from threading import Event, Lock, get_ident
 
@@ -36,7 +37,10 @@ from policynim.interfaces import mcp as mcp_module
 from policynim.services.preflight import PreflightService
 from policynim.settings import Settings
 from policynim.types import (
+    BetaAccount,
     BetaAuthDecision,
+    BetaIssuedApiKey,
+    BetaUsageSnapshot,
     Citation,
     EmbeddedChunk,
     GeneratedCompiledPolicyDraft,
@@ -164,6 +168,82 @@ class StaticBetaAuthService:
     def authenticate_api_key(self, *, token: str | None) -> BetaAuthDecision:
         self.seen_tokens.append(token)
         return self._decision
+
+
+class ControlledKeyRotationService:
+    """Expose issuance barriers and failures behind the real portal session routes."""
+
+    def __init__(self, *, block_first: bool = True, failure_stage: str | None = None) -> None:
+        """Create two independent accounts and controls for the first account's rotation."""
+        self.started = Event()
+        self.release = Event()
+        self.block_first = block_first
+        self.failure_stage = failure_stage
+        self.issue_calls: list[int] = []
+        self.account_reads: list[int] = []
+        self._lock = Lock()
+        self.accounts = {
+            account_id: BetaAccount(
+                account_id=account_id,
+                github_user_id=account_id,
+                github_login=f"fixture-user-{account_id}",
+                status="active",
+                created_at=datetime(2026, 4, 5, tzinfo=UTC),
+                last_login_at=datetime(2026, 4, 5, tzinfo=UTC),
+            )
+            for account_id in (1, 2)
+        }
+        self.usage = BetaUsageSnapshot(
+            usage_date=date(2026, 4, 5), request_count=0, quota=500, remaining=500
+        )
+
+    def build_github_authorize_url(self, *, state: str) -> str:
+        """Preserve the actual signed-session state without contacting GitHub."""
+        return f"https://github.example/authorize?state={state}"
+
+    def complete_github_oauth(self, *, code: str) -> BetaAccount:
+        """Choose an account through the fixture's OAuth code."""
+        return self.accounts[int(code)]
+
+    def get_account(self, account_id: int) -> BetaAccount:
+        """Record reads and optionally fail the first admitted request before issuance."""
+        self.account_reads.append(account_id)
+        if self.failure_stage == "account":
+            self.failure_stage = None
+            raise ValueError("fixture account failure")
+        return self.accounts[account_id]
+
+    def get_portal_usage(self, account_id: int) -> BetaUsageSnapshot:
+        """Return a stable snapshot without storage access."""
+        return self.usage
+
+    def issue_api_key(self, *, account_id: int) -> BetaIssuedApiKey:
+        """Block only the first rotation while allowing other accounts to make progress."""
+        with self._lock:
+            self.issue_calls.append(account_id)
+            generation = self.issue_calls.count(account_id)
+        if self.failure_stage == "issue":
+            self.failure_stage = None
+            raise ValueError("fixture issuance failure")
+        if self.block_first and account_id == 1 and generation == 1:
+            self.started.set()
+            assert self.release.wait(5), "test did not release key issuance"
+        return BetaIssuedApiKey(
+            account=self.accounts[account_id],
+            api_key=f"fixture-key-{account_id}-{generation}",
+            usage=self.usage,
+        )
+
+
+async def _login_for_key_rotation(client: httpx.AsyncClient, account_id: int) -> None:
+    """Establish a real signed portal session before exercising rotation requests."""
+    start = await client.get("/auth/github/start")
+    assert start.status_code == 302
+    state = start.headers["location"].partition("state=")[2]
+    callback = await client.get(
+        "/auth/github/callback", params={"state": state, "code": str(account_id)}
+    )
+    assert callback.status_code == 302
 
 
 def _ok_starlette_app() -> ASGIApp:
@@ -1540,6 +1620,144 @@ def test_streamable_http_app_returns_429_for_quota_exhausted_beta_account(monkey
 
     assert response.status_code == 429
     assert response.json() == {"error": "Quota exceeded."}
+
+
+def test_key_regeneration_rejects_account_overlap_and_keeps_other_accounts_independent(
+    monkeypatch,
+) -> None:
+    """One slow issuance rejects duplicate POSTs without blocking a different account."""
+    service = ControlledKeyRotationService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Keep two authenticated sessions active while the first account's worker waits."""
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+            ) as first_client,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+            ) as second_client,
+        ):
+            await _login_for_key_rotation(first_client, 1)
+            await _login_for_key_rotation(second_client, 2)
+            first = asyncio.create_task(first_client.post("/beta/api-key/regenerate"))
+            try:
+                await _wait_until_set(service.started)
+                duplicate = await asyncio.wait_for(
+                    first_client.post("/beta/api-key/regenerate"), timeout=0.5
+                )
+                assert duplicate.status_code == 409
+                assert "already in progress" in duplicate.text
+                assert "refresh /beta" in duplicate.text
+                assert "fixture-key" not in duplicate.text
+                assert service.issue_calls == [1]
+                assert service.account_reads == [1]
+                independent = await asyncio.wait_for(
+                    second_client.post("/beta/api-key/regenerate"), timeout=0.5
+                )
+                assert independent.status_code == 200
+                assert "fixture-key-2-1" in independent.text
+                assert not first.done()
+            finally:
+                service.release.set()
+                result = await first
+            assert result.status_code == 200
+            assert "fixture-key-1-1" in result.text
+            assert service.issue_calls == [1, 2]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure_stage", ["account", "issue", "render"])
+def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, failure_stage) -> None:
+    """Account reads, issuance failures, and rendering failures cannot strand the guard."""
+    service = ControlledKeyRotationService(block_first=False, failure_stage=failure_stage)
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
+    if failure_stage == "render":
+        render_dashboard = mcp_module._render_beta_dashboard
+
+        def fail_first_render(*args, **kwargs):
+            """Fail after mutation to verify the final rendering boundary also releases."""
+            if service.failure_stage == "render":
+                service.failure_stage = None
+                raise ValueError("fixture rendering failure")
+            return render_dashboard(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_module, "_render_beta_dashboard", fail_first_render)
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Retry through the same authenticated browser session after a failed request."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+        ) as client:
+            await _login_for_key_rotation(client, 1)
+            with pytest.raises(ValueError, match="fixture .* failure"):
+                await client.post("/beta/api-key/regenerate")
+            recovered = await client.post("/beta/api-key/regenerate")
+            assert recovered.status_code == 200
+            assert "API key generated" in recovered.text
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("cancellation_kind", ["asyncio", "anyio"])
+def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
+    monkeypatch, cancellation_kind
+) -> None:
+    """Disconnect cancellation cannot permit another rotation while issuance still runs."""
+    service = ControlledKeyRotationService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
+    app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
+
+    async def exercise() -> None:
+        """Cancel the response, reject overlap, and retry after the worker drains."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://beta.example.com"
+        ) as client:
+            await _login_for_key_rotation(client, 1)
+            scopes: list[anyio.CancelScope] = []
+            responses: list[httpx.Response] = []
+
+            async def invoke() -> None:
+                """Cancel through the selected mechanism while the real route is active."""
+                if cancellation_kind == "anyio":
+                    with anyio.CancelScope() as scope:
+                        scopes.append(scope)
+                        responses.append(await client.post("/beta/api-key/regenerate"))
+                else:
+                    responses.append(await client.post("/beta/api-key/regenerate"))
+
+            request = asyncio.create_task(invoke())
+            try:
+                await _wait_until_set(service.started)
+                if cancellation_kind == "anyio":
+                    scopes[0].cancel()
+                else:
+                    request.cancel()
+                await asyncio.sleep(0)
+                assert not request.done()
+                duplicate = await asyncio.wait_for(
+                    client.post("/beta/api-key/regenerate"), timeout=0.5
+                )
+                assert duplicate.status_code == 409
+                assert service.issue_calls == [1]
+            finally:
+                service.release.set()
+                await asyncio.gather(request, return_exceptions=True)
+            assert responses == []
+            if cancellation_kind == "anyio":
+                assert scopes[0].cancelled_caught
+            else:
+                assert request.cancelled()
+            recovered = await client.post("/beta/api-key/regenerate")
+            assert recovered.status_code == 200
+            assert "fixture-key-1-2" in recovered.text
+            assert service.issue_calls == [1, 1]
+
+    asyncio.run(exercise())
 
 
 def test_slow_api_key_authentication_does_not_block_public_requests(monkeypatch) -> None:

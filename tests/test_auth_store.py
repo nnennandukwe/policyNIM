@@ -13,7 +13,8 @@ import pytest
 
 from policynim.errors import PolicyNIMError
 from policynim.storage import AuthStore
-from policynim.types import BetaAccount, BetaAuthDecision
+from policynim.storage.auth_store import ApiKeyQuotaResult
+from policynim.types import BetaAccount, BetaUsageSnapshot
 
 
 def _hash_api_key(value: str) -> str:
@@ -259,28 +260,28 @@ def test_auth_store_concurrent_admissions_preserve_quota_and_audit(tmp_path: Pat
     account = _account_with_key(store, now)
     start = Barrier(12, timeout=5)
 
-    def admit() -> BetaAuthDecision:
+    def admit() -> ApiKeyQuotaResult:
         """Attempt admission on a separate SQLite connection with concurrent peers."""
         start.wait()
-        return store.authenticate_and_consume_quota(
+        return store.consume_quota_for_api_key(
             key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
         )
 
     with ThreadPoolExecutor(max_workers=12) as executor:
         pending = [executor.submit(admit) for _ in range(12)]
-        decisions = [future.result(timeout=10) for future in pending]
+        results = [future.result(timeout=10) for future in pending]
 
-    authorized = [decision for decision in decisions if decision.status == "authorized"]
-    denied = [decision for decision in decisions if decision.status == "quota_exceeded"]
-    assert len(authorized) == 3
-    assert len(denied) == 9
-    assert sorted(item.usage.request_count for item in authorized if item.usage is not None) == [
+    consumed = [result for result in results if result.quota_consumed]
+    exhausted = [result for result in results if not result.quota_consumed]
+    assert len(consumed) == 3
+    assert len(exhausted) == 9
+    assert sorted(item.usage.request_count for item in consumed if item.usage is not None) == [
         1,
         2,
         3,
     ]
-    assert all(item.usage is not None and item.usage.remaining == 0 for item in denied)
-    assert all(item.account == account and item.source == "api_key" for item in decisions)
+    assert all(item.usage is not None and item.usage.remaining == 0 for item in exhausted)
+    assert all(item.account == account for item in results)
     assert (
         store.get_usage_snapshot(
             account_id=account.account_id, usage_date=now.date(), quota=3
@@ -331,7 +332,7 @@ def test_auth_store_admission_commits_before_waiting_revocation(
     monkeypatch.setattr(operator_store, "_connect", traced_connect)
     with ThreadPoolExecutor(max_workers=2) as executor:
         admission = executor.submit(
-            store.authenticate_and_consume_quota,
+            store.consume_quota_for_api_key,
             key_hash=_hash_api_key("pnm_test_secret"),
             usage_date=now.date(),
             quota=3,
@@ -346,18 +347,17 @@ def test_auth_store_admission_commits_before_waiting_revocation(
             assert not revocation.done()
         finally:
             continue_admission.set()
-        decision = admission.result(timeout=5)
+        result = admission.result(timeout=5)
         revocation.result(timeout=5)
 
-    assert decision.status == "authorized"
-    assert decision.usage is not None and decision.usage.request_count == 1
+    assert result.quota_consumed is True
+    assert result.account == account
+    assert result.usage is not None and result.usage.request_count == 1
     assert store.authenticate_api_key(key_hash=_hash_api_key("pnm_test_secret")) is None
-    assert (
-        store.authenticate_and_consume_quota(
-            key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
-        ).status
-        == "unauthorized"
+    after_revocation = store.consume_quota_for_api_key(
+        key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
     )
+    assert after_revocation == ApiKeyQuotaResult(account=None, usage=None, quota_consumed=False)
     assert (
         store.get_usage_snapshot(
             account_id=account.account_id, usage_date=now.date(), quota=3
@@ -366,19 +366,19 @@ def test_auth_store_admission_commits_before_waiting_revocation(
     )
 
 
-@pytest.mark.parametrize("failure_stage", ["decision", "commit"])
+@pytest.mark.parametrize("failure_stage", ["snapshot", "commit"])
 def test_auth_store_failed_admission_rolls_back_quota(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure_stage: str
 ) -> None:
-    """Return no authorization or quota charge when validation or commit fails."""
+    """Return no consumption result or quota charge when validation or commit fails."""
     store = AuthStore(path=tmp_path / "auth.sqlite3")
     now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
     account = _account_with_key(store, now)
     original_connect = store._connect
 
-    def reject_decision(**kwargs: object) -> BetaAuthDecision:
-        """Inject result-validation failure after the quota mutation."""
-        raise ValueError("decision validation failed")
+    def reject_snapshot(**kwargs: object) -> BetaUsageSnapshot:
+        """Inject usage-snapshot validation failure after the quota mutation."""
+        raise ValueError("usage snapshot validation failed")
 
     def reject_commit(
         action: int,
@@ -399,14 +399,14 @@ def test_auth_store_failed_admission_rolls_back_quota(
         return conn
 
     with monkeypatch.context() as patch:
-        if failure_stage == "decision":
-            patch.setattr("policynim.storage.auth_store.BetaAuthDecision", reject_decision)
+        if failure_stage == "snapshot":
+            patch.setattr("policynim.storage.auth_store._usage_snapshot", reject_snapshot)
             expected_error = ValueError
         else:
             patch.setattr(store, "_connect", failing_connect)
             expected_error = sqlite3.DatabaseError
         with pytest.raises(expected_error):
-            store.authenticate_and_consume_quota(
+            store.consume_quota_for_api_key(
                 key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
             )
 
@@ -416,8 +416,9 @@ def test_auth_store_failed_admission_rolls_back_quota(
         ).request_count
         == 0
     )
-    recovered = store.authenticate_and_consume_quota(
+    recovered = store.consume_quota_for_api_key(
         key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
     )
-    assert recovered.status == "authorized"
+    assert recovered.quota_consumed is True
+    assert recovered.account == account
     assert recovered.usage is not None and recovered.usage.request_count == 1

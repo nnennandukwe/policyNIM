@@ -220,3 +220,41 @@ def test_authentication_observes_authority_changes_before_quota_admission(
     )
     assert usage.request_count == 0
     assert operator_store.list_audit_events(event_type="quota_exceeded") == []
+
+
+def test_authentication_maps_committed_quota_and_account_state(tmp_path: Path) -> None:
+    """Keep authorization status and precedence in the service's public contract."""
+    settings = _settings(tmp_path).model_copy(update={"beta_daily_request_quota": 1})
+    store = AuthStore(path=settings.beta_auth_db_path)
+    service = BetaAuthService(store=store, settings=settings)
+    account = store.upsert_account_from_github(
+        github_user_id=123, github_login="octocat", email=None, now=service._utc_now()
+    )
+    issued = service.issue_api_key(account_id=account.account_id)
+
+    allowed = service.authenticate_api_key(token=issued.api_key)
+    assert allowed.status == "authorized"
+    assert allowed.source == "api_key"
+    assert allowed.account == issued.account
+    assert allowed.usage is not None and allowed.usage.request_count == 1
+
+    exhausted = service.authenticate_api_key(token=issued.api_key)
+    assert exhausted.status == "quota_exceeded"
+    assert exhausted.source == "api_key"
+    assert exhausted.account == issued.account
+    assert exhausted.usage is not None and exhausted.usage.remaining == 0
+
+    service.suspend_account(github_login="octocat")
+    suspended = service.authenticate_api_key(token=issued.api_key)
+    assert suspended.status == "suspended"
+    assert suspended.source == "api_key"
+    assert suspended.account is not None and suspended.account.status == "suspended"
+    assert suspended.usage is None
+
+    service.revoke_api_key(github_login="octocat")
+    revoked = service.authenticate_api_key(token=issued.api_key)
+    assert revoked.status == "unauthorized"
+    assert revoked.source is None
+    assert revoked.account is None and revoked.usage is None
+    assert service.get_portal_usage(account.account_id).request_count == 1
+    assert len(service.list_audit_events(event_type="quota_exceeded")) == 1

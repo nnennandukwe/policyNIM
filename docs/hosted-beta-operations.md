@@ -41,6 +41,10 @@ Hosted beta notes:
 - `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` defaults to `10` per server process.
   Saturated calls return a retry-later tool error before provider work starts.
   Cancellation retains capacity until the operation and its cleanup finish.
+- A server process admits one key-regeneration request per account at a time.
+  An overlapping request receives HTTP `409`; wait for the first request and
+  refresh `/beta` before trying again. Later deliberate rotations still revoke
+  the previous key. This guard does not coordinate independent server processes.
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret

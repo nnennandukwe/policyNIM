@@ -506,7 +506,8 @@ def _register_beta_routes(
     settings: Settings,
     beta_auth_service: BetaAuthService,
 ) -> None:
-    """Register the hosted beta portal routes."""
+    """Register portal routes with a process-local guard for overlapping key rotations."""
+    regenerating_accounts: set[int] = set()
     limiter = _InMemoryRateLimiter(
         max_attempts=settings.beta_auth_rate_limit_max_attempts,
         window_seconds=settings.beta_auth_rate_limit_window_seconds,
@@ -633,37 +634,54 @@ def _register_beta_routes(
 
     @server.custom_route(_BETA_API_KEY_REGENERATE_PATH, methods=["POST"], include_in_schema=False)
     async def beta_regenerate_api_key(request: Request) -> Response:
-        """Rotate an authenticated account's API key without blocking other requests."""
+        """Admit one rotation per account until work, cancellation drain, and rendering finish."""
         account_id = _require_beta_session_account_id(request)
         if account_id is None:
             return RedirectResponse(_BETA_PATH, status_code=302)
-        account = await _run_sync_until_complete(partial(beta_auth_service.get_account, account_id))
-        if account is None:
-            request.session.clear()
-            return RedirectResponse(_BETA_PATH, status_code=302)
+        if account_id in regenerating_accounts:
+            return _render_beta_landing(
+                settings,
+                message=(
+                    "API key generation is already in progress for this account. "
+                    "Wait for that request to finish, then refresh /beta before trying again."
+                ),
+                status_code=409,
+            )
+        regenerating_accounts.add(account_id)
         try:
-            issued_key = await _run_sync_until_complete(
-                partial(beta_auth_service.issue_api_key, account_id=account_id)
+            account = await _run_sync_until_complete(
+                partial(beta_auth_service.get_account, account_id)
             )
-        except PolicyNIMError as exc:
-            usage = await _run_sync_until_complete(
-                partial(beta_auth_service.get_portal_usage, account_id)
-            )
+            if account is None:
+                request.session.clear()
+                return RedirectResponse(_BETA_PATH, status_code=302)
+            try:
+                issued_key = await _run_sync_until_complete(
+                    partial(beta_auth_service.issue_api_key, account_id=account_id)
+                )
+            except PolicyNIMError as exc:
+                usage = await _run_sync_until_complete(
+                    partial(beta_auth_service.get_portal_usage, account_id)
+                )
+                return _render_beta_dashboard(
+                    settings,
+                    account=account,
+                    usage=usage,
+                    message=str(exc),
+                    message_tone="error",
+                )
             return _render_beta_dashboard(
                 settings,
-                account=account,
-                usage=usage,
-                message=str(exc),
-                message_tone="error",
+                account=issued_key.account,
+                usage=issued_key.usage,
+                new_api_key=issued_key.api_key,
+                message=(
+                    "API key generated. Export `POLICYNIM_TOKEN` before connecting your client."
+                ),
+                message_tone="success",
             )
-        return _render_beta_dashboard(
-            settings,
-            account=issued_key.account,
-            usage=issued_key.usage,
-            new_api_key=issued_key.api_key,
-            message="API key generated. Export `POLICYNIM_TOKEN` before connecting your client.",
-            message_tone="success",
-        )
+        finally:
+            regenerating_accounts.remove(account_id)
 
     @server.custom_route(_BETA_LOGOUT_PATH, methods=["POST"], include_in_schema=False)
     async def beta_logout(request: Request) -> Response:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -14,7 +15,6 @@ from policynim.types import (
     BetaAccount,
     BetaAccountStatus,
     BetaAuditEvent,
-    BetaAuthDecision,
     BetaUsageSnapshot,
 )
 
@@ -45,6 +45,15 @@ SELECT
     ) AS api_key_created_at
 FROM accounts a
 """
+
+
+@dataclass(frozen=True)
+class ApiKeyQuotaResult:
+    """Account and quota facts read or written by one committed transaction."""
+
+    account: BetaAccount | None
+    usage: BetaUsageSnapshot | None
+    quota_consumed: bool
 
 
 class AuthStore:
@@ -327,49 +336,42 @@ class AuthStore:
         with closing(self._connect()) as conn:
             return self._fetch_account_by_key_hash(conn, key_hash)
 
-    def authenticate_and_consume_quota(
+    def consume_quota_for_api_key(
         self,
         *,
         key_hash: str,
         usage_date: date,
         quota: int,
         now: datetime,
-    ) -> BetaAuthDecision:
-        """Validate authority and admit one request in the same write transaction.
+    ) -> ApiKeyQuotaResult:
+        """Consume quota for an active key/account in the same write transaction.
 
         Rotation, revocation, and suspension cannot commit between key lookup and
-        quota admission. Decisions are validated before commit and returned only
-        afterward; later authority changes do not cancel an admitted request.
+        quota consumption. Account and usage snapshots are validated before commit;
+        the result describes that committed state even after later mutations.
         """
         with closing(self._connect()) as conn:
             _begin_immediate(conn)
             try:
                 account = self._fetch_account_by_key_hash(conn, key_hash)
-                if account is None:
-                    decision = BetaAuthDecision(status="unauthorized")
-                elif account.status != _ACTIVE_STATUS:
-                    decision = BetaAuthDecision(
-                        status="suspended", source="api_key", account=account
-                    )
-                else:
-                    usage, allowed = self._consume_daily_quota(
+                usage = None
+                quota_consumed = False
+                if account is not None and account.status == _ACTIVE_STATUS:
+                    usage, quota_consumed = self._consume_daily_quota(
                         conn,
                         account_id=account.account_id,
                         usage_date=usage_date,
                         quota=quota,
                         now=now,
                     )
-                    decision = BetaAuthDecision(
-                        status="authorized" if allowed else "quota_exceeded",
-                        source="api_key",
-                        account=account,
-                        usage=usage,
-                    )
+                result = ApiKeyQuotaResult(
+                    account=account, usage=usage, quota_consumed=quota_consumed
+                )
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
-        return decision
+        return result
 
     def consume_daily_quota(
         self,
