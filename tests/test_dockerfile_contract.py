@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+from policynim.settings import Settings
+
+NO_ENV: dict[str, Any] = {"_env_file": None}
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "Dockerfile"
@@ -66,3 +71,27 @@ def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
     assert "Railway only supports `--mount=type=cache`" in text
     assert "`Dockerfile.railway`" in text
     assert "`Dockerfile`" in text
+
+
+def test_ingestion_build_arguments_match_runtime_defaults_and_publish_rules() -> None:
+    settings = Settings(**NO_ENV)
+    expected = {
+        "POLICYNIM_NVIDIA_EMBED_MODEL": settings.nvidia_embed_model,
+        "POLICYNIM_NVIDIA_BASE_URL": settings.nvidia_base_url,
+        "POLICYNIM_EMBED_BATCH_SIZE": str(settings.embed_batch_size),
+        "POLICYNIM_NVIDIA_TIMEOUT_SECONDS": str(settings.nvidia_timeout_seconds),
+        "POLICYNIM_NVIDIA_MAX_RETRIES": str(settings.nvidia_max_retries),
+    }
+    for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
+        text = _read_text(path)
+        global_args, builder, runtime = text.split("FROM ${PYTHON_BASE_IMAGE}")
+        for name, value in expected.items():
+            assert f"ARG {name}={value}\n" in global_args
+            for stage in (builder, runtime):
+                assert f"ARG {name}\n" in stage
+                assert f"{name}=${{{name}}}" in stage
+        assert "uv run --no-sync policynim ingest" in builder
+        assert "COPY --from=builder /app/data/runtime/runtime_rules.json " in runtime
+        assert (
+            "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json" in runtime
+        )
