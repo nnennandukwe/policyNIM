@@ -1681,6 +1681,31 @@ def test_doctor_reports_configured_mcp_operation_limit(
     assert "- concurrent operations: 3" in text_result.stdout
 
 
+@pytest.mark.parametrize("host", ["::1", "2001:db8::1", "::ffff:192.0.2.1"])
+def test_doctor_formats_ipv6_http_authorities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    host: str,
+) -> None:
+    """Print usable IPv6 MCP URLs in JSON and human-readable diagnostics."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_HOST=host,
+        POLICYNIM_MCP_PORT="8123",
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    expected_url = f"http://[{host}]:8123/mcp"
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout)["mcp"]["streamable_http_url"] == expected_url
+    assert text_result.exit_code == 0
+    assert f"- streamable-http: {expected_url}" in text_result.stdout
+
+
 def test_doctor_source_checkout_recovery_uses_uv_run_commands(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

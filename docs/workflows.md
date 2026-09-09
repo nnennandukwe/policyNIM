@@ -348,12 +348,33 @@ uv run policynim mcp --transport streamable-http
 ```
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other
-than the default development bind `127.0.0.1:8000`. The host setting controls only
-the listening interface; it does not allow that address in incoming MCP Host or
-Origin headers. For access through any non-loopback address, also set
-`POLICYNIM_MCP_PUBLIC_BASE_URL` to the client-facing origin (for example,
-`http://192.168.1.20:8000` for a LAN bind). This is required even when bearer auth
-is disabled. A wildcard bind such as `0.0.0.0` does not allow arbitrary hosts.
+than the default development bind `127.0.0.1:8000`. A concrete bind address also
+permits its exact HTTP authority: with `POLICYNIM_MCP_HOST=192.168.1.20` and
+`POLICYNIM_MCP_PORT=8000`, clients can use `http://192.168.1.20:8000/mcp` without
+setting a public origin when authentication is disabled. Other remote ports and
+hostnames are not implicitly trusted. Port 80 accepts both omitted and explicit
+`:80` forms.
+
+The host must be a bare IPv4 address, IPv6 address, or ASCII DNS hostname; use
+`POLICYNIM_MCP_PORT` for the port. IPv6 settings omit brackets (for example,
+`2001:db8::20`); client URLs include them (`http://[2001:db8::20]:8000/mcp`). Hosts
+are lowercased; IP literals permit their configured spelling and canonical form.
+A terminal DNS dot is preserved and must appear in the client authority.
+Empty hosts, URL syntax, wildcard DNS names, IPv6 zone identifiers, and legacy
+numeric IPv4 forms such as `127.1` are rejected. Use a standard dotted-decimal
+IPv4 address instead. The limited-broadcast address `255.255.255.255` and its
+IPv4-mapped IPv6 forms are also rejected; use a concrete interface or an explicit
+wildcard bind with a public origin.
+
+Wildcard binds such as `0.0.0.0` or `::` grant no remote Host/Origin permissions.
+For remote access through a wildcard bind, explicitly set
+`POLICYNIM_MCP_PUBLIC_BASE_URL` to the client-facing origin, such as
+`http://192.168.1.20:8000` or `https://mcp.example.com`. Loopback access remains
+available without that setting. Proxies and HTTPS endpoints also need their
+explicit public origin when it differs from the direct HTTP bind authority.
+Disallowed Host and Origin headers return HTTP 421 and 403 respectively, before
+MCP tool work. Correct the client authority or configure its public origin; do
+not disable rebinding protection.
 
 Both transports support MCP `2026-07-28` and legacy clients through the official
 Python SDK `2.2.0`. The existing tool names, arguments, and JSON payload fields
@@ -388,9 +409,11 @@ Hosted HTTP notes:
   operator break-glass access when self-serve auth is enabled
 - `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
   URL, and must not contain credentials, a query, or a fragment
-- Set that public origin for remotely reachable HTTP deployments, including when
-  bearer auth is disabled. MCP Host and Origin checks allow the configured public
-  origin and loopback; an absent Origin header is allowed for non-browser clients.
+- Set that public origin for remote access through wildcard binds or a proxy,
+  including when bearer auth is disabled. Authentication always requires it.
+  MCP Host and Origin checks allow loopback, the concrete HTTP bind authority,
+  and the configured public origin. An absent Origin header is allowed for
+  non-browser clients.
   Proxy requests must preserve an allowed Host header. Authentication also covers
   `/mcp` trailing-slash variants.
 - Host the HTTP app at the service root. ASGI `root_path` and mounted path prefixes

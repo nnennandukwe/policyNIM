@@ -2843,11 +2843,12 @@ def _build_doctor_report() -> dict[str, object]:
         if not index_recovery_step_added and ingest_next_step not in next_steps:
             next_steps.append(ingest_next_step)
 
+    http_host = f"[{settings.mcp_host}]" if ":" in settings.mcp_host else settings.mcp_host
     report["mcp"] = {
         "stdio_command": _doctor_mcp_command("mcp --transport stdio"),
         "smoke_command": _doctor_mcp_command("mcp-smoke --format json"),
         "local_stdio_config_commands": _doctor_mcp_config_commands(),
-        "streamable_http_url": f"http://{settings.mcp_host}:{settings.mcp_port}/mcp",
+        "streamable_http_url": f"http://{http_host}:{settings.mcp_port}/mcp",
         "auth_required": settings.mcp_require_auth,
         "max_concurrent_operations": settings.mcp_max_concurrent_operations,
     }

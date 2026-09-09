@@ -14,6 +14,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from functools import lru_cache, partial
 from importlib.metadata import PackageNotFoundError, version
+from ipaddress import IPv6Address, ip_address
 from pathlib import Path
 from threading import BoundedSemaphore
 from typing import Annotated, TypeVar
@@ -268,11 +269,32 @@ def _streamable_http_port_in_use_message(host: str, port: int) -> str:
 
 
 def _ensure_streamable_http_port_available(host: str, port: int) -> None:
-    """Fail early with a clear error when the HTTP MCP port is already occupied."""
+    """Probe resolved IPv4 and IPv6 listener addresses before hosted runtime work."""
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind((host, port))
+        addresses = socket.getaddrinfo(
+            host, port, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE
+        )
+        bound_any_address = False
+        for family, socket_type, protocol, _, address in dict.fromkeys(addresses):
+            try:
+                probe = socket.socket(family, socket_type, protocol)
+            except OSError:
+                # asyncio.create_server also skips unsupported socket families.
+                continue
+            with probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if socket.has_ipv6 and family == socket.AF_INET6:
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                try:
+                    probe.bind(address)
+                except OSError as exc:
+                    if exc.errno == errno.EADDRNOTAVAIL:
+                        # Uvicorn can use another address when this one is unavailable.
+                        continue
+                    raise
+                bound_any_address = True
+        if not bound_any_address:
+            raise OSError(errno.EADDRNOTAVAIL, "No resolved address is available for binding")
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE:
             raise ConfigurationError(_streamable_http_port_in_use_message(host, port)) from exc
@@ -1202,12 +1224,33 @@ def _is_browser_mcp_visit(scope: Scope) -> bool:
 
 
 def _transport_security(settings: Settings) -> TransportSecuritySettings:
-    """Allow loopback clients and only the configured public service origin."""
+    """Trust loopback, concrete bind authorities, and the explicit public service origin."""
     loopback_hosts = ["127.0.0.1", "localhost", "[::1]"]
     allowed_hosts = [entry for host in loopback_hosts for entry in (host, f"{host}:*")]
     allowed_origins = [
         entry for host in loopback_hosts for entry in (f"http://{host}", f"http://{host}:*")
     ]
+    bind_host = settings.mcp_host
+    try:
+        bind_address = ip_address(bind_host)
+    except ValueError:
+        bind_address = None
+    bind_hosts = [bind_host]
+    if bind_address is not None:
+        bind_hosts.append(str(bind_address))
+    if isinstance(bind_address, IPv6Address) and bind_address.ipv4_mapped is not None:
+        bind_address = bind_address.ipv4_mapped
+    if bind_address is None or (
+        not bind_address.is_unspecified and str(bind_address) != "255.255.255.255"
+    ):
+        for host in bind_hosts:
+            hostname = f"[{host}]" if ":" in host else host
+            authority = f"{hostname}:{settings.mcp_port}"
+            allowed_hosts.append(authority)
+            allowed_origins.append(f"http://{authority}")
+            if settings.mcp_port == 80:
+                allowed_hosts.append(hostname)
+                allowed_origins.append(f"http://{hostname}")
     if settings.mcp_public_base_url is not None:
         public_url = urlsplit(str(settings.mcp_public_base_url))
         hostname = public_url.hostname or ""

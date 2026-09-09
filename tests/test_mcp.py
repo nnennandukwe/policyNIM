@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import socket
 import subprocess
@@ -546,6 +547,7 @@ def test_run_server_surfaces_hosted_startup_readiness_errors(monkeypatch) -> Non
 
 
 def test_streamable_http_port_probe_rejects_in_use_port() -> None:
+    """Reject an occupied IPv4 listener with actionable port recovery guidance."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -553,6 +555,143 @@ def test_streamable_http_port_probe_rejects_in_use_port() -> None:
 
         with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_PORT"):
             mcp_module._ensure_streamable_http_port_available(host, port)
+
+
+def test_streamable_http_ipv6_startup_checks_port_before_runtime_work(monkeypatch) -> None:
+    """Permit IPv6 startup, but reject an occupied listener before runtime work."""
+    if not socket.has_ipv6:
+        pytest.skip("This platform does not support IPv6 sockets.")
+    try:
+        listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    except OSError as exc:
+        pytest.skip(f"IPv6 sockets are unavailable: {exc}")
+    with listener:
+        try:
+            listener.bind(("::1", 0))
+            listener.listen()
+        except OSError as exc:
+            pytest.skip(f"IPv6 loopback is unavailable: {exc}")
+        port = listener.getsockname()[1]
+        monkeypatch.setattr(
+            mcp_module, "get_settings", lambda: Settings(mcp_host="::1", mcp_port=port)
+        )
+        monkeypatch.setattr(
+            mcp_module,
+            "ensure_hosted_runtime_ready",
+            lambda *args, **kwargs: pytest.fail("An occupied port must block runtime preparation"),
+        )
+        monkeypatch.setattr(
+            mcp_module,
+            "_build_streamable_http_app",
+            lambda settings: pytest.fail("An occupied port must block HTTP app construction"),
+        )
+        with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_PORT"):
+            mcp_module.run_server("streamable-http")
+
+    mcp_module._ensure_streamable_http_port_available("::1", port)
+
+
+@pytest.mark.parametrize(
+    (
+        "address_families",
+        "unsupported_family",
+        "unavailable_family",
+        "occupied_family",
+        "expected_error",
+    ),
+    [
+        ([socket.AF_INET], None, None, None, None),
+        ([socket.AF_INET6], None, None, None, None),
+        ([socket.AF_INET6, socket.AF_INET, socket.AF_INET6], None, None, None, None),
+        ([socket.AF_INET6, socket.AF_INET], socket.AF_INET6, None, None, None),
+        ([socket.AF_INET6, socket.AF_INET], None, socket.AF_INET6, None, None),
+        ([socket.AF_INET6, socket.AF_INET], None, None, socket.AF_INET, "POLICYNIM_MCP_PORT"),
+        ([socket.AF_INET6], socket.AF_INET6, None, None, "Could not reserve"),
+        ([socket.AF_INET6], None, socket.AF_INET6, None, "Could not reserve"),
+    ],
+)
+def test_streamable_http_port_probe_checks_resolved_addresses(
+    monkeypatch,
+    address_families,
+    unsupported_family,
+    unavailable_family,
+    occupied_family,
+    expected_error,
+) -> None:
+    """Check every supported DNS address while preserving bind failures and cleanup."""
+    addresses = {
+        socket.AF_INET: ("127.0.0.1", 9001),
+        socket.AF_INET6: ("::1", 9001, 0, 0),
+    }
+    resolutions = [
+        (family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", addresses[family])
+        for family in address_families
+    ]
+    resolution_calls = []
+    socket_attempts = []
+    probes = []
+
+    def resolve(host, port, *args, **kwargs):
+        """Resolve a synthetic hostname without accessing DNS."""
+        resolution_calls.append((host, port))
+        return resolutions
+
+    class Probe:
+        """Record socket-family selection and deterministic startup cleanup."""
+
+        def __init__(self, family, socket_type, protocol=0):
+            """Capture the resolved socket parameters without opening a socket."""
+            socket_attempts.append(family)
+            if family == unsupported_family:
+                raise OSError(errno.EAFNOSUPPORT, "Address family unsupported")
+            self.family = family
+            self.socket_type = socket_type
+            self.protocol = protocol
+            self.options = []
+            self.bound_address = None
+            self.closed = False
+            probes.append(self)
+
+        def __enter__(self):
+            """Return this probe for deterministic cleanup."""
+            return self
+
+        def __exit__(self, *args):
+            """Close the probe on either successful or failed binding."""
+            self.closed = True
+
+        def setsockopt(self, *option):
+            """Record options that keep IPv4 and IPv6 binds independent."""
+            self.options.append(option)
+
+        def bind(self, address):
+            """Bind only a resolved address or reproduce an operating-system failure."""
+            assert address == addresses[self.family]
+            self.bound_address = address
+            if self.family == unavailable_family:
+                raise OSError(errno.EADDRNOTAVAIL, "Address unavailable")
+            if self.family == occupied_family:
+                raise OSError(errno.EADDRINUSE, "Address in use")
+
+    monkeypatch.setattr(mcp_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(mcp_module.socket, "socket", Probe)
+    monkeypatch.setattr(mcp_module.socket, "has_ipv6", True)
+    if expected_error is None:
+        mcp_module._ensure_streamable_http_port_available("mcp.example", 9001)
+    else:
+        with pytest.raises(ConfigurationError, match=expected_error):
+            mcp_module._ensure_streamable_http_port_available("mcp.example", 9001)
+
+    assert resolution_calls == [("mcp.example", 9001)]
+    assert socket_attempts == list(dict.fromkeys(address_families))
+    assert [probe.family for probe in probes] == [
+        family for family in dict.fromkeys(address_families) if family != unsupported_family
+    ]
+    assert all(probe.closed for probe in probes)
+    assert all(probe.protocol == socket.IPPROTO_TCP for probe in probes)
+    for probe in probes:
+        if probe.family == socket.AF_INET6:
+            assert (socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1) in probe.options
 
 
 def test_run_server_surfaces_streamable_http_port_conflicts(monkeypatch) -> None:
@@ -1353,39 +1492,6 @@ def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> N
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
-
-
-@pytest.mark.parametrize(
-    ("bind_host", "public_origin", "request_host", "expected_status"),
-    [
-        ("192.0.2.20", None, "192.0.2.20:8000", 421),
-        ("192.0.2.20", "http://192.0.2.20:8000", "192.0.2.20:8000", 200),
-        ("0.0.0.0", None, "192.0.2.20:8000", 421),
-        ("0.0.0.0", None, "localhost:8000", 200),
-    ],
-    ids=["custom-bind-untrusted", "public-origin-trusted", "wildcard-untrusted", "loopback"],
-)
-def test_bind_address_does_not_expand_trusted_http_hosts(
-    monkeypatch, bind_host, public_origin, request_host, expected_status
-) -> None:
-    """Custom and wildcard socket binds confer no trust without a matching public origin."""
-    _stub_streamable_http_server(monkeypatch)
-    settings = Settings.model_validate(
-        {
-            "mcp_host": bind_host,
-            "mcp_public_base_url": public_origin,
-            "mcp_require_auth": False,
-            "beta_signup_enabled": False,
-        }
-    )
-    app = mcp_module._build_streamable_http_app(settings)
-
-    with TestClient(app, base_url=f"http://{request_host}") as client:
-        response = client.get("/mcp", follow_redirects=False)
-
-    assert response.status_code == expected_status
-    if expected_status == 200:
-        assert response.json() == {"ok": True}
 
 
 @pytest.mark.parametrize("secret", [None, "", "   "])

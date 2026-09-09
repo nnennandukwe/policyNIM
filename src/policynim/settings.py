@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
+import socket
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -183,6 +186,52 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             raise ValueError("POLICYNIM_INDEX_DB_PATH must not be empty.")
         return value
+
+    @field_validator("mcp_host", mode="before")
+    @classmethod
+    def validate_mcp_host(cls, value: Any) -> str:
+        """Normalize bare bind hosts without admitting URL syntax or numeric aliases."""
+        remedy = (
+            "POLICYNIM_MCP_HOST must be a bare IPv4/IPv6 address or an ASCII DNS hostname. "
+            "Use 127.0.0.1, ::1, or policy.example; set POLICYNIM_MCP_PORT separately."
+        )
+        if (
+            not isinstance(value, str)
+            or not value
+            or not value.isascii()
+            or any(character.isspace() for character in value)
+            or "%" in value
+        ):
+            raise ValueError(remedy)
+
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            address = None
+        if address is not None:
+            effective_address = address
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+                effective_address = address.ipv4_mapped
+            if str(effective_address) == "255.255.255.255":
+                raise ValueError(remedy + " Broadcast addresses are not supported.")
+            return value.lower()
+
+        normalized = value.lower()
+        dns_name = normalized.removesuffix(".")
+        if (
+            len(dns_name) > 253
+            or re.fullmatch(r"[0-9.]+", dns_name) is not None
+            or any(
+                re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                for label in dns_name.split(".")
+            )
+        ):
+            raise ValueError(remedy)
+        try:
+            socket.inet_aton(dns_name)
+        except OSError:
+            return normalized
+        raise ValueError(remedy + " Legacy numeric IPv4 aliases are not supported.")
 
     @field_validator("mcp_bearer_tokens", mode="before")
     @classmethod
