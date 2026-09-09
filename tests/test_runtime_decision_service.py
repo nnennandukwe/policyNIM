@@ -52,6 +52,7 @@ class MockIndexStore:
         """The fixture represents a compatible index."""
 
     def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
+        """Implement the test store's replacement protocol with a synthetic build receipt."""
         self._chunks = [PolicyChunk(**chunk.model_dump(exclude={"vector"})) for chunk in chunks]
         return "test-build"
 

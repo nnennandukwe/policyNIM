@@ -311,7 +311,10 @@ class EvalService:
         """Run live eval cases against an isolated temporary index."""
         with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
             temp_settings = self._settings.model_copy(
-                update={"index_db_path": Path(temp_dir) / "index.sqlite3"}
+                update={
+                    "index_db_path": Path(temp_dir) / "index.sqlite3",
+                    "runtime_rules_artifact_path": Path(temp_dir) / "runtime_rules.json",
+                }
             )
             ingest_service = create_ingest_service(temp_settings)
             try:

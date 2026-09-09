@@ -242,7 +242,7 @@ def _stage_runtime_rules_artifact(
 def _finalize_runtime_rules_artifact(
     staged_path: Path, destination: Path, observed: tuple[int, int, int, int] | None
 ) -> None:
-    """Atomically move a staged artifact into its final location."""
+    """Publish staged rules; replacing existing files requires a single offline publisher."""
     if _artifact_identity(destination) != observed:
         raise IndexCompatibilityError("Runtime-rules destination changed during ingestion.")
     if observed is None:

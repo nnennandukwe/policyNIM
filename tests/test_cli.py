@@ -4462,6 +4462,7 @@ def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) ->
 
 @pytest.mark.parametrize("mutation", ["legacy", "model", "incomplete", "compatible"])
 def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_path, mutation):
+    """Verify doctor reports index identity without provider calls."""
     import sqlite3
 
     checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
@@ -4484,7 +4485,7 @@ def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_p
     result = runner.invoke(app, ["doctor", "--format", "json"])
     assert result.exit_code == 0
     report = json.loads(result.stdout)
-    check = next(c for c in report["checks"] if c["name"] == "local_index_path")
+    check = next(entry for entry in report["checks"] if entry["name"] == "local_index_path")
     assert check["status"] == ("ok" if mutation == "compatible" else "action_required")
     assert report["index"]["compatible"] is (mutation == "compatible")
     if mutation == "compatible":
@@ -4494,3 +4495,25 @@ def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_p
         assert "separate" in " ".join(report["next_steps"])
     assert "doctor-secret-sentinel" not in result.stdout
     assert path.read_bytes() == before
+
+
+def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tmp_path):
+    """Use the real ingest command to reject corrupt data with operator guidance."""
+    from test_index_identity import SpyEmbedder
+
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    path = checkout / "data" / "index.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"private-corrupt-index-sentinel")
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="secret-key-sentinel")
+    embedder = SpyEmbedder()
+    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", lambda _: embedder)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "separate" in result.stderr
+    assert "sentinel" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert embedder.calls == 0 and embedder.closed
+    assert path.read_bytes() == b"private-corrupt-index-sentinel"

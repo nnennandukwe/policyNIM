@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 from openai import (
     APIConnectionError,
+    APIResponseValidationError,
     APIStatusError,
     APITimeoutError,
     AuthenticationError,
@@ -120,6 +121,7 @@ class NVIDIAEmbedder(Embedder):
         *,
         input_type: str,
     ) -> list[list[float]]:
+        """Request passage or query vectors with bounded retries and sanitized failures."""
         for attempt in range(self._max_retries + 1):
             try:
                 response = self._client.embeddings.create(
@@ -131,7 +133,14 @@ class NVIDIAEmbedder(Embedder):
                         "truncate": "NONE",
                     },
                 )
-                return _validate_embeddings_response(response.data, expected_count=len(texts))
+                return _validate_embeddings_response(
+                    getattr(response, "data", None), expected_count=len(texts)
+                )
+            except (APIResponseValidationError, json.JSONDecodeError) as exc:
+                raise ProviderError(
+                    "NVIDIA embeddings response was invalid.",
+                    failure_class="invalid_response",
+                ) from exc
             except AuthenticationError as exc:
                 raise _auth_error("embeddings") from exc
             except BadRequestError as exc:
@@ -287,6 +296,7 @@ class NVIDIAReranker(Reranker):
         return ranked[:top_k]
 
     def _request_ranking(self, payload: dict[str, object]) -> Any:
+        """Request passage rankings and classify failures without exposing response bodies."""
         endpoint = f"{self._model}/reranking"
         for attempt in range(self._max_retries + 1):
             try:
@@ -558,6 +568,7 @@ def _request_chat_completion(
     max_retries: int,
     operation: str,
 ) -> str:
+    """Request structured chat output and sanitize provider failures."""
     options: dict[str, Any] = {"temperature": 0, "top_p": 1}
     if model == "nvidia/nemotron-3-super-120b-a12b":
         options = {
@@ -684,10 +695,16 @@ def _normalize_text(text: str, *, field_name: str) -> str:
 
 
 def _validate_embeddings_response(
-    data: Sequence[Any],
+    data: object,
     *,
     expected_count: int,
 ) -> list[list[float]]:
+    """Require one finite, consistently sized vector for each requested input."""
+    if not isinstance(data, list):
+        raise ProviderError(
+            "NVIDIA embeddings response did not contain embedding data.",
+            failure_class="invalid_response",
+        )
     if len(data) != expected_count:
         raise ProviderError(
             "NVIDIA embeddings response count did not match the number of inputs.",

@@ -60,6 +60,7 @@ class RecordingIndexStore:
         """The fixture represents a compatible index."""
 
     def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
+        """Implement the test store's replacement protocol with a synthetic build receipt."""
         self.replace_calls += 1
         return "test-build"
 

@@ -3080,6 +3080,7 @@ def _path_text(path: Path | None) -> str | None:
 
 
 def _cli_error_message(error: PolicyNIMError) -> str:
+    """Render controlled errors with the recovery guidance appropriate to their class."""
     if config_discovery.standalone_setup_missing() and _looks_like_missing_local_setup_error(error):
         return _missing_setup_message()
     if (

@@ -30,6 +30,7 @@ from policynim.types import EmbeddingIdentity
     ],
 )
 def test_failed_migration_preserves_original_installation(tmp_path, monkeypatch, fault):
+    """Verify failed migration preserves original installation."""
     original_settings, original, _ = make_ingest(tmp_path, filename="original.sqlite3")
     original.run()
     preserved = [
@@ -43,6 +44,7 @@ def test_failed_migration_preserves_original_installation(tmp_path, monkeypatch,
     )
 
     def fail(*args, **kwargs):
+        """Interrupt the selected boundary to verify preservation and cleanup."""
         if fault.startswith("interrupt"):
             raise KeyboardInterrupt("injected interruption")
         raise OSError("injected failure")
@@ -72,6 +74,7 @@ def test_failed_migration_preserves_original_installation(tmp_path, monkeypatch,
 
 
 def test_complete_migration_retains_old_index_and_records_new_space(tmp_path):
+    """Verify complete migration retains old index and records new space."""
     old_settings, old, _ = make_ingest(tmp_path, filename="old.sqlite3")
     old.run()
     old_bytes = old_settings.index_db_path.read_bytes()
@@ -86,11 +89,13 @@ def test_complete_migration_retains_old_index_and_records_new_space(tmp_path):
 
 
 def test_new_index_publication_does_not_clobber_concurrent_creator(tmp_path, monkeypatch):
+    """Verify new index publication does not clobber concurrent creator."""
     path = tmp_path / "index.sqlite3"
     store = create_index_store(settings_for(path))
     real_link = storage_module.os.link
 
     def competing_link(source, destination):
+        """Simulate another owner creating the destination before no-clobber publication."""
         Path(destination).write_bytes(b"concurrent owner")
         real_link(source, destination)
 
@@ -102,6 +107,7 @@ def test_new_index_publication_does_not_clobber_concurrent_creator(tmp_path, mon
 
 
 def test_destination_replaced_during_embedding_is_not_overwritten(tmp_path):
+    """Verify destination replaced during embedding is not overwritten."""
     settings, service, embedder = make_ingest(tmp_path)
     replacement = tmp_path / "other.sqlite3"
     create_index_store(settings_for(replacement, "test/other")).replace([chunk()])
@@ -109,6 +115,7 @@ def test_destination_replaced_during_embedding_is_not_overwritten(tmp_path):
     original_embed = embedder.embed_documents
 
     def replace_destination(texts):
+        """Replace the observed destination while ingestion is preparing its candidate."""
         replacement.replace(settings.index_db_path)
         return original_embed(texts)
 
@@ -119,12 +126,14 @@ def test_destination_replaced_during_embedding_is_not_overwritten(tmp_path):
 
 
 def test_destination_changes_during_database_write_are_preserved(tmp_path, monkeypatch):
+    """Verify destination changes during database write are preserved."""
     settings = settings_for(tmp_path / "index.sqlite3")
     store = create_index_store(settings)
     store.replace([chunk()])
     insert = storage_module._insert_chunks
 
     def replace_destination(conn, chunks):
+        """Replace the observed destination while ingestion is preparing its candidate."""
         insert(conn, chunks)
         settings.index_db_path.unlink()
         settings.index_db_path.write_bytes(b"concurrent destination")
@@ -136,11 +145,13 @@ def test_destination_changes_during_database_write_are_preserved(tmp_path, monke
 
 
 def test_concurrent_rules_destination_is_preserved_and_candidate_unready(tmp_path, monkeypatch):
+    """Verify concurrent rules destination is preserved and candidate unready."""
     settings, service, _ = make_ingest(tmp_path)
     rules = tmp_path / "index.sqlite3.rules.json"
     finalize = ingest_module._finalize_runtime_rules_artifact
 
     def competing_rules(*args):
+        """Create another writer's rules artifact before candidate finalization."""
         rules.write_text("concurrent rules")
         finalize(*args)
 
@@ -152,6 +163,7 @@ def test_concurrent_rules_destination_is_preserved_and_candidate_unready(tmp_pat
 
 
 def test_completion_receipt_cannot_mark_another_build_ready(tmp_path):
+    """Verify completion receipt cannot mark another build ready."""
     store = create_index_store(settings_for(tmp_path / "index.sqlite3"))
     store.replace([chunk()], complete=False)
     with pytest.raises(MissingIndexError, match="changed"):
@@ -159,15 +171,55 @@ def test_completion_receipt_cannot_mark_another_build_ready(tmp_path):
     assert not store.inspect_identity().complete
 
 
+def test_destination_change_during_final_validation_is_preserved(tmp_path, monkeypatch):
+    """Reject drift introduced by final compatibility inspection before publication."""
+    path = tmp_path / "index.sqlite3"
+    store = create_index_store(settings_for(path))
+    store.replace([chunk()])
+    replacement = tmp_path / "replacement.sqlite3"
+    create_index_store(settings_for(replacement)).replace([chunk()])
+    replacement_bytes = replacement.read_bytes()
+    validate = store.validate_replacement
+    calls = 0
+
+    def change_after_validation():
+        """Publish a compatible competing database during the final inspection."""
+        nonlocal calls
+        calls += 1
+        validate()
+        if calls == 2:
+            replacement.replace(path)
+
+    monkeypatch.setattr(store, "validate_replacement", change_after_validation)
+    with pytest.raises(MissingIndexError, match="changed"):
+        store.replace([chunk()])
+    assert path.read_bytes() == replacement_bytes
+
+
+def test_corrupt_index_has_sanitized_migration_guidance(tmp_path):
+    """Reject corrupt persisted data without changing it or exposing SQLite details."""
+    from policynim.errors import IndexCompatibilityError
+
+    path = tmp_path / "index.sqlite3"
+    path.write_bytes(b"private-corrupt-index-sentinel")
+    with pytest.raises(IndexCompatibilityError, match="separate") as caught:
+        create_index_store(settings_for(path)).validate_replacement()
+    assert "sentinel" not in str(caught.value)
+    assert path.read_bytes() == b"private-corrupt-index-sentinel"
+
+
 @pytest.mark.parametrize("published", [False, True])
 def test_cleanup_error_never_misreports_publication(tmp_path, monkeypatch, caplog, published):
+    """Verify cleanup error never misreports publication."""
     settings = settings_for(tmp_path / "index.sqlite3")
     store = create_index_store(settings)
 
     def cleanup_failure(*args):
+        """Inject an owned-file cleanup failure without removing published data."""
         raise PermissionError("secret-cleanup-sentinel")
 
     def write_failure(*args):
+        """Fail candidate preparation so cleanup cannot obscure the primary error."""
         raise ValueError("original write failure")
 
     monkeypatch.setattr(storage_module, "_cleanup_database_files", cleanup_failure)
@@ -184,6 +236,7 @@ def test_cleanup_error_never_misreports_publication(tmp_path, monkeypatch, caplo
 
 
 def test_output_cannot_replace_preserved_policy_source(tmp_path):
+    """Verify output cannot replace preserved policy source."""
     settings, service, embedder = make_ingest(tmp_path)
     service.run()
     source = tmp_path / "policies" / "logging.md"
@@ -212,11 +265,13 @@ def test_output_cannot_replace_preserved_policy_source(tmp_path):
     ],
 )
 def test_identity_rejects_credential_bearing_or_invalid_endpoints(endpoint):
+    """Verify identity rejects credential bearing or invalid endpoints."""
     with pytest.raises(ValueError):
         EmbeddingIdentity(model="test/model", endpoint=endpoint)
 
 
 def test_identity_normalizes_only_equivalent_endpoint_spelling():
+    """Verify identity normalizes only equivalent endpoint spelling."""
     assert EmbeddingIdentity(model="m", endpoint="https://EXAMPLE.invalid:443/v1/") == (
         EmbeddingIdentity(model="m", endpoint="https://example.invalid/v1")
     )
@@ -224,6 +279,7 @@ def test_identity_normalizes_only_equivalent_endpoint_spelling():
 
 @pytest.mark.parametrize("fault", ["begin", "commit", "checkpoint", "close"])
 def test_database_lifecycle_failure_preserves_published_index(tmp_path, monkeypatch, fault):
+    """Verify database lifecycle failure preserves published index."""
     settings = settings_for(tmp_path / "index.sqlite3")
     store = create_index_store(settings)
     store.replace([chunk()])
@@ -233,12 +289,15 @@ def test_database_lifecycle_failure_preserves_published_index(tmp_path, monkeypa
 
     class FailingConnection:
         def __init__(self, connection):
+            """Initialize the test double's state and wrapped resources."""
             self.connection = connection
 
         def __getattr__(self, name):
+            """Delegate unmodified connection operations to the real SQLite connection."""
             return getattr(self.connection, name)
 
         def execute(self, sql, *args):
+            """Inject the selected transaction failure and delegate other SQL to SQLite."""
             if (
                 sql
                 == {
@@ -252,12 +311,14 @@ def test_database_lifecycle_failure_preserves_published_index(tmp_path, monkeypa
             return self.connection.execute(sql, *args)
 
         def close(self):
+            """Record or perform resource cleanup for lifecycle assertions."""
             self.connection.close()
             closed.append(True)
             if fault == "close":
                 raise OSError("injected close failure")
 
     def fault_connection(path, **kwargs):
+        """Wrap only staging connections with the selected database lifecycle failure."""
         connection = connect(path, **kwargs)
         return FailingConnection(connection) if path.suffix == ".tmp" else connection
 
@@ -271,21 +332,26 @@ def test_database_lifecycle_failure_preserves_published_index(tmp_path, monkeypa
 
 
 def test_rules_staging_write_failure_cleans_owned_file(tmp_path, monkeypatch):
+    """Verify rules staging write failure cleans owned file."""
     settings, service, embedder = make_ingest(tmp_path)
     temporary_file = ingest_module.NamedTemporaryFile
 
     class FailingWriter:
         def __init__(self, *args, **kwargs):
+            """Initialize the test double's state and wrapped resources."""
             self.handle = temporary_file(*args, **kwargs)
             self.name = self.handle.name
 
         def __enter__(self):
+            """Return the owned test resource for context-managed execution."""
             return self
 
         def __exit__(self, *args):
+            """Release the test resource when context-managed execution ends."""
             self.handle.close()
 
         def write(self, text):
+            """Write partial staged data before injecting the artifact failure."""
             self.handle.write(text[:10])
             raise OSError("injected partial rules write")
 
@@ -300,10 +366,12 @@ def test_rules_staging_write_failure_cleans_owned_file(tmp_path, monkeypatch):
 def test_rules_cleanup_failure_after_publication_keeps_complete_result(
     tmp_path, monkeypatch, caplog
 ):
+    """Verify rules cleanup failure after publication keeps complete result."""
     settings, service, _ = make_ingest(tmp_path)
     unlink = Path.unlink
 
     def cleanup_failure(path, *args, **kwargs):
+        """Inject an owned-file cleanup failure without removing published data."""
         if ".rules.json." in path.name:
             raise OSError("secret-unlink-sentinel")
         return unlink(path, *args, **kwargs)
@@ -316,6 +384,7 @@ def test_rules_cleanup_failure_after_publication_keeps_complete_result(
 
 
 def test_ingestion_does_not_replace_same_model_destination_created_during_embedding(tmp_path):
+    """Verify ingestion does not replace same model destination created during embedding."""
     settings, service, embedder = make_ingest(tmp_path)
     replacement = tmp_path / "other.sqlite3"
     create_index_store(settings_for(replacement)).replace([chunk()])
@@ -323,6 +392,7 @@ def test_ingestion_does_not_replace_same_model_destination_created_during_embedd
     original_embed = embedder.embed_documents
 
     def concurrent_build(texts):
+        """Publish a compatible index while the original ingestion is embedding."""
         replacement.replace(settings.index_db_path)
         return original_embed(texts)
 
