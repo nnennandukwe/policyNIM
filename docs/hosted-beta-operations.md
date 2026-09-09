@@ -104,7 +104,10 @@ GitHub Actions smoke:
 - hosted MCP can stay healthy on `/healthz` while an individual tool call fails
   because NVIDIA embeddings, reranking, or grounded generation is temporarily
   unavailable
-- retry after a short delay first
+- for transient timeout, connection, rate-limit, or server errors, retry after a short delay
+- HTTP 410 is classified as `endpoint_unavailable` and is not retried; verify
+  the operation's model and endpoint configuration against the current NVIDIA
+  catalog and follow [provider recovery](hosted-provider-recovery.md)
 - if the failure persists, the operator should inspect hosted MCP logs for
   `upstream_failure_class` such as `timeout`, `connection`, or `rate_limit`
 
@@ -210,6 +213,14 @@ Railway-specific build note:
   `ARG NVIDIA_API_KEY` for the bake-time ingest step
 - set `NVIDIA_API_KEY` as a Railway service variable before deploy so it is
   available during the image build as well as at runtime for live retrieval
+- the ingestion model, base URL, batch size, timeout, and retry variables are
+  explicitly declared as build arguments in both Docker stages; changing a
+  runtime variable alone does not change an already baked index
+- update existing model overrides for all three operations using the
+  [provider recovery runbook](hosted-provider-recovery.md). An embedding identity
+  mismatch keeps startup unready; rebuild the complete preserved corpus
+- both the SQLite index and compiled runtime-rules artifact are copied into the
+  runtime image. The database is marked complete only after rules finalization
 
 Recommended beta setup:
 

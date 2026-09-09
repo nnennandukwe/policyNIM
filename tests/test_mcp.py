@@ -2036,3 +2036,34 @@ def test_slow_github_callback_does_not_block_portal_requests(monkeypatch) -> Non
             assert result.status_code == 502
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", ["endpoint_unavailable", "index_incompatible"])
+def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, failure):
+    from policynim.errors import IndexCompatibilityError
+
+    error = (
+        ProviderError("private-response-sentinel", failure_class=failure)
+        if failure == "endpoint_unavailable"
+        else IndexCompatibilityError("private-index-path-sentinel")
+    )
+    closed = []
+    events = []
+
+    class FailingSearch:
+        def search(self, request):
+            raise error
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: FailingSearch())
+    monkeypatch.setattr(mcp_module, "_emit_hosted_event", lambda *args, **kw: events.append(kw))
+    with pytest.raises(ToolError) as caught:
+        _call_tool("policy_search", {"query": "request logging", "top_k": 1})
+    text = str(caught.value)
+    assert "sentinel" not in text
+    assert ("Do not retry" if failure == "endpoint_unavailable" else "separate") in text
+    assert "Retry or" not in text
+    assert closed == [True]
+    assert events[0]["upstream_failure_class"] == failure

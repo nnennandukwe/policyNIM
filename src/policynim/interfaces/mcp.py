@@ -40,6 +40,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
     ConfigurationError,
+    IndexCompatibilityError,
     InvalidPolicyDocumentError,
     MissingIndexError,
     PolicyNIMError,
@@ -409,6 +410,12 @@ async def _run_logged_tool(
 
 def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
+    if isinstance(exc, IndexCompatibilityError):
+        return (
+            "The policy index is incompatible or incomplete. Ask the operator to preserve "
+            "the sources and rebuild the complete corpus into separate index and runtime-rules "
+            "paths with the configured embedding model, then validate before activation."
+        )
     if isinstance(exc, MissingIndexError):
         return (
             "The policy index is unavailable. Ask the operator to run `policynim ingest` "
@@ -420,6 +427,11 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
         return "PolicyNIM configuration is invalid. Ask the operator to check the server settings."
     if isinstance(exc, ProviderError):
         messages = {
+            "endpoint_unavailable": (
+                "The policy model endpoint is unavailable (HTTP 410). Do not retry unchanged "
+                "requests. Ask the operator to verify NVIDIA model and endpoint settings "
+                "against the current API catalog, including Docker build-time configuration."
+            ),
             "timeout": "The policy model provider timed out. Retry later.",
             "rate_limit": "The policy model provider is rate limited. Retry later.",
             "connection": "The policy model provider is unavailable. Retry later.",
