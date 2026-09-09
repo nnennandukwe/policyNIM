@@ -105,9 +105,19 @@ a warning after successful completion does not mean publication was rolled back.
 Corrupt or unreadable existing indexes produce the same sanitized, separate-path
 recovery guidance; ingestion never replaces them implicitly.
 
-Only after validation should an approved operator select the candidate's index,
-rules, and matching provider configuration during restart or deployment. Retain
-compatible application/configuration/index combinations for rollback. Preserving
+For a local restart, an approved operator can select the validated candidate's
+index and rules paths with the matching provider configuration.
+
+For hosted containers, the candidate is a **new image** built from the complete
+preserved corpus in its build context. Both Dockerfiles ingest that corpus inside
+the isolated builder and package `/app/data/index.sqlite3` and
+`/app/data/runtime/runtime_rules.json`. Inspect that image's identity, inventory,
+and rules before approving its deployment with matching runtime provider settings.
+Do not set Railway paths to the local shell's `recovery_dir`; those files are not
+inside the image. This workflow rebuilds the hosted candidate in the image and
+does not introduce external artifact publication or policy generations.
+
+Retain compatible application/configuration/index combinations for rollback. Preserving
 an old index whose provider endpoint is deprecated does not prove it remains an
 operational rollback option.
 
@@ -151,6 +161,8 @@ Invariants:
   startup. Diagnostics use read-only database connections.
 - Clean up only uniquely owned staging files. Do not erase a concurrent writer's
   destination or its sidecars.
+- Reject destinations with existing WAL, shared-memory, or rollback-journal
+  sidecars, including orphaned files or links. Preserve them and choose fresh paths.
 
 Hosted server startup retains Foundation's automatic ingestion for a truly absent
 index; that path can contact NVIDIA and belongs inside an approved deployment.

@@ -291,6 +291,66 @@ def test_completion_rechecks_file_after_connection_open(tmp_path, monkeypatch):
     assert not store.inspect_identity().complete
 
 
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+@pytest.mark.parametrize("broken_symlink", [False, True])
+def test_orphaned_destination_sidecars_block_ingestion_before_embedding(
+    tmp_path, suffix, broken_symlink
+):
+    """Preserve unowned sidecars and reject reuse of their absent database destination."""
+    settings, service, embedder = make_ingest(tmp_path)
+    sidecar = Path(str(settings.index_db_path) + suffix)
+    if broken_symlink:
+        sidecar.symlink_to(tmp_path / "absent-target")
+    else:
+        sidecar.write_bytes(b"preserved sidecar")
+    with pytest.raises(MissingIndexError, match="separate"):
+        service.run()
+    assert embedder.calls == 0
+    assert not settings.index_db_path.exists()
+    if broken_symlink:
+        assert sidecar.is_symlink()
+        assert sidecar.readlink() == tmp_path / "absent-target"
+    else:
+        assert sidecar.read_bytes() == b"preserved sidecar"
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_sidecar_created_during_preparation_prevents_fresh_publication(
+    tmp_path, monkeypatch, suffix
+):
+    """Refuse publication when an unowned sidecar appears during database preparation."""
+    path = tmp_path / "index.sqlite3"
+    sidecar = Path(str(path) + suffix)
+    insert = storage_module._insert_chunks
+
+    def create_competing_sidecar(conn, chunks):
+        """Write the candidate and then introduce an unowned destination sidecar."""
+        insert(conn, chunks)
+        sidecar.write_bytes(b"competing sidecar")
+
+    monkeypatch.setattr(storage_module, "_insert_chunks", create_competing_sidecar)
+    with pytest.raises(MissingIndexError, match="separate"):
+        create_index_store(settings_for(path)).replace([chunk()])
+    assert not path.exists()
+    assert sidecar.read_bytes() == b"competing sidecar"
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_completion_preserves_unowned_destination_sidecars(tmp_path, suffix):
+    """Do not complete or alter a candidate after an unowned journal appears."""
+    path = tmp_path / "index.sqlite3"
+    store = create_index_store(settings_for(path))
+    build_id = store.replace([chunk()], complete=False)
+    original = path.read_bytes()
+    sidecar = Path(str(path) + suffix)
+    sidecar.write_bytes(b"preserved completion sidecar")
+    with pytest.raises(MissingIndexError, match="separate"):
+        store.complete_ingest(build_id)
+    assert path.read_bytes() == original
+    assert sidecar.read_bytes() == b"preserved completion sidecar"
+
+
 @pytest.mark.parametrize("published", [False, True])
 def test_cleanup_error_never_misreports_publication(tmp_path, monkeypatch, caplog, published):
     """Verify cleanup error never misreports publication."""
