@@ -65,6 +65,7 @@ class SQLiteVecIndexStore(IndexStore):
         """Reject unknown or incompatible existing data before incurring embedding usage."""
         if self._embedding_identity is None or self._path.is_symlink():
             raise IndexCompatibilityError()
+        _require_no_destination_sidecars(self._path)
         if self._path.exists():
             try:
                 self.validate_identity()
@@ -136,15 +137,12 @@ class SQLiteVecIndexStore(IndexStore):
                 raise IndexCompatibilityError("Prepared index disappeared before publication.")
             if _path_identity(self._path) != observed:
                 raise IndexCompatibilityError("Index destination changed during preparation.")
+            _require_no_destination_sidecars(self._path)
             if observed is None:
                 # Unlike replace(), link() cannot overwrite a concurrent creator.
                 os.link(tmp_path, self._path)
             else:
                 self.validate_replacement()
-                if any(p.exists() for p in _database_files(self._path)[1:]):
-                    raise IndexCompatibilityError(
-                        "Index is in use; rebuild offline into separate paths."
-                    )
                 if _path_identity(self._path) != observed:
                     raise IndexCompatibilityError("Index destination changed before publication.")
                 tmp_path.replace(self._path)
@@ -183,6 +181,7 @@ class SQLiteVecIndexStore(IndexStore):
 
     def _validate_pending_ingest(self, build_id: str) -> None:
         """Require the producer's build receipt and the physical file it staged."""
+        _require_no_destination_sidecars(self._path)
         if (
             self._pending_ingest is None
             or self._pending_ingest[0] != build_id
@@ -642,15 +641,22 @@ def _json_string_list(value: str) -> list[str]:
 
 
 def _cleanup_database_files(path: Path) -> None:
-    """Remove a SQLite database and its WAL sidecar files."""
+    """Remove an owned SQLite database and its journal sidecars."""
     for candidate in _database_files(path):
         candidate.unlink(missing_ok=True)
 
 
-def _database_files(path: Path) -> tuple[Path, Path, Path]:
-    """Return the main SQLite database path plus WAL sidecar paths."""
+def _require_no_destination_sidecars(path: Path) -> None:
+    """Reject unowned journals, including broken links, without removing them."""
+    if any(_path_identity(sidecar) is not None for sidecar in _database_files(path)[1:]):
+        raise IndexCompatibilityError("Index destination has existing sidecars.")
+
+
+def _database_files(path: Path) -> tuple[Path, ...]:
+    """Return the main SQLite database and its WAL and rollback-journal paths."""
     return (
         path,
         path.with_name(f"{path.name}-wal"),
         path.with_name(f"{path.name}-shm"),
+        path.with_name(f"{path.name}-journal"),
     )
