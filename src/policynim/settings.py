@@ -115,6 +115,7 @@ class Settings(BaseSettings):
         env_prefix="POLICYNIM_",
         extra="ignore",
         populate_by_name=True,
+        hide_input_in_errors=True,
     )
 
     @classmethod
