@@ -10,9 +10,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock, Mock, sentinel
 
 import pytest
 from click import unstyle
+from mcp import MCPError
+from mcp.types import ListToolsResult, Tool
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
@@ -1653,7 +1656,29 @@ def test_doctor_reports_ready_checkout_and_mcp_hints(
         ),
     }
     assert payload["mcp"]["streamable_http_url"] == "http://127.0.0.1:8000/mcp"
+    assert payload["mcp"]["max_concurrent_operations"] == 10
     assert "nvapi-test-key" not in result.stdout
+
+
+def test_doctor_reports_configured_mcp_operation_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Expose the effective admission limit in machine and human diagnostics."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS="3",
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout)["mcp"]["max_concurrent_operations"] == 3
+    assert text_result.exit_code == 0
+    assert "- concurrent operations: 3" in text_result.stdout
 
 
 def test_doctor_source_checkout_recovery_uses_uv_run_commands(
@@ -3446,6 +3471,91 @@ def test_mcp_smoke_failure_text_prints_recovery_steps(
     assert "Next steps:" in result.stdout
     assert "policynim doctor" in result.stdout
     assert "policynim ingest" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("tool_names", "expected_status", "missing_tools"),
+    [
+        (["policy_search", "policy_preflight"], "ok", []),
+        (["policy_search"], "error", ["policy_preflight"]),
+    ],
+)
+def test_mcp_stdio_smoke_discovers_sdk_tools_with_float_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tool_names: list[str],
+    expected_status: str,
+    missing_tools: list[str],
+) -> None:
+    """Keep discovery reports and client cleanup compatible with SDK 2."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    @asynccontextmanager
+    async def fake_stdio_client(*args: object, **kwargs: object):
+        yield sentinel.read_stream, sentinel.write_stream
+
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    session.list_tools.return_value = ListToolsResult(
+        tools=[Tool(name=name, input_schema={"type": "object"}) for name in tool_names]
+    )
+    session_factory = Mock(return_value=session)
+    monkeypatch.setattr(cli_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(cli_module, "ClientSession", session_factory)
+
+    report = asyncio.run(cli_module._run_mcp_stdio_smoke(timeout_seconds=7.5))
+
+    session_factory.assert_called_once_with(
+        sentinel.read_stream, sentinel.write_stream, read_timeout_seconds=7.5
+    )
+    session.initialize.assert_awaited_once_with()
+    session.list_tools.assert_awaited_once_with()
+    session.__aexit__.assert_awaited_once()
+    assert report["status"] == expected_status
+    assert report["tools"] == sorted(tool_names)
+    assert report["missing_tools"] == missing_tools
+    if missing_tools:
+        assert "mcp-config --target local-stdio" in " ".join(cast(list[str], report["next_steps"]))
+    else:
+        assert "next_steps" not in report
+
+
+@pytest.mark.parametrize("failure_stage", ["initialize", "list_tools"])
+@pytest.mark.parametrize("failure_kind", ["protocol", "timeout"])
+def test_mcp_stdio_smoke_reports_sdk_failures_and_closes_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_stage: str,
+    failure_kind: str,
+) -> None:
+    """Preserve recovery output when a connected client cannot complete discovery."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    @asynccontextmanager
+    async def fake_stdio_client(*args: object, **kwargs: object):
+        yield sentinel.read_stream, sentinel.write_stream
+
+    failure = (
+        MCPError(-32603, "Discovery unavailable")
+        if failure_kind == "protocol"
+        else TimeoutError("Discovery timed out")
+    )
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    getattr(session, failure_stage).side_effect = failure
+    monkeypatch.setattr(cli_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(cli_module, "ClientSession", Mock(return_value=session))
+
+    report = asyncio.run(cli_module._run_mcp_stdio_smoke(timeout_seconds=1.0))
+
+    assert report["status"] == "error"
+    assert report["tools"] == []
+    assert report["missing_tools"] == ["policy_preflight", "policy_search"]
+    assert type(failure).__name__ in str(report["message"])
+    assert "policynim doctor" in " ".join(cast(list[str], report["next_steps"]))
+    session.__aexit__.assert_awaited_once()
+    if failure_stage == "initialize":
+        session.list_tools.assert_not_awaited()
 
 
 def test_mcp_stdio_smoke_exception_report_includes_recovery_steps(

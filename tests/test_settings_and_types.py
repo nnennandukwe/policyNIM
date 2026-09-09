@@ -135,6 +135,39 @@ def test_settings_still_allows_constructor_field_names() -> None:
     assert settings.mcp_port == 9001
 
 
+def test_mcp_operation_limit_defaults_and_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow an explicit positive limit while preserving the default admission capacity."""
+    monkeypatch.delenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS", raising=False)
+    assert load_settings_without_env_file().mcp_max_concurrent_operations == 10
+    configured = load_settings_without_env_file(mcp_max_concurrent_operations=2)
+    assert configured.mcp_max_concurrent_operations == 2
+
+
+def test_mcp_operation_limit_environment_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read the prefixed variable and let direct construction override it."""
+    monkeypatch.setenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS", "4")
+    assert load_settings_without_env_file().mcp_max_concurrent_operations == 4
+    configured = load_settings_without_env_file(mcp_max_concurrent_operations=3)
+    assert configured.mcp_max_concurrent_operations == 3
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "", "1.5", "unlimited"])
+def test_mcp_operation_limit_rejects_invalid_environment(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Reject malformed limits rather than silently disabling admission control."""
+    monkeypatch.setenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS", value)
+    with pytest.raises(ValidationError, match="mcp_max_concurrent_operations"):
+        load_settings_without_env_file()
+
+
+@pytest.mark.parametrize("origin", ["https://user:secret@example.com", "https://user@example.com"])
+def test_mcp_public_origin_rejects_user_information(origin: str) -> None:
+    """Keep credentials out of the public origin used in health and transport security."""
+    with pytest.raises(ValidationError, match="must not include credentials"):
+        load_settings_without_env_file(mcp_public_base_url=origin)
+
+
 def test_settings_normalizes_nvidia_chat_model_names() -> None:
     settings = load_settings_without_env_file(nvidia_chat_model=" nvidia/model#variant ")
 

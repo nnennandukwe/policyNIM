@@ -329,6 +329,33 @@ Important evaluation rules:
 - `policy_preflight(task, domain?, top_k?)`
 - `policy_search(query, domain?, top_k?)`
 
+The MCP interface uses the official Python SDK `2.2.0` and supports the stable
+`2026-07-28` protocol alongside the SDK's legacy protocol adapter, over both
+stdio and Streamable HTTP. Current clients use `server/discover`; legacy clients
+initialize before listing or calling tools. The application version is reported
+explicitly. Tool output schemas describe `SearchResult` and `PreflightResult`,
+with equivalent JSON text content for existing clients. Both tools constrain
+`top_k` to `1..20` and advertise read-only, non-destructive access that can contact
+external NVIDIA services.
+
+Each server admits at most `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` expensive
+tool operations (default `10`, minimum `1`). Admission happens on the event loop
+before worker dispatch. Excess calls return a tool error asking the caller to
+retry later, without constructing a provider. An admitted operation constructs,
+uses, and closes its synchronous service on a worker thread. Cancellation retains
+the slot until that worker and its cleanup finish. This is a per-process bound,
+not a distributed quota or a measured production capacity claim.
+
+The HTTP transport is stateless for both modern and legacy clients. Host and
+Origin checks allow loopback and the configured public service origin; other
+hosts and supplied origins are rejected. Hosted SQLite authentication and GitHub
+requests run off the event loop while session and rate-limit state stay on it.
+The bearer-token beta flow remains the current authorization model; standards-based
+MCP OAuth is tracked separately in [#97](https://github.com/nnennandukwe/policyNIM/issues/97).
+
+SDK migration references: [official migration guide](https://py.sdk.modelcontextprotocol.io/migration/)
+and [protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/).
+
 ### Hosted HTTP Endpoint
 
 - `GET /healthz` returns a JSON readiness payload for the hosted HTTP runtime.
@@ -363,7 +390,7 @@ Shared interface guarantees:
   evidence store.
 - top-k validation is shared and explicit.
 - runtime setup failures are not masked as insufficient context.
-- hosted HTTP auth applies only to `/mcp`, never to `stdio`.
+- hosted HTTP auth applies to `/mcp` and its trailing-slash variants, never to `stdio`.
 - hosted beta auth stores one active API key per account in a local SQLite file
   mounted on the Railway auth volume.
 - hosted tool logs emit JSON lines with auth result, tool name, latency, and

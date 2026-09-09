@@ -91,6 +91,7 @@ class Settings(BaseSettings):
             validation_alias=AliasChoices("POLICYNIM_MCP_PORT", "PORT"),
         ),
     ] = 8000
+    mcp_max_concurrent_operations: Annotated[int, Field(ge=1)] = 10
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None
@@ -261,6 +262,8 @@ class Settings(BaseSettings):
     def validate_hosted_mcp_settings(self) -> Settings:
         """Validate hosted-only MCP settings without affecting stdio defaults."""
         if self.mcp_public_base_url is not None:
+            if self.mcp_public_base_url.username or self.mcp_public_base_url.password:
+                raise ValueError("POLICYNIM_MCP_PUBLIC_BASE_URL must not include credentials.")
             if self.mcp_public_base_url.path not in ("", "/"):
                 raise ValueError(
                     "POLICYNIM_MCP_PUBLIC_BASE_URL must be a service origin like "

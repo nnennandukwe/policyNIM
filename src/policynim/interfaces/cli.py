@@ -10,7 +10,7 @@ import re
 import shlex
 import sys
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from pathlib import Path
@@ -2516,7 +2516,7 @@ async def _run_mcp_stdio_smoke(
                 async with ClientSession(
                     read_stream,
                     write_stream,
-                    read_timeout_seconds=timedelta(seconds=timeout_seconds),
+                    read_timeout_seconds=timeout_seconds,
                 ) as session:
                     await session.initialize()
                     tool_result = await session.list_tools()
@@ -2849,6 +2849,7 @@ def _build_doctor_report() -> dict[str, object]:
         "local_stdio_config_commands": _doctor_mcp_config_commands(),
         "streamable_http_url": f"http://{settings.mcp_host}:{settings.mcp_port}/mcp",
         "auth_required": settings.mcp_require_auth,
+        "max_concurrent_operations": settings.mcp_max_concurrent_operations,
     }
     if not next_steps:
         search_command = _doctor_cli_command('search --query "refresh token cleanup" --top-k 5')
@@ -3026,6 +3027,7 @@ def _render_doctor_report(report: dict[str, object]) -> list[str]:
             for client, command in config_commands.items():
                 lines.append(f"- {client} config: {command}")
         lines.append(f"- streamable-http: {mcp.get('streamable_http_url')}")
+        lines.append(f"- concurrent operations: {mcp.get('max_concurrent_operations')}")
     next_steps = report["next_steps"]
     if isinstance(next_steps, list) and next_steps:
         lines.append("")

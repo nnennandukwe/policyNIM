@@ -55,6 +55,12 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
 
+The MCP server supports protocol `2026-07-28` and legacy clients through the
+official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
+`POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` to bound expensive tool calls per server
+(default `10`). Excess calls receive a retry-later error. See the
+[MCP workflow](docs/workflows.md) for transport and public-origin configuration.
+
 ## What To Run First
 
 If you want the shortest path to a real preflight run, start with

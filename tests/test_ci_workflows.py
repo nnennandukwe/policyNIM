@@ -20,8 +20,21 @@ def test_ci_pytest_gate_excludes_all_live_markers() -> None:
     """Ensure normal CI cannot discover live or Docker-only tests by accident."""
     text = _read_text(CI_WORKFLOW)
 
-    assert 'uv run pytest -q -m "not live and not docker_live"' in text
-    assert 'uv run pytest -q -m "not live"\n' not in text
+    pytest_commands = re.findall(r"run: (.*pytest.*)", text)
+    assert pytest_commands
+    for command in pytest_commands:
+        assert 'pytest -q -m "not live and not docker_live"' in command
+        assert "--no-sync" in command
+
+
+def test_ci_checks_supported_python_versions_from_locked_dependencies() -> None:
+    """Verify the SDK migration on both supported interpreters without resolving new versions."""
+    text = _read_text(CI_WORKFLOW)
+    assert 'python-version: ["3.11", "3.12"]' in text
+    assert "--python ${{ matrix.python-version }}" in text
+    sync_commands = re.findall(r"run: (.*uv sync.*)", text)
+    assert sync_commands
+    assert all("--locked" in command for command in sync_commands)
 
 
 def test_hosted_smoke_workflow_is_manual_and_secret_gated() -> None:
