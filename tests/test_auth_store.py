@@ -14,8 +14,7 @@ import pytest
 
 from policynim.errors import PolicyNIMError
 from policynim.storage import AuthStore
-from policynim.storage.auth_store import ApiKeyQuotaResult
-from policynim.types import BetaAccount, BetaUsageSnapshot
+from policynim.types import ApiKeyQuotaResult, BetaAccount, BetaUsageSnapshot
 
 
 def _hash_api_key(value: str) -> str:
@@ -472,7 +471,7 @@ def test_auth_store_admission_commits_before_waiting_revocation(
     )
 
 
-@pytest.mark.parametrize("failure_stage", ["snapshot", "commit"])
+@pytest.mark.parametrize("failure_stage", ["snapshot", "observation", "commit"])
 def test_auth_store_failed_admission_rolls_back_quota(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure_stage: str
 ) -> None:
@@ -485,6 +484,10 @@ def test_auth_store_failed_admission_rolls_back_quota(
     def reject_snapshot(**kwargs: object) -> BetaUsageSnapshot:
         """Inject usage-snapshot validation failure after the quota mutation."""
         raise ValueError("usage snapshot validation failed")
+
+    def reject_observation(**kwargs: object) -> ApiKeyQuotaResult:
+        """Exercise domain-model validation after the quota mutation, before commit."""
+        return ApiKeyQuotaResult.model_validate({**kwargs, "quota_consumed": "invalid-boolean"})
 
     def reject_commit(
         action: int,
@@ -507,6 +510,9 @@ def test_auth_store_failed_admission_rolls_back_quota(
     with monkeypatch.context() as patch:
         if failure_stage == "snapshot":
             patch.setattr("policynim.storage.auth_store._usage_snapshot", reject_snapshot)
+            expected_error = ValueError
+        elif failure_stage == "observation":
+            patch.setattr("policynim.storage.auth_store.ApiKeyQuotaResult", reject_observation)
             expected_error = ValueError
         else:
             patch.setattr(store, "_connect", failing_connect)

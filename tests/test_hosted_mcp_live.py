@@ -28,6 +28,7 @@ pytestmark = [
 
 @asynccontextmanager
 async def _authenticated_session() -> AsyncIterator[ClientSession]:
+    """Open an initialized hosted MCP session using the configured beta bearer token."""
     headers = {"Authorization": f"Bearer {_BETA_TOKEN}"}
     timeout = httpx2.Timeout(30.0, read=300.0)
     async with httpx2.AsyncClient(headers=headers, timeout=timeout) as http_client:
@@ -38,6 +39,7 @@ async def _authenticated_session() -> AsyncIterator[ClientSession]:
 
 
 def _structured_payload(result: CallToolResult) -> dict[str, object]:
+    """Require a successful tool result and return its structured object payload."""
     assert not result.is_error
     payload = result.structured_content
     assert isinstance(payload, dict)

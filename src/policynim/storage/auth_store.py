@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from policynim.errors import PolicyNIMError
 from policynim.types import (
+    ApiKeyQuotaResult,
     BetaAccount,
     BetaAccountStatus,
     BetaAuditEvent,
@@ -45,15 +45,6 @@ SELECT
     ) AS api_key_created_at
 FROM accounts a
 """
-
-
-@dataclass(frozen=True)
-class ApiKeyQuotaResult:
-    """Account and quota facts read or written by one committed transaction."""
-
-    account: BetaAccount | None
-    usage: BetaUsageSnapshot | None
-    quota_consumed: bool
 
 
 class AuthStore:
