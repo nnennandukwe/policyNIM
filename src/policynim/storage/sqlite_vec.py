@@ -3,19 +3,33 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
+import os
+import re
 import sqlite3
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from uuid import uuid4
 
 import sqlite_vec
+from pydantic import ValidationError
 
 from policynim.contracts import IndexStore
-from policynim.errors import MissingIndexError
-from policynim.types import EmbeddedChunk, PolicyChunk, PolicyMetadata, ScoredChunk
+from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.types import (
+    EmbeddedChunk,
+    EmbeddingIdentity,
+    IndexIdentity,
+    PolicyChunk,
+    PolicyMetadata,
+    ScoredChunk,
+)
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
+LOGGER = logging.getLogger(__name__)
 _METADATA_TABLE = "index_metadata"
 _CHUNKS_TABLE = "policy_chunks"
 _VECTORS_TABLE = "policy_vectors"
@@ -26,9 +40,10 @@ _MIN_DOMAIN_CANDIDATES = 20
 class SQLiteVecIndexStore(IndexStore):
     """Stores embedded policy chunks in a local sqlite-vec database."""
 
-    def __init__(self, *, path: Path) -> None:
+    def __init__(self, *, path: Path, embedding_identity: EmbeddingIdentity | None = None) -> None:
         """Configure the SQLite index database path."""
         self._path = path
+        self._embedding_identity = embedding_identity
 
     @property
     def path(self) -> Path:
@@ -45,37 +60,118 @@ class SQLiteVecIndexStore(IndexStore):
         """Return the fixed logical table name for ingest result compatibility."""
         return _CHUNKS_TABLE
 
-    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
-        """Replace the local index contents with embedded chunks."""
+    def validate_replacement(self) -> None:
+        """Reject unknown or incompatible existing data before incurring embedding usage."""
+        if self._embedding_identity is None or self._path.is_symlink():
+            raise IndexCompatibilityError()
+        if self._path.exists():
+            self.validate_identity()
+
+    def inspect_identity(self) -> IndexIdentity:
+        """Inspect persisted identity without altering the database or calling a provider."""
+        with closing(self._require_connection()) as conn:
+            return _read_identity(conn)
+
+    def validate_identity(self) -> None:
+        """Require a complete index in the embedding space configured for this store."""
+        with closing(self._require_connection()) as conn:
+            self._validate_identity(conn)
+
+    def _validate_identity(
+        self, conn: sqlite3.Connection, *, require_complete: bool = True
+    ) -> IndexIdentity:
+        identity = _read_identity(conn)
+        if self._embedding_identity is None or identity.embedding != self._embedding_identity:
+            raise IndexCompatibilityError()
+        if require_complete and not identity.complete:
+            raise IndexCompatibilityError("Index ingestion did not complete.")
+        return identity
+
+    def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
+        """Publish one validated database; migrations must use a fresh destination."""
         indexed_chunks, dimension = _validate_replacement(self._path, chunks)
+        self.validate_replacement()
+        if self._path.exists() and self.inspect_identity().dimension != dimension:
+            raise IndexCompatibilityError("Embedding dimensions changed.")
+        observed = _path_identity(self._path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = _new_temp_database_path(self._path)
-
+        build_id = uuid4().hex
+        published = False
         try:
             with closing(_connect(tmp_path)) as conn:
                 _begin_immediate(conn)
                 try:
                     _initialize_schema(conn, dimension=dimension)
+                    assert self._embedding_identity is not None
+                    conn.executemany(
+                        f"INSERT INTO {_METADATA_TABLE} (key, value) VALUES (?, ?)",
+                        (
+                            ("embedding_provider", self._embedding_identity.provider),
+                            ("embedding_model", self._embedding_identity.model),
+                            ("embedding_endpoint", self._embedding_identity.endpoint),
+                            ("build_id", build_id),
+                            ("ingest_complete", "true" if complete else "false"),
+                        ),
+                    )
                     _insert_chunks(conn, indexed_chunks)
+                    self._validate_identity(conn, require_complete=False)
                     conn.execute("COMMIT")
                 except Exception:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")
                     raise
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                conn.execute("PRAGMA journal_mode=DELETE")
 
-            _cleanup_sidecars(self._path)
-            tmp_path.replace(self._path)
-            _cleanup_sidecars(self._path)
+            if _path_identity(self._path) != observed:
+                raise IndexCompatibilityError("Index destination changed during preparation.")
+            if observed is None:
+                # Unlike replace(), link() cannot overwrite a concurrent creator.
+                os.link(tmp_path, self._path)
+            else:
+                self.validate_replacement()
+                if any(p.exists() for p in _database_files(self._path)[1:]):
+                    raise IndexCompatibilityError(
+                        "Index is in use; rebuild offline into separate paths."
+                    )
+                tmp_path.replace(self._path)
+            published = True
+            return build_id
         finally:
-            _cleanup_database_files(tmp_path)
+            try:
+                _cleanup_database_files(tmp_path)
+            except OSError:
+                # Cleanup must not mask failures or report a published build as aborted.
+                LOGGER.warning(
+                    "Could not remove owned index staging files (%s).",
+                    "published" if published else "not published",
+                )
+
+    def complete_ingest(self, build_id: str) -> None:
+        """Mark only this ingestion's database complete after runtime rules are finalized."""
+        with closing(_connect(self._path, must_exist=True)) as conn:
+            conn.execute("PRAGMA journal_mode=DELETE")
+            _begin_immediate(conn)
+            try:
+                identity = self._validate_identity(conn, require_complete=False)
+                if identity.build_id != build_id:
+                    raise IndexCompatibilityError("Index changed before ingestion completion.")
+                conn.execute(
+                    f"UPDATE {_METADATA_TABLE} SET value='true' WHERE key='ingest_complete'"
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
         if not self._path.exists() or self._path.is_dir():
             return False
         try:
-            with closing(_connect(self._path)) as conn:
+            with closing(_connect(self._path, read_only=True)) as conn:
                 return _has_required_schema(conn) and _count_chunks(conn) > 0
         except (OSError, sqlite3.DatabaseError):
             return False
@@ -85,7 +181,7 @@ class SQLiteVecIndexStore(IndexStore):
         if not self._path.exists() or self._path.is_dir():
             return 0
         try:
-            with closing(_connect(self._path)) as conn:
+            with closing(_connect(self._path, read_only=True)) as conn:
                 if not _has_required_schema(conn):
                     return 0
                 return _count_chunks(conn)
@@ -124,6 +220,8 @@ class SQLiteVecIndexStore(IndexStore):
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
         with closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            self._validate_identity(conn)
             if top_k <= 0:
                 return []
             query_vector = _validated_query_vector(conn, query_embedding)
@@ -187,7 +285,7 @@ class SQLiteVecIndexStore(IndexStore):
                 f"Local SQLite index path {self._path} must not be a directory."
             )
 
-        conn = _connect(self._path)
+        conn = _connect(self._path, read_only=True)
         try:
             if not _has_required_schema(conn):
                 raise MissingIndexError(f"Local SQLite index at {self._path} is not initialized.")
@@ -213,7 +311,7 @@ def _validate_replacement(
 
     dimension: int | None = None
     for chunk in indexed_chunks:
-        if not chunk.vector:
+        if not chunk.vector or not all(math.isfinite(v) for v in chunk.vector):
             raise MissingIndexError(f"Chunk {chunk.chunk_id!r} does not have an embedding vector.")
         if dimension is None:
             dimension = len(chunk.vector)
@@ -236,14 +334,23 @@ def _new_temp_database_path(target_path: Path) -> Path:
         return Path(handle.name)
 
 
-def _connect(path: Path) -> sqlite3.Connection:
+def _connect(
+    path: Path, *, read_only: bool = False, must_exist: bool = False
+) -> sqlite3.Connection:
     """Open a SQLite connection configured for sqlite-vec operations."""
-    connection = sqlite3.connect(path, timeout=30.0, isolation_level=None)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    connection.execute("PRAGMA journal_mode = WAL")
+    target = path.resolve().as_uri() + ("?mode=ro" if read_only else "?mode=rw")
+    connection = sqlite3.connect(
+        target if read_only or must_exist else path,
+        uri=read_only or must_exist,
+        timeout=30.0,
+        isolation_level=None,
+    )
     try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        if not read_only:
+            connection.execute("PRAGMA journal_mode = WAL")
         connection.enable_load_extension(True)
         try:
             sqlite_vec.load(connection)
@@ -364,7 +471,7 @@ def _has_required_schema(conn: sqlite3.Connection) -> bool:
     table_names = {str(row["name"]) for row in rows}
     if not {_METADATA_TABLE, _CHUNKS_TABLE, _VECTORS_TABLE}.issubset(table_names):
         return False
-    return _metadata_value(conn, "schema_version") == _SCHEMA_VERSION
+    return _metadata_value(conn, "schema_version") in {"1", _SCHEMA_VERSION}
 
 
 def _metadata_value(conn: sqlite3.Connection, key: str) -> str | None:
@@ -374,6 +481,49 @@ def _metadata_value(conn: sqlite3.Connection, key: str) -> str | None:
         (key,),
     ).fetchone()
     return str(row["value"]) if row is not None else None
+
+
+def _read_identity(conn: sqlite3.Connection) -> IndexIdentity:
+    """Validate metadata against the physical vector table, never infer missing identity."""
+    if _metadata_value(conn, "schema_version") != _SCHEMA_VERSION:
+        raise IndexCompatibilityError()
+    try:
+        complete = _metadata_value(conn, "ingest_complete")
+        if complete not in {"true", "false"}:
+            raise ValueError("Missing completion marker")
+        identity = IndexIdentity.model_validate(
+            {
+                "embedding": {
+                    "provider": _metadata_value(conn, "embedding_provider"),
+                    "model": _metadata_value(conn, "embedding_model"),
+                    "endpoint": _metadata_value(conn, "embedding_endpoint"),
+                },
+                "dimension": int(_metadata_value(conn, "embedding_dimension") or "0"),
+                "build_id": _metadata_value(conn, "build_id"),
+                "complete": complete == "true",
+            }
+        )
+        schema = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name=?", (_VECTORS_TABLE,)
+        ).fetchone()
+        match = re.search(r"float\[(\d+)\]", str(schema[0])) if schema else None
+        if match is None or int(match[1]) != identity.dimension:
+            raise ValueError("Vector schema does not match metadata")
+        count = conn.execute(f"SELECT COUNT(*) FROM {_VECTORS_TABLE}").fetchone()[0]
+        if count != _count_chunks(conn) or count == 0:
+            raise ValueError("Vector and policy inventory disagree")
+        return identity
+    except (ValidationError, TypeError, ValueError, sqlite3.DatabaseError) as exc:
+        raise IndexCompatibilityError() from exc
+
+
+def _path_identity(path: Path) -> tuple[int, int, int, int] | None:
+    """Capture the destination identity without following an unexpected symbolic link."""
+    try:
+        stat = path.lstat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size
 
 
 def _embedding_dimension(conn: sqlite3.Connection) -> int:
@@ -401,7 +551,7 @@ def _validated_query_vector(
 ) -> list[float]:
     """Validate and normalize a query embedding for sqlite-vec search."""
     query_vector = [float(value) for value in query_embedding]
-    if not query_vector:
+    if not query_vector or not all(math.isfinite(v) for v in query_vector):
         raise MissingIndexError("Search query embedding is empty.")
 
     expected_dimension = _embedding_dimension(conn)
@@ -463,12 +613,6 @@ def _json_string_list(value: str) -> list[str]:
 def _cleanup_database_files(path: Path) -> None:
     """Remove a SQLite database and its WAL sidecar files."""
     for candidate in _database_files(path):
-        candidate.unlink(missing_ok=True)
-
-
-def _cleanup_sidecars(path: Path) -> None:
-    """Remove only WAL sidecar files for a SQLite database path."""
-    for candidate in _database_files(path)[1:]:
         candidate.unlink(missing_ok=True)
 
 

@@ -153,10 +153,11 @@ class PolicyRouterService:
 def create_policy_router_service(settings: Settings | None = None) -> PolicyRouterService:
     """Build the default policy router from application settings."""
     active_settings = settings or get_settings()
+    index_store = create_index_store(active_settings)
     embedder, reranker = _create_default_router_components(active_settings)
     return PolicyRouterService(
         embedder=embedder,
-        index_store=create_index_store(active_settings),
+        index_store=index_store,
         reranker=reranker,
     )
 
@@ -219,6 +220,7 @@ def _create_default_router_components(settings: Settings) -> tuple[Embedder, Rer
 def _ensure_index_ready(index_store: IndexStore) -> None:
     if not index_store.exists() or index_store.count() == 0:
         raise MissingIndexError("Run `policynim ingest` before routing policy selection.")
+    index_store.validate_identity()
 
 
 def _matching_signals(text: str, patterns: Sequence[_TaskPattern]) -> list[str]:

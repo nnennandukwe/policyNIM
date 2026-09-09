@@ -26,7 +26,12 @@ from pydantic import TypeAdapter, ValidationError
 
 import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
-from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
+from policynim.errors import (
+    ConfigurationError,
+    IndexCompatibilityError,
+    MissingIndexError,
+    PolicyNIMError,
+)
 from policynim.interfaces.mcp import run_server
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
@@ -2772,6 +2777,7 @@ def _build_doctor_report() -> dict[str, object]:
         "eval_workspace_dir": resolve_runtime_path(settings.eval_workspace_dir).as_posix(),
     }
 
+    report["index"] = _doctor_index_details(settings)
     legacy_lancedb_alias_configured = _doctor_legacy_lancedb_alias_configured(discovery)
     index_recovery_step_added = False
     if index_path.is_dir():
@@ -2798,7 +2804,9 @@ def _build_doctor_report() -> dict[str, object]:
                 {
                     "name": "local_index_path",
                     "status": "ok",
-                    "message": "A populated local SQLite index exists.",
+                    "message": (
+                        "A complete local SQLite index matches the configured embedding model."
+                    ),
                 }
             )
         else:
@@ -2807,12 +2815,12 @@ def _build_doctor_report() -> dict[str, object]:
                     "name": "local_index_path",
                     "status": "action_required",
                     "message": (
-                        "Configured local SQLite index file is not a populated "
-                        "PolicyNIM sqlite-vec index."
+                        "Configured local SQLite index is missing valid embedding identity, "
+                        "is incomplete, or does not match the configured embedding model."
                     ),
                 }
             )
-            next_steps.append(_doctor_ingest_next_step())
+            next_steps.append(str(IndexCompatibilityError()))
             index_recovery_step_added = True
     else:
         checks.append(
@@ -2907,9 +2915,23 @@ def _doctor_ingest_next_step() -> str:
 def _doctor_local_index_ready(settings: Settings) -> bool:
     """Return whether the configured local SQLite index is ready for runtime use."""
     try:
-        return create_index_store(settings).exists()
+        create_index_store(settings).validate_identity()
+        return True
     except Exception:
         return False
+
+
+def _doctor_index_details(settings: Settings) -> dict[str, object]:
+    """Inspect stored public identity locally; absence is unknown, never inferred."""
+    details: dict[str, object] = {"identity": None, "compatible": False}
+    try:
+        store = create_index_store(settings)
+        details["identity"] = store.inspect_identity().model_dump(mode="json")
+        store.validate_identity()
+        details["compatible"] = True
+    except Exception:
+        pass  # The local_index_path check supplies sanitized recovery guidance.
+    return details
 
 
 def _doctor_index_directory_next_step(*, legacy_lancedb_alias_configured: bool) -> str:
@@ -3060,7 +3082,11 @@ def _path_text(path: Path | None) -> str | None:
 def _cli_error_message(error: PolicyNIMError) -> str:
     if config_discovery.standalone_setup_missing() and _looks_like_missing_local_setup_error(error):
         return _missing_setup_message()
-    if isinstance(error, MissingIndexError) and _is_standalone_local_runtime():
+    if (
+        isinstance(error, MissingIndexError)
+        and not isinstance(error, IndexCompatibilityError)
+        and _is_standalone_local_runtime()
+    ):
         return _STANDALONE_MISSING_INDEX_MESSAGE
     return str(error)
 

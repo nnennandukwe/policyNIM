@@ -13,6 +13,14 @@ from policynim.settings import Settings
 from policynim.types import HealthCheckResult
 
 
+class IngestStub(SimpleNamespace):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.closed = True
+
+
 class StubIndexStore:
     """Minimal index-store stub for health service tests."""
 
@@ -29,7 +37,12 @@ class StubIndexStore:
         self._exists_error = exists_error
         self._count_error = count_error
 
-    def replace(self, chunks) -> None:  # pragma: no cover - protocol filler for tests
+    def validate_identity(self) -> None:
+        """The fixture represents a compatible index."""
+
+    def replace(
+        self, chunks, *, complete: bool = True
+    ) -> str:  # pragma: no cover - protocol filler for tests
         raise NotImplementedError
 
     def exists(self) -> bool:
@@ -224,7 +237,7 @@ def test_ensure_hosted_runtime_ready_rebuilds_missing_index(
     monkeypatch.setattr(
         health_module,
         "create_ingest_service",
-        lambda settings: SimpleNamespace(
+        lambda settings: IngestStub(
             run=lambda: (
                 rebuilds.append("run")
                 or SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
@@ -270,7 +283,7 @@ def test_ensure_hosted_runtime_ready_rebuilds_empty_index(
     monkeypatch.setattr(
         health_module,
         "create_ingest_service",
-        lambda settings: SimpleNamespace(
+        lambda settings: IngestStub(
             run=lambda: (
                 rebuilds.append("run")
                 or SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
@@ -316,7 +329,7 @@ def test_ensure_hosted_runtime_ready_raises_when_empty_index_stays_empty_after_r
     monkeypatch.setattr(
         health_module,
         "create_ingest_service",
-        lambda settings: SimpleNamespace(
+        lambda settings: IngestStub(
             run=lambda: (
                 rebuilds.append("run")
                 or SimpleNamespace(index_uri="/tmp/index", chunk_count=0, document_count=0)
@@ -353,7 +366,7 @@ def test_ensure_hosted_runtime_ready_raises_when_automatic_rebuild_fails(
     monkeypatch.setattr(
         health_module,
         "create_ingest_service",
-        lambda settings: SimpleNamespace(run=lambda: (_ for _ in ()).throw(failure)),
+        lambda settings: IngestStub(run=lambda: (_ for _ in ()).throw(failure)),
     )
 
     with pytest.raises(
