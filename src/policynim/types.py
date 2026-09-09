@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -30,6 +31,55 @@ class StrictModel(BaseModel):
     """Base model for explicit API contracts."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class EmbeddingIdentity(StrictModel):
+    """Credential-free identity of one embedding space, independent of vector length."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    provider: Literal["nvidia"] = "nvidia"
+    model: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(c in value for c in "\r\n"):
+            raise ValueError("Embedding model must be nonempty and single-line.")
+        return value
+
+    @field_validator("endpoint")
+    @classmethod
+    def normalize_endpoint(cls, value: str) -> str:
+        parts = urlsplit(value.strip())
+        if (
+            parts.scheme not in {"https", "http"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError(
+                "Embedding endpoint must be HTTP(S), without credentials or query data."
+            )
+        host = parts.hostname.lower()
+        if ":" in host:
+            host = f"[{host}]"
+        port = parts.port
+        if port is not None and port != (443 if parts.scheme == "https" else 80):
+            host += f":{port}"
+        return urlunsplit((parts.scheme, host, parts.path.rstrip("/"), "", ""))
+
+
+class IndexIdentity(StrictModel):
+    """Persisted model, shape, and completion evidence for one database build."""
+
+    embedding: EmbeddingIdentity
+    dimension: int = Field(gt=0)
+    build_id: str = Field(min_length=1)
+    complete: bool
 
 
 class PolicyMetadata(StrictModel):

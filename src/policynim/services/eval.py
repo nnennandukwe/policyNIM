@@ -1402,8 +1402,11 @@ class _OfflineIndexStore(IndexStore):
             tuple([float(index)]): query for index, query in enumerate(candidates_by_query, start=1)
         }
 
-    def replace(self, chunks: Sequence[Any]) -> None:
-        return None
+    def validate_identity(self) -> None:
+        """Offline candidates and query vectors are paired within this fixture."""
+
+    def replace(self, chunks: Sequence[Any], *, complete: bool = True) -> str:
+        raise NotImplementedError("Offline eval candidates cannot be replaced.")
 
     def exists(self) -> bool:
         return True

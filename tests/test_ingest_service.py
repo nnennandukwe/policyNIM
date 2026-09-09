@@ -11,7 +11,7 @@ import pytest
 
 from policynim.services.ingest import IngestService
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
-from policynim.types import EmbeddedChunk
+from policynim.types import EmbeddedChunk, EmbeddingIdentity
 
 
 class MockEmbedder:
@@ -56,8 +56,18 @@ class RecordingIndexStore:
         self.table_name = table_name
         self.replace_calls = 0
 
-    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+    def validate_identity(self) -> None:
+        """The fixture represents a compatible index."""
+
+    def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
         self.replace_calls += 1
+        return "test-build"
+
+    def validate_replacement(self) -> None:
+        """Allow replacement in this recording fixture."""
+
+    def complete_ingest(self, build_id: str) -> None:
+        """Accept completion in this recording fixture."""
 
     def count(self) -> int:
         return 0
@@ -104,7 +114,12 @@ def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
         """,
     )
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
     service = IngestService(
         embedder=MockEmbedder(),
         index_store=store,

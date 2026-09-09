@@ -1267,10 +1267,15 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
                 )
             ]
 
+        def validate_identity(self) -> None:
+            """Static candidates use the test embedder's space."""
+
         def replace(
             self,
             chunks: Sequence[EmbeddedChunk],
-        ) -> None:  # pragma: no cover - protocol filler for tests
+            *,
+            complete: bool = True,
+        ) -> str:  # pragma: no cover - protocol filler for tests
             raise NotImplementedError
 
         def list_chunks(self) -> list[PolicyChunk]:  # pragma: no cover - protocol filler

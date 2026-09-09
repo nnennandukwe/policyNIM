@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from policynim.contracts import IndexStore
-from policynim.errors import ConfigurationError
+from policynim.errors import ConfigurationError, IndexCompatibilityError
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -41,6 +41,7 @@ class RuntimeHealthService:
                     f"Local index table {self._table_name!r} exists but contains no rows."
                 )
 
+            self._index_store.validate_identity()
             return HealthCheckResult(
                 status="ok",
                 ready=True,
@@ -48,6 +49,10 @@ class RuntimeHealthService:
                 row_count=row_count,
                 mcp_url=self._mcp_url,
                 reason=None,
+            )
+        except IndexCompatibilityError:
+            return self._not_ready(
+                "Local index embedding identity is incompatible or ingestion is incomplete."
             )
         except Exception as exc:
             LOGGER.exception("Runtime health check failed.")
@@ -91,6 +96,10 @@ def ensure_hosted_runtime_ready(
     )
     if result.ready:
         return
+
+    if rebuild_if_missing and index_store.path.exists():
+        # Existing unknown/mismatched data must never trigger a paid implicit migration.
+        index_store.validate_identity()
 
     if rebuild_if_missing:
         _rebuild_hosted_runtime_index(
@@ -161,7 +170,8 @@ def _rebuild_hosted_runtime_index(
         summary,
     )
     try:
-        result = create_ingest_service(settings).run()
+        with create_ingest_service(settings) as service:
+            result = service.run()
     except Exception as exc:
         rebuild_reason = f"Automatic hosted-index rebuild failed: {type(exc).__name__}: {exc}."
         raise ConfigurationError(
