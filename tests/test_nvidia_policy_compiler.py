@@ -133,6 +133,8 @@ def test_policy_compiler_prompt_includes_allowed_chunk_ids() -> None:
     assert "BACKEND-1" in prompt_text
     assert "SECURITY-1" in prompt_text
     assert "policy_id" in prompt_text
+    assert "A policy_id is not a citation" in prompt_text
+    assert 'Allowed citation_ids (copy exactly):\n["BACKEND-1", "SECURITY-1"]' in prompt_text
 
 
 def test_policy_compiler_extracts_json_from_reasoning_wrappers() -> None:

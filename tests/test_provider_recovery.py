@@ -289,6 +289,12 @@ def test_chat_options_are_specific_to_replacement_model(model):
 
     assert invoke("generation", handler, model=model).citation_ids == [candidate().chunk_id]
     assert calls[0]["model"] == model
+    system_prompt, user_prompt = [message["content"] for message in calls[0]["messages"]]
+    assert "A policy_id is not a citation" in system_prompt
+    allowed_ids = user_prompt.split("Allowed citation_ids (copy exactly):\n", 1)[1].split("\n", 1)[
+        0
+    ]
+    assert json.loads(allowed_ids) == [candidate().chunk_id]
     if model == CHAT_MODEL:
         assert calls[0]["temperature"] == 1
         assert calls[0]["top_p"] == 0.95
