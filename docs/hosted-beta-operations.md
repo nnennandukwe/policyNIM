@@ -36,6 +36,8 @@ Hosted beta notes:
 - Set `POLICYNIM_MCP_PUBLIC_BASE_URL` to the deployed origin so MCP Host and
   Origin checks allow the public endpoint. Reverse proxies must preserve an
   allowed Host header; clients without an Origin header remain supported.
+- Deploy at the service root. ASGI `root_path` and mount prefixes are rejected
+  so generated MCP, beta, and OAuth links always address the served routes.
 - `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` defaults to `10` per server process.
   Saturated calls return a retry-later tool error before provider work starts.
   Cancellation retains capacity until the operation and its cleanup finish.

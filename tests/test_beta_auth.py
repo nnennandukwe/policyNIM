@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -147,3 +150,73 @@ def test_beta_auth_service_rejects_audit_filter_for_unknown_account(tmp_path: Pa
 
     with pytest.raises(PolicyNIMError, match="does not exist"):
         service.list_audit_events(github_login="missing-user")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_status"),
+    [("rotate", "unauthorized"), ("revoke", "unauthorized"), ("suspend", "suspended")],
+)
+def test_authentication_observes_authority_changes_before_quota_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+    expected_status: str,
+) -> None:
+    """Reject authority withdrawn while authentication is preparing quota admission."""
+    service = _service(tmp_path)
+    operator_store = AuthStore(path=service._store.path)
+    now = service._utc_now()
+    account = operator_store.upsert_account_from_github(
+        github_user_id=123,
+        github_login="octocat",
+        email=None,
+        now=now,
+    )
+    issued = service.issue_api_key(account_id=account.account_id)
+    admission_preparing = Event()
+    continue_admission = Event()
+
+    def paused_clock() -> datetime:
+        """Pause at the former gap between active-key lookup and quota consumption."""
+        admission_preparing.set()
+        assert continue_admission.wait(timeout=5)
+        return now
+
+    monkeypatch.setattr(service, "_utc_now", paused_clock)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(service.authenticate_api_key, token=issued.api_key)
+        try:
+            assert admission_preparing.wait(timeout=5)
+            if mutation == "rotate":
+                operator_store.rotate_api_key(
+                    account_id=account.account_id,
+                    key_prefix="pnm_replacement",
+                    key_hash="replacement-hash",
+                    now=now,
+                )
+            elif mutation == "revoke":
+                operator_store.revoke_active_key(account_id=account.account_id, now=now)
+            else:
+                operator_store.set_account_status(
+                    account_id=account.account_id, status="suspended", now=now
+                )
+        finally:
+            continue_admission.set()
+        decision = pending.result(timeout=5)
+
+    assert decision.status == expected_status
+    assert decision.usage is None
+    if mutation == "suspend":
+        assert decision.account is not None
+        assert decision.account.status == "suspended"
+        assert decision.source == "api_key"
+    else:
+        assert decision.account is None
+        assert decision.source is None
+    usage = operator_store.get_usage_snapshot(
+        account_id=account.account_id,
+        usage_date=now.date(),
+        quota=service._settings.beta_daily_request_quota,
+    )
+    assert usage.request_count == 0
+    assert operator_store.list_audit_events(event_type="quota_exceeded") == []

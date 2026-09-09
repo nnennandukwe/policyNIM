@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
+import subprocess
+import sys
+import textwrap
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from importlib.metadata import version
@@ -616,16 +620,95 @@ def test_mcp_rejects_eleventh_operation_before_provider_construction(monkeypatch
     asyncio.run(exercise())
 
 
+def test_exported_mcp_resolves_configured_capacity_once_on_first_tool_call(tmp_path) -> None:
+    """Import stays configuration-free and the exported server honors its first runtime limit."""
+    config_file = tmp_path / "offline.env"
+    config_file.write_text("", encoding="utf-8")
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import os
+        from threading import Event
+        from unittest.mock import patch
+
+        from mcp.server.mcpserver.exceptions import ToolError
+        from policynim import settings
+        from policynim.types import SearchResult
+
+        with patch.object(settings, 'get_settings', side_effect=AssertionError('import settings')):
+            from policynim.interfaces import mcp as module
+        module.get_settings = settings.get_settings
+        os.environ['POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS'] = '1'
+        started = Event()
+        release = Event()
+        created = []
+
+        class Service:
+            def search(self, request):
+                '''Block only the first admitted operation.'''
+                if request.query == 'first':
+                    started.set()
+                    assert release.wait(5)
+                return SearchResult(query=request.query, top_k=request.top_k, hits=[])
+
+            def close(self):
+                '''The fixture owns no external client.'''
+                pass
+
+        def create_service(runtime_settings):
+            '''Track the effective settings when each service is allocated.'''
+            created.append(runtime_settings.mcp_max_concurrent_operations)
+            return Service()
+
+        async def exercise():
+            '''Keep the first configured admission limit across settings reloads.'''
+            running = asyncio.create_task(module.mcp.call_tool('policy_search', {'query': 'first'}))
+            try:
+                async with asyncio.timeout(5):
+                    while not started.is_set():
+                        await asyncio.sleep(0.001)
+                os.environ['POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS'] = '2'
+                settings.get_settings.cache_clear()
+                try:
+                    await module.mcp.call_tool('policy_search', {'query': 'excess'})
+                except ToolError as error:
+                    assert 'server_busy' in str(error)
+                else:
+                    raise AssertionError('exported server ignored its first configured capacity')
+                assert created == [1]
+            finally:
+                release.set()
+                await running
+            await module.mcp.call_tool('policy_search', {'query': 'recovered'})
+            assert created == [1, 2]
+
+        with patch.object(module, 'create_search_service', create_service):
+            asyncio.run(exercise())
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "POLICYNIM_CONFIG_FILE": str(config_file)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("cancellation_kind", ["asyncio", "anyio"])
+@pytest.mark.parametrize("worker_outcome", ["success", "operation_failure", "cleanup_failure"])
 def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
-    monkeypatch, cancellation_kind
+    monkeypatch, cancellation_kind, worker_outcome
 ) -> None:
-    """Cancellation cannot free capacity while its provider or cleanup still runs."""
+    """Cancellation drains work and cleanup, propagates, and records no success event."""
     started = Event()
     release_work = Event()
     cleanup_started = Event()
     release_cleanup = Event()
     service_threads: list[int] = []
+    events: list[dict[str, object]] = []
 
     class BlockingSearchService(MockSearchService):
         def search(self, request: SearchRequest) -> SearchResult:
@@ -633,6 +716,8 @@ def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
             service_threads.append(get_ident())
             started.set()
             assert release_work.wait(5), "test did not release provider work"
+            if worker_outcome == "operation_failure":
+                raise ValueError("private-operation-failure")
             return super().search(request)
 
         def close(self) -> None:
@@ -641,23 +726,40 @@ def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
             cleanup_started.set()
             assert release_cleanup.wait(5), "test did not release cleanup"
             super().close()
+            if worker_outcome == "cleanup_failure":
+                raise ValueError("private-cleanup-failure")
 
     service = BlockingSearchService()
     monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: service)
+    monkeypatch.setattr(
+        mcp_module,
+        "_emit_hosted_event",
+        lambda event, **fields: events.append({"event": event, **fields}),
+    )
 
     async def exercise() -> None:
         """Cancel using both native asyncio and the SDK's structured scopes."""
         server = mcp_module._create_mcp_server(Settings(mcp_max_concurrent_operations=1))
         scopes: list[anyio.CancelScope] = []
+        cancellations: list[bool] = []
+        results: list[object] = []
+
+        async def call() -> None:
+            """Record whether the handler propagated cancellation or returned a result."""
+            try:
+                results.append(await server.call_tool("policy_search", {"query": "first"}))
+            except asyncio.CancelledError:
+                cancellations.append(True)
+                raise
 
         async def invoke() -> None:
             """Use the cancellation mechanism selected for this regression."""
             if cancellation_kind == "anyio":
                 with anyio.CancelScope() as scope:
                     scopes.append(scope)
-                    await server.call_tool("policy_search", {"query": "first"})
+                    await call()
             else:
-                await server.call_tool("policy_search", {"query": "first"})
+                await call()
 
         request = asyncio.create_task(invoke())
         try:
@@ -674,14 +776,28 @@ def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
             await _wait_until_set(cleanup_started)
             with pytest.raises(ToolError, match="server_busy"):
                 await server.call_tool("policy_search", {"query": "during cleanup"})
+            assert not any(event["upstream_failure_class"] == "cancelled" for event in events)
+            events.clear()
         finally:
             release_work.set()
             release_cleanup.set()
             await asyncio.gather(request, return_exceptions=True)
         assert service.closed
         assert len(set(service_threads)) == 1
+        assert cancellations == [True]
+        assert results == []
         if cancellation_kind == "asyncio":
             assert request.cancelled()
+        else:
+            assert scopes[0].cancelled_caught
+        assert len(events) == 1
+        assert events[0]["event"] == "mcp.tool"
+        assert events[0]["tool_name"] == "policy_search"
+        assert events[0]["upstream_failure_class"] == "cancelled"
+        assert "private-" not in str(events)
+        monkeypatch.setattr(
+            mcp_module, "create_search_service", lambda settings: MockSearchService()
+        )
         await server.call_tool("policy_search", {"query": "after cleanup"})
 
     asyncio.run(exercise())
@@ -1294,11 +1410,12 @@ def test_streamable_http_app_accepts_valid_bearer_token(monkeypatch) -> None:
 
 @pytest.mark.parametrize("path", ["/gateway/mcp", "/gateway/mcp/"])
 @pytest.mark.parametrize("deployment", ["root_path", "mount"])
-def test_prefixed_mcp_routes_enforce_auth_and_host_origin_before_provider_creation(
+def test_prefixed_hosting_is_rejected_before_auth_or_provider_work(
     monkeypatch: pytest.MonkeyPatch, path: str, deployment: str
 ) -> None:
-    """A proxy prefix or Starlette mount must not bypass the real MCP boundary."""
+    """Proxy prefixes and mounts fail closed because all hosted URLs assume an origin root."""
     services: list[MockSearchService] = []
+    auth_service = StaticBetaAuthService(BetaAuthDecision(status="authorized", source="api_key"))
 
     def create_service(settings: Settings) -> MockSearchService:
         """Record provider construction only after the complete boundary admits a call."""
@@ -1309,7 +1426,7 @@ def test_prefixed_mcp_routes_enforce_auth_and_host_origin_before_provider_creati
     settings = _hosted_settings()
     monkeypatch.setattr(mcp_module, "get_settings", lambda: settings)
     monkeypatch.setattr(mcp_module, "create_search_service", create_service)
-    monkeypatch.setattr(mcp_module, "_build_beta_auth_service", lambda settings: None)
+    monkeypatch.setattr(mcp_module, "_build_beta_auth_service", lambda settings: auth_service)
     server = mcp_module._create_mcp_server(settings)
     monkeypatch.setattr(
         mcp_module, "_create_mcp_server", lambda settings, beta_auth_service=None: server
@@ -1347,32 +1464,40 @@ def test_prefixed_mcp_routes_enforce_auth_and_host_origin_before_provider_creati
         },
     }
     with TestClient(app, base_url="http://localhost", root_path=root_path) as client:
-        for authorization in (None, "Token secret-token", "Bearer wrong-token"):
+        for authorization in (
+            None,
+            "Token secret-token",
+            "Bearer wrong-token",
+            "Bearer secret-token",
+        ):
             supplied = dict(headers)
             if authorization is not None:
                 supplied["Authorization"] = authorization
             response = client.post(path, headers=supplied, json=request, follow_redirects=False)
-            assert response.status_code == 401
-            assert response.json() == {"error": "Unauthorized."}
+            assert response.status_code == 400
+            assert "hosted at the origin root" in response.json()["error"]
             assert services == []
+            assert auth_service.seen_tokens == []
 
         authorized = {**headers, "Authorization": "Bearer secret-token"}
-        for overrides, status in (
-            ({"Host": "untrusted.example"}, 421),
-            ({"Origin": "https://untrusted.example"}, 403),
+        for overrides in (
+            {"Host": "untrusted.example"},
+            {"Origin": "https://untrusted.example"},
         ):
             response = client.post(
                 path, headers={**authorized, **overrides}, json=request, follow_redirects=False
             )
-            assert response.status_code == status
+            assert response.status_code == 400
+            assert "hosted at the origin root" in response.json()["error"]
             assert services == []
+            assert auth_service.seen_tokens == []
 
-        response = client.post(path, headers=authorized, json=request, follow_redirects=True)
-
-    assert response.status_code == 200
-    assert response.json()["result"]["structuredContent"]["query"] == "background cleanup"
-    assert len(services) == 1
-    assert services[0].closed
+        for public_path in ("/gateway/healthz", "/gateway/beta", "/gateway/auth/github/start"):
+            response = client.get(public_path, follow_redirects=False)
+            assert response.status_code == 400
+            assert "hosted at the origin root" in response.json()["error"]
+        assert services == []
+        assert auth_service.seen_tokens == []
 
 
 def test_streamable_http_app_accepts_valid_db_backed_api_key(monkeypatch) -> None:

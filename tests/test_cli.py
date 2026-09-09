@@ -3492,6 +3492,7 @@ def test_mcp_stdio_smoke_discovers_sdk_tools_with_float_timeout(
 
     @asynccontextmanager
     async def fake_stdio_client(*args: object, **kwargs: object):
+        """Supply inert streams for successful and incomplete discovery scenarios."""
         yield sentinel.read_stream, sentinel.write_stream
 
     session = AsyncMock()
@@ -3533,6 +3534,7 @@ def test_mcp_stdio_smoke_reports_sdk_failures_and_closes_session(
 
     @asynccontextmanager
     async def fake_stdio_client(*args: object, **kwargs: object):
+        """Keep transport setup successful while the session fails during discovery."""
         yield sentinel.read_stream, sentinel.write_stream
 
     failure = (

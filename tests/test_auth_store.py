@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
+from pathlib import Path
+from threading import Barrier, Event
+
+import pytest
 
 from policynim.errors import PolicyNIMError
 from policynim.storage import AuthStore
+from policynim.types import BetaAccount, BetaAuthDecision
 
 
 def _hash_api_key(value: str) -> str:
@@ -230,3 +237,187 @@ def test_auth_store_reset_for_tests_clears_existing_state(tmp_path) -> None:
     store.reset_for_tests()
 
     assert store.list_accounts() == []
+
+
+def _account_with_key(store: AuthStore, now: datetime) -> BetaAccount:
+    """Create one active account and a known key for admission tests."""
+    account = store.upsert_account_from_github(
+        github_user_id=123, github_login="octocat", email=None, now=now
+    )
+    return store.rotate_api_key(
+        account_id=account.account_id,
+        key_prefix="pnm_test",
+        key_hash=_hash_api_key("pnm_test_secret"),
+        now=now,
+    )
+
+
+def test_auth_store_concurrent_admissions_preserve_quota_and_audit(tmp_path: Path) -> None:
+    """Admit exactly the quota under contention and audit every exhausted request."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = _account_with_key(store, now)
+    start = Barrier(12, timeout=5)
+
+    def admit() -> BetaAuthDecision:
+        """Attempt admission on a separate SQLite connection with concurrent peers."""
+        start.wait()
+        return store.authenticate_and_consume_quota(
+            key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        pending = [executor.submit(admit) for _ in range(12)]
+        decisions = [future.result(timeout=10) for future in pending]
+
+    authorized = [decision for decision in decisions if decision.status == "authorized"]
+    denied = [decision for decision in decisions if decision.status == "quota_exceeded"]
+    assert len(authorized) == 3
+    assert len(denied) == 9
+    assert sorted(item.usage.request_count for item in authorized if item.usage is not None) == [
+        1,
+        2,
+        3,
+    ]
+    assert all(item.usage is not None and item.usage.remaining == 0 for item in denied)
+    assert all(item.account == account and item.source == "api_key" for item in decisions)
+    assert (
+        store.get_usage_snapshot(
+            account_id=account.account_id, usage_date=now.date(), quota=3
+        ).request_count
+        == 3
+    )
+    events = store.list_audit_events(event_type="quota_exceeded")
+    assert len(events) == 9
+    assert all(
+        event.details == {"usage_date": now.date().isoformat(), "request_count": 3}
+        for event in events
+    )
+
+
+def test_auth_store_admission_commits_before_waiting_revocation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Serialize a later revocation without cancelling the already admitted request."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    operator_store = AuthStore(path=store.path)
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = _account_with_key(store, now)
+    account_read = Event()
+    continue_admission = Event()
+    revocation_started = Event()
+    original_lookup = store._fetch_account_by_key_hash
+    original_connect = operator_store._connect
+
+    def paused_lookup(conn: sqlite3.Connection, key_hash: str) -> BetaAccount | None:
+        """Hold the admission transaction after reading the active key."""
+        result = original_lookup(conn, key_hash)
+        account_read.set()
+        assert continue_admission.wait(timeout=5)
+        return result
+
+    def trace_revocation(statement: str) -> None:
+        """Signal the competing writer's attempt to acquire the transaction lock."""
+        if statement == "BEGIN IMMEDIATE":
+            revocation_started.set()
+
+    def traced_connect() -> sqlite3.Connection:
+        """Observe the real competing transaction without replacing SQLite locking."""
+        conn = original_connect()
+        conn.set_trace_callback(trace_revocation)
+        return conn
+
+    monkeypatch.setattr(store, "_fetch_account_by_key_hash", paused_lookup)
+    monkeypatch.setattr(operator_store, "_connect", traced_connect)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        admission = executor.submit(
+            store.authenticate_and_consume_quota,
+            key_hash=_hash_api_key("pnm_test_secret"),
+            usage_date=now.date(),
+            quota=3,
+            now=now,
+        )
+        try:
+            assert account_read.wait(timeout=5)
+            revocation = executor.submit(
+                operator_store.revoke_active_key, account_id=account.account_id, now=now
+            )
+            assert revocation_started.wait(timeout=5)
+            assert not revocation.done()
+        finally:
+            continue_admission.set()
+        decision = admission.result(timeout=5)
+        revocation.result(timeout=5)
+
+    assert decision.status == "authorized"
+    assert decision.usage is not None and decision.usage.request_count == 1
+    assert store.authenticate_api_key(key_hash=_hash_api_key("pnm_test_secret")) is None
+    assert (
+        store.authenticate_and_consume_quota(
+            key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
+        ).status
+        == "unauthorized"
+    )
+    assert (
+        store.get_usage_snapshot(
+            account_id=account.account_id, usage_date=now.date(), quota=3
+        ).request_count
+        == 1
+    )
+
+
+@pytest.mark.parametrize("failure_stage", ["decision", "commit"])
+def test_auth_store_failed_admission_rolls_back_quota(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure_stage: str
+) -> None:
+    """Return no authorization or quota charge when validation or commit fails."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = _account_with_key(store, now)
+    original_connect = store._connect
+
+    def reject_decision(**kwargs: object) -> BetaAuthDecision:
+        """Inject result-validation failure after the quota mutation."""
+        raise ValueError("decision validation failed")
+
+    def reject_commit(
+        action: int,
+        argument: str | None,
+        second_argument: str | None,
+        database: str | None,
+        trigger: str | None,
+    ) -> int:
+        """Reject COMMIT through SQLite while allowing its rollback."""
+        if action == sqlite3.SQLITE_TRANSACTION and argument == "COMMIT":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    def failing_connect() -> sqlite3.Connection:
+        """Install the commit-failure hook on the admission connection."""
+        conn = original_connect()
+        conn.set_authorizer(reject_commit)
+        return conn
+
+    with monkeypatch.context() as patch:
+        if failure_stage == "decision":
+            patch.setattr("policynim.storage.auth_store.BetaAuthDecision", reject_decision)
+            expected_error = ValueError
+        else:
+            patch.setattr(store, "_connect", failing_connect)
+            expected_error = sqlite3.DatabaseError
+        with pytest.raises(expected_error):
+            store.authenticate_and_consume_quota(
+                key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
+            )
+
+    assert (
+        store.get_usage_snapshot(
+            account_id=account.account_id, usage_date=now.date(), quota=3
+        ).request_count
+        == 0
+    )
+    recovered = store.authenticate_and_consume_quota(
+        key_hash=_hash_api_key("pnm_test_secret"), usage_date=now.date(), quota=3, now=now
+    )
+    assert recovered.status == "authorized"
+    assert recovered.usage is not None and recovered.usage.request_count == 1

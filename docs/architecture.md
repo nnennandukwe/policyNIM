@@ -348,13 +348,27 @@ not a distributed quota or a measured production capacity claim.
 
 The HTTP transport is stateless for both modern and legacy clients. Host and
 Origin checks allow loopback and the configured public service origin; other
-hosts and supplied origins are rejected. Hosted SQLite authentication and GitHub
-requests run off the event loop while session and rate-limit state stay on it.
+hosts and supplied origins are rejected. Hosted HTTP must run at the service
+root: nonempty ASGI `root_path` or mount prefixes are rejected before authentication
+or provider work, keeping advertised MCP, beta, and OAuth URLs consistent.
+Hosted SQLite authentication and GitHub requests run off the event loop while
+session and rate-limit state stay on it. API-key validation, account-status checks,
+and quota consumption share one SQLite write transaction, serializing admission
+with key rotation, revocation, and suspension. Later revocation does not cancel
+requests already admitted by a committed transaction.
 The bearer-token beta flow remains the current authorization model; standards-based
 MCP OAuth is tracked separately in [#97](https://github.com/nnennandukwe/policyNIM/issues/97).
 
 SDK migration references: [official migration guide](https://py.sdk.modelcontextprotocol.io/migration/)
 and [protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/).
+
+The SDK's [tagged package manifest](https://raw.githubusercontent.com/modelcontextprotocol/python-sdk/v2.2.0/pyproject.toml)
+requires HTTPX2. [Pydantic maintains HTTPX2 and HTTPcore2](https://github.com/pydantic/httpx2/tree/v2.6.0);
+the pinned `2.6.0` wheels have PyPI publishing attestations from that repository.
+PolicyNIM retains HTTPX `0.27.2` for NVIDIA's optional evaluator dependencies and
+pins HTTPX2 `2.6.0` to keep compatibility with their AnyIO `4.9.0` constraint.
+See the [HTTPX2](https://pypi.org/project/httpx2/2.6.0/#files) and
+[HTTPcore2](https://pypi.org/project/httpcore2/2.6.0/#files) artifact provenance.
 
 ### Hosted HTTP Endpoint
 

@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 import anyio
 from anyio import to_thread
+from anyio.lowlevel import checkpoint_if_cancelled
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
@@ -120,12 +121,11 @@ async def _run_sync_until_complete(
                 break
             except asyncio.CancelledError as exc:
                 if worker.cancelled():
-                    raise
+                    break
                 cancellation = exc
             except Exception:
-                if cancellation is not None:
-                    raise cancellation
-                raise
+                break
+    await checkpoint_if_cancelled()
     if cancellation is not None:
         raise cancellation
     return worker.result()
@@ -344,6 +344,16 @@ async def _run_logged_tool(
     request_id = _request_id_from_context(ctx)
     try:
         result = await executor.run(operation)
+    except asyncio.CancelledError:
+        _emit_hosted_event(
+            "mcp.tool",
+            auth_result=auth_result,
+            tool_name=tool_name,
+            latency_ms=_elapsed_ms(start_time),
+            upstream_failure_class="cancelled",
+            request_id=request_id,
+        )
+        raise
     except Exception as exc:
         _emit_hosted_event(
             "mcp.tool",
@@ -401,9 +411,17 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
     )
 
 
-def _register_tools(server: MCPServer, *, capacity: int = 10) -> MCPServer:
-    """Register the public MCP tools on the supplied server instance."""
-    executor = _ToolExecutor(capacity)
+def _register_tools(server: MCPServer, *, capacity: int | None = None) -> MCPServer:
+    """Register tools, resolving an omitted capacity once when the first tool runs."""
+    executor = _ToolExecutor(capacity) if capacity is not None else None
+
+    def get_executor() -> _ToolExecutor:
+        """Initialize the server's fixed limit without import-time settings side effects."""
+        nonlocal executor
+        if executor is None:
+            executor = _ToolExecutor(get_settings().mcp_max_concurrent_operations)
+        return executor
+
     annotations = ToolAnnotations(
         read_only_hint=True,
         destructive_hint=False,
@@ -427,7 +445,7 @@ def _register_tools(server: MCPServer, *, capacity: int = 10) -> MCPServer:
             "policy_preflight",
             lambda: _run_policy_preflight(task=task, domain=domain, top_k=top_k),
             ctx=ctx,
-            executor=executor,
+            executor=get_executor(),
         )
         return PreflightResult.model_validate(result)
 
@@ -447,7 +465,7 @@ def _register_tools(server: MCPServer, *, capacity: int = 10) -> MCPServer:
             "policy_search",
             lambda: _run_policy_search(query=query, domain=domain, top_k=top_k),
             ctx=ctx,
-            executor=executor,
+            executor=get_executor(),
         )
         return SearchResult.model_validate(result)
 
@@ -1112,7 +1130,7 @@ class _BearerProtectedASGIApp:
 
 
 class _MCPHostOriginApp:
-    """Validate the MCP boundary before either authentication or slash redirects."""
+    """Enforce root hosting and validate MCP before authentication or slash redirects."""
 
     def __init__(self, app: ASGIApp, settings: TransportSecuritySettings) -> None:
         """Reuse the SDK's Host/Origin validation ahead of the ASGI router."""
@@ -1120,7 +1138,19 @@ class _MCPHostOriginApp:
         self._security = TransportSecurityMiddleware(settings)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Reject untrusted MCP hosts/origins before constructing a redirect."""
+        """Reject mounted hosting and untrusted MCP hosts/origins before routing."""
+        if scope["type"] == "http" and scope.get("root_path"):
+            response = JSONResponse(
+                {
+                    "error": (
+                        "PolicyNIM must be hosted at the origin root. Remove the ASGI root_path "
+                        "or URL mount prefix and use /mcp and /beta."
+                    )
+                },
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
         if _is_protected_mcp_request(scope, _STREAMABLE_HTTP_PATH):
             response = await self._security.validate_request(Request(scope))
             if response is not None:

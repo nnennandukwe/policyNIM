@@ -388,6 +388,8 @@ Hosted HTTP notes:
   origin and loopback; an absent Origin header is allowed for non-browser clients.
   Proxy requests must preserve an allowed Host header. Authentication also covers
   `/mcp` trailing-slash variants.
+- Host the HTTP app at the service root. ASGI `root_path` and mounted path prefixes
+  are rejected; generated MCP, beta, health, and OAuth URLs use the configured origin.
 - `stdio` does not enforce HTTP bearer authentication; configured settings are
   still validated at startup
 - when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
