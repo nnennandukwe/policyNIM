@@ -44,6 +44,7 @@ class SQLiteVecIndexStore(IndexStore):
         """Configure the SQLite index database path."""
         self._path = path
         self._embedding_identity = embedding_identity
+        self._pending_ingest: tuple[str, tuple[int, int, int, int]] | None = None
 
     @property
     def path(self) -> Path:
@@ -130,6 +131,9 @@ class SQLiteVecIndexStore(IndexStore):
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 conn.execute("PRAGMA journal_mode=DELETE")
 
+            prepared_identity = _path_identity(tmp_path)
+            if prepared_identity is None:
+                raise IndexCompatibilityError("Prepared index disappeared before publication.")
             if _path_identity(self._path) != observed:
                 raise IndexCompatibilityError("Index destination changed during preparation.")
             if observed is None:
@@ -145,6 +149,7 @@ class SQLiteVecIndexStore(IndexStore):
                     raise IndexCompatibilityError("Index destination changed before publication.")
                 tmp_path.replace(self._path)
             published = True
+            self._pending_ingest = (build_id, prepared_identity) if not complete else None
             return build_id
         finally:
             try:
@@ -158,8 +163,9 @@ class SQLiteVecIndexStore(IndexStore):
 
     def complete_ingest(self, build_id: str) -> None:
         """Mark only this ingestion's database complete after runtime rules are finalized."""
-        with closing(_connect(self._path, must_exist=True)) as conn:
-            conn.execute("PRAGMA journal_mode=DELETE")
+        self._validate_pending_ingest(build_id)
+        with closing(_connect(self._path, must_exist=True, configure_wal=False)) as conn:
+            self._validate_pending_ingest(build_id)
             _begin_immediate(conn)
             try:
                 identity = self._validate_identity(conn, require_complete=False)
@@ -173,6 +179,17 @@ class SQLiteVecIndexStore(IndexStore):
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 raise
+        self._pending_ingest = None
+
+    def _validate_pending_ingest(self, build_id: str) -> None:
+        """Require the producer's build receipt and the physical file it staged."""
+        if (
+            self._pending_ingest is None
+            or self._pending_ingest[0] != build_id
+            or self._path.is_symlink()
+            or _path_identity(self._path) != self._pending_ingest[1]
+        ):
+            raise IndexCompatibilityError("Index changed before ingestion completion.")
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
@@ -345,7 +362,11 @@ def _new_temp_database_path(target_path: Path) -> Path:
 
 
 def _connect(
-    path: Path, *, read_only: bool = False, must_exist: bool = False
+    path: Path,
+    *,
+    read_only: bool = False,
+    must_exist: bool = False,
+    configure_wal: bool = True,
 ) -> sqlite3.Connection:
     """Open a SQLite connection configured for sqlite-vec operations."""
     target = path.resolve().as_uri() + ("?mode=ro" if read_only else "?mode=rw")
@@ -359,7 +380,7 @@ def _connect(
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
-        if not read_only:
+        if not read_only and configure_wal:
             connection.execute("PRAGMA journal_mode = WAL")
         connection.enable_load_extension(True)
         try:
