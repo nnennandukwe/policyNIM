@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
+from ipaddress import ip_address
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryFile
 from typing import Annotated, Literal, NoReturn, cast
@@ -2843,7 +2844,15 @@ def _build_doctor_report() -> dict[str, object]:
         if not index_recovery_step_added and ingest_next_step not in next_steps:
             next_steps.append(ingest_next_step)
 
-    http_host = f"[{settings.mcp_host}]" if ":" in settings.mcp_host else settings.mcp_host
+    http_host = settings.mcp_host
+    try:
+        bind_address = ip_address(http_host)
+    except ValueError:
+        bind_address = None
+    if bind_address is not None and bind_address.is_unspecified:
+        http_host = "127.0.0.1" if bind_address.version == 4 else "::1"
+    if ":" in http_host:
+        http_host = f"[{http_host}]"
     http_base_url = (
         str(settings.mcp_public_base_url).rstrip("/")
         if settings.mcp_public_base_url is not None

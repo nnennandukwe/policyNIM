@@ -350,11 +350,10 @@ uv run policynim mcp --transport streamable-http
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other
 than the default development bind `127.0.0.1:8000`. When authentication is disabled,
 a concrete bind address also permits its exact HTTP authority. With
-`POLICYNIM_MCP_HOST=192.168.1.20` and
-`POLICYNIM_MCP_PORT=8000`, clients can use `http://192.168.1.20:8000/mcp` without
-setting a public origin. Other remote ports and
-hostnames are not implicitly trusted. Port 80 accepts both omitted and explicit
-`:80` forms.
+`POLICYNIM_MCP_HOST=192.168.1.20` and `POLICYNIM_MCP_PORT=8000`,
+clients can use `http://192.168.1.20:8000/mcp` without setting a public origin.
+Other remote ports and hostnames are not implicitly trusted. Port 80 accepts
+both omitted and explicit `:80` forms.
 
 The host must be a bare IPv4 address, IPv6 address, or ASCII DNS hostname; use
 `POLICYNIM_MCP_PORT` for the port. IPv6 settings omit brackets (for example,
@@ -373,8 +372,10 @@ Wildcard binds such as `0.0.0.0` or `::` grant no remote Host/Origin permissions
 For remote access through a wildcard bind, explicitly set
 `POLICYNIM_MCP_PUBLIC_BASE_URL` to the client-facing origin, such as
 `http://192.168.1.20:8000` or `https://mcp.example.com`. Loopback access remains
-available without that setting. Proxies and HTTPS endpoints also need their
-explicit public origin when it differs from the direct HTTP bind authority.
+available without that setting. For a wildcard bind without a public origin,
+`policynim doctor` reports a local connection URL using `127.0.0.1` for IPv4 or
+`[::1]` for IPv6 at the configured port. Proxies and HTTPS endpoints also need
+their explicit public origin when it differs from the direct HTTP bind authority.
 Disallowed Host and Origin headers return HTTP 421 and 403 respectively, before
 MCP tool work. Correct the client authority or configure its public origin; do
 not disable rebinding protection.

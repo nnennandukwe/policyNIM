@@ -1707,6 +1707,41 @@ def test_doctor_formats_ipv6_http_authorities(
 
 
 @pytest.mark.parametrize(
+    ("bind_host", "client_host"),
+    [
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "[::1]"),
+        ("0:0:0:0:0:0:0:0", "[::1]"),
+        ("192.0.2.20", "192.0.2.20"),
+        ("mcp.example", "mcp.example"),
+    ],
+)
+def test_doctor_uses_connectable_host_for_direct_mcp_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bind_host: str,
+    client_host: str,
+) -> None:
+    """Use loopback for wildcard binds while preserving concrete client authorities."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_HOST=bind_host,
+        POLICYNIM_MCP_PORT="8123",
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    expected_url = f"http://{client_host}:8123/mcp"
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout)["mcp"]["streamable_http_url"] == expected_url
+    assert text_result.exit_code == 0
+    assert f"- streamable-http: {expected_url}" in text_result.stdout
+
+
+@pytest.mark.parametrize(
     ("bind_host", "public_origin", "auth_required", "expected_url"),
     [
         ("10.23.45.6", "https://policy.example", True, "https://policy.example/mcp"),
