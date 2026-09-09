@@ -225,3 +225,10 @@ both offline verification and Qodo review at the new head, and deploy the final
 verified combination. This supplies evidence to #104; it does not complete that
 broader hosted-release program or #88. Inventory expansion (#90), atomic generation
 publication (#93), and provider pooling/lifecycle redesign (#99) remain separate.
+
+The approved live recovery probe observed the replacement chat model citing a
+policy ID in place of a full chunk ID. Generation and compilation requests now
+supply the explicit allowed chunk IDs and distinguish them from policy metadata.
+Citation validation remains strict: a policy ID is never silently expanded or
+accepted as a chunk citation. Live acceptance must verify this contract separately
+from endpoint access.

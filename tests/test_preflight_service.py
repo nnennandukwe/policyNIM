@@ -495,7 +495,8 @@ def test_preflight_service_caps_retained_chunks_per_policy() -> None:
     ]
 
 
-def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids() -> None:
+@pytest.mark.parametrize("citation_id", ["UNKNOWN", "BACKEND-LOG-001"])
+def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids(citation_id) -> None:
     store = MockIndexStore(
         [
             make_chunk(
@@ -509,7 +510,7 @@ def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids() ->
     generator = MockGenerator(
         GeneratedPreflightDraft(
             summary="Unknown citations should fail closed.",
-            citation_ids=["UNKNOWN"],
+            citation_ids=[citation_id],
         )
     )
     service = PreflightService(
