@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import math
 import os
 import re
 import sqlite3
-from collections.abc import Sequence
-from contextlib import closing
+from collections.abc import Iterator, Sequence
+from contextlib import closing, contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
@@ -137,15 +138,17 @@ class SQLiteVecIndexStore(IndexStore):
                 raise IndexCompatibilityError("Prepared index disappeared before publication.")
             if _path_identity(self._path) != observed:
                 raise IndexCompatibilityError("Index destination changed during preparation.")
-            _require_no_destination_sidecars(self._path)
-            if observed is None:
-                # Unlike replace(), link() cannot overwrite a concurrent creator.
-                os.link(tmp_path, self._path)
-            else:
-                self.validate_replacement()
-                if _path_identity(self._path) != observed:
-                    raise IndexCompatibilityError("Index destination changed before publication.")
-                tmp_path.replace(self._path)
+            # Keep validation and publication under a destination-scoped lock.
+            with _destination_lock(self._path):
+                _require_no_destination_sidecars(self._path)
+                if observed is None:
+                    # Unlike replace(), link() cannot overwrite a concurrent creator.
+                    os.link(tmp_path, self._path)
+                else:
+                    self.validate_replacement()
+                    if _path_identity(self._path) != observed:
+                        raise IndexCompatibilityError("Index destination changed before publication.")
+                    tmp_path.replace(self._path)
             published = True
             self._pending_ingest = (build_id, prepared_identity) if not complete else None
             return build_id
@@ -638,6 +641,18 @@ def _json_string_list(value: str) -> list[str]:
     if not isinstance(loaded, list):
         return []
     return [str(item) for item in loaded]
+
+
+@contextmanager
+def _destination_lock(path: Path) -> Iterator[None]:
+    """Serialize publishers targeting the same index destination."""
+    lock_path = path.with_name(f".{path.name}.publish.lock")
+    with lock_path.open("a") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _cleanup_database_files(path: Path) -> None:
