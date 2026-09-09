@@ -13,8 +13,11 @@ the server. NVIDIA's catalog marks the previous
 [reranking](https://build.nvidia.com/nvidia/llama-nemotron-rerank-1b-v2), and
 [chat](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1_5)
 hosted endpoints deprecated. Endpoint retirement is the leading supported
-explanation. Historical wire capture and replacement access have not been
-verified; credentials and dependency behavior are not conclusively excluded.
+explanation. Historical wire capture is unavailable; credentials and dependency
+behavior are not conclusively excluded. Approved replacement probes and preview
+ingestion subsequently succeeded with the existing staging credential. See
+[PR #108](https://github.com/nnennandukwe/policyNIM/pull/108) for revision-bound
+build, inventory, health, and tool acceptance evidence.
 
 | Operation | Default model | Official request contract |
 | --- | --- | --- |
@@ -29,6 +32,17 @@ and top-p `1`. Citation validation remains mandatory. No model fallback or silen
 embedding truncation is applied. HTTP 410 is classified as `endpoint_unavailable`
 and stops immediately, including when retry settings are nonzero. Public errors
 identify the operation and configuration names without upstream response bodies.
+
+The selected reranker returns raw logits. Its adapter applies NVIDIA's documented
+sigmoid conversion and sorts by original logits, preserving order even when the
+converted values saturate. Custom-model scores retain their existing behavior.
+These scores are ranking signals, not calibrated proof that a policy applies.
+The router's existing positive-score check admits nonzero converted scores to
+compilation; it does not impose an absolute relevance cutoff for this model.
+The compiler must still reject unsupported evidence, and preflight retains its
+insufficient-context and citation checks. A model-specific relevance cutoff needs
+separate labeled evaluation; do not assume that a successful cited example
+establishes retrieval quality for every task.
 
 ## Build and runtime configuration
 
@@ -164,10 +178,13 @@ Invariants:
 - Reject destinations with existing WAL, shared-memory, or rollback-journal
   sidecars, including orphaned files or links. Preserve them and choose fresh paths.
 
-Hosted server startup retains Foundation's automatic ingestion for a truly absent
-index; that path can contact NVIDIA and belongs inside an approved deployment.
-It refuses existing empty, corrupt, incomplete, or incompatible files. The health
-inspector and `doctor` themselves never ingest or contact providers.
+Hosted server startup retains Foundation's automatic ingestion when both the
+index and rules output are absent; that path can contact NVIDIA and belongs
+inside an approved deployment. An absent index with an existing rules artifact
+is a partial installation: startup preserves the rules and refuses to rebuild
+implicitly. Restore a compatible pair or build a complete candidate into separate
+paths. Startup also refuses existing empty, corrupt, incomplete, or incompatible
+indexes. The health inspector and `doctor` never ingest or contact providers.
 
 ## Fault and lifecycle evidence required
 

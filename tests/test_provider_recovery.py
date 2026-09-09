@@ -448,7 +448,7 @@ def test_negative_nvidia_logits_reach_policy_compilation_routing(tmp_path):
         ) as router:
             routed = router.route(RouteRequest(task="Add request IDs to backend logs.", top_k=1))
     assert not routed.packet.insufficient_context
-    assert [c.chunk_id for c in routed.retained_context] == [candidate().chunk_id]
+    assert [chunk.chunk_id for chunk in routed.retained_context] == [candidate().chunk_id]
     retained_score = routed.retained_context[0].score
     assert retained_score is not None and 0 < retained_score < 0.5
 

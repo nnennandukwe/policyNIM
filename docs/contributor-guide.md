@@ -218,13 +218,29 @@ Install pre-commit once:
 uv run --group dev pre-commit install
 ```
 
-Run the standard quality gates:
+Run the locked offline matrix in separate environments for each supported Python
+version. These commands exclude tests marked `live` and `docker_live`, even when
+provider credentials are configured:
 
 ```bash
-uv run ruff check
-uv run pytest -q
-uv run pyright
+UV_PROJECT_ENVIRONMENT=.venv-311 uv sync --locked --python 3.11 --group test --group dev
+UV_PROJECT_ENVIRONMENT=.venv-311 uv run --no-sync --python 3.11 pytest -q -m "not live and not docker_live"
+
+UV_PROJECT_ENVIRONMENT=.venv-312 uv sync --locked --python 3.12 --group test --group dev
+UV_PROJECT_ENVIRONMENT=.venv-312 uv run --no-sync --python 3.12 pytest -q -m "not live and not docker_live"
+
+UV_PROJECT_ENVIRONMENT=.venv-311 uv run --no-sync ruff check
+UV_PROJECT_ENVIRONMENT=.venv-311 uv run --no-sync ruff format --check
+UV_PROJECT_ENVIRONMENT=.venv-311 uv run --no-sync pyright --pythonpath .venv-311/bin/python
+uv lock --check
+git diff --check
 ```
+
+`--pythonpath` points Pyright at the selected environment; it does not execute
+Python. If you place the environments elsewhere, adjust both
+`UV_PROJECT_ENVIRONMENT` and that interpreter path. Runtime dependencies remain
+locked; optional extras require separate resolution checks when their dependency
+constraints change.
 
 For live or hosted-only checks, use the coverage notes in
 [../tests/README.md](../tests/README.md).
