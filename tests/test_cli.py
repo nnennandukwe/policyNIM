@@ -4517,3 +4517,37 @@ def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tm
     assert isinstance(result.exception, SystemExit)
     assert embedder.calls == 0 and embedder.closed
     assert path.read_bytes() == b"private-corrupt-index-sentinel"
+
+
+@pytest.mark.parametrize(
+    "setting", ["POLICYNIM_NVIDIA_BASE_URL", "POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL"]
+)
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://user:password-sentinel@example.invalid/v1",
+        "https://example.invalid/v1?key=key-sentinel",
+    ],
+)
+def test_invalid_provider_endpoint_does_not_echo_credentials(
+    monkeypatch, tmp_path, setting, endpoint
+):
+    """Reject endpoint configuration through the real CLI without echoing its input."""
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="configured-key-sentinel")
+    monkeypatch.setenv(setting, endpoint)
+
+    def client_must_not_be_created(**kwargs):
+        """Fail if invalid settings reach provider client construction."""
+        raise AssertionError("Provider client must not be created")
+
+    monkeypatch.setattr("policynim.providers.nvidia.OpenAI", client_must_not_be_created)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "sentinel" not in result.stderr
+    assert endpoint not in result.stderr
+    assert "input_value" not in result.stderr
+    assert "Provider client must not be created" not in result.stderr
+    assert "endpoint" in result.stderr.lower() or "credentials" in result.stderr.lower()
