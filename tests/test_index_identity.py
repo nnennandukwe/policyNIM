@@ -296,3 +296,77 @@ def test_runtime_actions_reject_incompatible_index(tmp_path, mutation, matched, 
             with pytest.raises(MissingIndexError):
                 executor.execute(request)
     assert not output.exists()
+
+
+def test_hosted_readiness_does_not_rebuild_existing_index_after_inspection_failure(
+    tmp_path, monkeypatch
+):
+    """Preserve a compatible existing index when its health inspection fails."""
+    from policynim.errors import ConfigurationError
+    from policynim.services import health as health_module
+    from policynim.types import HealthCheckResult
+
+    settings = settings_for(
+        tmp_path / "index.sqlite3", mcp_public_base_url="https://example.invalid"
+    )
+    store = create_index_store(settings)
+    store.replace([chunk()])
+    original = settings.index_db_path.read_bytes()
+    rebuilds = []
+
+    def unavailable_inspector(settings, **kwargs):
+        """Report an inspection failure without changing the valid database."""
+        return HealthCheckResult(
+            status="error",
+            ready=False,
+            table_name=store.table_name,
+            row_count=0,
+            mcp_url="https://example.invalid/mcp",
+            reason="Local index inspection failed: OSError.",
+        )
+
+    def record_rebuild(*args, **kwargs):
+        """Record the provider-backed action that must not be selected."""
+        rebuilds.append("rebuild")
+
+    monkeypatch.setattr(health_module, "_check_hosted_runtime_health", unavailable_inspector)
+    monkeypatch.setattr(health_module, "_rebuild_hosted_runtime_index", record_rebuild)
+    with pytest.raises(ConfigurationError):
+        ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
+    assert rebuilds == []
+    assert settings.index_db_path.read_bytes() == original
+    assert store.inspect_identity().complete
+
+
+def test_empty_schema_two_index_is_preserved_without_startup_ingestion(tmp_path, monkeypatch):
+    """Reject an emptied database even when its model metadata remains complete."""
+    from contextlib import closing
+
+    import sqlite_vec
+
+    from policynim.services import health as health_module
+
+    settings = settings_for(tmp_path / "index.sqlite3")
+    store = create_index_store(settings)
+    store.replace([chunk()])
+    with closing(sqlite3.connect(settings.index_db_path)) as connection:
+        connection.enable_load_extension(True)
+        sqlite_vec.load(connection)
+        connection.enable_load_extension(False)
+        connection.execute("DELETE FROM policy_vectors")
+        connection.execute("DELETE FROM policy_chunks")
+        connection.commit()
+    original = settings.index_db_path.read_bytes()
+    rebuilds = []
+
+    def record_rebuild(*args, **kwargs):
+        """Record any unexpected attempt to contact the ingestion provider."""
+        rebuilds.append("rebuild")
+
+    monkeypatch.setattr(health_module, "_rebuild_hosted_runtime_index", record_rebuild)
+    assert not create_runtime_health_service(settings).check().ready
+    with pytest.raises(MissingIndexError, match="contains no rows"):
+        ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
+    assert rebuilds == []
+    assert settings.index_db_path.read_bytes() == original
+    assert store.count() == 0

@@ -97,11 +97,12 @@ def ensure_hosted_runtime_ready(
     if result.ready:
         return
 
-    if rebuild_if_missing and index_store.path.exists():
+    index_exists = index_store.path.exists()
+    if rebuild_if_missing and index_exists:
         # Existing unknown/mismatched data must never trigger a paid implicit migration.
         index_store.validate_identity()
 
-    if rebuild_if_missing:
+    if rebuild_if_missing and not index_exists:
         _rebuild_hosted_runtime_index(
             active_settings,
             index_path=index_store.path,

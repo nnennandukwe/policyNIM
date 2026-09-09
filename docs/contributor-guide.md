@@ -236,9 +236,9 @@ uv lock --check
 git diff --check
 ```
 
-`--pythonpath` points Pyright at the selected environment; it does not execute
-Python. If you place the environments elsewhere, adjust both
-`UV_PROJECT_ENVIRONMENT` and that interpreter path. Runtime dependencies remain
+`--pythonpath` points Pyright at the selected environment's interpreter. If you
+place the environments elsewhere, adjust both `UV_PROJECT_ENVIRONMENT` and that
+interpreter path. Runtime dependencies remain
 locked; optional extras require separate resolution checks when their dependency
 constraints change.
 
