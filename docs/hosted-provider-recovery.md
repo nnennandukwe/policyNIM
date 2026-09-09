@@ -239,3 +239,12 @@ so the key is not embedded in the displayed RUN command. This does not turn buil
 ARGs into BuildKit secrets: restrict access to Railway build metadata and rotate
 any key previously rendered in legacy build logs. The generic Dockerfile continues
 to use a BuildKit secret.
+
+The selected reranker returns raw logits, including negative values for useful
+passages. Its adapter applies the [NVIDIA-documented sigmoid conversion](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2)
+before exposing scores to the existing routing gate. It sorts by the original
+logits first so saturated probabilities do not change ranking order, and rejects
+non-finite scores. Custom-model score behavior is unchanged. These scores remain
+ranking signals; compilation and generation still require grounded evidence and
+valid chunk citations. A hosted probe established that the prior raw-logit path
+discarded all 15 candidates before the compiler was called.

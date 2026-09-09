@@ -375,3 +375,109 @@ def test_credentialed_http_endpoints_fail_before_client_construction(monkeypatch
         getattr(module, adapter_name)(**kwargs)
     assert not calls
     assert "sentinel" not in str(caught.value)
+
+
+@pytest.mark.parametrize("model", [RERANK_MODEL, "custom/reranker"])
+def test_replacement_reranker_converts_documented_logits_only_for_selected_model(model):
+    """Translate a zero logit to its documented probability without changing custom scores."""
+
+    def handler(request):
+        """Return one zero logit through the real HTTP response parser."""
+        return httpx.Response(200, json={"rankings": [{"index": 0, "logit": 0.0}]})
+
+    score = invoke("reranking", handler, model=model)[0].score
+    assert score == (0.5 if model == RERANK_MODEL else 0.0)
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -float("inf")])
+def test_reranker_rejects_nonfinite_scores_without_retry(score):
+    """Do not convert malformed scores into confident-looking ranking results."""
+    calls = []
+
+    def handler(request):
+        """Return deliberately invalid JSON numeric values without a network call."""
+        calls.append(request)
+        return httpx.Response(200, content=json.dumps({"rankings": [{"index": 0, "logit": score}]}))
+
+    with pytest.raises(ProviderError) as caught:
+        invoke("reranking", handler)
+    assert caught.value.failure_class == "invalid_response"
+    assert len(calls) == 1
+
+
+def test_negative_nvidia_logits_reach_policy_compilation_routing(tmp_path):
+    """Exercise the observed hosted failure through real SQLite and mocked NVIDIA HTTP."""
+    from policynim.services.router import PolicyRouterService
+    from policynim.storage import create_index_store
+    from policynim.types import EmbeddedChunk, RouteRequest
+
+    class QueryEmbedder:
+        """Provide the same deterministic vector space as the real test index."""
+
+        def embed_query(self, text):
+            """Return the known vector for the relevant logging passage."""
+            return [1.0, 0.0]
+
+        def embed_documents(self, texts):
+            """Return vectors in the same test space for protocol compatibility."""
+            return [[1.0, 0.0] for _ in texts]
+
+        def close(self):
+            """Release the resource-free test embedder."""
+
+    store = create_index_store(Settings(**NO_ENV, index_db_path=tmp_path / "index.sqlite3"))
+    store.replace([EmbeddedChunk(**candidate().model_dump(exclude={"score"}), vector=[1.0, 0.0])])
+
+    def handler(request):
+        """Replay a negative logit, as the documented model and hosted probe returned."""
+        return httpx.Response(200, json={"rankings": [{"index": 0, "logit": -2.783203125}]})
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="https://example.invalid/v1"
+    ) as http:
+        reranker = NVIDIAReranker(
+            api_key="test",
+            model=RERANK_MODEL,
+            base_url="https://example.invalid/v1",
+            timeout_seconds=1,
+            max_retries=0,
+            client=http,
+        )
+        with PolicyRouterService(
+            embedder=QueryEmbedder(), index_store=store, reranker=reranker
+        ) as router:
+            routed = router.route(RouteRequest(task="Add request IDs to backend logs.", top_k=1))
+    assert not routed.packet.insufficient_context
+    assert [c.chunk_id for c in routed.retained_context] == [candidate().chunk_id]
+    retained_score = routed.retained_context[0].score
+    assert retained_score is not None and 0 < retained_score < 0.5
+
+
+@pytest.mark.parametrize("logits", [(900.0, 1000.0), (-1000.0, -900.0)])
+def test_reranker_preserves_logit_order_when_probabilities_saturate(logits):
+    """Keep ranking deterministic at both floating-point saturation boundaries."""
+
+    def handler(request):
+        """Return distinct finite logits whose sigmoid probabilities coincide."""
+        return httpx.Response(
+            200,
+            json={
+                "rankings": [{"index": index, "logit": score} for index, score in enumerate(logits)]
+            },
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="https://example.invalid/v1"
+    ) as http:
+        reranker = NVIDIAReranker(
+            api_key="test",
+            model=RERANK_MODEL,
+            base_url="https://example.invalid/v1",
+            timeout_seconds=1,
+            max_retries=0,
+            client=http,
+        )
+        chunks = [candidate().model_copy(update={"chunk_id": name}) for name in ("lower", "higher")]
+        ranked = reranker.rerank("request IDs", chunks, top_k=2)
+    assert [chunk.chunk_id for chunk in ranked] == ["higher", "lower"]
+    assert all(chunk.score is not None and 0 <= chunk.score <= 1 for chunk in ranked)

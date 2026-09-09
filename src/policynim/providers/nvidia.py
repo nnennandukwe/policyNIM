@@ -285,15 +285,16 @@ class NVIDIAReranker(Reranker):
         response = self._request_ranking(payload)
         scores = _extract_rerank_scores(response, expected_count=len(candidates))
 
-        ranked = [
-            candidate.model_copy(update={"score": float(score)})
-            for candidate, score in zip(candidates, scores, strict=True)
+        if not all(math.isfinite(score) for score in scores):
+            raise ProviderError(
+                "NVIDIA reranking response returned a non-finite score.",
+                failure_class="invalid_response",
+            )
+        ranked = sorted(zip(candidates, scores, strict=True), key=lambda row: row[1], reverse=True)
+        return [
+            candidate.model_copy(update={"score": _rerank_score(score, model=self._model)})
+            for candidate, score in ranked[:top_k]
         ]
-        ranked.sort(
-            key=lambda chunk: chunk.score if chunk.score is not None else float("-inf"),
-            reverse=True,
-        )
-        return ranked[:top_k]
 
     def _request_ranking(self, payload: dict[str, object]) -> Any:
         """Request passage rankings and classify failures without exposing response bodies."""
@@ -742,6 +743,16 @@ def _validate_embeddings_response(
         embeddings[index] = embedding
 
     return [embeddings[index] for index in range(expected_count)]
+
+
+def _rerank_score(logit: float, *, model: str) -> float:
+    """Apply NVIDIA's documented sigmoid for the selected model, preserving custom scores."""
+    if model != "nvidia/llama-nemotron-rerank-vl-1b-v2":
+        return logit
+    if logit >= 0:
+        return 1.0 / (1.0 + math.exp(-logit))
+    exponent = math.exp(logit)
+    return exponent / (1.0 + exponent)
 
 
 def _extract_rerank_scores(payload: Any, *, expected_count: int) -> list[float]:
