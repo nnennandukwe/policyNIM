@@ -16,6 +16,7 @@ from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import AuthStore
 from policynim.types import (
+    ApiKeyQuotaResult,
     BetaAccount,
     BetaAuditEvent,
     BetaAuthDecision,
@@ -158,7 +159,7 @@ class BetaAuthService:
             return BetaAuthDecision(status="unauthorized")
 
         now = self._utc_now()
-        result = self._store.consume_quota_for_api_key(
+        result: ApiKeyQuotaResult = self._store.consume_quota_for_api_key(
             key_hash=_hash_api_key(token.strip()),
             usage_date=now.date(),
             quota=self._settings.beta_daily_request_quota,

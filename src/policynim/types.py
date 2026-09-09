@@ -690,6 +690,14 @@ class BetaAuthDecision(StrictModel):
     usage: BetaUsageSnapshot | None = None
 
 
+class ApiKeyQuotaResult(StrictModel):
+    """Account and quota facts returned after checking an API key."""
+
+    account: BetaAccount | None = None
+    usage: BetaUsageSnapshot | None = None
+    quota_consumed: bool
+
+
 def _validate_non_empty_string(value: object, *, field_name: str) -> str:
     """Return one trimmed required string and reject empty values."""
     if not isinstance(value, str):
