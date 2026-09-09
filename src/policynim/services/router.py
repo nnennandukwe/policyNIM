@@ -218,6 +218,7 @@ def _create_default_router_components(settings: Settings) -> tuple[Embedder, Rer
 
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
+    """Reject missing or incompatible vectors before contacting the embedding provider."""
     if not index_store.exists() or index_store.count() == 0:
         raise MissingIndexError("Run `policynim ingest` before routing policy selection.")
     index_store.validate_identity()

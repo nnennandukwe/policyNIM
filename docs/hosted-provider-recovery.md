@@ -102,6 +102,8 @@ or incompatible indexes before they can authorize actions. On any failure, stop;
 for inspection and choose fresh paths for another attempt. An incomplete database
 must not be activated. Cleanup warnings identify owned staging-file cleanup;
 a warning after successful completion does not mean publication was rolled back.
+Corrupt or unreadable existing indexes produce the same sanitized, separate-path
+recovery guidance; ingestion never replaces them implicitly.
 
 Only after validation should an approved operator select the candidate's index,
 rules, and matching provider configuration during restart or deployment. Retain
@@ -177,6 +179,8 @@ Default CI remains offline. Use the contributor guide's locked test commands for
 both Python 3.11 and 3.12, Ruff, formatting, Pyright, and `uv lock --check`. Bind
 results and Qodo review evidence to the exact revision. Local-review coverage
 limitations and historical findings must be reported separately from PR review.
+Live evaluation orchestration also isolates both its temporary database and runtime
+rules; it must never read or overwrite an installation's rules artifact.
 
 Live verification needs explicit approval, zero provider retries, and a stop on
 the first failure. Record the commit, lock digest, configuration names/public

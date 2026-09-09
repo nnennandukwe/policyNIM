@@ -20,6 +20,7 @@ NO_ENV: dict[str, Any] = {"_env_file": None}
 
 
 def settings_for(path: Path, model: str = "test/model-a", **kwargs) -> Settings:
+    """Build explicit offline settings for a test embedding identity and index destination."""
     return Settings(
         **NO_ENV,
         index_db_path=path,
@@ -30,6 +31,7 @@ def settings_for(path: Path, model: str = "test/model-a", **kwargs) -> Settings:
 
 
 def chunk() -> EmbeddedChunk:
+    """Return one embedded policy chunk in a two-dimensional test space."""
     return EmbeddedChunk(
         chunk_id="P:rules",
         path="policies/p.md",
@@ -45,27 +47,33 @@ def chunk() -> EmbeddedChunk:
 
 class SpyEmbedder:
     def __init__(self):
+        """Initialize the test double's state and wrapped resources."""
         self.calls = 0
         self.closed = False
 
     def embed_query(self, text):
+        """Return a test query vector after performing the case's configured side effect."""
         self.calls += 1
         return [1.0, 0.0]
 
     def embed_documents(self, texts):
+        """Count embedding calls and return fixed two-dimensional vectors for the corpus."""
         self.calls += 1
         return [[1.0, 0.0] for _ in texts]
 
     def close(self):
+        """Record or perform resource cleanup for lifecycle assertions."""
         self.closed = True
 
 
 def metadata(path):
+    """Read the persisted index metadata using an independent SQLite connection."""
     with sqlite3.connect(path) as conn:
         return dict(conn.execute("SELECT key, value FROM index_metadata"))
 
 
 def test_index_persists_model_identity_with_vectors(tmp_path):
+    """Verify index persists model identity with vectors."""
     settings = settings_for(tmp_path / "index.sqlite3")
     create_index_store(settings).replace([chunk()])
     stored = metadata(settings.index_db_path)
@@ -84,6 +92,7 @@ def test_index_persists_model_identity_with_vectors(tmp_path):
     ["same_dimension_model", "endpoint", "legacy", "missing_model", "dimension", "incomplete"],
 )
 def test_incompatible_index_blocks_query_and_readiness_without_embedding(tmp_path, mutation):
+    """Verify incompatible index blocks query and readiness without embedding."""
     path = tmp_path / "index.sqlite3"
     settings = settings_for(path)
     create_index_store(settings).replace([chunk()])
@@ -113,6 +122,7 @@ def test_incompatible_index_blocks_query_and_readiness_without_embedding(tmp_pat
 
 
 def test_legacy_index_remains_inspectable_but_cannot_be_reembedded_in_place(tmp_path):
+    """Verify legacy index remains inspectable but cannot be reembedded in place."""
     settings = settings_for(tmp_path / "index.sqlite3")
     store = create_index_store(settings)
     store.replace([chunk()])
@@ -126,6 +136,7 @@ def test_legacy_index_remains_inspectable_but_cannot_be_reembedded_in_place(tmp_
 
 
 def test_search_rechecks_identity_after_provider_returns(tmp_path):
+    """Verify search rechecks identity after provider returns."""
     path = tmp_path / "index.sqlite3"
     settings = settings_for(path)
     create_index_store(settings).replace([chunk()])
@@ -134,6 +145,7 @@ def test_search_rechecks_identity_after_provider_returns(tmp_path):
 
     class ReplacingEmbedder(SpyEmbedder):
         def embed_query(self, text):
+            """Return a test query vector after performing the case's configured side effect."""
             other.replace(path)
             return super().embed_query(text)
 
@@ -144,6 +156,7 @@ def test_search_rechecks_identity_after_provider_returns(tmp_path):
 
 
 def make_ingest(tmp_path, *, model="test/model-a", filename="index.sqlite3"):
+    """Create an isolated corpus, rules destination, and ingest service with a spy embedder."""
     corpus = tmp_path / "policies"
     corpus.mkdir(exist_ok=True)
     (corpus / "logging.md").write_text("# Logging\n\n## Rules\n\nInclude request identifiers.\n")
@@ -160,6 +173,7 @@ def make_ingest(tmp_path, *, model="test/model-a", filename="index.sqlite3"):
 
 
 def test_model_change_rejected_before_provider_call(tmp_path):
+    """Verify model change rejected before provider call."""
     settings, service, _ = make_ingest(tmp_path)
     service.run()
     before = settings.index_db_path.read_bytes()
@@ -171,9 +185,11 @@ def test_model_change_rejected_before_provider_call(tmp_path):
 
 
 def test_rules_finalization_failure_leaves_candidate_unready(tmp_path, monkeypatch):
+    """Verify rules finalization failure leaves candidate unready."""
     settings, service, _ = make_ingest(tmp_path)
 
     def fail(*args):
+        """Interrupt the selected boundary to verify preservation and cleanup."""
         raise OSError("injected finalize failure")
 
     monkeypatch.setattr("policynim.services.ingest._finalize_runtime_rules_artifact", fail)
@@ -186,6 +202,7 @@ def test_rules_finalization_failure_leaves_candidate_unready(tmp_path, monkeypat
 
 
 def test_fresh_migration_cannot_overwrite_existing_rules(tmp_path):
+    """Verify fresh migration cannot overwrite existing rules."""
     settings, service, embedder = make_ingest(tmp_path)
     rules = tmp_path / "index.sqlite3.rules.json"
     rules.write_text("preserved prior rules")
@@ -197,6 +214,7 @@ def test_fresh_migration_cannot_overwrite_existing_rules(tmp_path):
 
 
 def test_startup_never_rebuilds_model_mismatch(tmp_path, monkeypatch):
+    """Verify startup never rebuilds model mismatch."""
     path = tmp_path / "index.sqlite3"
     create_index_store(settings_for(path)).replace([chunk()])
     calls = []
@@ -212,6 +230,7 @@ def test_startup_never_rebuilds_model_mismatch(tmp_path, monkeypatch):
 @pytest.mark.parametrize("matched", [False, True])
 @pytest.mark.parametrize("consumer", ["decision", "execution"])
 def test_runtime_actions_reject_incompatible_index(tmp_path, mutation, matched, consumer):
+    """Verify runtime actions reject incompatible index."""
     from policynim.services.runtime_decision import RuntimeDecisionService
     from policynim.services.runtime_execution import RuntimeExecutionService
     from policynim.storage import RuntimeEvidenceStore

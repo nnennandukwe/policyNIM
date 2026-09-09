@@ -65,7 +65,12 @@ class SQLiteVecIndexStore(IndexStore):
         if self._embedding_identity is None or self._path.is_symlink():
             raise IndexCompatibilityError()
         if self._path.exists():
-            self.validate_identity()
+            try:
+                self.validate_identity()
+            except IndexCompatibilityError:
+                raise
+            except (MissingIndexError, sqlite3.DatabaseError, OSError) as exc:
+                raise IndexCompatibilityError("Existing index cannot be validated.") from exc
 
     def inspect_identity(self) -> IndexIdentity:
         """Inspect persisted identity without altering the database or calling a provider."""
@@ -136,6 +141,8 @@ class SQLiteVecIndexStore(IndexStore):
                     raise IndexCompatibilityError(
                         "Index is in use; rebuild offline into separate paths."
                     )
+                if _path_identity(self._path) != observed:
+                    raise IndexCompatibilityError("Index destination changed before publication.")
                 tmp_path.replace(self._path)
             published = True
             return build_id

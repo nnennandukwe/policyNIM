@@ -1227,6 +1227,7 @@ def test_call_tool_logs_failure_class_when_tool_raises(monkeypatch) -> None:
 def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
     monkeypatch,
 ) -> None:
+    """Verify call tool logs failure class when policy preflight generator times out."""
     events: list[dict[str, object]] = []
 
     class StaticEmbedder:
@@ -1276,6 +1277,7 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
             *,
             complete: bool = True,
         ) -> str:  # pragma: no cover - protocol filler for tests
+            """Implement the test store's replacement protocol with a synthetic build receipt."""
             raise NotImplementedError
 
         def list_chunks(self) -> list[PolicyChunk]:  # pragma: no cover - protocol filler
@@ -2040,6 +2042,7 @@ def test_slow_github_callback_does_not_block_portal_requests(monkeypatch) -> Non
 
 @pytest.mark.parametrize("failure", ["endpoint_unavailable", "index_incompatible"])
 def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, failure):
+    """Verify mcp recovery guidance does not retry permanent failures."""
     from policynim.errors import IndexCompatibilityError
 
     error = (
@@ -2052,9 +2055,11 @@ def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, fa
 
     class FailingSearch:
         def search(self, request):
+            """Raise the selected controlled failure through the real MCP error boundary."""
             raise error
 
         def close(self):
+            """Record or perform resource cleanup for lifecycle assertions."""
             closed.append(True)
 
     monkeypatch.setattr(mcp_module, "create_search_service", lambda settings: FailingSearch())

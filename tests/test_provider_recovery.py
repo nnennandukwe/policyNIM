@@ -23,6 +23,7 @@ CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 
 def candidate() -> ScoredChunk:
+    """Return one policy passage for provider request and citation assertions."""
     return ScoredChunk(
         chunk_id="BE-LOG-001:rules",
         path="policies/backend/backend-logging-standard.md",
@@ -36,7 +37,11 @@ def candidate() -> ScoredChunk:
 
 
 def invoke(
-    operation: str, handler: Callable[[httpx.Request], httpx.Response], *, model: str | None = None
+    operation: str,
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    model: str | None = None,
+    strict_response: bool = False,
 ) -> Any:
     """Exercise real SDK serialization and HTTP exception mapping without network access."""
     with httpx.Client(
@@ -58,6 +63,7 @@ def invoke(
             base_url="https://integrate.api.nvidia.com/v1",
             max_retries=0,
             http_client=http,
+            _strict_response_validation=strict_response,
         ) as client:
             if operation == "generation":
                 generator = NVIDIAGenerator(
@@ -98,9 +104,11 @@ def invoke(
     ],
 )
 def test_provider_failure_contract(operation: str, status: int, failure_class: str, attempts: int):
+    """Verify provider failure contract."""
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        """Capture the mocked HTTP request and return the response required by this case."""
         calls.append(request)
         return httpx.Response(status, json={"error": {"message": "sentinel-private-response"}})
 
@@ -120,9 +128,11 @@ def test_provider_failure_contract(operation: str, status: int, failure_class: s
 
 @pytest.mark.parametrize("operation", ["embeddings", "query"])
 def test_embedding_wire_contract_and_response_order(operation: str):
+    """Verify embedding wire contract and response order."""
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        """Capture the mocked HTTP request and return the response required by this case."""
         calls.append((str(request.url), json.loads(request.content)))
         count = len(calls[-1][1]["input"])
         return httpx.Response(
@@ -166,9 +176,11 @@ def test_embedding_wire_contract_and_response_order(operation: str):
     ],
 )
 def test_embedding_rejects_malformed_response_without_retry(data):
+    """Verify embedding rejects malformed response without retry."""
     calls = []
 
     def handler(request):
+        """Capture the mocked HTTP request and return the response required by this case."""
         calls.append(request)
         # Raw JSON allows the non-finite sentinel to reach the adapter's validator.
         return httpx.Response(
@@ -184,9 +196,11 @@ def test_embedding_rejects_malformed_response_without_retry(data):
 
 
 def test_replacement_reranker_wire_contract():
+    """Verify replacement reranker wire contract."""
     calls = []
 
     def handler(request):
+        """Capture the mocked HTTP request and return the response required by this case."""
         calls.append((str(request.url), json.loads(request.content)))
         return httpx.Response(200, json={"rankings": [{"index": 0, "logit": 0.8}]})
 
@@ -204,11 +218,49 @@ def test_replacement_reranker_wire_contract():
     ]
 
 
-@pytest.mark.parametrize("model", [CHAT_MODEL, "custom/chat-model"])
-def test_chat_options_are_specific_to_replacement_model(model):
+@pytest.mark.parametrize("body", ["private-not-json", '"private-string"', "null", "{}"])
+def test_embedding_rejects_invalid_response_envelopes_without_retry(body):
+    """Classify SDK decoding and missing response envelopes without exposing the body."""
     calls = []
 
     def handler(request):
+        """Return a malformed successful response through the real SDK transport."""
+        calls.append(request)
+        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    with pytest.raises(ProviderError) as caught:
+        invoke("query", handler)
+    assert caught.value.failure_class == "invalid_response"
+    assert "private" not in str(caught.value)
+    assert len(calls) == 1
+
+
+def test_sdk_response_validation_failure_is_sanitized_and_not_retried():
+    """Preserve invalid-response classification when the SDK rejects a response itself."""
+    from openai import APIResponseValidationError
+
+    calls = []
+
+    def handler(request):
+        """Return invalid embedding data to a strict real OpenAI client."""
+        calls.append(request)
+        return httpx.Response(200, json={"data": "private-response-sentinel"})
+
+    with pytest.raises(ProviderError) as caught:
+        invoke("query", handler, strict_response=True)
+    assert isinstance(caught.value.__cause__, APIResponseValidationError)
+    assert caught.value.failure_class == "invalid_response"
+    assert "sentinel" not in str(caught.value)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("model", [CHAT_MODEL, "custom/chat-model"])
+def test_chat_options_are_specific_to_replacement_model(model):
+    """Verify chat options are specific to replacement model."""
+    calls = []
+
+    def handler(request):
+        """Capture the mocked HTTP request and return the response required by this case."""
         calls.append(json.loads(request.content))
         return httpx.Response(
             200,
@@ -248,6 +300,7 @@ def test_chat_options_are_specific_to_replacement_model(model):
 
 
 def test_default_models_and_environment_overrides(monkeypatch):
+    """Verify default models and environment overrides."""
     for suffix in ["CHAT", "EMBED", "RERANK"]:
         monkeypatch.delenv(f"POLICYNIM_NVIDIA_{suffix}_MODEL", raising=False)
     settings = Settings(**NO_ENV)
@@ -272,6 +325,7 @@ def test_default_models_and_environment_overrides(monkeypatch):
     "field", ["nvidia_embed_model", "nvidia_rerank_model", "nvidia_chat_model"]
 )
 def test_model_overrides_are_normalized_consistently(field):
+    """Verify model overrides are normalized consistently."""
     options: dict[str, Any] = {**NO_ENV, field: " custom/model "}
     assert getattr(Settings(**options), field) == "custom/model"
     options[field] = "custom/model\ninvalid"
@@ -290,11 +344,13 @@ def test_model_overrides_are_normalized_consistently(field):
     ],
 )
 def test_credentialed_http_endpoints_fail_before_client_construction(monkeypatch, adapter_name):
+    """Verify credentialed http endpoints fail before client construction."""
     import policynim.providers.nvidia as module
 
     calls = []
 
     def client_must_not_be_created(**kwargs):
+        """Fail if invalid endpoint configuration reaches client construction."""
         calls.append(True)
         raise AssertionError("client construction reached")
 

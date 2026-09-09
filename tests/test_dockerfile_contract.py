@@ -74,6 +74,7 @@ def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
 
 
 def test_ingestion_build_arguments_match_runtime_defaults_and_publish_rules() -> None:
+    """Verify ingestion build arguments match runtime defaults and publish rules."""
     settings = Settings(**NO_ENV)
     expected = {
         "POLICYNIM_NVIDIA_EMBED_MODEL": settings.nvidia_embed_model,
