@@ -557,6 +557,44 @@ def test_streamable_http_port_probe_rejects_in_use_port() -> None:
             mcp_module._ensure_streamable_http_port_available(host, port)
 
 
+@pytest.mark.parametrize("resolution_code", [socket.EAI_NONAME, socket.EAI_AGAIN])
+def test_streamable_http_dns_failure_stops_startup_with_host_guidance(
+    monkeypatch: pytest.MonkeyPatch, resolution_code: int
+) -> None:
+    """Translate permanent and temporary DNS failures before runtime or provider setup."""
+    settings = Settings(mcp_host="missing.example", mcp_port=9001)
+    resolution_error = socket.gaierror(resolution_code, "Synthetic resolution failure")
+
+    def get_settings() -> Settings:
+        """Return the configured DNS bind host without reading external configuration."""
+        return settings
+
+    def fail_resolution(host: str, port: int, **kwargs: object) -> None:
+        """Fail the configured hostname lookup without accessing DNS."""
+        assert (host, port) == ("missing.example", 9001)
+        raise resolution_error
+
+    def forbid_startup(*args: object, **kwargs: object) -> None:
+        """Reject socket creation, runtime preparation or HTTP startup after DNS failure."""
+        pytest.fail("DNS failure must stop socket, runtime and provider preparation")
+
+    monkeypatch.setattr(mcp_module, "get_settings", get_settings)
+    monkeypatch.setattr(mcp_module.socket, "getaddrinfo", fail_resolution)
+    monkeypatch.setattr(mcp_module.socket, "socket", forbid_startup)
+    monkeypatch.setattr(mcp_module, "ensure_hosted_runtime_ready", forbid_startup)
+    monkeypatch.setattr(mcp_module, "_build_streamable_http_app", forbid_startup)
+    monkeypatch.setattr(mcp_module, "_run_streamable_http_app", forbid_startup)
+
+    with pytest.raises(ConfigurationError, match="POLICYNIM_MCP_HOST") as caught:
+        mcp_module.run_server("streamable-http")
+
+    assert caught.value.__cause__ is resolution_error
+    assert "missing.example" in str(caught.value)
+    assert "resolve" in str(caught.value)
+    assert "binding" in str(caught.value)
+    assert "local IP address" in str(caught.value)
+
+
 def test_streamable_http_ipv6_startup_checks_port_before_runtime_work(monkeypatch) -> None:
     """Permit IPv6 startup, but reject an occupied listener before runtime work."""
     if not socket.has_ipv6:

@@ -269,7 +269,7 @@ def _streamable_http_port_in_use_message(host: str, port: int) -> str:
 
 
 def _ensure_streamable_http_port_available(host: str, port: int) -> None:
-    """Probe resolved IPv4 and IPv6 listener addresses before hosted runtime work."""
+    """Probe listener addresses and report actionable resolution or binding failures."""
     try:
         addresses = socket.getaddrinfo(
             host, port, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE
@@ -295,6 +295,11 @@ def _ensure_streamable_http_port_available(host: str, port: int) -> None:
                 bound_any_address = True
         if not bound_any_address:
             raise OSError(errno.EADDRNOTAVAIL, "No resolved address is available for binding")
+    except socket.gaierror as exc:
+        raise ConfigurationError(
+            f"Could not resolve configured MCP host {host!r} for binding. "
+            "Check `POLICYNIM_MCP_HOST` or use a concrete local IP address, such as 127.0.0.1."
+        ) from exc
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE:
             raise ConfigurationError(_streamable_http_port_in_use_message(host, port)) from exc
