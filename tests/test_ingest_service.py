@@ -74,8 +74,8 @@ class RecordingIndexStore:
         return 0
 
 
-def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
-    """Build and rebuild the default SQLite index."""
+def test_ingest_service_builds_and_refreshes_into_separate_paths(tmp_path: Path) -> None:
+    """Refresh into separate outputs while preserving the original complete pair."""
     policies_dir = tmp_path / "policies"
     artifact_path = tmp_path / "runtime" / "runtime_rules.json"
     write_policy(
@@ -155,12 +155,32 @@ def test_ingest_service_builds_and_rebuilds_local_index(tmp_path: Path) -> None:
 
     (policies_dir / "security" / "tokens.md").unlink()
 
-    second_result = service.run()
+    original_index = store.path.read_bytes()
+    original_rules = artifact_path.read_bytes()
+    refreshed_store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "refreshed.sqlite3",
+    )
+    refreshed_rules = tmp_path / "runtime" / "refreshed_rules.json"
+    refresh = IngestService(
+        embedder=MockEmbedder(),
+        index_store=refreshed_store,
+        corpus_root=policies_dir,
+        embedding_model="mock-embedder",
+        runtime_rules_artifact_path=refreshed_rules,
+    )
+    second_result = refresh.run()
+    assert store.path.read_bytes() == original_index
+    assert artifact_path.read_bytes() == original_rules
+    store.validate_identity()
+    refreshed_store.validate_identity()
 
     assert second_result.document_count == 1
     assert second_result.chunk_count < first_result.chunk_count
-    assert store.count() == second_result.chunk_count
-    second_artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert refreshed_store.count() == second_result.chunk_count
+    second_artifact = json.loads(refreshed_rules.read_text(encoding="utf-8"))
     assert len(second_artifact["rules"]) == 1
 
 

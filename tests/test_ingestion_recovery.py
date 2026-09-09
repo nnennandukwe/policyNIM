@@ -543,3 +543,49 @@ def test_ingestion_does_not_replace_same_model_destination_created_during_embedd
     with pytest.raises(MissingIndexError, match="changed"):
         service.run()
     assert settings.index_db_path.read_bytes() == expected
+
+
+@pytest.mark.parametrize("boundary", ["rules", "completion"])
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_failed_same_model_refresh_preserves_ready_installation(
+    tmp_path, monkeypatch, boundary, interrupted
+):
+    """A refresh cannot displace working data before its coupled artifacts complete."""
+    settings, service, embedder = make_ingest(tmp_path)
+    service.run()
+    paths = [
+        settings.index_db_path,
+        tmp_path / "index.sqlite3.rules.json",
+        tmp_path / "policies" / "logging.md",
+    ]
+    before = {path: path.read_bytes() for path in paths}
+    calls = embedder.calls
+
+    def fail(*args, **kwargs):
+        """Expose the late failure that previously replaced a working index."""
+        if interrupted:
+            raise KeyboardInterrupt("injected refresh interruption")
+        raise OSError("injected refresh failure")
+
+    if boundary == "rules":
+        monkeypatch.setattr(ingest_module, "_finalize_runtime_rules_artifact", fail)
+    else:
+        monkeypatch.setattr(storage_module.SQLiteVecIndexStore, "complete_ingest", fail)
+    with pytest.raises((OSError, KeyboardInterrupt, MissingIndexError)):
+        service.run()
+    assert {path: path.read_bytes() for path in paths} == before
+    assert create_runtime_health_service(settings).check().ready
+    assert create_index_store(settings).search([1.0, 0.0], top_k=1)
+    assert embedder.calls == calls
+
+
+def test_incomplete_store_replacement_cannot_displace_complete_index(tmp_path):
+    """The persistence boundary also refuses incomplete in-place publication."""
+    settings = settings_for(tmp_path / "index.sqlite3")
+    store = create_index_store(settings)
+    store.replace([chunk()])
+    before = settings.index_db_path.read_bytes()
+    with pytest.raises(MissingIndexError, match="separate"):
+        store.replace([chunk()], complete=False)
+    assert settings.index_db_path.read_bytes() == before
+    assert create_runtime_health_service(settings).check().ready

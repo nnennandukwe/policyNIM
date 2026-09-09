@@ -109,6 +109,11 @@ class IngestService:
             raise IndexCompatibilityError("Output destinations must be outside policy sources.")
         observed_index = _artifact_identity(self._index_store.uri)
         observed_rules = _artifact_identity(rules_path)
+        if observed_index is not None or observed_rules is not None:
+            raise IndexCompatibilityError(
+                "Ingestion requires new index and runtime-rules destinations, "
+                "even for the same model."
+            )
         documents = load_policy_documents(self._corpus_root)
         runtime_rules_artifact = _compile_runtime_rules_artifact(documents)
         chunks = chunk_policy_documents(documents)
@@ -242,14 +247,11 @@ def _stage_runtime_rules_artifact(
 def _finalize_runtime_rules_artifact(
     staged_path: Path, destination: Path, observed: tuple[int, int, int, int] | None
 ) -> None:
-    """Publish staged rules; replacing existing files requires a single offline publisher."""
-    if _artifact_identity(destination) != observed:
+    """Publish staged rules without overwriting an existing artifact."""
+    if observed is not None or _artifact_identity(destination) != observed:
         raise IndexCompatibilityError("Runtime-rules destination changed during ingestion.")
-    if observed is None:
-        os.link(staged_path, destination)
-        _cleanup_staged_runtime_rules_artifact(staged_path)
-    else:
-        staged_path.replace(destination)
+    os.link(staged_path, destination)
+    _cleanup_staged_runtime_rules_artifact(staged_path)
 
 
 def _cleanup_staged_runtime_rules_artifact(staged_path: Path) -> None:

@@ -35,16 +35,32 @@ class StrictModel(BaseModel):
 
 def normalize_provider_endpoint(value: str) -> str:
     """Require credential-free HTTPS and canonicalize the embedding-space endpoint."""
-    parts = urlsplit(value.strip())
-    if (
-        parts.scheme != "https"
-        or not parts.hostname
-        or parts.username is not None
-        or parts.password is not None
-        or parts.query
-        or parts.fragment
-    ):
-        raise ValueError("Provider endpoint must use HTTPS, without credentials or query data.")
+    try:
+        value = value.strip()
+        if "\\" in value or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        ):
+            raise ValueError
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError
+        # urlsplit alone accepts malformed hostnames; use the same validated URL
+        # spelling for persisted identity and every provider client.
+        parts = urlsplit(str(AnyHttpUrl(value)))
+        if not parts.hostname:
+            raise ValueError
+    except ValueError:
+        raise ValueError(
+            "Provider endpoint must use a valid HTTPS URL, without credentials or query data."
+        ) from None
     host = parts.hostname.lower()
     if ":" in host:
         host = f"[{host}]"

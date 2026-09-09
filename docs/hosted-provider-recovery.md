@@ -77,12 +77,16 @@ cannot satisfy startup readiness.
 ## Rebuild into a separate candidate
 
 Preserve the original corpus, index, runtime rules, and configuration. Do not edit
-identity metadata or reuse either old output path. A schema-1 index remains
+identity metadata or reuse either old output path. This requirement also applies
+to same-model refreshes: every `ingest` run needs absent index and runtime-rules
+outputs. A failed refresh therefore cannot displace the active installation.
+A schema-1 index remains
 inspectable with `dump-index`, but cannot be queried or implicitly upgraded.
 All schema-2 indexes record provider, model, credential-free endpoint, observed
 vector dimension, build ID, and completion status. Equal dimensions do not make
 different models compatible. Endpoint identities must use HTTPS without URL
-credentials, query parameters, or fragments.
+credentials, query parameters, or fragments. Malformed hosts, embedded whitespace
+or control characters, and backslashes are rejected before client construction.
 
 After approval for live provider usage, run this from a locked source checkout
 with `NVIDIA_API_KEY` already supplied securely. Set `POLICYNIM_CORPUS_DIR` to the
@@ -137,14 +141,14 @@ operational rollback option.
 
 ## Transaction contract
 
-For a model migration, canonical state is the original source corpus, index,
-runtime rules, and operator configuration. The migration owns only a new,
+For every ingestion build or refresh, canonical state is the original source
+corpus, index, runtime rules, and operator configuration. The build owns only a new,
 explicitly selected candidate destination and its uniquely named staging files.
 The old paths must not be selected as migration outputs.
 
 | State | Transition | Durable result |
 | --- | --- | --- |
-| Observed | Validate settings and destinations | Existing incompatible/unknown indexes are rejected without provider calls. |
+| Observed | Validate settings and destinations | Every existing output is rejected without provider calls, including compatible same-model indexes. |
 | Preparing | Embed all preserved source documents | Original installation is untouched. |
 | Staged | Write vectors and identity into one temporary database | Production inspection must accept identity and dimensions. |
 | Published, incomplete | Publish database with an incomplete marker | Retrieval and readiness reject the candidate. |
@@ -153,11 +157,11 @@ The old paths must not be selected as migration outputs.
 | Recoverable | Failure after database publication | Incomplete candidate remains blocked; preserve it and retry into a new destination. |
 | Cleanup warning | Failure removing owned temporary files after publication | Report the committed state accurately; do not delete published data. |
 
-The database publication operation is an atomic no-clobber link for a new
-destination and a staged-file replacement for a compatible existing index.
-Migration requires a fresh destination. A concurrent creator of that destination
-must win rather than be overwritten. Existing-index replacement is an offline,
-single-publisher operation; concurrent activation/publication is reserved for #93.
+Ingestion publishes the database and rules with atomic no-clobber links into
+absent destinations. A concurrent creator wins rather than being overwritten.
+The lower-level store still supports complete single-file replacement for offline
+callers, but ingestion never uses that path: an incomplete build cannot replace
+an existing database. Concurrent activation/publication remains reserved for #93.
 No sequence of separate index/rules writes is claimed to be an atomic generation.
 
 Invariants:
@@ -169,8 +173,8 @@ Invariants:
 - Never query an incomplete candidate or complete a different build by mistake.
 - Complete only the physical database published by the active ingestion. Copied
   build metadata cannot resume completion after path substitution or process restart.
-- Preserve original sources and old index/rules during migration and every
-  migration failure. Reject a pre-existing rules output for a fresh migration.
+- Preserve original sources and old index/rules during every build, refresh, and
+  failure. Reject either pre-existing output, even when its model is compatible.
 - Never rebuild an incompatible index as a side effect of health, doctor, or
   startup. Diagnostics use read-only database connections.
 - Clean up only uniquely owned staging files. Do not erase a concurrent writer's
@@ -196,7 +200,7 @@ indexes. The health inspector and `doctor` never ingest or contact providers.
 | Write database / commit | Insert, commit, close or checkpoint failure | No published candidate; owned temp cleanup only. |
 | Inspect staged database | Invalid identity/dimensions | Publication refused. |
 | Publish new destination | Concurrent create or link failure | Preserve winning destination and original installation. |
-| Replace compatible destination | Identity changes during preparation | Refuse stale replacement. |
+| Refresh existing destination | Same model; injected late rules/completion failure | Refuse before provider calls; original index/rules remain ready and byte-identical. |
 | Finalize rules | Rename failure or concurrent create | Candidate remains incomplete and unready. |
 | Complete candidate | Mismatched build identifier / update failure | Fail closed; never complete a different build. |
 | Cleanup | Unlink failure | Preserve original error or report post-commit cleanup warning. |

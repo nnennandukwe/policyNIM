@@ -1795,7 +1795,9 @@ def test_doctor_source_checkout_recovery_uses_uv_run_commands(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert (
-        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
+        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact. "
+        "If either output exists, choose separate POLICYNIM_INDEX_DB_PATH and "
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
     ) in payload["next_steps"]
     assert (
         "Run `policynim ingest` to build the local policy index and runtime rules artifact."

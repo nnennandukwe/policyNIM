@@ -102,6 +102,8 @@ class SQLiteVecIndexStore(IndexStore):
         if self._path.exists() and self.inspect_identity().dimension != dimension:
             raise IndexCompatibilityError("Embedding dimensions changed.")
         observed = _path_identity(self._path)
+        if not complete and observed is not None:
+            raise IndexCompatibilityError("Incomplete ingestion requires a new index destination.")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = _new_temp_database_path(self._path)
         build_id = uuid4().hex

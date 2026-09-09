@@ -349,7 +349,17 @@ def test_model_overrides_are_normalized_consistently(field):
         "NVIDIAPolicyConformanceEvaluator",
     ],
 )
-def test_credentialed_http_endpoints_fail_before_client_construction(monkeypatch, adapter_name):
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://example.invalid/v1",
+        "https://exa mple.invalid/v1",
+        "https://exa%20mple.invalid/v1",
+        "https://exam\nple.invalid/v1",
+        "https://example.invalid\\other/v1",
+    ],
+)
+def test_invalid_endpoints_fail_before_client_construction(monkeypatch, adapter_name, endpoint):
     """Verify credentialed http endpoints fail before client construction."""
     import policynim.providers.nvidia as module
 
@@ -365,7 +375,7 @@ def test_credentialed_http_endpoints_fail_before_client_construction(monkeypatch
     kwargs = dict(
         api_key="credential-sentinel",
         model="custom/model",
-        base_url="http://example.invalid/v1",
+        base_url=endpoint,
         timeout_seconds=1,
         max_retries=0,
     )
@@ -481,3 +491,39 @@ def test_reranker_preserves_logit_order_when_probabilities_saturate(logits):
         ranked = reranker.rerank("request IDs", chunks, top_k=2)
     assert [chunk.chunk_id for chunk in ranked] == ["higher", "lower"]
     assert all(chunk.score is not None and 0 <= chunk.score <= 1 for chunk in ranked)
+
+
+@pytest.mark.parametrize("field", ["nvidia_base_url", "nvidia_retrieval_base_url"])
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://exa mple.invalid/v1",
+        "https://exa%20mple.invalid/v1",
+        "https://exam\nple.invalid/v1",
+        "https://example.invalid\\other/v1",
+    ],
+)
+def test_settings_and_identity_reject_malformed_provider_endpoints(field, endpoint):
+    """Reject malformed provider hosts consistently before persisting or using them."""
+    from policynim.types import EmbeddingIdentity
+
+    with pytest.raises(ValueError):
+        Settings(**{**NO_ENV, field: endpoint})
+    with pytest.raises(ValueError):
+        EmbeddingIdentity(model="test/model", endpoint=endpoint)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "canonical"),
+    [
+        ("https://EXAMPLE.invalid:443/v1/", "https://example.invalid/v1"),
+        ("https://example.invalid:8443/v1", "https://example.invalid:8443/v1"),
+        ("https://[2001:db8::1]:8443/v1/", "https://[2001:db8::1]:8443/v1"),
+    ],
+)
+def test_valid_custom_endpoint_identity_matches_settings(endpoint, canonical):
+    """Preserve custom TLS hosts and ports, including IPv6, across both consumers."""
+    from policynim.types import EmbeddingIdentity
+
+    assert Settings(**NO_ENV, nvidia_base_url=endpoint).nvidia_base_url == canonical
+    assert EmbeddingIdentity(model="custom/model", endpoint=endpoint).endpoint == canonical

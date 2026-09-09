@@ -261,7 +261,7 @@ def doctor(
 
 @app.command()
 def ingest() -> None:
-    """Build the local policy index from the shipped corpus."""
+    """Build a policy index and runtime rules at unused output paths."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
@@ -2908,7 +2908,8 @@ def _doctor_ingest_next_step() -> str:
     """Return the standard ingest recovery step for doctor output."""
     return (
         f"Run `{_doctor_cli_command('ingest')}` to build the local policy index "
-        "and runtime rules artifact."
+        "and runtime rules artifact. If either output exists, choose separate "
+        "POLICYNIM_INDEX_DB_PATH and POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
     )
 
 

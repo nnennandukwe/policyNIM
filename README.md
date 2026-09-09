@@ -143,7 +143,8 @@ Use [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md) for:
 
 Existing installations changing embedding models must follow the
 [source-preserving provider recovery runbook](docs/hosted-provider-recovery.md).
-Unknown or incompatible indexes require a complete rebuild into separate paths.
+Every ingestion build, including a same-model refresh, requires separate, absent
+index and runtime-rules output paths; existing installations are preserved.
 
 ## Local Contributor Setup
 
