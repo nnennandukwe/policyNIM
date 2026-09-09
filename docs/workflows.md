@@ -348,7 +348,12 @@ uv run policynim mcp --transport streamable-http
 ```
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other
-than the default development bind `127.0.0.1:8000`.
+than the default development bind `127.0.0.1:8000`. The host setting controls only
+the listening interface; it does not allow that address in incoming MCP Host or
+Origin headers. For access through any non-loopback address, also set
+`POLICYNIM_MCP_PUBLIC_BASE_URL` to the client-facing origin (for example,
+`http://192.168.1.20:8000` for a LAN bind). This is required even when bearer auth
+is disabled. A wildcard bind such as `0.0.0.0` does not allow arbitrary hosts.
 
 Both transports support MCP `2026-07-28` and legacy clients through the official
 Python SDK `2.2.0`. The existing tool names, arguments, and JSON payload fields

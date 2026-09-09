@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import Barrier, Event
@@ -253,6 +254,110 @@ def _account_with_key(store: AuthStore, now: datetime) -> BetaAccount:
     )
 
 
+@pytest.mark.parametrize("key_state", ["unknown", "revoked"])
+def test_auth_store_rejects_invalid_keys_while_another_writer_holds_lock(
+    tmp_path: Path, key_state: str
+) -> None:
+    """Reject invalid keys without waiting for writer admission or changing state."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = _account_with_key(store, now)
+    key_hash = _hash_api_key("unknown_secret")
+    if key_state == "revoked":
+        store.revoke_active_key(account_id=account.account_id, now=now)
+        key_hash = _hash_api_key("pnm_test_secret")
+    initial_events = store.list_audit_events()
+
+    with closing(store._connect()) as writer, ThreadPoolExecutor(max_workers=1) as executor:
+        writer.execute("BEGIN IMMEDIATE")
+        try:
+            pending = executor.submit(
+                store.consume_quota_for_api_key,
+                key_hash=key_hash,
+                usage_date=now.date(),
+                quota=3,
+                now=now,
+            )
+            result = pending.result(timeout=2)
+            assert writer.in_transaction
+        finally:
+            writer.execute("ROLLBACK")
+
+    assert result == ApiKeyQuotaResult(account=None, usage=None, quota_consumed=False)
+    assert (
+        store.get_usage_snapshot(
+            account_id=account.account_id, usage_date=now.date(), quota=3
+        ).request_count
+        == 0
+    )
+    assert store.list_audit_events() == initial_events
+
+
+@pytest.mark.parametrize("mutation", ["rotate", "revoke", "suspend"])
+def test_auth_store_rechecks_candidate_before_consuming_quota(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    """Reject a key or account invalidated after the preliminary read completes."""
+    store = AuthStore(path=tmp_path / "auth.sqlite3")
+    operator_store = AuthStore(path=store.path)
+    now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    account = _account_with_key(store, now)
+    candidate_read = Event()
+    continue_admission = Event()
+    original_lookup = store._fetch_account_by_key_hash
+
+    def paused_candidate(conn: sqlite3.Connection, key_hash: str) -> BetaAccount | None:
+        """Expose the gap between the preliminary read and authoritative transaction."""
+        result = original_lookup(conn, key_hash)
+        if not conn.in_transaction:
+            assert result is not None and result.status == "active"
+            candidate_read.set()
+            assert continue_admission.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(store, "_fetch_account_by_key_hash", paused_candidate)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(
+            store.consume_quota_for_api_key,
+            key_hash=_hash_api_key("pnm_test_secret"),
+            usage_date=now.date(),
+            quota=3,
+            now=now,
+        )
+        try:
+            assert candidate_read.wait(timeout=5)
+            if mutation == "rotate":
+                operator_store.rotate_api_key(
+                    account_id=account.account_id,
+                    key_prefix="pnm_replacement",
+                    key_hash=_hash_api_key("replacement_secret"),
+                    now=now,
+                )
+            elif mutation == "revoke":
+                operator_store.revoke_active_key(account_id=account.account_id, now=now)
+            else:
+                operator_store.set_account_status(
+                    account_id=account.account_id, status="suspended", now=now
+                )
+        finally:
+            continue_admission.set()
+        result = pending.result(timeout=5)
+
+    assert result.quota_consumed is False
+    assert result.usage is None
+    if mutation == "suspend":
+        assert result.account is not None and result.account.status == "suspended"
+    else:
+        assert result.account is None
+    assert (
+        store.get_usage_snapshot(
+            account_id=account.account_id, usage_date=now.date(), quota=3
+        ).request_count
+        == 0
+    )
+    assert store.list_audit_events(event_type="quota_exceeded") == []
+
+
 def test_auth_store_concurrent_admissions_preserve_quota_and_audit(tmp_path: Path) -> None:
     """Admit exactly the quota under contention and audit every exhausted request."""
     store = AuthStore(path=tmp_path / "auth.sqlite3")
@@ -313,8 +418,9 @@ def test_auth_store_admission_commits_before_waiting_revocation(
     def paused_lookup(conn: sqlite3.Connection, key_hash: str) -> BetaAccount | None:
         """Hold the admission transaction after reading the active key."""
         result = original_lookup(conn, key_hash)
-        account_read.set()
-        assert continue_admission.wait(timeout=5)
+        if conn.in_transaction:
+            account_read.set()
+            assert continue_admission.wait(timeout=5)
         return result
 
     def trace_revocation(statement: str) -> None:

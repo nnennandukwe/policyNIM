@@ -349,10 +349,14 @@ class AuthStore:
         Rotation, revocation, and suspension cannot commit between key lookup and
         quota consumption. Account and usage snapshots are validated before commit;
         the result describes that committed state even after later mutations.
+        A preliminary read rejects absent keys without competing for a writer lock.
         """
         with closing(self._connect()) as conn:
+            if self._fetch_account_by_key_hash(conn, key_hash) is None:
+                return ApiKeyQuotaResult(account=None, usage=None, quota_consumed=False)
             _begin_immediate(conn)
             try:
+                # The preliminary read cannot authorize; recheck under the writer lock.
                 account = self._fetch_account_by_key_hash(conn, key_hash)
                 usage = None
                 quota_consumed = False

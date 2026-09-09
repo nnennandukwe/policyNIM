@@ -1355,6 +1355,39 @@ def test_streamable_http_app_keeps_mcp_open_when_auth_disabled(monkeypatch) -> N
     assert response.json() == {"ok": True}
 
 
+@pytest.mark.parametrize(
+    ("bind_host", "public_origin", "request_host", "expected_status"),
+    [
+        ("192.0.2.20", None, "192.0.2.20:8000", 421),
+        ("192.0.2.20", "http://192.0.2.20:8000", "192.0.2.20:8000", 200),
+        ("0.0.0.0", None, "192.0.2.20:8000", 421),
+        ("0.0.0.0", None, "localhost:8000", 200),
+    ],
+    ids=["custom-bind-untrusted", "public-origin-trusted", "wildcard-untrusted", "loopback"],
+)
+def test_bind_address_does_not_expand_trusted_http_hosts(
+    monkeypatch, bind_host, public_origin, request_host, expected_status
+) -> None:
+    """Custom and wildcard socket binds confer no trust without a matching public origin."""
+    _stub_streamable_http_server(monkeypatch)
+    settings = Settings.model_validate(
+        {
+            "mcp_host": bind_host,
+            "mcp_public_base_url": public_origin,
+            "mcp_require_auth": False,
+            "beta_signup_enabled": False,
+        }
+    )
+    app = mcp_module._build_streamable_http_app(settings)
+
+    with TestClient(app, base_url=f"http://{request_host}") as client:
+        response = client.get("/mcp", follow_redirects=False)
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json() == {"ok": True}
+
+
 @pytest.mark.parametrize("secret", [None, "", "   "])
 def test_streamable_http_app_requires_non_empty_session_secret_without_settings_validation(
     monkeypatch: pytest.MonkeyPatch,
