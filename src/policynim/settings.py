@@ -30,7 +30,7 @@ from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
-from policynim.types import DEFAULT_TOP_K, TopK
+from policynim.types import DEFAULT_TOP_K, TopK, normalize_provider_endpoint
 
 
 class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
@@ -176,6 +176,12 @@ class Settings(BaseSettings):
                 raise ValueError(f"{setting} must not contain line breaks.")
             return normalized
         return value
+
+    @field_validator("nvidia_base_url", "nvidia_retrieval_base_url")
+    @classmethod
+    def validate_nvidia_endpoint(cls, value: str) -> str:
+        """Reject credential-bearing or cleartext provider endpoints before client creation."""
+        return normalize_provider_endpoint(value)
 
     @field_validator("corpus_dir", mode="before")
     @classmethod

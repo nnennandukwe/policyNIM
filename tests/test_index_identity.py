@@ -206,3 +206,74 @@ def test_startup_never_rebuilds_model_mismatch(tmp_path, monkeypatch):
     with pytest.raises(Exception):
         ensure_hosted_runtime_ready(settings_for(path, "test/model-b"), rebuild_if_missing=True)
     assert calls == []
+
+
+@pytest.mark.parametrize("mutation", ["legacy", "incomplete", "model", "endpoint"])
+@pytest.mark.parametrize("matched", [False, True])
+@pytest.mark.parametrize("consumer", ["decision", "execution"])
+def test_runtime_actions_reject_incompatible_index(tmp_path, mutation, matched, consumer):
+    from policynim.services.runtime_decision import RuntimeDecisionService
+    from policynim.services.runtime_execution import RuntimeExecutionService
+    from policynim.storage import RuntimeEvidenceStore
+    from policynim.types import CompiledRuntimeRule, FileWriteActionRequest, RuntimeRulesArtifact
+
+    settings, ingestion, _ = make_ingest(tmp_path)
+    ingestion.run()
+    store = create_index_store(settings)
+    rules_path = tmp_path / "index.sqlite3.rules.json"
+    output = tmp_path / "output.txt"
+    if matched:
+        indexed = store.list_chunks()[0]
+        first_line = int(indexed.lines.split("-")[0])
+        artifact = RuntimeRulesArtifact(
+            rules=[
+                CompiledRuntimeRule(
+                    policy_id=indexed.policy.policy_id,
+                    title=indexed.policy.title,
+                    domain=indexed.policy.domain,
+                    source_path=indexed.path,
+                    start_line=first_line,
+                    end_line=first_line,
+                    action="file_write",
+                    effect="confirm",
+                    reason="Review writes.",
+                    path_globs=[str(output)],
+                )
+            ]
+        )
+        rules_path.write_text(artifact.model_dump_json())
+    if mutation in {"legacy", "incomplete"}:
+        key, value = (
+            ("schema_version", "1") if mutation == "legacy" else ("ingest_complete", "false")
+        )
+        with sqlite3.connect(settings.index_db_path) as conn:
+            conn.execute("UPDATE index_metadata SET value=? WHERE key=?", (value, key))
+    else:
+        settings = settings.model_copy(
+            update={
+                "nvidia_embed_model" if mutation == "model" else "nvidia_base_url": "test/other"
+                if mutation == "model"
+                else "https://other.invalid/v1"
+            }
+        )
+    decisions = RuntimeDecisionService(
+        index_store=create_index_store(settings), runtime_rules_artifact_path=rules_path
+    )
+    request = FileWriteActionRequest(
+        kind="file_write",
+        task="Update logging",
+        cwd=tmp_path,
+        path=output,
+        content="must not be written",
+    )
+    if consumer == "decision":
+        with decisions, pytest.raises(MissingIndexError):
+            decisions.decide(request)
+    else:
+        evidence = RuntimeEvidenceStore(path=tmp_path / "evidence.sqlite3")
+        with RuntimeExecutionService(
+            decision_service=decisions, evidence_store=evidence, confirmer=lambda _: True
+        ) as executor:
+            with pytest.raises(MissingIndexError):
+                executor.execute(request)
+    assert not output.exists()

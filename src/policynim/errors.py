@@ -33,6 +33,7 @@ class IndexCompatibilityError(MissingIndexError):
     def __init__(
         self, detail: str = "Index embedding identity is unknown or incompatible."
     ) -> None:
+        """Attach source-preserving recovery instructions without stored index details."""
         super().__init__(
             detail + " Preserve existing sources, index, and runtime rules. Rebuild the complete "
             "corpus with `policynim ingest` into separate POLICYNIM_INDEX_DB_PATH and "

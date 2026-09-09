@@ -19,7 +19,7 @@ def create_index_store(settings: Settings) -> SQLiteVecIndexStore:
         )
     except (ValidationError, ValueError) as exc:
         raise ConfigurationError(
-            "Configure a nonempty POLICYNIM_NVIDIA_EMBED_MODEL and an HTTP(S) "
+            "Configure a nonempty POLICYNIM_NVIDIA_EMBED_MODEL and an HTTPS "
             "POLICYNIM_NVIDIA_BASE_URL without credentials, query parameters, or fragments."
         ) from exc
     return SQLiteVecIndexStore(

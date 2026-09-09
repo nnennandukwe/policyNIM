@@ -208,6 +208,7 @@ def _ensure_index_ready(index_store: IndexStore) -> None:
     """Require a non-empty local index before runtime decisions can proceed."""
     if not index_store.exists() or index_store.count() == 0:
         raise MissingIndexError("Run `policynim ingest` before using runtime decisions.")
+    index_store.validate_identity()
 
 
 def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRuntimeAction:
