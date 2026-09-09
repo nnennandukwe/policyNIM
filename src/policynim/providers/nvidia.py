@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Sequence
 from types import TracebackType
 from typing import Any
@@ -133,7 +134,8 @@ class NVIDIAEmbedder(Embedder):
                 raise _auth_error("embeddings") from exc
             except BadRequestError as exc:
                 raise ProviderError(
-                    f"NVIDIA embeddings request was rejected: {exc}",
+                    "NVIDIA embeddings request was rejected. "
+                    "Check the model and input configuration.",
                     failure_class="bad_request",
                 ) from exc
             except RateLimitError as exc:
@@ -144,6 +146,8 @@ class NVIDIAEmbedder(Embedder):
                     failure_class="rate_limit",
                 ) from exc
             except APIStatusError as exc:
+                if exc.status_code == 410:
+                    raise _endpoint_unavailable("embeddings", "EMBED", "BASE_URL") from exc
                 if exc.status_code in {401, 403}:
                     raise _auth_error("embeddings") from exc
                 if exc.status_code == 429:
@@ -173,6 +177,8 @@ class NVIDIAEmbedder(Embedder):
                     "NVIDIA embeddings request failed after retries.",
                     failure_class="connection",
                 ) from exc
+            except ProviderError:
+                raise
             except Exception as exc:  # pragma: no cover - defensive guard.
                 raise ProviderError(
                     "Unexpected NVIDIA embeddings failure.",
@@ -286,6 +292,10 @@ class NVIDIAReranker(Reranker):
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
+                if status_code == 410:
+                    raise _endpoint_unavailable(
+                        "reranking", "RERANK", "RETRIEVAL_BASE_URL"
+                    ) from exc
                 if status_code in {401, 403}:
                     raise _auth_error("reranking") from exc
                 if status_code == 429:
@@ -542,20 +552,27 @@ def _request_chat_completion(
     max_retries: int,
     operation: str,
 ) -> str:
+    options: dict[str, Any] = {"temperature": 0, "top_p": 1}
+    if model == "nvidia/nemotron-3-super-120b-a12b":
+        options = {
+            "temperature": 1,
+            "top_p": 0.95,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0,
-                top_p=1,
+                **options,
             )
             return _extract_chat_content(response, operation=operation)
         except AuthenticationError as exc:
             raise _auth_error(operation) from exc
         except BadRequestError as exc:
             raise ProviderError(
-                f"NVIDIA {operation} request was rejected: {exc}",
+                f"NVIDIA {operation} request was rejected. "
+                "Check the model and input configuration.",
                 failure_class="bad_request",
             ) from exc
         except RateLimitError as exc:
@@ -566,6 +583,8 @@ def _request_chat_completion(
                 failure_class="rate_limit",
             ) from exc
         except APIStatusError as exc:
+            if exc.status_code == 410:
+                raise _endpoint_unavailable(operation, "CHAT", "BASE_URL") from exc
             if exc.status_code in {401, 403}:
                 raise _auth_error(operation) from exc
             if exc.status_code == 429:
@@ -609,6 +628,25 @@ def _request_chat_completion(
     )
 
 
+def _endpoint_unavailable(
+    operation: str, model_setting: str, endpoint_setting: str
+) -> ProviderError:
+    """Describe HTTP 410 without exposing upstream bodies or configured credentials."""
+    recovery = (
+        " Rebuild the complete corpus into separate index and runtime-rules paths when changing "
+        "the embedding model; preserve the old index and sources."
+        if model_setting == "EMBED"
+        else ""
+    )
+    return ProviderError(
+        f"NVIDIA {operation} endpoint is unavailable (HTTP 410); do not retry unchanged requests. "
+        f"Verify POLICYNIM_NVIDIA_{model_setting}_MODEL and POLICYNIM_NVIDIA_{endpoint_setting} "
+        "against the current NVIDIA API catalog. For Docker ingestion, configure build arguments "
+        "separately from runtime service variables." + recovery,
+        failure_class="endpoint_unavailable",
+    )
+
+
 def _auth_error(operation: str) -> ConfigurationError:
     return ConfigurationError(
         f"NVIDIA authentication failed during {operation}. Verify NVIDIA_API_KEY is valid.",
@@ -638,13 +676,25 @@ def _validate_embeddings_response(
             failure_class="invalid_response",
         )
 
-    embeddings: list[list[float]] = []
+    embeddings: dict[int, list[float]] = {}
     dimension: int | None = None
     for item in data:
-        embedding = list(getattr(item, "embedding", []))
-        if not embedding:
+        index = getattr(item, "index", None)
+        if type(index) is not int or index < 0 or index >= expected_count or index in embeddings:
             raise ProviderError(
-                "NVIDIA embeddings response returned an empty vector.",
+                "NVIDIA embeddings response returned invalid or duplicate input indices.",
+                failure_class="invalid_response",
+            )
+        try:
+            embedding = [float(value) for value in item.embedding]
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ProviderError(
+                "NVIDIA embeddings response returned an invalid vector.",
+                failure_class="invalid_response",
+            ) from exc
+        if not embedding or not all(math.isfinite(value) for value in embedding):
+            raise ProviderError(
+                "NVIDIA embeddings response returned an empty or non-finite vector.",
                 failure_class="invalid_response",
             )
         if dimension is None:
@@ -654,9 +704,9 @@ def _validate_embeddings_response(
                 "NVIDIA embeddings response returned mixed vector dimensions.",
                 failure_class="invalid_response",
             )
-        embeddings.append([float(value) for value in embedding])
+        embeddings[index] = embedding
 
-    return embeddings
+    return [embeddings[index] for index in range(expected_count)]
 
 
 def _extract_rerank_scores(payload: Any, *, expected_count: int) -> list[float]:
