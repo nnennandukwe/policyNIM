@@ -200,11 +200,15 @@ need the package.
 The default example configs use:
 
 - embeddings:
-  [`nvidia/llama-nemotron-embed-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-embed-1b-v2)
+  [`nvidia/nemotron-3-embed-1b`](https://docs.api.nvidia.com/nim/re/reference/nvidia-nemotron-3-embed-1b-infer)
 - reranking:
-  [`nvidia/llama-nemotron-rerank-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-1b-v2-infer)
+  [`nvidia/llama-nemotron-rerank-vl-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2-infer)
 - grounded generation:
-  [NVIDIA LLM API reference](https://docs.api.nvidia.com/nim/reference/llm-apis)
+  [`nvidia/nemotron-3-super-120b-a12b`](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/build)
+
+See [provider recovery](hosted-provider-recovery.md) before switching an existing
+installation to a different embedding model. Index identity must match even
+when the old and new models produce vectors of the same dimension.
 
 ## Contributor Workflow
 

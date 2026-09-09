@@ -15,6 +15,7 @@ from pydantic import (
     AnyHttpUrl,
     Field,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -78,9 +79,9 @@ class Settings(BaseSettings):
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
-    nvidia_chat_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
-    nvidia_embed_model: str = "nvidia/llama-nemotron-embed-1b-v2"
-    nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-1b-v2"
+    nvidia_chat_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
+    nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_retrieval_base_url: str = "https://ai.api.nvidia.com/v1/retrieval"
     nvidia_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
@@ -160,16 +161,19 @@ class Settings(BaseSettings):
                 raise ValueError("POLICYNIM_CONFIG_FILE must point to an existing env file.")
         return value
 
-    @field_validator("nvidia_chat_model", mode="before")
+    @field_validator(
+        "nvidia_chat_model", "nvidia_embed_model", "nvidia_rerank_model", mode="before"
+    )
     @classmethod
-    def validate_nvidia_chat_model(cls, value: Any) -> Any:
-        """Reject chat model names that cannot safely identify one provider model."""
+    def validate_nvidia_model(cls, value: Any, info: ValidationInfo) -> Any:
+        """Keep request and persisted model identities consistent for explicit overrides."""
+        setting = f"POLICYNIM_{info.field_name or 'nvidia_model'}".upper()
         if isinstance(value, str):
             normalized = value.strip()
             if not normalized:
-                raise ValueError("POLICYNIM_NVIDIA_CHAT_MODEL must not be empty.")
+                raise ValueError(f"{setting} must not be empty.")
             if any(character in normalized for character in "\r\n"):
-                raise ValueError("POLICYNIM_NVIDIA_CHAT_MODEL must not contain line breaks.")
+                raise ValueError(f"{setting} must not contain line breaks.")
             return normalized
         return value
 
