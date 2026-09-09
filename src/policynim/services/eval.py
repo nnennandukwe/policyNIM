@@ -1406,6 +1406,7 @@ class _OfflineIndexStore(IndexStore):
         """Offline candidates and query vectors are paired within this fixture."""
 
     def replace(self, chunks: Sequence[Any], *, complete: bool = True) -> str:
+        """Reject writes to deterministic offline eval fixtures."""
         raise NotImplementedError("Offline eval candidates cannot be replaced.")
 
     def exists(self) -> bool:

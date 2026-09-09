@@ -37,6 +37,7 @@ from policynim.types import (
     PreflightRequest,
     RegenerationContext,
     ScoredChunk,
+    normalize_provider_endpoint,
 )
 
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -63,6 +64,7 @@ class NVIDIAEmbedder(Embedder):
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._batch_size = batch_size
         self._max_retries = max_retries
@@ -209,6 +211,7 @@ class NVIDIAReranker(Reranker):
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for reranking.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -360,6 +363,7 @@ class NVIDIAGenerator(Generator):
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for grounded generation.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -432,6 +436,7 @@ class NVIDIAPolicyCompiler:
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for policy compilation.")
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -499,6 +504,7 @@ class NVIDIAPolicyConformanceEvaluator:
                 "NVIDIA_API_KEY is required for policy conformance evaluation."
             )
 
+        base_url = _require_provider_endpoint(base_url)
         self._model = model
         self._max_retries = max_retries
         self._owns_client = client is None
@@ -626,6 +632,18 @@ def _request_chat_completion(
         f"NVIDIA {operation} request failed after retries.",
         failure_class="unexpected",
     )
+
+
+def _require_provider_endpoint(base_url: str) -> str:
+    """Validate direct adapter construction as well as environment-backed settings."""
+    try:
+        return normalize_provider_endpoint(base_url)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "NVIDIA endpoints must use HTTPS without URL credentials, query parameters, "
+            "or fragments. Verify POLICYNIM_NVIDIA_BASE_URL and "
+            "POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL."
+        ) from exc
 
 
 def _endpoint_unavailable(

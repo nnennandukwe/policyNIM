@@ -277,3 +277,39 @@ def test_model_overrides_are_normalized_consistently(field):
     options[field] = "custom/model\ninvalid"
     with pytest.raises(ValueError):
         Settings(**options)
+
+
+@pytest.mark.parametrize(
+    "adapter_name",
+    [
+        "NVIDIAEmbedder",
+        "NVIDIAReranker",
+        "NVIDIAGenerator",
+        "NVIDIAPolicyCompiler",
+        "NVIDIAPolicyConformanceEvaluator",
+    ],
+)
+def test_credentialed_http_endpoints_fail_before_client_construction(monkeypatch, adapter_name):
+    import policynim.providers.nvidia as module
+
+    calls = []
+
+    def client_must_not_be_created(**kwargs):
+        calls.append(True)
+        raise AssertionError("client construction reached")
+
+    monkeypatch.setattr(module, "OpenAI", client_must_not_be_created)
+    monkeypatch.setattr(module.httpx, "Client", client_must_not_be_created)
+    kwargs = dict(
+        api_key="credential-sentinel",
+        model="custom/model",
+        base_url="http://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    if adapter_name == "NVIDIAEmbedder":
+        kwargs["batch_size"] = 1
+    with pytest.raises(ConfigurationError, match="HTTPS") as caught:
+        getattr(module, adapter_name)(**kwargs)
+    assert not calls
+    assert "sentinel" not in str(caught.value)

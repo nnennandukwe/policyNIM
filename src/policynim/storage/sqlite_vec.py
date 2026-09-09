@@ -80,6 +80,7 @@ class SQLiteVecIndexStore(IndexStore):
     def _validate_identity(
         self, conn: sqlite3.Connection, *, require_complete: bool = True
     ) -> IndexIdentity:
+        """Require stored identity to match configuration and, normally, completed ingestion."""
         identity = _read_identity(conn)
         if self._embedding_identity is None or identity.embedding != self._embedding_identity:
             raise IndexCompatibilityError()
@@ -311,7 +312,9 @@ def _validate_replacement(
 
     dimension: int | None = None
     for chunk in indexed_chunks:
-        if not chunk.vector or not all(math.isfinite(v) for v in chunk.vector):
+        if not chunk.vector or not all(
+            math.isfinite(vector_value) for vector_value in chunk.vector
+        ):
             raise MissingIndexError(f"Chunk {chunk.chunk_id!r} does not have an embedding vector.")
         if dimension is None:
             dimension = len(chunk.vector)
@@ -551,7 +554,7 @@ def _validated_query_vector(
 ) -> list[float]:
     """Validate and normalize a query embedding for sqlite-vec search."""
     query_vector = [float(value) for value in query_embedding]
-    if not query_vector or not all(math.isfinite(v) for v in query_vector):
+    if not query_vector or not all(math.isfinite(vector_value) for vector_value in query_vector):
         raise MissingIndexError("Search query embedding is empty.")
 
     expected_dimension = _embedding_dimension(conn)

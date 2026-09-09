@@ -22,7 +22,8 @@ verified; credentials and dependency behavior are not conclusively excluded.
 | Reranking | `nvidia/llama-nemotron-rerank-vl-1b-v2` | [Reference](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2-infer): `/v1/retrieval/{model}/reranking`, text query and passages, `truncate=END`. |
 | Chat | `nvidia/nemotron-3-super-120b-a12b` | [Reference](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/build): OpenAI-compatible chat, temperature `1`, top-p `0.95`, `chat_template_kwargs.enable_thinking=false`. |
 
-Custom model overrides remain supported. The selected chat model alone uses
+Custom model overrides remain supported. Credentialed provider endpoints require
+HTTPS; cleartext endpoints are rejected before constructing clients. The selected chat model alone uses
 these sampling and reasoning options; unrelated models retain temperature `0`
 and top-p `1`. Citation validation remains mandatory. No model fallback or silent
 embedding truncation is applied. HTTP 410 is classified as `endpoint_unavailable`
@@ -66,7 +67,7 @@ identity metadata or reuse either old output path. A schema-1 index remains
 inspectable with `dump-index`, but cannot be queried or implicitly upgraded.
 All schema-2 indexes record provider, model, credential-free endpoint, observed
 vector dimension, build ID, and completion status. Equal dimensions do not make
-different models compatible. Endpoint identities must be HTTP(S) without URL
+different models compatible. Endpoint identities must use HTTPS without URL
 credentials, query parameters, or fragments.
 
 After approval for live provider usage, run this from a locked source checkout
@@ -96,7 +97,8 @@ action-required in its JSON even when the diagnostic command exits successfully.
 Check source inventory against indexed documents/chunks and confirm runtime rules
 exist. The shipped corpus at the Foundation baseline has 9 documents and 45
 chunks; verify the inventory for the exact source revision being deployed.
-Doctor and health never contact NVIDIA. On any failure, stop; retain the candidate
+Doctor and health never contact NVIDIA. Runtime decisions also reject incomplete
+or incompatible indexes before they can authorize actions. On any failure, stop; retain the candidate
 for inspection and choose fresh paths for another attempt. An incomplete database
 must not be activated. Cleanup warnings identify owned staging-file cleanup;
 a warning after successful completion does not mean publication was rolled back.

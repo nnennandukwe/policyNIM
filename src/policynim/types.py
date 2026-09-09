@@ -33,6 +33,27 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def normalize_provider_endpoint(value: str) -> str:
+    """Require credential-free HTTPS and canonicalize the embedding-space endpoint."""
+    parts = urlsplit(value.strip())
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError("Provider endpoint must use HTTPS, without credentials or query data.")
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = parts.port
+    if port is not None and port != (443 if parts.scheme == "https" else 80):
+        host += f":{port}"
+    return urlunsplit((parts.scheme, host, parts.path.rstrip("/"), "", ""))
+
+
 class EmbeddingIdentity(StrictModel):
     """Credential-free identity of one embedding space, independent of vector length."""
 
@@ -44,33 +65,17 @@ class EmbeddingIdentity(StrictModel):
     @field_validator("model")
     @classmethod
     def validate_model(cls, value: str) -> str:
+        """Require a nonempty, single-line model identifier and normalize whitespace."""
         value = value.strip()
-        if not value or any(c in value for c in "\r\n"):
+        if not value or any(character in value for character in "\r\n"):
             raise ValueError("Embedding model must be nonempty and single-line.")
         return value
 
     @field_validator("endpoint")
     @classmethod
     def normalize_endpoint(cls, value: str) -> str:
-        parts = urlsplit(value.strip())
-        if (
-            parts.scheme not in {"https", "http"}
-            or not parts.hostname
-            or parts.username is not None
-            or parts.password is not None
-            or parts.query
-            or parts.fragment
-        ):
-            raise ValueError(
-                "Embedding endpoint must be HTTP(S), without credentials or query data."
-            )
-        host = parts.hostname.lower()
-        if ":" in host:
-            host = f"[{host}]"
-        port = parts.port
-        if port is not None and port != (443 if parts.scheme == "https" else 80):
-            host += f":{port}"
-        return urlunsplit((parts.scheme, host, parts.path.rstrip("/"), "", ""))
+        """Canonicalize the credential-free HTTPS endpoint stored with vectors."""
+        return normalize_provider_endpoint(value)
 
 
 class IndexIdentity(StrictModel):
