@@ -1,0 +1,77 @@
+name: Bug Report
+description: Report reproducible PolicyNIM CLI, MCP, install, or runtime behavior.
+title: "[Bug]: "
+labels: ["type/bug", "status/needs-triage", "needs/support-bundle"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a PolicyNIM issue. Do not paste API keys, bearer
+        tokens, hosted beta tokens, or private policy content.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - CLI
+        - MCP stdio
+        - Hosted MCP streamable-http
+        - Hosted beta portal
+        - Install or release artifact
+        - Runtime evidence
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: support_bundle
+    attributes:
+      label: policynim support-bundle output
+      description: Run `policynim support-bundle` and paste redacted output. The bundle includes `policynim doctor` diagnostics and redacts local path prefixes by default. For local MCP stdio issues, run `policynim support-bundle --include-mcp-smoke`. Use `--include-local-paths` only in private maintainer triage.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: mcp_config
+    attributes:
+      label: MCP config evidence
+      description: For hosted MCP issues, paste redacted `policynim mcp-config --target hosted-http --client codex --hosted-url 'https://<host>/mcp' --format json` output and include the `hosted_url_placeholder` value. For local stdio issues, include the matching local `mcp-config` JSON when client setup is involved.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include exact commands, install channel, and MCP transport if relevant.
+      placeholder: |
+        1. Install with ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and logs
+      description: Redact tokens and private policy content before pasting logs.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: live
+    attributes:
+      label: Did this call live or hosted services?
+      options:
+        - No, offline/local only
+        - Yes, NVIDIA-hosted API
+        - Yes, hosted MCP or beta portal
+        - Yes, Docker or Railway
+        - Not sure
+    validations:
+      required: true

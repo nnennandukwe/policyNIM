@@ -1,0 +1,99 @@
+# PolicyNIM issue and PR label taxonomy.
+# Apply these labels in GitHub before broad public triage; this file is the
+# repository source of truth even if label sync is manual at first.
+
+- name: type/bug
+  color: "d73a4a"
+  description: Reproducible broken behavior in CLI, MCP, install, hosted beta, or runtime flows.
+
+- name: type/feature
+  color: "a2eeef"
+  description: Request for a new or expanded user-facing workflow.
+
+- name: type/docs
+  color: "0075ca"
+  description: Documentation, examples, README, or release-note work.
+
+- name: type/launch
+  color: "bfdadc"
+  description: Public launch evidence review for release, PyPI, hosted MCP, and client proof.
+
+- name: type/security
+  color: "b60205"
+  description: Public placeholder only; private security reports use GitHub advisories.
+
+- name: status/needs-triage
+  color: "fbca04"
+  description: Maintainer has not yet routed priority, surface, or required evidence.
+
+- name: status/needs-repro
+  color: "fef2c0"
+  description: Maintainer needs a smaller reproduction, command output, or refreshed support bundle.
+
+- name: status/blocked-external
+  color: "cccccc"
+  description: Waiting on external service state such as PyPI, Railway, GitHub, Docker, or NVIDIA.
+
+- name: status/accepted
+  color: "0e8a16"
+  description: Maintainer agrees the issue or proposal is in scope.
+
+- name: priority/p0
+  color: "b60205"
+  description: Security, release integrity, install breakage, or data-leak risk.
+
+- name: priority/p1
+  color: "d93f0b"
+  description: Blocks first-run CLI, MCP setup, release gates, or core verification workflows.
+
+- name: priority/p2
+  color: "fbca04"
+  description: Important rough edge that affects contributor or maintainer confidence.
+
+- name: surface/cli
+  color: "1d76db"
+  description: PolicyNIM command-line behavior, flags, help text, or output contracts.
+
+- name: surface/mcp-stdio
+  color: "5319e7"
+  description: Local stdio MCP server, client config, mcp-smoke, or local agent integration.
+
+- name: surface/hosted-mcp
+  color: "5319e7"
+  description: Hosted streamable-http MCP, beta portal, auth, health, or Railway deployment.
+
+- name: surface/install-release
+  color: "006b75"
+  description: Package install, standalone installers, release artifacts, checksums, or manifests.
+
+- name: surface/runtime-evidence
+  color: "0e8a16"
+  description: Runtime decision, execution, evidence report, or audit log workflows.
+
+- name: surface/ci
+  color: "c5def5"
+  description: CI, release workflow, offline/live gate, Pyright, Ruff, or test infrastructure.
+
+- name: surface/docs
+  color: "0075ca"
+  description: README, docs pages, examples, roadmap, support, or maintainer guidance.
+
+- name: needs/support-bundle
+  color: "fef2c0"
+  description: Needs policynim support-bundle output before maintainers can reproduce confidently.
+
+- name: needs/live-check
+  color: "fef2c0"
+  description: Needs explicit opt-in NVIDIA, hosted MCP, Docker, Railway, or PyPI evidence.
+
+- name: needs/launch-evidence
+  color: "fef2c0"
+  description: Needs external public-launch proof before launch-ready claims can be accepted.
+
+- name: needs/codeowner-review
+  color: "fef2c0"
+  description: Needs review from the listed CODEOWNERS path owner before merge.
+
+- name: good-first-issue
+  color: "7057ff"
+  description: Small, well-scoped change with deterministic verification and clear owner guidance.
