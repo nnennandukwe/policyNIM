@@ -38,6 +38,7 @@ def runtime_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Setting
 
 
 def _request(tmp_path: Path, script: str) -> ShellCommandActionRequest:
+    """Build a shell action in the shared evidence session."""
     return ShellCommandActionRequest(
         kind="shell_command",
         task="Verify subprocess cleanup.",
@@ -135,6 +136,7 @@ def test_interrupted_runtime_stops_children_before_propagating(
     interrupted = False
 
     def interrupt_once(process, *args, **kwargs):
+        """Interrupt after child startup once, then delegate subsequent communication."""
         nonlocal interrupted
         if not interrupted:
             interrupted = True
