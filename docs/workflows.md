@@ -482,6 +482,14 @@ That compiled artifact powers the runtime decision and execution services:
 - `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS` sets the default shell timeout for
   runtime execution
 
+On Linux and macOS, shell commands run in a separate process group. A timeout
+terminates that group before PolicyNIM returns `failed` with `failure_class=timeout`
+and stores the terminal evidence. An interruption also terminates the group, but
+propagates without recording a completed outcome. Check the action's effects
+before retrying: termination can't undo earlier writes or external requests.
+Descendants that deliberately leave the process group aren't covered. Windows
+retains direct-child termination; process-tree cleanup isn't guaranteed there.
+
 The runtime CLI flow is JSON-first and file- or stdin-driven:
 
 ```bash
