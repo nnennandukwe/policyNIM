@@ -61,6 +61,24 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 (default `10`). Excess calls receive a retry-later error. See the
 [MCP workflow](docs/workflows.md) for transport and public-origin configuration.
 
+## Inspect Policies Without An API Key
+
+```bash
+policynim inventory
+policynim inventory --format json
+```
+
+These commands inspect the bundled or configured Markdown sources and the local
+SQLite index without setup, model credentials, network calls, or data changes.
+Source documents, source chunks, indexed policy IDs, and indexed chunks are
+reported separately. Unavailable counts stay `null` in JSON and `unknown` in text.
+The report describes this process's files; it doesn't inspect a remote deployment
+or prove that source content matches an existing index.
+
+Run `policynim doctor` for setup checks and recovery instructions. In a source
+checkout, prefix these commands with `uv run`. See the
+[policy inventory and recovery guide](docs/policy-inventory.md).
+
 ## What To Run First
 
 If you want the shortest path to a real preflight run, start with

@@ -9,6 +9,7 @@ reference that used to live in the root README.
 
 - `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
 - `policynim doctor [--format text|json]`
+- `policynim inventory [--format text|json]`
 - `policynim init`
 - `policynim ingest`
 - `policynim dump-index [--count-only]`
@@ -59,6 +60,11 @@ for hosted MCP, local CLI, or local MCP.
 Use `policynim doctor` when you want a local-only setup report that checks the
 config file, credentials, index path, runtime rules artifact, and MCP launch
 hints.
+
+Use `policynim inventory` to inspect source and indexed counts without an API key
+or prior initialization. It reports unavailable counts as unknown and keeps local
+inspection separate from remote deployment evidence. See
+[policy inventory and recovery](policy-inventory.md) for states and recovery.
 
 ## Core Workflows
 

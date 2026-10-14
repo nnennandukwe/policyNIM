@@ -735,7 +735,7 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
         health_service = create_runtime_health_service(settings)
         fallback_reason = "Local index readiness could not be inspected."
     except Exception as exc:
-        LOGGER.exception("Could not construct runtime health service.")
+        LOGGER.error("Health service construction failed: %s", format_health_failure_reason(exc))
         health_service = None
         fallback_reason = format_health_failure_reason(exc)
 
@@ -759,7 +759,7 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
         try:
             result = await asyncio.to_thread(health_service.check)
         except Exception as exc:
-            LOGGER.exception("Runtime health probe failed.")
+            LOGGER.error("Runtime health probe failed: %s", format_health_failure_reason(exc))
             return _fallback_result(format_health_failure_reason(exc))
 
         status_code = 200 if result.ready else 503

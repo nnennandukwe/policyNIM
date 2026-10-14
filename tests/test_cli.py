@@ -1835,10 +1835,7 @@ def test_doctor_flags_invalid_sqlite_index_file(
     assert local_index_check == {
         "name": "local_index_path",
         "status": "action_required",
-        "message": (
-            "Configured local SQLite index is missing valid embedding identity, "
-            "is incomplete, or does not match the configured embedding model."
-        ),
+        "message": ("The local index isn't a readable PolicyNIM sqlite-vec database."),
     }
     assert "separate POLICYNIM_INDEX_DB_PATH" in " ".join(payload["next_steps"])
 
@@ -1873,10 +1870,12 @@ def test_doctor_flags_legacy_lancedb_directory_index_path(
             "Set POLICYNIM_INDEX_DB_PATH to a SQLite file path such as data/index.sqlite3."
         ),
     }
-    assert (
-        "Replace deprecated `POLICYNIM_LANCEDB_URI` with "
-        "`POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
-    ) in payload["next_steps"]
+    recovery = " ".join(payload["next_steps"])
+    assert "Replace deprecated `POLICYNIM_LANCEDB_URI`" in recovery
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH" in recovery
+    assert "legacy-only policy content" in recovery
+    assert "Preserve the old directory" in recovery
+    assert "uv run policynim ingest" in recovery
     assert (
         "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
         not in payload["next_steps"]
@@ -1907,9 +1906,11 @@ def test_doctor_flags_canonical_directory_index_path(
     )
     assert local_index_check["status"] == "action_required"
     assert "points to a directory" in local_index_check["message"]
-    assert (
-        "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
-    ) in payload["next_steps"]
+    recovery = " ".join(payload["next_steps"])
+    assert "Set a fresh `POLICYNIM_INDEX_DB_PATH`" in recovery
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH" in recovery
+    assert "authoritative Markdown sources" in recovery
+    assert "uv run policynim ingest" in recovery
     assert "POLICYNIM_LANCEDB_URI" not in " ".join(payload["next_steps"])
 
 

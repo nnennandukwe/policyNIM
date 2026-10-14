@@ -8,6 +8,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
@@ -19,6 +20,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import IndexStore
 from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.types import (
     EmbeddedChunk,
     EmbeddingIdentity,
@@ -83,6 +85,65 @@ class SQLiteVecIndexStore(IndexStore):
         """Require a complete index in the embedding space configured for this store."""
         with closing(self._require_connection()) as conn:
             self._validate_identity(conn)
+
+    def inspect_readiness(self) -> IndexReadinessReport:
+        """Read counts and identity from one snapshot without changing existing data."""
+        try:
+            mode = self._path.stat().st_mode
+            if stat.S_ISDIR(mode):
+                return IndexReadinessReport(state="directory")
+            if not stat.S_ISREG(mode):
+                return IndexReadinessReport(state="invalid")
+            with closing(_connect(self._path, read_only=True)) as conn:
+                conn.execute("BEGIN")
+                if not _has_required_schema(conn):
+                    return IndexReadinessReport(state="invalid")
+                count = _count_chunks(conn)
+                policy_count = int(
+                    conn.execute(
+                        f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
+                    ).fetchone()[0]
+                )
+                if count == 0:
+                    return IndexReadinessReport(state="empty", chunk_count=0, policy_count=0)
+                try:
+                    identity = _read_identity(conn)
+                except IndexCompatibilityError:
+                    return IndexReadinessReport(
+                        state="incompatible", chunk_count=count, policy_count=policy_count
+                    )
+                if not identity.complete:
+                    state = "incomplete"
+                elif identity.embedding != self._embedding_identity:
+                    state = "incompatible"
+                else:
+                    state = "ready"
+                return IndexReadinessReport(
+                    state=state,
+                    chunk_count=count,
+                    policy_count=policy_count,
+                    identity=identity,
+                    compatible=state == "ready",
+                )
+        except FileNotFoundError:
+            return IndexReadinessReport(state="missing")
+        except OSError:
+            return IndexReadinessReport(state="unreadable")
+        except sqlite3.DatabaseError as exc:
+            state = (
+                "unreadable"
+                if getattr(exc, "sqlite_errorcode", None)
+                in {
+                    sqlite3.SQLITE_CANTOPEN,
+                    sqlite3.SQLITE_PERM,
+                    sqlite3.SQLITE_BUSY,
+                    sqlite3.SQLITE_LOCKED,
+                    sqlite3.SQLITE_IOERR,
+                    sqlite3.SQLITE_AUTH,
+                }
+                else "invalid"
+            )
+            return IndexReadinessReport(state=state)
 
     def _validate_identity(
         self, conn: sqlite3.Connection, *, require_complete: bool = True

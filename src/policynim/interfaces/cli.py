@@ -49,8 +49,8 @@ from policynim.services import (
     create_runtime_execution_service,
     create_search_service,
 )
+from policynim.services.inventory import inspect_policy_inventory
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import (
     MAX_TOP_K,
     CompileRequest,
@@ -257,6 +257,43 @@ def doctor(
         return
     for line in _render_doctor_report(report):
         typer.echo(line)
+
+
+@app.command(help="Inspect source policies and local indexed counts without setup or NVIDIA calls.")
+def inventory(
+    output_format: Annotated[
+        Literal["text", "json"],
+        typer.Option("--format", help="Inventory output format: text or json."),
+    ] = "text",
+) -> None:
+    """Keep source inventory separate from the observed local database."""
+    try:
+        report = inspect_policy_inventory()
+    except PolicyNIMError as exc:
+        _exit_with_error(_cli_error_message(exc))
+    if output_format == "json":
+        typer.echo(report.model_dump_json(indent=2))
+        return
+    typer.echo("PolicyNIM inventory (local process; remote deployment isn't inspected)")
+    source = report.source
+    typer.echo(f"Source directory: {source.root or 'unavailable'}")
+    typer.echo(f"Source documents: {_inventory_count(source.document_count)}")
+    typer.echo(f"Source policy IDs: {_inventory_count(source.policy_count)}")
+    typer.echo(f"Source chunks: {_inventory_count(source.chunk_count)}")
+    if source.reason:
+        typer.echo(source.reason)
+    typer.echo(f"Index path: {report.index_path}")
+    typer.echo(f"Index state: {report.index.state}")
+    typer.echo(f"Indexed policy IDs: {_inventory_count(report.index.policy_count)}")
+    typer.echo(f"Indexed chunks: {_inventory_count(report.index.chunk_count)}")
+    typer.echo(report.index.reason)
+    if report.index.state != "ready":
+        typer.echo("Next: run `policynim doctor` for source-preserving recovery guidance.")
+
+
+def _inventory_count(count: int | None) -> str:
+    """Render unknown values without implying an observed empty inventory."""
+    return "unknown" if count is None else str(count)
 
 
 @app.command()
@@ -2777,10 +2814,13 @@ def _build_doctor_report() -> dict[str, object]:
         "eval_workspace_dir": resolve_runtime_path(settings.eval_workspace_dir).as_posix(),
     }
 
-    report["index"] = _doctor_index_details(settings)
+    inventory = inspect_policy_inventory(settings)
+    report["inventory"] = inventory.model_dump(mode="json")
+    report["index"] = inventory.index.model_dump(mode="json")
+    readiness = inventory.index
     legacy_lancedb_alias_configured = _doctor_legacy_lancedb_alias_configured(discovery)
-    index_recovery_step_added = False
-    if index_path.is_dir():
+    index_recovery_step_added = readiness.state not in {"ready", "missing"}
+    if readiness.state == "directory":
         checks.append(
             {
                 "name": "local_index_path",
@@ -2797,40 +2837,34 @@ def _build_doctor_report() -> dict[str, object]:
                 legacy_lancedb_alias_configured=legacy_lancedb_alias_configured
             )
         )
-        index_recovery_step_added = True
-    elif index_path.exists():
-        if _doctor_local_index_ready(settings):
-            checks.append(
-                {
-                    "name": "local_index_path",
-                    "status": "ok",
-                    "message": (
-                        "A complete local SQLite index matches the configured embedding model."
-                    ),
-                }
-            )
-        else:
-            checks.append(
-                {
-                    "name": "local_index_path",
-                    "status": "action_required",
-                    "message": (
-                        "Configured local SQLite index is missing valid embedding identity, "
-                        "is incomplete, or does not match the configured embedding model."
-                    ),
-                }
-            )
-            next_steps.append(str(IndexCompatibilityError()))
-            index_recovery_step_added = True
     else:
         checks.append(
             {
                 "name": "local_index_path",
-                "status": "action_required",
-                "message": "No local index path exists yet.",
+                "status": "ok" if readiness.state == "ready" else "action_required",
+                "message": readiness.reason,
             }
         )
-        next_steps.append(_doctor_ingest_next_step())
+        if readiness.state == "missing":
+            next_steps.append(_doctor_ingest_next_step())
+        elif readiness.state == "unreadable":
+            next_steps.append(
+                "Check read permissions on the configured index and its parent directory, "
+                "then rerun doctor. Preserve existing data; don't rebuild to diagnose permissions."
+            )
+        elif readiness.state != "ready":
+            next_steps.append(str(IndexCompatibilityError()))
+    if inventory.source.status != "ok":
+        checks.append(
+            {
+                "name": "policy_sources",
+                "status": "action_required",
+                "message": inventory.source.reason or "Policy sources are unavailable.",
+            }
+        )
+        next_steps.append(
+            "Recover authoritative Markdown sources and set POLICYNIM_CORPUS_DIR before rebuilding."
+        )
 
     if runtime_rules_path.exists():
         checks.append(
@@ -2913,39 +2947,18 @@ def _doctor_ingest_next_step() -> str:
     )
 
 
-def _doctor_local_index_ready(settings: Settings) -> bool:
-    """Return whether the configured local SQLite index is ready for runtime use."""
-    try:
-        create_index_store(settings).validate_identity()
-        return True
-    except Exception:
-        return False
-
-
-def _doctor_index_details(settings: Settings) -> dict[str, object]:
-    """Inspect stored public identity locally; absence is unknown, never inferred."""
-    details: dict[str, object] = {"identity": None, "compatible": False}
-    try:
-        store = create_index_store(settings)
-        details["identity"] = store.inspect_identity().model_dump(mode="json")
-        store.validate_identity()
-        details["compatible"] = True
-    except Exception:
-        pass  # The local_index_path check supplies sanitized recovery guidance.
-    return details
-
-
 def _doctor_index_directory_next_step(*, legacy_lancedb_alias_configured: bool) -> str:
     """Return recovery guidance for SQLite index paths that point at directories."""
-    if legacy_lancedb_alias_configured:
-        return (
-            "Replace deprecated `POLICYNIM_LANCEDB_URI` with "
-            f"`POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run "
-            f"`{_doctor_cli_command('ingest')}`."
-        )
+    setting_hint = (
+        "Replace deprecated `POLICYNIM_LANCEDB_URI` with a fresh `POLICYNIM_INDEX_DB_PATH` "
+        if legacy_lancedb_alias_configured
+        else "Set a fresh `POLICYNIM_INDEX_DB_PATH` "
+    )
     return (
-        "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run "
-        f"`{_doctor_cli_command('ingest')}`."
+        setting_hint + "and a separate POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destination. "
+        "Preserve the old directory and runtime rules. Recover any legacy-only policy content "
+        "and verify POLICYNIM_CORPUS_DIR contains the authoritative Markdown sources before "
+        f"running `{_doctor_cli_command('ingest')}`; validate the candidate before activation."
     )
 
 
@@ -3052,6 +3065,23 @@ def _render_doctor_report(report: dict[str, object]) -> list[str]:
                 lines.append(
                     f"- {check.get('name')}: {check.get('status')} - {check.get('message')}"
                 )
+    inventory = report.get("inventory")
+    if isinstance(inventory, dict):
+        source = inventory.get("source", {})
+        index = inventory.get("index", {})
+        lines.append("")
+        lines.append("Inventory (local process):")
+        if isinstance(source, dict):
+            documents = source.get("document_count")
+            chunks = source.get("chunk_count")
+            lines.append(f"- source documents: {documents if documents is not None else 'unknown'}")
+            lines.append(f"- source chunks: {chunks if chunks is not None else 'unknown'}")
+        if isinstance(index, dict):
+            policies = index.get("policy_count")
+            chunks = index.get("chunk_count")
+            lines.append(f"- index state: {index.get('state')}")
+            lines.append(f"- indexed policy IDs: {policies if policies is not None else 'unknown'}")
+            lines.append(f"- indexed chunks: {chunks if chunks is not None else 'unknown'}")
     mcp = report["mcp"]
     if isinstance(mcp, dict) and mcp:
         lines.append("")
