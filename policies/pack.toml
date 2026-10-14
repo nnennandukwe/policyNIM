@@ -1,0 +1,39 @@
+schema_version = 1
+pack_id = "policynim.baseline"
+version = "0.1.0"
+
+[[policies]]
+policy_id = "ARCH-API-001"
+path = "architecture/api-versioning-guidance.md"
+
+[[policies]]
+policy_id = "ARCH-JOB-001"
+path = "architecture/background-job-design-rules.md"
+
+[[policies]]
+policy_id = "BE-LOG-001"
+path = "backend/backend-logging-standard.md"
+
+[[policies]]
+policy_id = "BE-CONFIG-001"
+path = "backend/config-validation-and-fail-closed.md"
+
+[[policies]]
+policy_id = "BE-TRACE-001"
+path = "backend/request-correlation-and-tracing-standard.md"
+
+[[policies]]
+policy_id = "SEC-AUTH-001"
+path = "security/auth-sensitive-code-review-standard.md"
+
+[[policies]]
+policy_id = "SEC-PUBLIC-ENDPOINT-002"
+path = "security/public-endpoint-safety.md"
+
+[[policies]]
+policy_id = "SEC-SECRET-001"
+path = "security/secrets-redaction-and-handling.md"
+
+[[policies]]
+policy_id = "SEC-SESSION-001"
+path = "security/session-lifetime-and-token-boundaries.md"

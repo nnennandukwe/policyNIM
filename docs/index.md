@@ -32,6 +32,7 @@ operations into separate pages so the root README can stay short.
 - [public-source-grounding.md](public-source-grounding.md): provenance notes for
   the shipped sample corpus
 
+- [policy-packs.md](policy-packs.md): versioned manifests, source catalogs, and provenance limits
 - [policy-inventory.md](policy-inventory.md): inspect source/index counts and recover old configurations without changing data
 
 ## Talks And Workflow Notes

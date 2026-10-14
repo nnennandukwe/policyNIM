@@ -1613,9 +1613,11 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     assert payload["status"] == "action_required"
     assert payload["runtime_mode"] == "standalone"
     assert payload["config"]["expected_init_config_file"] == str(config_root / "config.env")
-    assert payload["next_steps"] == [
+    assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
-    ]
+    )
+    assert payload["inventory"]["source"]["document_count"] == 9
+    assert payload["index"]["state"] == "missing"
     assert "nvapi" not in result.stdout.lower()
 
 
@@ -2102,7 +2104,7 @@ def test_support_bundle_does_not_label_installed_cwd_as_repo_root(
     assert payload["first_run"]["runtime_mode"] == "standalone"
     assert "<repo-root>" not in payload["redaction"]["path_markers"]
     assert str(workspace) not in result.stdout
-    assert "workspace" not in result.stdout
+    assert payload["doctor"]["paths"]["eval_workspace_dir"] == "<data-dir>/evals/workspace"
 
 
 def test_support_bundle_redacts_custom_absolute_runtime_paths(

@@ -49,6 +49,7 @@ from policynim.services import (
     create_runtime_execution_service,
     create_search_service,
 )
+from policynim.services.catalog import build_policy_catalog
 from policynim.services.inventory import inspect_policy_inventory
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -99,6 +100,97 @@ evidence_app = typer.Typer(
 app.add_typer(beta_admin_app, name="beta-admin")
 app.add_typer(runtime_app, name="runtime")
 app.add_typer(evidence_app, name="evidence")
+policies_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Inspect and validate policy sources without model credentials or network calls.",
+)
+app.add_typer(policies_app, name="policies")
+
+
+@policies_app.command("list")
+def policies_list(
+    output_format: Annotated[
+        Literal["text", "json"], typer.Option("--format", help="Catalog output: text or json.")
+    ] = "text",
+) -> None:
+    """List source policy IDs and pack versions; use show for individual content revisions."""
+    try:
+        catalog = build_policy_catalog()
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format)
+    if output_format == "json":
+        typer.echo(catalog.model_dump_json(indent=2))
+        return
+    typer.echo(f"Source catalog: {catalog.effective_count} policies; {catalog.digest}")
+    typer.echo("Indexed generation: unknown (source inspection only)")
+    for entry in catalog.policies:
+        provenance = entry.policy.provenance
+        pack = (
+            f"{provenance.pack_id}@{provenance.pack_version}"
+            if provenance is not None and provenance.pack_id is not None
+            else "legacy directory (pack unknown)"
+        )
+        typer.echo(f"{entry.policy.policy_id}  {entry.policy.domain}  {pack}  {entry.policy.title}")
+
+
+@policies_app.command("show")
+def policies_show(
+    policy_id: Annotated[str, typer.Argument(help="Exact policy ID from `policies list`.")],
+    output_format: Annotated[
+        Literal["text", "json"], typer.Option("--format", help="Policy output: text or json.")
+    ] = "text",
+) -> None:
+    """Show one policy's source text, content digest, and declared provenance."""
+    try:
+        entry = build_policy_catalog().show(policy_id)
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format)
+    if output_format == "json":
+        typer.echo(entry.model_dump_json(indent=2))
+        return
+    typer.echo(f"{entry.policy.policy_id}: {entry.policy.title}")
+    typer.echo(f"Source: {entry.path}")
+    if entry.policy.provenance is not None:
+        typer.echo(f"Revision: {entry.policy.provenance.content_digest}")
+        typer.echo(f"Grounding: {entry.policy.provenance.grounding_kind}")
+    typer.echo(entry.body)
+
+
+@policies_app.command("validate")
+def policies_validate(
+    output_format: Annotated[
+        Literal["text", "json"], typer.Option("--format", help="Validation output: text or json.")
+    ] = "text",
+) -> None:
+    """Validate manifest, membership, source metadata, and policy IDs without embedding."""
+    try:
+        catalog = build_policy_catalog()
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format)
+    result = {
+        "status": "ok",
+        "scope": "source",
+        "catalog_digest": catalog.digest,
+        "authored_count": catalog.authored_count,
+        "effective_count": catalog.effective_count,
+        "indexed_count": None,
+    }
+    if output_format == "json":
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        typer.echo(f"Valid source catalog: {catalog.effective_count} policies; {catalog.digest}")
+        typer.echo(
+            "Validation checks structure and declared metadata; it doesn't certify compliance."
+        )
+
+
+def _catalog_error(error: PolicyNIMError, output_format: str) -> NoReturn:
+    """Keep validation failures machine-readable with a nonzero command exit."""
+    if output_format == "json":
+        typer.echo(json.dumps({"status": "error", "scope": "source", "message": str(error)}))
+        raise typer.Exit(code=1)
+    _exit_with_error(str(error))
 
 
 @app.callback()
@@ -2760,10 +2852,7 @@ def _build_doctor_report() -> dict[str, object]:
     if config_discovery.standalone_setup_missing():
         message = f"Run `policynim init` to create {expected_config_file}."
         checks.append({"name": "setup", "status": "action_required", "message": message})
-        report["status"] = "action_required"
-        report["checks"] = checks
-        report["next_steps"] = [message]
-        return report
+        next_steps.append(message)
 
     try:
         settings = get_settings()

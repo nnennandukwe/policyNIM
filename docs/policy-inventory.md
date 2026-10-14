@@ -25,8 +25,8 @@ absent or unreadable database has unknown counts, rather than an inferred zero.
 Matching source and index counts don't prove identical content. Inventory doesn't
 claim generation consistency or remote deployment verification.
 
-Both `inventory --format json` and `doctor --format json` include the same typed
-index inspection. Doctor adds configuration, credentials, runtime-rules presence,
+When settings load, both `inventory --format json` and `doctor --format json`
+include the same typed index inspection, even before initialization. Doctor adds configuration, credentials, runtime-rules presence,
 and MCP setup hints. Doctor's existing exit behavior stays compatible: inspect
 its JSON `status` when using it in automation.
 

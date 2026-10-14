@@ -237,7 +237,7 @@ def test_doctor_and_inventory_share_same_observed_index(
 ) -> None:
     """Keep diagnosis and standalone inspection on the same typed readiness contract."""
     config = tmp_path / "local.env"
-    config.write_text("NVIDIA_API_KEY=offline-fixture\n", encoding="utf-8")
+    config.write_text("", encoding="utf-8")
     monkeypatch.setenv("POLICYNIM_CONFIG_FILE", str(config))
     path = tmp_path / "index.sqlite3"
     path.write_bytes(b"not a database")

@@ -10,6 +10,8 @@ reference that used to live in the root README.
 - `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
 - `policynim doctor [--format text|json]`
 - `policynim inventory [--format text|json]`
+- `policynim policies list|validate [--format text|json]`
+- `policynim policies show <policy-id> [--format text|json]`
 - `policynim init`
 - `policynim ingest`
 - `policynim dump-index [--count-only]`
@@ -65,6 +67,11 @@ Use `policynim inventory` to inspect source and indexed counts without an API ke
 or prior initialization. It reports unavailable counts as unknown and keeps local
 inspection separate from remote deployment evidence. See
 [policy inventory and recovery](policy-inventory.md) for states and recovery.
+
+Use `policynim policies list`, `show <policy-id>`, and `validate` for a source-only
+catalog with pack identity, content revisions, and declared provenance. A
+`pack.toml` manifest makes membership explicit; plain directories remain supported.
+See [policy packs](policy-packs.md) before authoring a manifest.
 
 ## Core Workflows
 
