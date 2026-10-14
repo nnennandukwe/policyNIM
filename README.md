@@ -63,22 +63,26 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 
 ## Inspect Policies Without An API Key
 
+These new commands are available from this source checkout or a wheel built from
+it. The existing `v0.1.0` release predates them.
+
 ```bash
-policynim policies list
-policynim policies show SEC-AUTH-001
-policynim policies validate --format json
-policynim inventory --format json
+uv run policynim policies list
+uv run policynim policies show SEC-AUTH-001
+uv run policynim policies validate --format json
+uv run policynim inventory --format json
 ```
 
 The catalog commands list policy IDs, source text, pack versions, and content
-revisions. Inventory inspects the selected Markdown sources and local SQLite index without setup, model credentials, network calls, or data changes.
+revisions. Inventory inspects the selected Markdown sources and local SQLite index
+without setup, model credentials, network calls, or data changes.
 Source documents, source chunks, indexed policy IDs, and indexed chunks are
 reported separately. Unavailable counts stay `null` in JSON and `unknown` in text.
 The report describes this process's files; it doesn't inspect a remote deployment
 or prove that source content matches an existing index.
 
-Run `policynim doctor` for setup checks and recovery instructions. In a source
-checkout, prefix these commands with `uv run`. See the
+Run `uv run policynim doctor` for setup checks and recovery instructions. A wheel
+built from this revision uses the direct `policynim` entrypoint. See the
 [policy inventory and recovery guide](docs/policy-inventory.md) and
 [policy pack format](docs/policy-packs.md).
 
