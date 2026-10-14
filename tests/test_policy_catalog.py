@@ -366,3 +366,34 @@ def test_catalog_rejection_blocks_embedding_and_publication(monkeypatch, tmp_pat
         service.run()
     assert embedder.calls == 0
     assert not output.exists() and not rules.exists()
+
+
+def test_new_unlisted_policy_is_visible_without_implicit_activation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Adding a file must produce an explicit unselected-path diagnostic, not activation."""
+    from policynim.services.catalog import build_policy_catalog
+
+    root = tmp_path / "pack"
+    write_pack(root)
+    baseline = build_policy_catalog(root)
+    (root / "new-policy.md").write_text(
+        "---\npolicy_id: NEW-001\n---\n# New policy\nRequire review.\n"
+    )
+    monkeypatch.setenv("POLICYNIM_CORPUS_DIR", str(root))
+    result = CliRunner().invoke(app, ["policies", "validate", "--format", "json"])
+    assert result.exit_code == 0
+    report = json.loads(result.stdout)
+    assert report["effective_count"] == 1
+    assert report["unlisted_markdown"] == ["new-policy.md"]
+    assert report["catalog_digest"] == baseline.digest
+    text = CliRunner().invoke(app, ["policies", "list"])
+    assert "aren't selected" in text.stdout
+    manifest = root / "pack.toml"
+    manifest.write_text(
+        manifest.read_text() + '\n[[policies]]\npolicy_id = "NEW-001"\npath = "new-policy.md"\n'
+    )
+    selected = build_policy_catalog(root)
+    assert selected.effective_count == 2
+    assert selected.unlisted_markdown == []
+    assert selected.digest != baseline.digest

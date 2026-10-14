@@ -132,6 +132,11 @@ def policies_list(
             else "legacy directory (pack unknown)"
         )
         typer.echo(f"{entry.policy.policy_id}  {entry.policy.domain}  {pack}  {entry.policy.title}")
+    if catalog.unlisted_markdown:
+        typer.echo(
+            f"Unlisted Markdown: {len(catalog.unlisted_markdown)} file(s) aren't selected. "
+            "Run `policynim policies validate --format json` for their paths."
+        )
 
 
 @policies_app.command("show")
@@ -175,6 +180,7 @@ def policies_validate(
         "authored_count": catalog.authored_count,
         "effective_count": catalog.effective_count,
         "indexed_count": None,
+        "unlisted_markdown": catalog.unlisted_markdown,
     }
     if output_format == "json":
         typer.echo(json.dumps(result, indent=2))
@@ -183,6 +189,8 @@ def policies_validate(
         typer.echo(
             "Validation checks structure and declared metadata; it doesn't certify compliance."
         )
+        if catalog.unlisted_markdown:
+            typer.echo("Unlisted Markdown (not selected): " + ", ".join(catalog.unlisted_markdown))
 
 
 def _catalog_error(error: PolicyNIMError, output_format: str) -> NoReturn:
@@ -2944,7 +2952,7 @@ def _build_doctor_report() -> dict[str, object]:
                 "then rerun doctor. Preserve existing data; don't rebuild to diagnose permissions."
             )
         elif readiness.state != "ready":
-            next_steps.append(str(IndexCompatibilityError()))
+            next_steps.append(str(IndexCompatibilityError(readiness.reason)))
     if inventory.source.status != "ok":
         checks.append(
             {
@@ -3209,6 +3217,7 @@ def _cli_error_message(error: PolicyNIMError) -> str:
     if (
         isinstance(error, MissingIndexError)
         and not isinstance(error, IndexCompatibilityError)
+        and error.failure_class is None
         and _is_standalone_local_runtime()
     ):
         return _STANDALONE_MISSING_INDEX_MESSAGE

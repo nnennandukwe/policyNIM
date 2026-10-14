@@ -308,3 +308,83 @@ def test_extended_sqlite_access_errors_never_recommend_rebuild(
     assert result.exit_code == 0
     assert json.loads(result.stdout)["index"]["state"] == "unreadable"
     assert "private access detail" not in result.stdout
+
+
+@pytest.mark.parametrize("failure", ["invalid", "directory", "unreadable"])
+def test_installed_runtime_keeps_recovery_diagnosis_and_blocks_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    """A valid execution control proves unusable-index refusal reaches the intended guard."""
+    from policynim.storage import sqlite_vec as adapter
+    from policynim.types import RuntimeRulesArtifact
+
+    path = tmp_path / "index.sqlite3"
+    write_index(path)
+    rules = tmp_path / "rules.json"
+    rules.write_text(RuntimeRulesArtifact().model_dump_json())
+    monkeypatch.setenv("NVIDIA_API_KEY", "offline-runtime-fixture")
+    monkeypatch.setenv("POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH", str(rules))
+    monkeypatch.setenv("POLICYNIM_RUNTIME_EVIDENCE_DB_PATH", str(tmp_path / "evidence.sqlite3"))
+    get_settings.cache_clear()
+    request = {
+        "kind": "file_write",
+        "task": "Verify local index readiness",
+        "cwd": str(tmp_path),
+        "path": str(tmp_path / "control.txt"),
+        "content": "allowed",
+    }
+    control = CliRunner().invoke(
+        app, ["runtime", "execute", "--input", "-"], input=json.dumps(request)
+    )
+    assert control.exit_code == 0, control.output
+    assert json.loads(control.stdout)["execution_outcome"] == "allowed"
+    assert (tmp_path / "control.txt").read_text() == "allowed"
+    if failure == "directory":
+        legacy = tmp_path / "legacy"
+        legacy.mkdir()
+        path = legacy / "original.lance"
+        path.write_bytes(b"preserved legacy data")
+        monkeypatch.setenv("POLICYNIM_INDEX_DB_PATH", str(legacy))
+        get_settings.cache_clear()
+    elif failure == "invalid":
+        path.write_bytes(b"preserved invalid index")
+    else:
+
+        def deny_read(*args, **kwargs):
+            """Inject policy-index access failure without affecting the evidence store."""
+            raise PermissionError(13, "private access detail")
+
+        monkeypatch.setattr(adapter, "_connect", deny_read)
+    before = path.read_bytes()
+    request["path"] = str(tmp_path / "forbidden.txt")
+    result = CliRunner().invoke(
+        app, ["runtime", "execute", "--input", "-"], input=json.dumps(request)
+    )
+    assert result.exit_code == 1
+    assert not (tmp_path / "forbidden.txt").exists()
+    assert path.read_bytes() == before
+    assert "policynim doctor" in result.stderr
+    assert "private access detail" not in result.stderr
+    if failure == "unreadable":
+        assert "don't rebuild" in result.stderr
+
+
+def test_doctor_empty_recovery_names_the_observed_cause(monkeypatch, tmp_path: Path) -> None:
+    """A complete matching empty index mustn't be diagnosed as a model mismatch."""
+    path = tmp_path / "index.sqlite3"
+    write_index(path)
+    with sqlite3.connect(path) as conn:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.execute("DELETE FROM policy_chunks")
+        conn.execute("DELETE FROM policy_vectors")
+    monkeypatch.setenv("NVIDIA_API_KEY", "offline-doctor-fixture")
+    get_settings.cache_clear()
+    result = CliRunner().invoke(app, ["doctor", "--format", "json"])
+    assert result.exit_code == 0
+    report = json.loads(result.stdout)
+    assert report["index"]["state"] == "empty"
+    recovery = " ".join(report["next_steps"])
+    assert "contains no policy chunks" in recovery
+    assert "embedding identity is unknown" not in recovery

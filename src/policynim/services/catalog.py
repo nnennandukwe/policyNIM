@@ -7,6 +7,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
+
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.ingest.loader import load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root
@@ -32,6 +34,7 @@ class PolicyCatalog(StrictModel):
     authored_count: int
     effective_count: int
     indexed_count: int | None = None
+    unlisted_markdown: list[str] = Field(default_factory=list)
     policies: list[CatalogPolicy]
 
     def show(self, policy_id: str) -> CatalogPolicy:
@@ -79,9 +82,16 @@ def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -
             "\n".join(entry.model_dump_json() for entry in policies).encode("utf-8")
         ).hexdigest()
     )
+    selected_paths = {entry.path for entry in policies}
     return PolicyCatalog(
         digest=digest,
         authored_count=len(policies),
         effective_count=len(policies),
         policies=policies,
+        unlisted_markdown=sorted(
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*.md")
+            if path.name != "TEMPLATE.md"
+            and path.relative_to(root).as_posix() not in selected_paths
+        ),
     )

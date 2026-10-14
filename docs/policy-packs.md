@@ -22,7 +22,10 @@ quality. Use [inventory](policy-inventory.md) for the actual local database coun
 ## Explicit Pack Membership
 
 A corpus with `pack.toml` loads only the declared Markdown members. Unlisted
-README files, templates, and author notes aren't policies. The bundled
+README files, templates, and author notes aren't policies. List and validation
+reports expose unselected files as `unlisted_markdown`; they aren't silently added.
+When copying `TEMPLATE.md` to create a new policy, register the new ID and path in
+the manifest before ingestion. The bundled
 `policynim.baseline@0.1.0` manifest lists the existing nine policies without
 changing their IDs or content.
 
