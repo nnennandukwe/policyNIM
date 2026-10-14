@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import IndexStore
 from policynim.errors import IndexCompatibilityError, MissingIndexError
-from policynim.storage.index_readiness import IndexReadinessReport
+from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
 from policynim.types import (
     EmbeddedChunk,
     EmbeddingIdentity,
@@ -105,18 +105,24 @@ class SQLiteVecIndexStore(IndexStore):
                         f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
                     ).fetchone()[0]
                 )
-                if count == 0:
-                    return IndexReadinessReport(state="empty", chunk_count=0, policy_count=0)
                 try:
-                    identity = _read_identity(conn)
-                except IndexCompatibilityError:
+                    identity = _read_identity(conn, allow_empty=True)
+                except IndexCompatibilityError as exc:
+                    if isinstance(exc.__cause__, sqlite3.Error) and is_sqlite_access_error(
+                        exc.__cause__
+                    ):
+                        return IndexReadinessReport(state="unreadable")
                     return IndexReadinessReport(
-                        state="incompatible", chunk_count=count, policy_count=policy_count
+                        state="invalid" if count == 0 else "incompatible",
+                        chunk_count=count,
+                        policy_count=policy_count,
                     )
                 if not identity.complete:
                     state = "incomplete"
                 elif identity.embedding != self._embedding_identity:
                     state = "incompatible"
+                elif count == 0:
+                    state = "empty"
                 else:
                     state = "ready"
                 return IndexReadinessReport(
@@ -131,19 +137,7 @@ class SQLiteVecIndexStore(IndexStore):
         except OSError:
             return IndexReadinessReport(state="unreadable")
         except sqlite3.DatabaseError as exc:
-            state = (
-                "unreadable"
-                if getattr(exc, "sqlite_errorcode", None)
-                in {
-                    sqlite3.SQLITE_CANTOPEN,
-                    sqlite3.SQLITE_PERM,
-                    sqlite3.SQLITE_BUSY,
-                    sqlite3.SQLITE_LOCKED,
-                    sqlite3.SQLITE_IOERR,
-                    sqlite3.SQLITE_AUTH,
-                }
-                else "invalid"
-            )
+            state = "unreadable" if is_sqlite_access_error(exc) else "invalid"
             return IndexReadinessReport(state=state)
 
     def _validate_identity(
@@ -601,7 +595,7 @@ def _metadata_value(conn: sqlite3.Connection, key: str) -> str | None:
     return str(row["value"]) if row is not None else None
 
 
-def _read_identity(conn: sqlite3.Connection) -> IndexIdentity:
+def _read_identity(conn: sqlite3.Connection, *, allow_empty: bool = False) -> IndexIdentity:
     """Validate metadata against the physical vector table, never infer missing identity."""
     if _metadata_value(conn, "schema_version") != _SCHEMA_VERSION:
         raise IndexCompatibilityError()
@@ -628,7 +622,7 @@ def _read_identity(conn: sqlite3.Connection) -> IndexIdentity:
         if match is None or int(match[1]) != identity.dimension:
             raise ValueError("Vector schema does not match metadata")
         count = conn.execute(f"SELECT COUNT(*) FROM {_VECTORS_TABLE}").fetchone()[0]
-        if count != _count_chunks(conn) or count == 0:
+        if count != _count_chunks(conn) or (count == 0 and not allow_empty):
             raise ValueError("Vector and policy inventory disagree")
         for row in conn.execute(
             f"SELECT value FROM {_METADATA_TABLE} WHERE key LIKE 'provenance:%'"

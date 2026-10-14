@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
@@ -10,7 +11,7 @@ from policynim.errors import InvalidPolicyDocumentError
 from policynim.ingest.loader import load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root
 from policynim.settings import Settings, get_settings
-from policynim.types import PolicyMetadata, StrictModel
+from policynim.types import ParsedDocument, PolicyMetadata, StrictModel
 
 
 class CatalogPolicy(StrictModel):
@@ -51,10 +52,15 @@ def build_policy_catalog(
         root if root is not None else resolve_corpus_root((settings or get_settings()).corpus_dir)
     )
     documents = load_policy_documents(corpus)
+    return compile_policy_catalog(documents, root=corpus)
+
+
+def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -> PolicyCatalog:
+    """Compile the exact loaded source snapshot before any model work starts."""
     policies = sorted(
         [
             CatalogPolicy(
-                path=doc.source_path.removeprefix(corpus.name + "/"),
+                path=doc.source_path.removeprefix(root.name + "/"),
                 policy=doc.metadata,
                 body=doc.body,
             )

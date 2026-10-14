@@ -17,7 +17,9 @@ can run inventory before `init` and without `NVIDIA_API_KEY`.
 The `source` section describes the selected Markdown corpus: document count,
 unique policy IDs, and chunks that the current loader would produce. An empty
 readable corpus has observed zero counts. Missing, unreadable, or invalid sources
-have `status: unavailable` and `null` counts.
+have `status: unavailable` and `null` counts. Run
+`policynim policies validate --format json` for the exact source location or
+manifest field that needs correction.
 
 The `index` section describes the configured local database: actual distinct
 policy IDs, actual chunks, stored embedding identity, and readiness state. An

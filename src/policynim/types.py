@@ -728,6 +728,7 @@ class IngestResult(StrictModel):
     document_count: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
     embedding_dimension: int = Field(ge=1)
+    catalog_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class HealthCheckResult(StrictModel):

@@ -312,3 +312,57 @@ def test_index_provenance_compatibility_and_failure_gate(tmp_path: Path, mutatio
         assert embedder.calls == 0
         assert store.inspect_readiness().state == "incompatible"
     assert path.read_bytes() == before
+
+
+def test_ingestion_returns_the_catalog_compiled_before_embedding(tmp_path: Path) -> None:
+    """Actual ingestion must expose the same source catalog identity as offline inspection."""
+    from test_index_identity import SpyEmbedder
+
+    from policynim.services.catalog import build_policy_catalog
+    from policynim.services.ingest import IngestService
+    from policynim.settings import Settings
+    from policynim.storage import create_index_store
+
+    root = tmp_path / "pack"
+    write_pack(root)
+    service = IngestService(
+        embedder=SpyEmbedder(),
+        index_store=create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3")),
+        corpus_root=root,
+        embedding_model="fixture/model",
+        runtime_rules_artifact_path=tmp_path / "rules.json",
+    )
+    result = service.run()
+    assert result.catalog_digest == build_policy_catalog(root).digest
+
+
+def test_catalog_rejection_blocks_embedding_and_publication(monkeypatch, tmp_path: Path) -> None:
+    """A catalog compilation failure must precede all provider and artifact work."""
+    from test_index_identity import SpyEmbedder
+
+    from policynim.errors import InvalidPolicyDocumentError
+    from policynim.services import ingest as ingest_module
+    from policynim.settings import Settings
+    from policynim.storage import create_index_store
+
+    root = tmp_path / "pack"
+    write_pack(root)
+    output, rules = tmp_path / "index.sqlite3", tmp_path / "rules.json"
+    embedder = SpyEmbedder()
+
+    def reject_catalog(documents, *, root):
+        """Inject one rejection at the catalog compilation boundary."""
+        raise InvalidPolicyDocumentError("Catalog compilation rejected the source snapshot.")
+
+    monkeypatch.setattr(ingest_module, "compile_policy_catalog", reject_catalog)
+    service = ingest_module.IngestService(
+        embedder=embedder,
+        index_store=create_index_store(Settings(index_db_path=output)),
+        corpus_root=root,
+        embedding_model="fixture/model",
+        runtime_rules_artifact_path=rules,
+    )
+    with pytest.raises(InvalidPolicyDocumentError, match="Catalog compilation rejected"):
+        service.run()
+    assert embedder.calls == 0
+    assert not output.exists() and not rules.exists()

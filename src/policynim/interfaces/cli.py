@@ -406,6 +406,8 @@ def ingest() -> None:
     typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
     typer.echo(f"Model: {result.embedding_model}")
     typer.echo(f"Index: {result.index_uri} (table: {result.table_name})")
+    if result.catalog_digest is not None:
+        typer.echo(f"Source catalog: {result.catalog_digest}")
 
 
 @app.command(
@@ -2952,6 +2954,7 @@ def _build_doctor_report() -> dict[str, object]:
             }
         )
         next_steps.append(
+            "Run `policynim policies validate --format json` for the exact source error. "
             "Recover authoritative Markdown sources and set POLICYNIM_CORPUS_DIR before rebuilding."
         )
 

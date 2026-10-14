@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Literal
 
 from pydantic import Field
@@ -24,6 +25,20 @@ _STATE_REASONS: dict[IndexReadinessState, str] = {
     "incompatible": "The index embedding identity is unknown or doesn't match configuration.",
     "incomplete": "The local index ingestion didn't complete.",
 }
+
+
+def is_sqlite_access_error(error: sqlite3.Error) -> bool:
+    """Classify primary and extended SQLite access codes without raw messages."""
+    code = getattr(error, "sqlite_errorcode", None)
+    return isinstance(code, int) and code & 0xFF in {
+        sqlite3.SQLITE_CANTOPEN,
+        sqlite3.SQLITE_PERM,
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_AUTH,
+        sqlite3.SQLITE_READONLY,
+    }
 
 
 class IndexReadinessReport(StrictModel):

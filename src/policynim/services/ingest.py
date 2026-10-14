@@ -15,6 +15,7 @@ from policynim.contracts import Embedder
 from policynim.errors import IndexCompatibilityError
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
+from policynim.services.catalog import compile_policy_catalog
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
 from policynim.types import (
@@ -115,6 +116,7 @@ class IngestService:
                 "even for the same model."
             )
         documents = load_policy_documents(self._corpus_root)
+        catalog = compile_policy_catalog(documents, root=self._corpus_root)
         runtime_rules_artifact = _compile_runtime_rules_artifact(documents)
         chunks = chunk_policy_documents(documents)
         vectors = self._embedder.embed_documents([chunk.text for chunk in chunks])
@@ -145,6 +147,7 @@ class IngestService:
             document_count=len(documents),
             chunk_count=len(embedded_chunks),
             embedding_dimension=len(embedded_chunks[0].vector),
+            catalog_digest=catalog.digest,
         )
 
 

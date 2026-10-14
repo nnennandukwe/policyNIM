@@ -2075,7 +2075,7 @@ def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, fa
 
 
 @pytest.mark.parametrize("failure_point", ["construction", "probe"])
-def test_healthz_os_errors_never_echo_untrusted_exception_text(monkeypatch, failure_point):
+def test_healthz_os_errors_never_echo_untrusted_exception_text(monkeypatch, failure_point, caplog):
     """Exercise both public fallback paths with secret-bearing OS error messages."""
     error = PermissionError(13, "Authorization: Bearer health-secret-sentinel", "/private/policy")
 
@@ -2104,3 +2104,6 @@ def test_healthz_os_errors_never_echo_untrusted_exception_text(monkeypatch, fail
     assert "health-secret-sentinel" not in response.text
     assert "/private/policy" not in response.text
     assert "PermissionError" in response.json()["reason"]
+    assert "test_mcp.py" in caplog.text
+    assert "health-secret-sentinel" not in caplog.text
+    assert "/private/policy" not in caplog.text

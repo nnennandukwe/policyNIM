@@ -164,6 +164,7 @@ def test_invalid_sources_are_unknown_not_empty(
     assert source["document_count"] is None
     assert source["policy_count"] is None
     assert "POLICYNIM_CORPUS_DIR" in source["reason"]
+    assert "policynim policies validate" in source["reason"]
 
 
 def test_legacy_alias_file_and_canonical_precedence(
@@ -246,3 +247,64 @@ def test_doctor_and_inventory_share_same_observed_index(
     assert inventory.exit_code == doctor.exit_code == 0
     assert json.loads(inventory.stdout)["index"] == json.loads(doctor.stdout)["index"]
     assert json.loads(doctor.stdout)["index"]["state"] == "invalid"
+
+
+def test_empty_index_requires_valid_shape_before_empty_diagnosis(tmp_path: Path) -> None:
+    """A valid empty control and one damaged identity must yield different recovery states."""
+    path = tmp_path / "index.sqlite3"
+    write_index(path)
+    with sqlite3.connect(path) as conn:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.execute("DELETE FROM policy_chunks")
+        conn.execute("DELETE FROM policy_vectors")
+    store = create_index_store(Settings())
+    assert store.inspect_readiness().state == "empty"
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE index_metadata SET value='999' WHERE key='embedding_dimension'")
+    before = path.read_bytes()
+    assert store.inspect_readiness().state == "invalid"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        sqlite3.SQLITE_IOERR_READ,
+        sqlite3.SQLITE_BUSY_SNAPSHOT,
+        sqlite3.SQLITE_LOCKED_SHAREDCACHE,
+        sqlite3.SQLITE_CANTOPEN_ISDIR,
+    ],
+)
+@pytest.mark.parametrize("failure_point", ["connection", "metadata"])
+def test_extended_sqlite_access_errors_never_recommend_rebuild(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int, failure_point: str
+) -> None:
+    """Keep actual extended access/contention codes in the unreadable recovery path."""
+    from policynim.storage import sqlite_vec as adapter
+
+    write_index(tmp_path / "index.sqlite3")
+    error = sqlite3.OperationalError("private access detail")
+    error.sqlite_errorcode = code
+
+    def fail_connection(*args, **kwargs):
+        """Inject one SQLite extended error at the real connection boundary."""
+        raise error
+
+    if failure_point == "connection":
+        monkeypatch.setattr(adapter, "_connect", fail_connection)
+    else:
+        original_metadata = adapter._metadata_value
+
+        def fail_identity_metadata(conn, key):
+            """Fail inside identity parsing after schema inspection succeeds."""
+            if key == "embedding_provider":
+                raise error
+            return original_metadata(conn, key)
+
+        monkeypatch.setattr(adapter, "_metadata_value", fail_identity_metadata)
+    result = CliRunner().invoke(app, ["inventory", "--format", "json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["index"]["state"] == "unreadable"
+    assert "private access detail" not in result.stdout

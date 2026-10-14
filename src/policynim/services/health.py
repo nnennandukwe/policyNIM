@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from pathlib import Path
 
 from policynim.contracts import IndexStore
@@ -55,7 +56,7 @@ class RuntimeHealthService:
                 "Local index embedding identity is incompatible or ingestion is incomplete."
             )
         except Exception as exc:
-            LOGGER.error("Runtime health check failed: %s", format_health_failure_reason(exc))
+            log_health_failure("Runtime health check failed.", exc)
             return self._not_ready(format_health_failure_reason(exc))
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
@@ -203,6 +204,20 @@ def format_health_failure_reason(exc: Exception) -> str:
     if isinstance(exc, OSError) and isinstance(exc.errno, int):
         detail += f" (errno {exc.errno})"
     return f"Local index readiness couldn't be inspected: {detail}."
+
+
+def log_health_failure(message: str, exc: Exception) -> None:
+    """Keep diagnostic call sites while excluding source lines and exception payloads."""
+    locations = " -> ".join(
+        f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}"
+        for frame in traceback.extract_tb(exc.__traceback__)
+    )
+    LOGGER.error(
+        "%s %s Traceback locations: %s",
+        message,
+        format_health_failure_reason(exc),
+        locations or "unavailable",
+    )
 
 
 def _format_hosted_runtime_error(*, index_path: Path | str, table_name: str, reason: str) -> str:

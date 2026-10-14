@@ -83,6 +83,10 @@ Directories without a manifest retain recursive Markdown loading, with
 and undeclared upstream provenance stay unknown. Existing `grounded_in` references
 remain available without being promoted to verified, versioned source records.
 
+Ingestion compiles the catalog from the same loaded source snapshot before
+embedding and prints its digest in the completion summary. A catalog compilation
+failure blocks provider calls and artifact publication.
+
 New indexes persist provenance in the existing SQLite metadata table. Dump and
 search read it back without requiring a schema migration. Older indexes without
 that metadata remain readable when their embedding identity is compatible;
