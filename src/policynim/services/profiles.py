@@ -452,6 +452,7 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
     if observed_text != original:
         raise InvalidPolicyDocumentError("Profile changed before staging; rerun the profile diff.")
     staged: Path | None = None
+    staged_identity: tuple[int, int] | None = None
     try:
         with NamedTemporaryFile(
             "w",
@@ -462,21 +463,37 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
             delete=False,
         ) as handle:
             staged = Path(handle.name)
+            staged_stat = os.fstat(handle.fileno())
+            staged_identity = (staged_stat.st_dev, staged_stat.st_ino)
             handle.write(_update_pin_text(original, current))
             handle.flush()
+            if os.name != "nt":
+                os.fchmod(handle.fileno(), observed_mode)
             os.fsync(handle.fileno())
-        os.chmod(staged, observed_mode)
         # Revalidate inputs and manual edits immediately before replacing the profile.
         final_report, _, final_original = diff_profile(path)
         if final_original != original or final_report.review_digest != expected_digest:
             raise InvalidPolicyDocumentError(
                 "Profile or sources changed; rerun `policynim profile diff`."
             )
+        if _staging_identity(staged) != staged_identity:
+            raise InvalidPolicyDocumentError(
+                "Staged profile changed; preserve the unexpected file and rerun the profile diff."
+            )
         os.replace(staged, path)
     finally:
-        if staged is not None:
+        if staged is not None and _staging_identity(staged) == staged_identity:
             staged.unlink(missing_ok=True)
     return report
+
+
+def _staging_identity(path: Path) -> tuple[int, int] | None:
+    """Inspect the directory entry itself so cleanup never follows a replaced symlink."""
+    try:
+        observed = path.lstat()
+    except FileNotFoundError:
+        return None
+    return observed.st_dev, observed.st_ino
 
 
 def serialize_profile(profile: PolicyProfile) -> str:

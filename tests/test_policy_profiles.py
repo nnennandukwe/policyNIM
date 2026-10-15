@@ -1127,6 +1127,53 @@ def test_profile_serializer_keeps_toml_1_0_escape_compatibility(profile_path: Pa
 
 
 @pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")
+@pytest.mark.parametrize("mode", [0o600, 0o640, 0o644])
+def test_profile_update_preserves_posix_access_mode(profile_path: Path, mode: int) -> None:
+    """Repinning preserves the operator's existing file access permissions."""
+    profile_path.chmod(mode)
+    report, _, _ = diff_profile(profile_path)
+    update_profile(profile_path, expected_digest=report.review_digest)
+    assert profile_path.stat().st_mode & 0o777 == mode
+
+
+@pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")
+def test_swapped_staging_symlink_cant_change_unrelated_permissions(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replacing the staged pathname can't chmod a private target or replace the profile."""
+    from contextlib import contextmanager
+
+    from policynim.services import profiles
+
+    profile_path.chmod(0o644)
+    original = profile_path.read_bytes()
+    report, _, _ = diff_profile(profile_path)
+    private = profile_path.parent / "private.txt"
+    private.write_text("PRIVATE-CANARY")
+    private.chmod(0o600)
+    real_temporary_file = profiles.NamedTemporaryFile
+    staged: Path | None = None
+
+    @contextmanager
+    def swap_after_close(*args, **kwargs):
+        """Replace the temporary directory entry after the owned handle closes."""
+        nonlocal staged
+        with real_temporary_file(*args, **kwargs) as handle:
+            staged = Path(handle.name)
+            yield handle
+        staged.unlink()
+        staged.symlink_to(private)
+
+    monkeypatch.setattr(profiles, "NamedTemporaryFile", swap_after_close)
+    with pytest.raises(InvalidPolicyDocumentError, match="Staged profile changed"):
+        update_profile(profile_path, expected_digest=report.review_digest)
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert private.read_text() == "PRIVATE-CANARY"
+    assert profile_path.read_bytes() == original
+    assert staged is not None and staged.is_symlink()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")
 def test_raced_profile_target_cant_broaden_staging_permissions(
     profile_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
