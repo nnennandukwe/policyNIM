@@ -11,7 +11,6 @@ import socket
 import subprocess
 import time
 from collections.abc import Sequence
-from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,7 +19,7 @@ from typing import Any, cast
 
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
-from policynim.operations import check_budget, close_components, operation_scope
+from policynim.operations import ResourceStack, check_budget, close_components, operation_scope
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
@@ -326,7 +325,7 @@ class EvalService:
             finally:
                 _close_component(ingest_service)
 
-            with ExitStack() as cleanup:
+            with ResourceStack() as cleanup:
                 search_service = _create_live_search_service(
                     temp_settings,
                     rerank_enabled=rerank_enabled,
@@ -1271,7 +1270,7 @@ def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> 
     """Build live search with the configured operation timeout."""
     from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 
-    with ExitStack() as cleanup:
+    with ResourceStack() as cleanup:
         embedder = NVIDIAEmbedder.from_settings(settings)
         cleanup.callback(close_components, embedder)
         reranker = NVIDIAReranker.from_settings(settings) if rerank_enabled else None
@@ -1299,7 +1298,7 @@ def _create_live_preflight_service(
         NVIDIAReranker,
     )
 
-    with ExitStack() as cleanup:
+    with ResourceStack() as cleanup:
         embedder = NVIDIAEmbedder.from_settings(settings)
         cleanup.callback(close_components, embedder)
         reranker = (
@@ -1360,7 +1359,7 @@ def _create_live_regeneration_service(
         NVIDIAReranker,
     )
 
-    with ExitStack() as cleanup:
+    with ResourceStack() as cleanup:
         embedder = NVIDIAEmbedder.from_settings(settings)
         cleanup.callback(close_components, embedder)
         reranker = (

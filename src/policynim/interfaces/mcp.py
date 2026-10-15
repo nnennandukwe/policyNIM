@@ -134,11 +134,11 @@ async def _run_sync_until_complete(
                     continue
                 except Exception:
                     break
+    # Observe a drained failure before an AnyIO cancellation checkpoint can raise.
+    if worker.done() and not worker.cancelled():
+        worker.exception()
     await checkpoint_if_cancelled()
     if cancellation is not None:
-        # Retrieve failures during the drain so the task doesn't report an unhandled exception.
-        if not worker.cancelled():
-            worker.exception()
         raise cancellation
     return worker.result()
 

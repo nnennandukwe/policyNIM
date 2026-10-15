@@ -406,3 +406,113 @@ def test_live_eval_factories_close_partial_provider_graphs(monkeypatch, kind: st
     }[kind]
     assert set(closed) == expected
     assert len(closed) == len(expected)
+
+
+@pytest.mark.parametrize(
+    "module_name, first, second",
+    [
+        ("compiler", "create_policy_router_service", "_create_default_policy_compiler"),
+        ("preflight", "create_policy_compiler_service", "_create_default_generator"),
+    ],
+)
+def test_setup_error_remains_primary_when_cleanup_also_fails(
+    monkeypatch, module_name, first, second
+) -> None:
+    """A double failure must retain the actionable provider configuration error."""
+    from importlib import import_module
+    from types import SimpleNamespace
+
+    from policynim.errors import ConfigurationError
+
+    module = import_module("policynim.services." + module_name)
+
+    def close():
+        """Inject a cleanup failure after provider setup already failed."""
+        raise RuntimeError("cleanup failed")
+
+    def fail(active):
+        """Preserve the primary configuration error callers can act on."""
+        raise ConfigurationError("provider setup failed", failure_class="auth")
+
+    monkeypatch.setattr(module, first, lambda active: SimpleNamespace(close=close))
+    monkeypatch.setattr(module, second, fail)
+    factory = getattr(
+        module,
+        "create_policy_compiler_service"
+        if module_name == "compiler"
+        else "create_preflight_service",
+    )
+    with pytest.raises(ConfigurationError, match="provider setup failed") as caught:
+        factory(settings())
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert caught.value.failure_class == "auth"
+
+
+def test_anyio_cancellation_observes_a_worker_failure_before_checkpoint(monkeypatch) -> None:
+    """A worker that finishes during cancellation must have its exception retrieved."""
+    import anyio
+
+    from policynim.interfaces.mcp import _run_sync_until_complete
+
+    async def scenario() -> None:
+        """Inject the completed-worker cancellation race at the await boundary."""
+
+        async def fail():
+            """Complete with a failure before the cancellation drain checks task state."""
+            raise RuntimeError("worker failed")
+
+        worker = asyncio.create_task(fail())
+        await asyncio.sleep(0)
+        assert worker.done() and getattr(worker, "_log_traceback")
+        original_create = asyncio.create_task
+        original_shield = asyncio.shield
+
+        def create(coroutine):
+            """Return the completed worker while closing the unused coroutine object."""
+            coroutine.close()
+            return worker
+
+        def shield(task):
+            """Model direct cancellation of the first shielded await."""
+            cancelled = asyncio.get_running_loop().create_future()
+            cancelled.cancel()
+            return cancelled
+
+        monkeypatch.setattr(asyncio, "create_task", create)
+        monkeypatch.setattr(asyncio, "shield", shield)
+        try:
+            with anyio.CancelScope() as scope:
+                scope.cancel()
+                await _run_sync_until_complete(lambda: None)
+            assert not getattr(worker, "_log_traceback")
+        finally:
+            worker.exception()
+            monkeypatch.setattr(asyncio, "create_task", original_create)
+            monkeypatch.setattr(asyncio, "shield", original_shield)
+
+    asyncio.run(scenario())
+
+
+def test_resource_stack_retains_original_error_and_attempts_every_close() -> None:
+    """Live-evaluation ownership must preserve setup errors when multiple closes fail."""
+    from policynim.errors import ConfigurationError
+    from policynim.operations import ResourceStack
+
+    closed = []
+
+    def close(name):
+        """Record cleanup before injecting an additional failure."""
+        closed.append(name)
+        raise RuntimeError("cleanup failed")
+
+    with pytest.raises(ConfigurationError, match="setup failed") as caught:
+        with ResourceStack() as cleanup:
+            cleanup.callback(close, "one")
+            cleanup.callback(close, "two")
+            raise ConfigurationError("setup failed", failure_class="auth")
+    assert closed == ["two", "one"]
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    # Failure-class traversal must terminate even when cleanup retains a causal chain.
+    from policynim.interfaces.mcp import _failure_class_from_error
+
+    assert _failure_class_from_error(caught.value) == "auth"

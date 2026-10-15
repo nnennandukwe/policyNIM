@@ -330,8 +330,8 @@ def create_policy_regeneration_service(
             generator=generator,
             conformance_service=conformance_service,
         )
-    except Exception:
-        close_components(conformance_service, generator, compiler_service)
+    except Exception as error:
+        close_components(conformance_service, generator, compiler_service, primary_error=error)
         raise
 
 

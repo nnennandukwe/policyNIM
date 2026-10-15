@@ -200,8 +200,8 @@ def create_preflight_service(settings: Settings | None = None) -> PreflightServi
             generator=generator,
             operation_timeout_seconds=active_settings.operation_timeout_seconds,
         )
-    except BaseException:
-        close_components(compiler_service)
+    except BaseException as error:
+        close_components(compiler_service, primary_error=error)
         raise
 
 

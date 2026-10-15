@@ -113,8 +113,8 @@ def create_policy_compiler_service(settings: Settings | None = None) -> PolicyCo
             compiler=compiler,
             operation_timeout_seconds=active_settings.operation_timeout_seconds,
         )
-    except BaseException:
-        close_components(router)
+    except BaseException as error:
+        close_components(router, primary_error=error)
         raise
 
 

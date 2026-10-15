@@ -7,11 +7,12 @@ import logging
 import math
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from functools import wraps
 from threading import Event
-from typing import Any, ParamSpec, TypeVar
+from types import TracebackType
+from typing import Any, Literal, ParamSpec, TypeVar
 
 from policynim.errors import ProviderError
 
@@ -133,7 +134,9 @@ def bounded_stage(stage: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     return decorate
 
 
-def close_components(*components: object | None) -> None:
+def close_components(
+    *components: object | None, primary_error: BaseException | None = None
+) -> None:
     """Attempt all optional close hooks, then propagate the first cleanup failure."""
     failure: BaseException | None = None
     for component in components:
@@ -144,4 +147,25 @@ def close_components(*components: object | None) -> None:
             except BaseException as exc:
                 failure = failure or exc
     if failure is not None:
+        if primary_error is not None:
+            raise primary_error from failure
         raise failure
+
+
+class ResourceStack(ExitStack):
+    """Close partial graphs while retaining the error that caused their teardown."""
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> Literal[False]:
+        """Attempt every registered close and keep the work failure primary."""
+        try:
+            super().__exit__(exc_type, exc_value, traceback)
+            return False
+        except BaseException as cleanup_error:
+            if exc_value is not None and cleanup_error is not exc_value:
+                raise exc_value from cleanup_error
+            raise

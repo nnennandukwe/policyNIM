@@ -102,8 +102,8 @@ def _create_default_search_components(settings: Settings) -> tuple[Embedder, Rer
     embedder = NVIDIAEmbedder.from_settings(settings)
     try:
         return embedder, NVIDIAReranker.from_settings(settings)
-    except BaseException:
-        close_components(embedder)
+    except BaseException as error:
+        close_components(embedder, primary_error=error)
         raise
 
 
