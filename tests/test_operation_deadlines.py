@@ -650,3 +650,88 @@ def test_provider_attempts_report_interruptions_without_claiming_cancellation(
     assert len(calls) == len(events) == 1
     assert events[0]["failure_class"] == "interrupted"
     assert events[0]["usage_status"] == "unknown"
+
+
+@pytest.mark.parametrize("outer", [False, True])
+def test_bulk_ingestion_bounds_each_batch_without_imposing_one_corpus_deadline(monkeypatch, outer):
+    """A large ingest can run many bounded batches while an explicit outer budget still wins."""
+    from types import SimpleNamespace
+
+    import policynim.operations as operations
+
+    clock = Clock()
+    original_budget = operations.OperationBudget
+
+    class ClockBudget(original_budget):
+        """Use simulated time for each newly created batch deadline."""
+
+        def __init__(self, seconds):
+            """Keep the configured duration while sharing the deterministic clock."""
+            super().__init__(seconds, clock=clock)
+
+    monkeypatch.setattr(operations, "OperationBudget", ClockBudget)
+    calls = []
+
+    def create(**kwargs):
+        """Consume one second per SDK batch without contacting a provider."""
+        calls.append(kwargs["timeout"])
+        clock.now += 1
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(index=index, embedding=[1.0, 0.0])
+                for index in range(len(kwargs["input"]))
+            ]
+        )
+
+    client = SimpleNamespace(embeddings=SimpleNamespace(create=create))
+    adapter = NVIDIAEmbedder(
+        api_key="test",
+        model="test",
+        base_url="https://provider.invalid",
+        batch_size=32,
+        timeout_seconds=2,
+        operation_timeout_seconds=2,
+        max_retries=0,
+        client=client,
+    )
+    if outer:
+        with pytest.raises(ProviderError) as caught, operations.operation_scope(ClockBudget(2)):
+            adapter.embed_documents(["policy"] * 10000)
+        assert caught.value.failure_class == "deadline_exhausted"
+        assert len(calls) == 2
+    else:
+        assert len(adapter.embed_documents(["policy"] * 10000)) == 10000
+        assert len(calls) == 313
+        assert all(timeout == 2 for timeout in calls)
+
+
+def test_retry_after_above_cap_with_available_budget_is_not_deadline_exhaustion(monkeypatch):
+    """An over-cap provider wait retains a separate, actionable failure class."""
+    from policynim.operations import OperationBudget, operation_scope
+    from policynim.providers.nvidia import _request_with_retry
+
+    def send(timeout):
+        """Return a provider delay above the cap but within the operation deadline."""
+        response = httpx.Response(
+            429,
+            headers={"Retry-After": "9"},
+            request=httpx.Request("POST", "https://provider.invalid"),
+        )
+        response.raise_for_status()
+
+    with pytest.raises(ProviderError) as caught, operation_scope(OperationBudget(120)):
+        _request_with_retry(
+            send,
+            operation="test",
+            model_setting="CHAT",
+            endpoint_setting="BASE_URL",
+            max_retries=2,
+            timeout_seconds=1,
+            retry_initial_seconds=0.5,
+            retry_max_seconds=8,
+        )
+    assert caught.value.failure_class == "retry_after_limit"
+    from policynim.interfaces.mcp import _safe_tool_error
+
+    assert "longer wait" in _safe_tool_error(caught.value)
+    assert "deadline" not in _safe_tool_error(caught.value)

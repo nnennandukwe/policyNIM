@@ -28,7 +28,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
-from policynim.operations import bounded_stage, current_budget, emit_operation_event
+from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
 from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
 from policynim.types import (
@@ -124,9 +124,9 @@ class NVIDIAEmbedder(Embedder):
         if self._owns_client:
             _close_client(self._client)
 
-    @bounded_stage("embedding")
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed policy chunk text in batches."""
+        """Embed policy text with one deadline per batch unless a caller supplies a budget."""
+        check_budget()
         normalized = [_normalize_text(text, field_name="document text") for text in texts]
         if not normalized:
             return []
@@ -137,13 +137,14 @@ class NVIDIAEmbedder(Embedder):
             embeddings.extend(self._request_embeddings(batch, input_type="passage"))
         return embeddings
 
-    @bounded_stage("embedding")
+    @bounded_stage("embedding_query")
     def embed_query(self, text: str) -> list[float]:
         """Embed one search query."""
         normalized = _normalize_text(text, field_name="query")
         embeddings = self._request_embeddings([normalized], input_type="query")
         return embeddings[0]
 
+    @bounded_stage("embedding_batch")
     def _request_embeddings(
         self,
         texts: Sequence[str],
@@ -743,6 +744,7 @@ def _request_with_retry(
             raise
         finally:
             emit_operation_event(
+                kind="attempt",
                 stage=operation,
                 attempt=attempt + 1,
                 failure_class=failure,
@@ -762,9 +764,11 @@ def _request_with_retry(
         if retry_after is not None:
             # Never shorten a provider's requested delay to fit the local cap.
             if retry_after > retry_max_seconds:
+                if retry_after >= budget.remaining():
+                    budget.wait(retry_after)
                 raise ProviderError(
                     "Provider retry delay exceeds the configured wait limit. Retry later.",
-                    failure_class="deadline_exhausted",
+                    failure_class="retry_after_limit",
                 ) from retry_error
             delay = max(delay, retry_after)
         budget.wait(delay)

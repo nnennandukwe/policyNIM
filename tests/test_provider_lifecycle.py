@@ -562,3 +562,104 @@ def test_resource_stack_preserves_interrupt_through_later_close_errors(interrupt
             cleanup.callback(close, "first", interruption())
             raise ConfigurationError("setup failed")
     assert closed == ["first", "last"]
+
+
+def install_search_factory(monkeypatch, active_settings) -> None:
+    """Use actual NVIDIA SDK borrowing behind a deterministic ready search index."""
+    from test_provider_recovery import candidate
+    from test_search_service import MockIndexStore, MockReranker
+
+    from policynim.interfaces import mcp as mcp_module
+    from policynim.services.search import SearchService
+
+    def create(active) -> SearchService:
+        """Build operation-local service state while borrowing a shared SDK client."""
+        return SearchService(
+            embedder=NVIDIAEmbedder.from_settings(active),
+            index_store=MockIndexStore([candidate()]),
+            reranker=MockReranker(),
+        )
+
+    monkeypatch.setattr(mcp_module, "get_settings", lambda: active_settings)
+    monkeypatch.setattr(mcp_module, "create_search_service", create)
+
+
+def test_helper_built_server_owns_its_provider_pool_until_client_exit(monkeypatch) -> None:
+    """Helper composition must share the same owner between tools and the lifespan."""
+    from mcp import Client
+
+    from policynim.interfaces import mcp as mcp_module
+
+    clients = install_sdk(
+        monkeypatch,
+        httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+            )
+        ),
+    )
+    install_search_factory(monkeypatch, settings())
+
+    async def scenario():
+        """Execute a provider-backed tool through the real in-process MCP client."""
+        server = mcp_module._register_tools(mcp_module._new_mcp_server())
+        async with Client(server) as client:
+            result = await client.call_tool("policy_search", {"query": "private"})
+            assert not result.is_error
+            assert len(clients) == 1 and not clients[0].is_closed()
+        assert clients[0].is_closed()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        for client in clients:
+            client.close()
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_stateless_http_retains_one_pool_across_sequential_and_concurrent_requests(
+    monkeypatch, mode
+) -> None:
+    """The pinned SDK enters the HTTP lifespan once, rather than once per POST."""
+    import httpx2
+    from fixtures.mcp_fixture_server import offline_services
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+    from test_mcp_protocol import _serve_http
+
+    from policynim.interfaces import mcp as mcp_module
+
+    clients = install_sdk(
+        monkeypatch,
+        httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+            )
+        ),
+    )
+    active_settings = settings()
+
+    async def scenario():
+        """Run real TCP MCP requests while NVIDIA calls use a local transport double."""
+        with offline_services(active_settings):
+            install_search_factory(monkeypatch, active_settings)
+            app = mcp_module._build_streamable_http_app(active_settings)
+            async with _serve_http(app) as origin:
+                async with httpx2.AsyncClient(timeout=5, trust_env=False) as http:
+                    transport = streamable_http_client(origin + "/mcp", http_client=http)
+                    async with Client(transport, mode=mode, read_timeout_seconds=5) as client:
+                        for index in range(2):
+                            result = await client.call_tool("policy_search", {"query": "private"})
+                            assert not result.is_error
+                            assert len(clients) == 1 and not clients[0].is_closed()
+                        results = await asyncio.gather(
+                            *[
+                                client.call_tool("policy_search", {"query": "private"})
+                                for index in range(3)
+                            ]
+                        )
+                        assert all(not result.is_error for result in results)
+                        assert len(clients) == 1 and not clients[0].is_closed()
+            assert clients[0].is_closed()
+
+    asyncio.run(scenario())

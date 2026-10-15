@@ -49,7 +49,7 @@ class PolicyConformanceService:
         """Release owned evaluator resources."""
         close_components(self._evaluator)
 
-    @bounded_stage("conformance")
+    @bounded_stage("conformance_pipeline")
     def evaluate(
         self,
         request: PolicyConformanceRequest,

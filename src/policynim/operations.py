@@ -124,6 +124,7 @@ def bounded_stage(stage: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
                 raise
             finally:
                 emit_operation_event(
+                    kind="stage",
                     stage=stage,
                     latency_ms=round((time.monotonic() - start) * 1000, 3),
                     failure_class=failure,

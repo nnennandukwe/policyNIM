@@ -67,7 +67,7 @@ class PolicyCompilerService:
         """Release owned provider resources held by this service."""
         close_components(self._router, self._compiler)
 
-    @bounded_stage("compilation")
+    @bounded_stage("compile_pipeline")
     def compile(self, request: CompileRequest) -> CompileResult:
         """Compile routed policy evidence into a grounded policy packet."""
         route_result = self._router.route(

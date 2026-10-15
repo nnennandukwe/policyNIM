@@ -338,7 +338,8 @@ uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
 Each search, route, compile, preflight, or regeneration operation gets one monotonic
 budget. Nested stages share it, including conformance and regeneration attempts.
 Evaluation gives each case its own budget, including optional conformance; ingestion
-bounds each embedding batch sequence separately from the evaluation case budget.
+gives each embedding batch a fresh budget, unless a caller explicitly supplies an
+outer budget. A large corpus doesn't have to finish within one batch's deadline.
 CLI and MCP use the same checks. Index readiness and citation validation still run;
 a deadline never turns missing evidence into a successful result.
 
@@ -356,9 +357,10 @@ then defaults. No new storage format or optional dependency is required.
 
 429, 5xx, network failures, and HTTP timeouts can retry. Backoff grows exponentially,
 with jitter between half the ceiling and the ceiling, capped by the maximum wait.
-A valid `Retry-After` delta or HTTP date sets a minimum wait. If that wait exceeds
-the cap or leaves no remaining operation budget, the request fails with
-`deadline_exhausted` instead of retrying early. Invalid headers fall back to jitter.
+A valid `Retry-After` delta or HTTP date sets a minimum wait. A wait that exceeds
+the cap while an operation still has enough time fails with `retry_after_limit`.
+A wait that leaves no remaining operation budget fails with `deadline_exhausted`.
+Neither condition retries early. Invalid headers fall back to jitter.
 Authentication, rejected requests, retired endpoints, and malformed responses don't
 retry. Retry exhaustion retains the provider failure class, such as `rate_limit`
 or `timeout`.
@@ -380,6 +382,8 @@ usage when cancellation or a deadline occurs. Neither state proves zero usage.
 
 Hosted JSON events from `policynim.operations` contain stage latency, attempt number,
 provider failure class, and measured token usage or an explicit `unknown` marker.
+A `kind` field separates stage events from attempts, and service totals use
+`compile_pipeline` / `conformance_pipeline` names distinct from provider stages.
 They don't include task text, policy text, credentials, response bodies, or exception
 messages. Token counts describe responses that supplied usage; they aren't a bill
 or proof that failed attempts were free. Stage events and attempt events are separate

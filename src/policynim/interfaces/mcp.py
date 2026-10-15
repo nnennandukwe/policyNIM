@@ -499,7 +499,10 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
                 "against the current API catalog, including Docker build-time configuration."
             ),
             "timeout": "The policy model provider timed out. Retry later.",
-            "deadline_exhausted": "The operation deadline was exhausted. Retry later.",
+            "deadline_exhausted": "The operation couldn't finish within its deadline. Retry later.",
+            "retry_after_limit": (
+                "The provider requested a longer wait than this service allows. Retry later."
+            ),
             "cancelled": "The operation was cancelled; upstream usage may already exist.",
             "shutdown": "The policy server is shutting down. Retry later.",
             "rate_limit": "The policy model provider is rate limited. Retry later.",
@@ -519,11 +522,19 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
     )
 
 
-def _register_tools(
-    server: MCPServer, *, capacity: int | None = None, runtime: _ToolExecutor | None = None
-) -> MCPServer:
-    """Register tools, resolving an omitted capacity once when the first tool runs."""
-    executor = runtime or _ToolExecutor(capacity)
+class _ManagedMCPServer(MCPServer):
+    """Keep tool dispatch and transport lifespan bound to the same resource owner."""
+
+    runtime: _ToolExecutor
+
+
+def _register_tools(server: _ManagedMCPServer, *, capacity: int | None = None) -> _ManagedMCPServer:
+    """Register tools against the executor already owned by this server."""
+    executor = server.runtime
+    if capacity is not None:
+        if executor._admission is not None:
+            raise ValueError("Register tool capacity before serving requests.")
+        executor._capacity = capacity
 
     annotations = ToolAnnotations(
         read_only_hint=True,
@@ -575,23 +586,27 @@ def _register_tools(
     return server
 
 
-def _new_mcp_server(runtime: _ToolExecutor | None = None) -> MCPServer:
-    """Identify the application independently from its MCP SDK version."""
+def _new_mcp_server(runtime: _ToolExecutor | None = None) -> _ManagedMCPServer:
+    """Create one server and its resource owner without eagerly reading settings."""
     try:
         application_version = version("policynim")
     except PackageNotFoundError:
         application_version = "unknown"
 
+    active_runtime = runtime if runtime is not None else _ToolExecutor()
+
     @asynccontextmanager
     async def lifespan(server: MCPServer) -> AsyncIterator[dict[str, object]]:
         """Keep pooled clients alive through worker drain for HTTP and stdio transports."""
+        # SDK 2.2's HTTP manager owns this once for its application lifetime,
+        # including stateless requests. Server.run owns it for stdio.
+        # See test_stateless_http_retains_one_pool_across_sequential_and_concurrent_requests.
         try:
             yield {}
         finally:
-            if runtime is not None:
-                await runtime.close()
+            await active_runtime.close()
 
-    return MCPServer(
+    server = _ManagedMCPServer(
         "PolicyNIM",
         lifespan=lifespan,
         version=application_version,
@@ -601,6 +616,9 @@ def _new_mcp_server(runtime: _ToolExecutor | None = None) -> MCPServer:
         ),
     )
 
+    server.runtime = active_runtime
+    return server
+
 
 def _create_mcp_server(
     settings: Settings,
@@ -609,7 +627,7 @@ def _create_mcp_server(
 ) -> MCPServer:
     """Create a fresh MCP server configured from runtime settings."""
     runtime = _ToolExecutor(settings.mcp_max_concurrent_operations, settings=settings)
-    server = _register_tools(_new_mcp_server(runtime), runtime=runtime)
+    server = _register_tools(_new_mcp_server(runtime))
     _register_health_route(server, settings)
     if settings.beta_signup_enabled and beta_auth_service is not None:
         _register_beta_routes(server, settings, beta_auth_service)
@@ -1441,8 +1459,7 @@ def run_server(transport: str = "stdio") -> None:
     server.run(transport="stdio")
 
 
-_default_runtime = _ToolExecutor()
-mcp = _register_tools(_new_mcp_server(_default_runtime), runtime=_default_runtime)
+mcp = _register_tools(_new_mcp_server())
 
 
 if __name__ == "__main__":
