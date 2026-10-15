@@ -84,7 +84,9 @@ Unsupported Markdown frontmatter such as `enabled` doesn't disable a policy.
    ```
 
    The result lists `added`, `changed`, `removed`, `changed_packs`,
-   `invalidated_decisions`, and any blocking `validation_error`. Changes include
+   `invalidated_decisions`, and any blocking `validation_error`. The JSON
+   `current_policies` snapshot includes the new text, provenance, and `target_digest`
+   for reviewing affected decisions even while old pins block preview. Changes include
    declared pack/provenance metadata. Missing or invalid selected packs fail
    instead of producing an applicable diff.
 3. Review affected overrides. Edit their target digest only after reviewing the

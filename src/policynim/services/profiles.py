@@ -358,6 +358,7 @@ class ProfileDiff(StrictModel):
     removed: list[str]
     changed_packs: list[str]
     invalidated_decisions: list[str]
+    current_policies: list[CatalogPolicy]
     validation_error: str | None = None
 
 
@@ -401,6 +402,7 @@ def diff_profile(path: Path) -> tuple[ProfileDiff, PolicyProfile, str]:
             pin.pack_id for pin in current.packs if pin != previous_pins.get(pin.pack_id)
         ),
         invalidated_decisions=invalidated,
+        current_policies=sorted(entries, key=lambda entry: entry.policy.policy_id),
         validation_error=validation_error,
     )
     return report, current, original

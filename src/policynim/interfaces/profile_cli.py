@@ -128,6 +128,9 @@ def show_profile_diff(path: ProfilePath, output_format: OutputFormat = "text") -
         typer.echo(f"Review digest: {report.review_digest}")
         if report.validation_error:
             typer.echo(f"Update blocked: {report.validation_error}")
+            typer.echo(
+                "Review current_policies with --format json for new text and target digests."
+            )
         else:
             typer.echo(
                 f"Apply: policynim profile update {shlex.quote(str(path))} "

@@ -353,7 +353,14 @@ def test_update_diff_requires_explicit_review_and_preserves_invalidated_targets(
         update_profile(profile_path, expected_digest=report.review_digest)
     assert profile_path.read_bytes() == original
     profile, _ = read_profile(profile_path)
-    reviewed = build_policy_catalog(policy.parent).show("A").target_digest
+    diff_output = CliRunner().invoke(
+        app, ["profile", "diff", str(profile_path), "--format", "json"]
+    )
+    assert diff_output.exit_code == 0, diff_output.output
+    current = json.loads(diff_output.stdout)["current_policies"]
+    revised_a = next(entry for entry in current if entry["policy"]["policy_id"] == "A")
+    assert "before every deployment" in revised_a["body"]
+    reviewed = revised_a["target_digest"]
     rewrite_profile(
         profile_path,
         profile.model_copy(
