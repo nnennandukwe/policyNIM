@@ -8,6 +8,7 @@ from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
 from policynim.operations import bounded_stage, check_budget, close_components
+from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
 from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
 from policynim.services.router import PolicyRouterService
 from policynim.settings import Settings, get_settings
@@ -92,15 +93,23 @@ class PreflightService:
         close_components(self._compiler_service, self._generator)
 
     @bounded_stage("preflight")
-    def preflight(self, request: PreflightRequest) -> PreflightResult:
+    def preflight(
+        self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> PreflightResult:
         """Run the grounded preflight pipeline."""
+        if principal is not None:
+            authorize_operation(principal, "policy_preflight")
         output = self._run_preflight(request, with_trace=False)
         assert isinstance(output, PreflightResult)
         return output
 
     @bounded_stage("preflight")
-    def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
+    def preflight_with_trace(
+        self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> PreflightTraceResult:
         """Run preflight and retain internal data needed for eval scoring."""
+        if principal is not None:
+            authorize_operation(principal, "policy_preflight")
         output = self._run_preflight(request, with_trace=True)
         assert isinstance(output, PreflightTraceResult)
         return output

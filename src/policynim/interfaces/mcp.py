@@ -26,17 +26,21 @@ from anyio import to_thread
 from anyio.lowlevel import checkpoint_if_cancelled
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mcp.server import MCPServer
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.routes import build_resource_metadata_url, create_protected_resource_routes
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from mcp.types import ToolAnnotations
-from pydantic import Field, ValidationError
+from pydantic import AnyHttpUrl, Field, ValidationError
 from starlette._utils import get_route_path
 from starlette.datastructures import Headers
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.routing import Route
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
@@ -46,6 +50,10 @@ from policynim.errors import (
     MissingIndexError,
     PolicyNIMError,
     ProviderError,
+)
+from policynim.interfaces.mcp_authorization import (
+    OperationAuthorizationApp,
+    record_authorization_failure,
 )
 from policynim.operations import OperationBudget, operation_scope
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
@@ -57,6 +65,15 @@ from policynim.services import (
     create_search_service,
     ensure_hosted_runtime_ready,
     format_health_failure_reason,
+)
+from policynim.services.authorization import (
+    SUPPORTED_SCOPES,
+    AuthenticatedPrincipal,
+    AuthorizationError,
+    IntrospectionTokenVerifier,
+    authorize_operation,
+    legacy_principal,
+    principal_from_access_token,
 )
 from policynim.services.health import log_health_failure
 from policynim.settings import Settings, get_settings
@@ -103,6 +120,9 @@ _HOSTED_AUTH_RESULT: ContextVar[str] = ContextVar(
     default="not_required",
 )
 _OperationResult = TypeVar("_OperationResult")
+_HOSTED_PRINCIPAL: ContextVar[AuthenticatedPrincipal | None] = ContextVar(
+    "policynim_hosted_principal", default=None
+)
 
 
 class _InvalidToolRequest(ValueError):
@@ -379,12 +399,21 @@ def _run_policy_preflight(
     task: str,
     domain: str | None = None,
     top_k: int | None = None,
+    *,
+    principal: AuthenticatedPrincipal | None = None,
 ) -> dict[str, object]:
     """Return policy guidance for a coding task."""
+    if principal is not None:
+        authorize_operation(principal, "policy_preflight")
     resolved_top_k = _resolve_top_k(top_k)
     service = create_preflight_service(get_settings())
     try:
-        result = service.preflight(PreflightRequest(task=task, domain=domain, top_k=resolved_top_k))
+        request = PreflightRequest(task=task, domain=domain, top_k=resolved_top_k)
+        result = (
+            service.preflight(request, principal=principal)
+            if principal is not None
+            else service.preflight(request)
+        )
         return result.model_dump(mode="json")
     except ValidationError as exc:
         raise _InvalidToolRequest(_format_validation_error("Preflight request", exc)) from exc
@@ -405,12 +434,21 @@ def _run_policy_search(
     query: str,
     domain: str | None = None,
     top_k: int | None = None,
+    *,
+    principal: AuthenticatedPrincipal | None = None,
 ) -> dict[str, object]:
     """Search the policy corpus."""
+    if principal is not None:
+        authorize_operation(principal, "policy_search")
     resolved_top_k = _resolve_top_k(top_k)
     service = create_search_service(get_settings())
     try:
-        result = service.search(SearchRequest(query=query, domain=domain, top_k=resolved_top_k))
+        request = SearchRequest(query=query, domain=domain, top_k=resolved_top_k)
+        result = (
+            service.search(request, principal=principal)
+            if principal is not None
+            else service.search(request)
+        )
         return result.model_dump(mode="json")
     finally:
         _close_service(service)
@@ -434,7 +472,7 @@ async def _run_logged_tool(
 ) -> dict[str, object]:
     """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
-    auth_result = _HOSTED_AUTH_RESULT.get()
+    auth_result = "authorized" if get_access_token() is not None else _HOSTED_AUTH_RESULT.get()
     request_id = _request_id_from_context(ctx)
     try:
         result = await executor.run(operation)
@@ -457,6 +495,9 @@ async def _run_logged_tool(
             upstream_failure_class=_failure_class_from_error(exc),
             request_id=request_id,
         )
+        if isinstance(exc, AuthorizationError):
+            record_authorization_failure(exc)
+            raise ToolError(str(exc)) from exc
         if isinstance(exc, PolicyNIMError):
             raise ToolError(_safe_tool_error(exc)) from exc
         if isinstance(exc, _InvalidToolRequest):
@@ -528,13 +569,33 @@ class _ManagedMCPServer(MCPServer):
     runtime: _ToolExecutor
 
 
-def _register_tools(server: _ManagedMCPServer, *, capacity: int | None = None) -> _ManagedMCPServer:
-    """Register tools against the executor already owned by this server."""
+def _register_tools(
+    server: _ManagedMCPServer, *, capacity: int | None = None, require_principal: bool = False
+) -> _ManagedMCPServer:
+    """Register authorized tools against the executor already owned by this server."""
     executor = server.runtime
     if capacity is not None:
         if executor._admission is not None:
             raise ValueError("Register tool capacity before serving requests.")
         executor._capacity = capacity
+
+    def get_principal(operation: str) -> AuthenticatedPrincipal | None:
+        """Require fresh service authority for every hosted tool invocation."""
+        access_token = get_access_token()
+        principal = (
+            principal_from_access_token(access_token)
+            if access_token is not None
+            else _HOSTED_PRINCIPAL.get()
+        )
+        if principal is None and require_principal:
+            raise ToolError("invalid_token: Authenticate before calling a protected operation.")
+        if principal is not None:
+            try:
+                authorize_operation(principal, operation)
+            except AuthorizationError as exc:
+                record_authorization_failure(exc)
+                raise ToolError(str(exc)) from exc
+        return principal
 
     annotations = ToolAnnotations(
         read_only_hint=True,
@@ -555,9 +616,12 @@ def _register_tools(server: _ManagedMCPServer, *, capacity: int | None = None) -
         ctx: Context,
     ) -> PreflightResult:
         """Get citation-backed policy guidance, review flags and tests for a coding task."""
+        principal = get_principal("policy_preflight")
         result = await _run_logged_tool(
             "policy_preflight",
-            lambda: _run_policy_preflight(task=task, domain=domain, top_k=top_k),
+            lambda: _run_policy_preflight(
+                task=task, domain=domain, top_k=top_k, principal=principal
+            ),
             ctx=ctx,
             executor=executor,
         )
@@ -575,9 +639,12 @@ def _register_tools(server: _ManagedMCPServer, *, capacity: int | None = None) -
         ctx: Context,
     ) -> SearchResult:
         """Search the policy corpus for relevant source chunks and their citations."""
+        principal = get_principal("policy_search")
         result = await _run_logged_tool(
             "policy_search",
-            lambda: _run_policy_search(query=query, domain=domain, top_k=top_k),
+            lambda: _run_policy_search(
+                query=query, domain=domain, top_k=top_k, principal=principal
+            ),
             ctx=ctx,
             executor=executor,
         )
@@ -586,12 +653,27 @@ def _register_tools(server: _ManagedMCPServer, *, capacity: int | None = None) -
     return server
 
 
-def _new_mcp_server(runtime: _ToolExecutor | None = None) -> _ManagedMCPServer:
-    """Create one server and its resource owner without eagerly reading settings."""
+def _new_mcp_server(
+    runtime: _ToolExecutor | None = None,
+    *,
+    settings: Settings | None = None,
+    beta_auth_service: BetaAuthService | None = None,
+) -> _ManagedMCPServer:
+    """Create one authorized server and resource owner without eagerly reading settings."""
     try:
         application_version = version("policynim")
     except PackageNotFoundError:
         application_version = "unknown"
+    auth = None
+    verifier = None
+    if settings is not None and settings.mcp_oauth_issuer_url is not None:
+        verifier = IntrospectionTokenVerifier(settings, beta_auth_service=beta_auth_service)
+        auth = AuthSettings(
+            issuer_url=AnyHttpUrl(settings.mcp_oauth_issuer_url),
+            resource_server_url=AnyHttpUrl(verifier.resource),
+            required_scopes=[],
+            validate_token_resource=True,
+        )
 
     active_runtime = runtime if runtime is not None else _ToolExecutor()
 
@@ -610,6 +692,8 @@ def _new_mcp_server(runtime: _ToolExecutor | None = None) -> _ManagedMCPServer:
         "PolicyNIM",
         lifespan=lifespan,
         version=application_version,
+        auth=auth,
+        token_verifier=verifier,
         instructions=(
             "Search policy sources or request citation-backed guidance before coding. "
             "Treat insufficient_context as missing evidence; guidance does not execute changes."
@@ -624,10 +708,14 @@ def _create_mcp_server(
     settings: Settings,
     *,
     beta_auth_service: BetaAuthService | None = None,
+    require_principal: bool = True,
 ) -> MCPServer:
     """Create a fresh MCP server configured from runtime settings."""
     runtime = _ToolExecutor(settings.mcp_max_concurrent_operations, settings=settings)
-    server = _register_tools(_new_mcp_server(runtime))
+    server = _register_tools(
+        _new_mcp_server(runtime, settings=settings, beta_auth_service=beta_auth_service),
+        require_principal=settings.mcp_require_auth and require_principal,
+    )
     _register_health_route(server, settings)
     if settings.beta_signup_enabled and beta_auth_service is not None:
         _register_beta_routes(server, settings, beta_auth_service)
@@ -1184,6 +1272,13 @@ def _beta_session_https_only(settings: Settings) -> bool:
 
 
 def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
+    """Initialize beta storage only when portal or legacy key authentication uses it."""
+    if (
+        settings.mcp_oauth_issuer_url is not None
+        and not settings.beta_signup_enabled
+        and not settings.mcp_oauth_allow_legacy_keys
+    ):
+        return None
     if not settings.beta_signup_enabled and not settings.mcp_require_auth:
         return None
     try:
@@ -1232,16 +1327,22 @@ class _BearerProtectedASGIApp:
             return
 
         token = _extract_bearer_token(scope)
+        principal: AuthenticatedPrincipal | None = None
         auth_result: str | None = None
         response: Response | None = None
         if token is not None and token in self._valid_tokens:
             auth_result = "authorized"
+            principal = legacy_principal(token=token)
         elif self._beta_auth_service is not None:
             decision = await _run_sync_until_complete(
                 partial(self._beta_auth_service.authenticate_api_key, token=token)
             )
             if decision.status == "authorized":
                 auth_result = "authorized"
+                if token is not None and decision.account is not None:
+                    principal = legacy_principal(
+                        token=token, account_id=decision.account.account_id
+                    )
             elif decision.status == "suspended":
                 auth_result = "suspended"
                 response = JSONResponse({"error": "Account suspended."}, status_code=403)
@@ -1268,16 +1369,77 @@ class _BearerProtectedASGIApp:
             return
 
         token_state = _HOSTED_AUTH_RESULT.set(auth_result)
+        principal_state = _HOSTED_PRINCIPAL.set(principal)
         try:
             await self._app(scope, receive, send)
         finally:
             _HOSTED_AUTH_RESULT.reset(token_state)
+            _HOSTED_PRINCIPAL.reset(principal_state)
 
     def _unauthorized_response(self, scope: Scope) -> Response:
         """Return onboarding for browser visits and JSON for MCP clients."""
         if self._beta_portal_url is not None and _is_browser_mcp_visit(scope):
             return RedirectResponse(self._beta_portal_url, status_code=303)
         return JSONResponse({"error": "Unauthorized."}, status_code=401)
+
+
+class _OAuthRequestGuardApp:
+    """Bound authentication requests and retain sanitized denial events."""
+
+    def __init__(self, app: ASGIApp, *, capacity: int) -> None:
+        """Wrap the SDK's responses without reading credentials or request bodies."""
+        self._app = app
+        self._admission = BoundedSemaphore(capacity)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Record protected-route authentication and permission denials once."""
+        protected = _is_protected_mcp_request(scope, _STREAMABLE_HTTP_PATH)
+        attempts_auth = scope["type"] == "http" and "authorization" in Headers(scope=scope)
+        if not protected and not attempts_auth:
+            await self._app(scope, receive, send)
+            return
+
+        admitted = attempts_auth and self._admission.acquire(blocking=False)
+        if attempts_auth and not admitted:
+            _emit_hosted_event(
+                "mcp.auth",
+                auth_result="auth_busy",
+                tool_name=None,
+                latency_ms=None,
+                upstream_failure_class=None,
+                request_id=None,
+            )
+            await JSONResponse(
+                {"error": "auth_busy", "message": "Too many authentication requests. Retry later."},
+                status_code=429,
+                headers={"Retry-After": "1"},
+            )(scope, receive, send)
+            return
+
+        async def record_denial(message: Message) -> None:
+            """Observe only the response status; forward every ASGI message unchanged."""
+            if (
+                protected
+                and message["type"] == "http.response.start"
+                and message["status"] in (401, 403)
+            ):
+                _emit_hosted_event(
+                    "mcp.auth",
+                    auth_result="unauthorized"
+                    if message["status"] == 401
+                    else "insufficient_scope",
+                    tool_name=None,
+                    latency_ms=None,
+                    upstream_failure_class=None,
+                    request_id=None,
+                )
+            await send(message)
+
+        try:
+            await self._app(scope, receive, record_denial)
+        finally:
+            if admitted:
+                self._admission.release()
 
 
 class _MCPHostOriginApp:
@@ -1393,6 +1555,30 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
         stateless_http=True,
         transport_security=security,
     )
+    if settings.mcp_oauth_issuer_url is not None:
+        resource = AnyHttpUrl(str(settings.mcp_public_base_url).rstrip("/") + "/mcp")
+        metadata = build_resource_metadata_url(resource)
+        for route in app.routes:
+            if isinstance(route, Route) and route.path == _STREAMABLE_HTTP_PATH:
+                route.app = OperationAuthorizationApp(
+                    route.app,
+                    metadata_url=str(metadata),
+                    body_timeout_seconds=settings.mcp_oauth_request_body_timeout_seconds,
+                )
+                # Keep slash visits inside authentication instead of the router's redirect.
+                app.router.routes.append(Route(_STREAMABLE_HTTP_PATH + "/", endpoint=route.app))
+        app.router.routes[:] = [
+            route
+            for route in app.routes
+            if not isinstance(route, Route) or route.path != urlsplit(str(metadata)).path
+        ]
+        app.router.routes.extend(
+            create_protected_resource_routes(
+                resource_url=resource,
+                authorization_servers=[AnyHttpUrl(settings.mcp_oauth_issuer_url)],
+                scopes_supported=SUPPORTED_SCOPES,
+            )
+        )
     if settings.beta_signup_enabled:
         session_secret = settings.beta_session_secret
         if session_secret is None or not session_secret.strip():
@@ -1405,6 +1591,11 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
             secret_key=session_secret,
             same_site="lax",
             https_only=_beta_session_https_only(settings),
+        )
+    if settings.mcp_oauth_issuer_url is not None:
+        return _MCPHostOriginApp(
+            _OAuthRequestGuardApp(app, capacity=settings.mcp_oauth_max_concurrent_requests),
+            security,
         )
     if not settings.mcp_require_auth:
         return _MCPHostOriginApp(app, security)
@@ -1455,7 +1646,7 @@ def run_server(transport: str = "stdio") -> None:
             raise
         return
 
-    server = _create_mcp_server(settings)
+    server = _create_mcp_server(settings, require_principal=False)
     server.run(transport="stdio")
 
 

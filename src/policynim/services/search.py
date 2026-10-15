@@ -6,6 +6,7 @@ from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.operations import bounded_stage, check_budget, close_components
+from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
 from policynim.storage.index_readiness import require_index_ready
@@ -47,8 +48,12 @@ class SearchService:
         close_components(self._embedder, self._reranker)
 
     @bounded_stage("search")
-    def search(self, request: SearchRequest) -> SearchResult:
+    def search(
+        self, request: SearchRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> SearchResult:
         """Run dense retrieval followed by reranking against the local index."""
+        if principal is not None:
+            authorize_operation(principal, "policy_search")
         _ensure_index_ready(self._index_store)
 
         check_budget()

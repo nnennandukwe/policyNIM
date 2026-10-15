@@ -416,7 +416,11 @@ def test_run_server_uses_stdio_transport_and_runtime_host_port(monkeypatch) -> N
     captured: dict[str, object] = {}
     server = StreamableHTTPStubServer()
 
-    def create_server(settings: Settings) -> StreamableHTTPStubServer:
+    def create_server(
+        settings: Settings, *, require_principal: bool = True
+    ) -> StreamableHTTPStubServer:
+        """Verify local transport construction doesn't require an HTTP identity."""
+        assert require_principal is False
         captured["host"] = settings.mcp_host
         captured["port"] = settings.mcp_port
         return server
