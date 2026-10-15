@@ -775,3 +775,21 @@ def test_profile_updates_serialize_before_validation(
     assert not thread.is_alive()
     assert not failures
     assert entered.is_set()
+
+
+@pytest.mark.parametrize(
+    "policy_id", ["security=baseline", "security#baseline", "security[baseline]"]
+)
+def test_updates_preserve_quoted_policy_ids(tmp_path: Path, policy_id: str) -> None:
+    """Generated quoted pin keys stay valid when IDs contain TOML punctuation."""
+    root = write_pack(tmp_path / "pack", "team.special", [policy_id])
+    path = tmp_path / "profile.toml"
+    initialize_profile(path, [root], profile_id="special")
+    path.write_text(path.read_text() + "\n# Retain notes with = and # punctuation.\n")
+    policy = root / f"{policy_id}.md"
+    policy.write_text(policy.read_text() + "\nReviewed requirement.\n")
+    report, _, _ = diff_profile(path)
+    assert report.changed == [policy_id]
+    update_profile(path, expected_digest=report.review_digest)
+    assert resolve_profile(path).catalog.show(policy_id).state == "active"
+    assert "# Retain notes with = and # punctuation." in path.read_text()

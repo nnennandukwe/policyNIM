@@ -520,9 +520,8 @@ def _update_pin_text(original: str, profile: PolicyProfile) -> str:
                         output.append("# Removed policy pin: " + line)
                         continue
                 if replacement is not None:
-                    # Digest/version values are simple strings; preserve any trailing operator note.
-                    comment = " #" + line.split("#", 1)[1].rstrip("\n") if "#" in line else ""
-                    output.append(f"{line.split('=', 1)[0]}= {json.dumps(replacement)}{comment}\n")
+                    prefix, comment = _assignment_parts(line)
+                    output.append(f"{prefix}= {json.dumps(replacement)}{comment}\n")
                     continue
         output.append(line)
     append_new_revisions()
@@ -537,3 +536,29 @@ def _update_pin_text(original: str, profile: PolicyProfile) -> str:
             "from `policynim profile init` and retain your decisions and notes."
         )
     return updated
+
+
+def _assignment_parts(line: str) -> tuple[str, str]:
+    """Find assignment and comment boundaries outside quoted TOML keys and values."""
+    quote: str | None = None
+    escaped = False
+    assignment: int | None = None
+    comment = ""
+    for index, character in enumerate(line):
+        if escaped:
+            escaped = False
+        elif quote == '"' and character == "\\":
+            escaped = True
+        elif quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {"'", '"'}:
+            quote = character
+        elif character == "=" and assignment is None:
+            assignment = index
+        elif character == "#":
+            comment = " " + line[index:].rstrip("\r\n")
+            break
+    if assignment is None:
+        raise InvalidPolicyDocumentError("Pack pin assignment couldn't be updated safely.")
+    return line[:assignment], comment
