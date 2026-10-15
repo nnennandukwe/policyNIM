@@ -169,7 +169,11 @@ def create_ingest_service(settings: Settings | None = None) -> IngestService:
     """Build the default ingest service from application settings."""
     active_settings = settings or get_settings()
     index_store = create_index_store(active_settings)
-    corpus_root = resolve_corpus_root(active_settings.corpus_dir)
+    corpus_root = (
+        active_settings.profile.parent
+        if active_settings.profile is not None
+        else resolve_corpus_root(active_settings.corpus_dir)
+    )
     return IngestService(
         profile_path=active_settings.profile,
         embedder=_create_default_embedder(active_settings),

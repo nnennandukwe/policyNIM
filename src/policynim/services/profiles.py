@@ -13,7 +13,9 @@ from pathlib import Path, PureWindowsPath
 from tempfile import NamedTemporaryFile
 from typing import Annotated, Literal, Self
 
+import tomlkit
 from pydantic import Field, StringConstraints, ValidationError, field_validator, model_validator
+from tomlkit.items import AoT, Array, InlineTable, String, Table
 
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.ingest.catalog import load_pack_manifest
@@ -473,112 +475,45 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
 
 
 def serialize_profile(profile: PolicyProfile) -> str:
-    """Render every schema field as editable TOML without executing pack content."""
-    lines = ["schema_version = 1", f"profile_id = {json.dumps(profile.profile_id)}"]
-    for section in ("packs", "exclusions", "replacements", "conflicts"):
-        for item in getattr(profile, section):
-            lines.extend(["", f"[[{section}]]"])
-            values = item.model_dump()
-            revisions = values.pop("policies", None)
-            lines.extend(f"{key} = {json.dumps(value)}" for key, value in values.items())
-            if revisions is not None:
-                lines.append("[packs.policies]")
-                lines.extend(
-                    f"{json.dumps(key)} = {json.dumps(value)}"
-                    for key, value in sorted(revisions.items())
-                )
-    return "\n".join(lines) + "\n"
+    """Render the schema as editable TOML without interpreting user strings as syntax."""
+    return tomlkit.dumps(profile.model_dump())
 
 
 def _update_pin_text(original: str, profile: PolicyProfile) -> str:
-    """Update generated pin values while preserving operator comments and decision text."""
-    lines = original.splitlines(keepends=True)
-    pack_index = -1
-    section = ""
-    seen_revisions: set[str] = set()
-    output: list[str] = []
-
-    def append_new_revisions() -> None:
-        """Append new policy revisions before leaving their selected pack table."""
-        if section == "policies" and pack_index >= 0:
-            for policy_id, digest in sorted(profile.packs[pack_index].policies.items()):
-                if policy_id not in seen_revisions:
-                    output.append(f"{json.dumps(policy_id)} = {json.dumps(digest)}\n")
-
-    for line in lines:
-        header = line.split("#", 1)[0].strip()
-        if header.startswith("["):
-            append_new_revisions()
-            if re.fullmatch(r"\[\[\s*packs\s*\]\]", header):
-                pack_index += 1
-                section = "pack"
-                seen_revisions = set()
-            elif re.fullmatch(r"\[\s*packs\.policies\s*\]", header):
-                section = "policies"
-            else:
-                section = "other"
-            output.append(line)
-            continue
-        if section in {"pack", "policies"} and "=" in line and not line.lstrip().startswith("#"):
-            try:
-                values = tomllib.loads(line)
-            except tomllib.TOMLDecodeError as exc:
-                raise InvalidPolicyDocumentError(
-                    "Profile update needs one-line pack pin values; "
-                    "preserve notes outside those values."
-                ) from exc
-            if len(values) == 1:
-                key = next(iter(values))
-                pin = profile.packs[pack_index]
-                replacement = None
-                if section == "pack" and key in {"path", "version", "digest"}:
-                    replacement = getattr(pin, key)
-                elif section == "policies":
-                    seen_revisions.add(key)
-                    replacement = pin.policies.get(key)
-                    if replacement is None:
-                        output.append("# Removed policy pin: " + line)
-                        continue
-                if replacement is not None:
-                    prefix, comment = _assignment_parts(line)
-                    output.append(f"{prefix}= {json.dumps(replacement)}{comment}\n")
-                    continue
-        output.append(line)
-    append_new_revisions()
-    updated = "".join(output)
-    try:
-        valid = PolicyProfile.model_validate(tomllib.loads(updated)) == profile
-    except (ValidationError, tomllib.TOMLDecodeError):
-        valid = False
-    if not valid:
+    """Edit parsed pin fields while retaining operator comments and decision strings."""
+    document = tomlkit.parse(original)
+    tables = document["packs"]
+    if not isinstance(tables, AoT | Array) or len(tables) != len(profile.packs):
+        raise InvalidPolicyDocumentError("Profile pack tables changed; rerun the profile diff.")
+    for table, pin in zip(tables, profile.packs, strict=True):
+        if not isinstance(table, Table | InlineTable):
+            raise InvalidPolicyDocumentError("Profile packs must contain TOML tables.")
+        for field in ("path", "version", "digest"):
+            table[field] = getattr(pin, field)
+        revisions = table["policies"]
+        if not isinstance(revisions, Table | InlineTable):
+            raise InvalidPolicyDocumentError("Pack policy revisions must form a TOML table.")
+        for policy_id in list(revisions):
+            if policy_id not in pin.policies:
+                removed = revisions.item(policy_id)
+                if not isinstance(removed, String):
+                    raise InvalidPolicyDocumentError("Policy digest values must be strings.")
+                note = removed.trivia.comment
+                del revisions[policy_id]
+                if isinstance(revisions, Table):
+                    revisions.add(
+                        tomlkit.comment(
+                            f"Removed policy pin: {json.dumps(policy_id)} = "
+                            f"{json.dumps(str(removed))}"
+                        )
+                    )
+                    if note:
+                        revisions.add(tomlkit.comment(note.removeprefix("#")))
+        for policy_id, digest in pin.policies.items():
+            revisions[policy_id] = digest
+    updated = tomlkit.dumps(document)
+    if PolicyProfile.model_validate(tomllib.loads(updated)) != profile:
         raise InvalidPolicyDocumentError(
-            "Profile pin layout couldn't be updated safely. Use the generated pack tables "
-            "from `policynim profile init` and retain your decisions and notes."
+            "Profile pins couldn't be updated without changing other data."
         )
     return updated
-
-
-def _assignment_parts(line: str) -> tuple[str, str]:
-    """Find assignment and comment boundaries outside quoted TOML keys and values."""
-    quote: str | None = None
-    escaped = False
-    assignment: int | None = None
-    comment = ""
-    for index, character in enumerate(line):
-        if escaped:
-            escaped = False
-        elif quote == '"' and character == "\\":
-            escaped = True
-        elif quote is not None:
-            if character == quote:
-                quote = None
-        elif character in {"'", '"'}:
-            quote = character
-        elif character == "=" and assignment is None:
-            assignment = index
-        elif character == "#":
-            comment = " " + line[index:].rstrip("\r\n")
-            break
-    if assignment is None:
-        raise InvalidPolicyDocumentError("Pack pin assignment couldn't be updated safely.")
-    return line[:assignment], comment

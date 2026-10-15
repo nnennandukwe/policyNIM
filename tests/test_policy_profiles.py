@@ -923,3 +923,77 @@ def test_reviewed_pack_relocation_persists_selected_path(profile_path: Path) -> 
     updated, _ = read_profile(profile_path)
     assert updated.packs[1].path == "relocated"
     assert resolve_profile(profile_path).roots[1] == relocated
+
+
+def test_update_preserves_multiline_operator_decisions(profile_path: Path) -> None:
+    """TOML-looking text inside a multiline reason mustn't be interpreted as profile structure."""
+    compose(profile_path)
+    reason = 'No browser tier.\n[[packs]]\nversion = "review notes"\nRetain this decision.'
+    original = profile_path.read_text().replace(
+        'reason = "No browser tier."', "reason = '''" + reason + "'''"
+    )
+    profile_path.write_text(original)
+    report, _, _ = diff_profile(profile_path)
+    update_profile(profile_path, expected_digest=report.review_digest)
+    updated, _ = read_profile(profile_path)
+    assert updated.exclusions[0].reason == reason
+    assert "reason = '''" in profile_path.read_text()
+
+
+def test_profile_factory_doesnt_require_bundled_sources(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A selected custom profile can ingest even when bundled resources aren't available."""
+    from test_index_identity import SpyEmbedder
+
+    from policynim.services import ingest
+
+    compose(profile_path)
+    embedder = SpyEmbedder()
+
+    def missing_bundle(*args):
+        """Reject any attempt to resolve the unselected bundled corpus."""
+        raise InvalidPolicyDocumentError("Bundled corpus unavailable.")
+
+    def fixture_embedder(settings: Settings):
+        """Inject the deterministic embedding boundary without credentials or network access."""
+        return embedder
+
+    monkeypatch.setattr(ingest, "resolve_corpus_root", missing_bundle)
+    monkeypatch.setattr(ingest, "_create_default_embedder", fixture_embedder)
+    settings = Settings(
+        **NO_ENV,
+        profile=profile_path,
+        index_db_path=profile_path.parent / "profile.sqlite3",
+        runtime_rules_artifact_path=profile_path.parent / "profile-rules.json",
+    )
+    with ingest.create_ingest_service(settings) as service:
+        result = service.run()
+    assert result.document_count == 3
+    assert result.catalog_digest == resolve_profile(profile_path).catalog.digest
+    assert embedder.calls == 1
+    assert embedder.closed
+
+
+def test_profile_serializer_round_trips_astral_policy_ids(tmp_path: Path) -> None:
+    """Unicode policy identifiers stay valid TOML rather than becoming surrogate escapes."""
+    policy_id = "policy-" + chr(0x1F989)
+    root = write_pack(tmp_path / "pack", "team.unicode", [policy_id])
+    path = tmp_path / "profile.toml"
+    initialize_profile(path, [root], profile_id="unicode")
+    report, _, _ = diff_profile(path)
+    update_profile(path, expected_digest=report.review_digest)
+    assert resolve_profile(path).catalog.show(policy_id).state == "active"
+
+
+def test_profile_serializer_keeps_toml_1_0_escape_compatibility(profile_path: Path) -> None:
+    """Escaped strings serialize for the stdlib TOML readers on both supported interpreters."""
+    compose(profile_path)
+    profile, _ = read_profile(profile_path)
+    reason = "Reviewed " + chr(27) + " decision."
+    profile.exclusions[0].reason = reason
+    rewrite_profile(profile_path, profile)
+    assert read_profile(profile_path)[0].exclusions[0].reason == reason
+    report, _, _ = diff_profile(profile_path)
+    update_profile(profile_path, expected_digest=report.review_digest)
+    assert read_profile(profile_path)[0].exclusions[0].reason == reason

@@ -102,8 +102,7 @@ Unsupported Markdown frontmatter such as `enabled` doesn't disable a policy.
    The token binds the profile text and proposed source snapshot. Changed inputs
    require a new diff. Update changes source pins only; it doesn't activate or
    rebuild an index. Operator notes and decision formatting are preserved. Keep
-   generated pack pins as one-line values and `[packs.policies]` tables so the
-   writer can safely update them.
+   your decisions and comments in valid TOML; the updater edits parsed pin fields.
 5. Preview again, then build into new index/rules destinations through the normal
    ingestion workflow. The existing ingestion destination guards still apply.
    Atomic whole-generation publication and rollback are tracked in #93.
