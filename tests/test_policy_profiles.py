@@ -871,3 +871,55 @@ def test_initialization_rejects_network_roots_before_pack_io(
             tmp_path / "profile.toml", [Path("//attacker/share")], profile_id="blocked"
         )
     assert not (tmp_path / "profile.toml").exists()
+
+
+@pytest.mark.parametrize(
+    "host,effect,blocked",
+    [
+        ("example.com", "confirm", True),
+        ("example.org", "confirm", False),
+        ("example.com", "block", False),
+    ],
+)
+def test_host_conflicts_use_runtime_case_normalization(
+    profile_path: Path, host: str, effect: str, blocked: bool
+) -> None:
+    """Host casing can't hide opposite effects from structural validation."""
+    for policy_id, selected_host, selected_effect, pack in (
+        ("A", "EXAMPLE.COM", "block", "baseline"),
+        ("D", host, effect, "custom"),
+    ):
+        policy = profile_path.parent / pack / f"{policy_id}.md"
+        policy.write_text(
+            policy.read_text()
+            .replace("action: shell_command", "action: http_request")
+            .replace("command_regexes:", "url_host_patterns:")
+            .replace(f'"^{policy_id}$"', f'"{selected_host}"')
+            .replace("effect: block", f"effect: {selected_effect}")
+        )
+    report, _, _ = diff_profile(profile_path)
+    assert bool(report.validation_error) is blocked
+    if blocked:
+        assert "Conflicting runtime effects" in (report.validation_error or "")
+    else:
+        update_profile(profile_path, expected_digest=report.review_digest)
+        assert resolve_profile(profile_path).catalog.effective_count == 5
+
+
+def test_reviewed_pack_relocation_persists_selected_path(profile_path: Path) -> None:
+    """A Git-managed path edit remains selected through diff, repinning, and resolution."""
+    from shutil import copytree
+
+    relocated = profile_path.parent / "relocated"
+    copytree(profile_path.parent / "custom", relocated)
+    member = relocated / "E.md"
+    member.write_text(member.read_text() + "\nReviewed local release.\n")
+    profile, _ = read_profile(profile_path)
+    profile.packs[1].path = "relocated"
+    rewrite_profile(profile_path, profile)
+    report, _, _ = diff_profile(profile_path)
+    assert report.changed == ["E"]
+    update_profile(profile_path, expected_digest=report.review_digest)
+    updated, _ = read_profile(profile_path)
+    assert updated.packs[1].path == "relocated"
+    assert resolve_profile(profile_path).roots[1] == relocated

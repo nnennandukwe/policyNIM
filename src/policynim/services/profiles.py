@@ -294,9 +294,9 @@ def _check_runtime_conflicts(documents: Sequence[ParsedDocument]) -> None:
             matcher = json.dumps(
                 [
                     rule.action,
-                    sorted(rule.path_globs),
-                    sorted(rule.command_regexes),
-                    sorted(rule.url_host_patterns),
+                    sorted(set(rule.path_globs)),
+                    sorted(set(rule.command_regexes)),
+                    sorted({pattern.lower() for pattern in rule.url_host_patterns}),
                 ]
             )
             if matcher in effects and effects[matcher] != rule.effect:
@@ -531,7 +531,7 @@ def _update_pin_text(original: str, profile: PolicyProfile) -> str:
                 key = next(iter(values))
                 pin = profile.packs[pack_index]
                 replacement = None
-                if section == "pack" and key in {"version", "digest"}:
+                if section == "pack" and key in {"path", "version", "digest"}:
                     replacement = getattr(pin, key)
                 elif section == "policies":
                     seen_revisions.add(key)

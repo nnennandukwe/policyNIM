@@ -68,7 +68,8 @@ exclusion/replacement contradictions, and replacement chains or cycles. A
 replacement must remain active. At least one effective policy must remain.
 
 A declared conflict names two known policies that mustn't both stay effective.
-Validation also rejects different runtime effects for identical matcher lists.
+Validation also rejects different runtime effects for identical normalized matcher
+lists; host patterns use the runtime's case-insensitive comparison.
 These are structural checks: it doesn't infer arbitrary prose compatibility,
 regex overlap, or semantic equivalence. Operators still review policy meaning.
 Unsupported Markdown frontmatter such as `enabled` doesn't disable a policy.
