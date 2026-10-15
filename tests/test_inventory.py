@@ -41,9 +41,9 @@ def test_inventory_separates_sources_from_unknown_index(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     report = json.loads(result.stdout)
     assert report["scope"] == "local"
-    assert report["source"]["document_count"] == 9
-    assert report["source"]["policy_count"] == 9
-    assert report["source"]["chunk_count"] == 45
+    assert report["source"]["document_count"] == 15
+    assert report["source"]["policy_count"] == 15
+    assert report["source"]["chunk_count"] == 111
     assert report["index"]["state"] == "missing"
     assert report["index"]["policy_count"] is None
     assert report["index"]["chunk_count"] is None
@@ -109,7 +109,7 @@ def test_inventory_reports_physical_counts_and_compatibility(
     result = CliRunner().invoke(app, ["inventory", "--format", "json"])
     assert result.exit_code == 0, result.output
     report = json.loads(result.stdout)
-    assert report["source"]["document_count"] == 9
+    assert report["source"]["document_count"] == 15
     assert report["index"]["state"] == state
     assert report["index"]["policy_count"] == (0 if mutation == "empty" else 2)
     assert report["index"]["chunk_count"] == (0 if mutation == "empty" else 3)
@@ -190,7 +190,7 @@ def test_inventory_text_labels_unknown_counts() -> None:
     """Human-readable inspection keeps absent counts visibly unknown."""
     result = CliRunner().invoke(app, ["inventory"])
     assert result.exit_code == 0
-    assert "Source documents: 9" in result.stdout
+    assert "Source documents: 15" in result.stdout
     assert "Indexed policy IDs: unknown" in result.stdout
     assert "remote deployment isn't inspected" in result.stdout
 
