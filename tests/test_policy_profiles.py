@@ -604,6 +604,51 @@ def test_profile_paths_fail_closed(profile_path: Path, source: str) -> None:
         resolve_profile(profile_path)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [["policies", "list"], ["policies", "show", "A"], ["policies", "validate"], ["inventory"]],
+)
+def test_selected_pack_loop_uses_public_source_errors(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch, command: list[str]
+) -> None:
+    """A looped configured pack yields structured catalog/inventory diagnostics."""
+    root = profile_path.parent / "custom"
+    root.rename(profile_path.parent / "previous-custom")
+    root.symlink_to("custom", target_is_directory=True)
+    monkeypatch.setenv("POLICYNIM_PROFILE", str(profile_path))
+    result = CliRunner().invoke(app, [*command, "--format", "json"])
+    if command == ["inventory"]:
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["source"]["status"] == "unavailable"
+    else:
+        assert result.exit_code == 1, result.output
+        assert json.loads(result.stdout)["status"] == "error"
+        assert "pack path couldn't be resolved" in result.stdout
+
+
+def test_ingest_rejects_looped_profile_pack_before_embedding(profile_path: Path) -> None:
+    """Invalid source resolution reaches the normal policy error before any model request."""
+    from test_index_identity import SpyEmbedder
+
+    root = profile_path.parent / "custom"
+    root.rename(profile_path.parent / "previous-custom")
+    root.symlink_to("custom", target_is_directory=True)
+    embedder = SpyEmbedder()
+    settings = Settings(**NO_ENV, index_db_path=profile_path.parent / "index.sqlite3")
+    with IngestService(
+        embedder=embedder,
+        index_store=create_index_store(settings),
+        corpus_root=profile_path.parent / "unused",
+        embedding_model=settings.nvidia_embed_model,
+        runtime_rules_artifact_path=profile_path.parent / "rules.json",
+        profile_path=profile_path,
+    ) as service:
+        with pytest.raises(InvalidPolicyDocumentError, match="pack path couldn't be resolved"):
+            service.run()
+    assert embedder.calls == 0
+    assert not settings.index_db_path.exists()
+
+
 def test_cli_init_is_offline_and_never_overwrites(profile_path: Path) -> None:
     """Public initialization pins selected packs and reports an existing destination safely."""
     runner = CliRunner()

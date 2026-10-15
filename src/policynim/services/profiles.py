@@ -209,7 +209,13 @@ def _current_inputs(
     entries: list[CatalogPolicy] = []
     roots: list[Path] = []
     for expected in profile.packs:
-        root = (path.parent.resolve() / expected.path).resolve()
+        try:
+            root = (path.parent.resolve() / expected.path).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise InvalidPolicyDocumentError(
+                "Selected pack path couldn't be resolved. "
+                "Check local paths, symlinks, and permissions."
+            ) from exc
         if root in roots:
             raise InvalidPolicyDocumentError("A local pack directory was selected more than once.")
         current, loaded, catalog_entries = _load_pack(root)
