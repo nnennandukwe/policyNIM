@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path, PureWindowsPath
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, mkdtemp
 from typing import Annotated, Literal, Self
 
 import tomlkit
@@ -380,6 +381,7 @@ class ProfileDiff(StrictModel):
     invalidated_decisions: list[str]
     current_policies: list[CatalogPolicy]
     validation_error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 def diff_profile(path: Path) -> tuple[ProfileDiff, PolicyProfile, str]:
@@ -453,11 +455,24 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
         raise InvalidPolicyDocumentError("Profile changed before staging; rerun the profile diff.")
     staged: Path | None = None
     staged_identity: tuple[int, int] | None = None
+    staging_directory = Path(mkdtemp(dir=path.parent, prefix=f".{path.name}.stage-"))
+    directory_stat = staging_directory.lstat()
+    directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
+    directory_descriptor: int | None = None
     try:
+        if os.name != "nt":
+            directory_descriptor = os.open(
+                staging_directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            opened_directory = os.fstat(directory_descriptor)
+            if (opened_directory.st_dev, opened_directory.st_ino) != directory_identity:
+                raise InvalidPolicyDocumentError(
+                    "Profile staging directory changed; retry the diff."
+                )
         with NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            dir=path.parent,
+            dir=staging_directory,
             prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
@@ -476,22 +491,73 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
             raise InvalidPolicyDocumentError(
                 "Profile or sources changed; rerun `policynim profile diff`."
             )
-        if _staging_identity(staged) != staged_identity:
+        current_directory = staging_directory.lstat()
+        if (current_directory.st_dev, current_directory.st_ino) != directory_identity:
+            raise InvalidPolicyDocumentError("Profile staging directory changed; retry the diff.")
+        if _staging_identity(staged, directory_descriptor) != staged_identity:
             raise InvalidPolicyDocumentError(
                 "Staged profile changed; preserve the unexpected file and rerun the profile diff."
             )
-        os.replace(staged, path)
+        if directory_descriptor is None:
+            os.replace(staged, path)
+        else:
+            os.replace(staged.name, path, src_dir_fd=directory_descriptor)
+        if os.name != "nt":
+            try:
+                _sync_profile_directory(path.parent)
+            except OSError:
+                report.warnings.append(
+                    "Profile pins changed, but directory sync failed. "
+                    "Reread the profile before retrying or restarting."
+                )
     finally:
-        if staged is not None and _staging_identity(staged) == staged_identity:
-            staged.unlink(missing_ok=True)
+        try:
+            if (
+                staged is not None
+                and _staging_identity(staged, directory_descriptor) == staged_identity
+            ):
+                if directory_descriptor is None:
+                    staged.unlink(missing_ok=True)
+                else:
+                    os.unlink(staged.name, dir_fd=directory_descriptor)
+        finally:
+            if directory_descriptor is not None:
+                os.close(directory_descriptor)
+            current_directory = staging_directory.lstat()
+            if (current_directory.st_dev, current_directory.st_ino) == directory_identity:
+                try:
+                    staging_directory.rmdir()
+                except OSError:
+                    # Preserve unexpected entries rather than deleting another writer's data.
+                    report.warnings.append(
+                        "Profile staging cleanup couldn't finish. Preserve unexpected entries "
+                        "and inspect the profile before retrying."
+                    )
     return report
 
 
-def _staging_identity(path: Path) -> tuple[int, int] | None:
+def _sync_profile_directory(path: Path) -> None:
+    """Persist the replacement entry on POSIX after the staged contents are durable."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _staging_identity(
+    path: Path, directory_descriptor: int | None = None
+) -> tuple[int, int] | None:
     """Inspect the directory entry itself so cleanup never follows a replaced symlink."""
     try:
-        observed = path.lstat()
+        observed = (
+            path.lstat()
+            if directory_descriptor is None
+            else os.stat(path.name, dir_fd=directory_descriptor, follow_symlinks=False)
+        )
     except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(observed.st_mode):
         return None
     return observed.st_dev, observed.st_ino
 

@@ -160,4 +160,6 @@ def apply_profile_update(
         )
     else:
         typer.echo(f"Updated source pins: {path}; the index hasn't changed.")
+        for warning in report.warnings:
+            typer.echo(f"Warning: {warning}")
         typer.echo(f"Next: policynim profile preview {shlex.quote(str(path))}")

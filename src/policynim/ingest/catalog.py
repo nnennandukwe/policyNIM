@@ -146,10 +146,10 @@ def read_pack_bytes(root: Path, member: str) -> bytes:
         # Callers supply the selected canonical root. Don't resolve it again after
         # member validation: a replacement root symlink must fail the open below.
         base = Path(os.path.abspath(root))
+        descriptor = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         relative = PurePosixPath((base / member).resolve(strict=True).relative_to(base).as_posix())
         if not relative.parts:
             raise InvalidPolicyDocumentError("Pack members must resolve to regular files.")
-        descriptor = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         for part in relative.parts[:-1]:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)

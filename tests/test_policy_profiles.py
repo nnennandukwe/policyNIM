@@ -468,7 +468,7 @@ def test_update_failure_keeps_profile_and_cleans_staging(
                 raise KeyboardInterrupt
         return real_diff(path)
 
-    def fail_replace(*args):
+    def fail_replace(*args, **kwargs):
         """Simulate a destination write failure after successful staging."""
         raise OSError("injected destination failure")
 
@@ -482,6 +482,7 @@ def test_update_failure_keeps_profile_and_cleans_staging(
     )
     assert profile_path.read_bytes() == expected
     assert list(profile_path.parent.glob(".profile.toml.*.tmp")) == []
+    assert list(profile_path.parent.glob(".profile.toml.stage-*")) == []
 
 
 def test_declared_conflicts_and_exact_runtime_matcher_conflicts(profile_path: Path) -> None:
@@ -711,6 +712,37 @@ def test_internal_pack_symlinks_stay_supported(tmp_path: Path, member_kind: str)
     path = tmp_path / "profile.toml"
     initialize_profile(path, [root], profile_id="internal")
     assert resolve_profile(path).catalog.effective_count == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor traversal proof.")
+def test_pack_root_swap_keeps_the_opened_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replacing the root pathname can't redirect a read to an unselected directory."""
+    from policynim.ingest.catalog import read_pack_bytes
+
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "A.md").write_text("PUBLIC")
+    replacement = tmp_path / "unselected"
+    replacement.mkdir()
+    (replacement / "A.md").write_text("PRIVATE-OUTSIDE-CANARY")
+    real_resolve = Path.resolve
+    swapped = False
+
+    def swap_after_resolution(path, *args, **kwargs):
+        """Swap the root after member resolution returns its canonical name."""
+        nonlocal swapped
+        result = real_resolve(path, *args, **kwargs)
+        if path == root / "A.md" and not swapped:
+            swapped = True
+            root.rename(tmp_path / "previous")
+            replacement.rename(root)
+        return result
+
+    monkeypatch.setattr(Path, "resolve", swap_after_resolution)
+    assert read_pack_bytes(root, "A.md") == b"PUBLIC"
+    assert swapped
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor traversal proof.")
@@ -1124,6 +1156,70 @@ def test_profile_serializer_keeps_toml_1_0_escape_compatibility(profile_path: Pa
     report, _, _ = diff_profile(profile_path)
     update_profile(profile_path, expected_digest=report.review_digest)
     assert read_profile(profile_path)[0].exclusions[0].reason == reason
+
+
+@pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")
+def test_update_uses_private_staging_directory_descriptor(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Moving the private staging directory can't redirect publication to another entry."""
+    from policynim.services import profiles
+
+    report, _, _ = diff_profile(profile_path)
+    real_replace = profiles.os.replace
+    replaced = False
+
+    def swap_before_replace(source, destination, *, src_dir_fd=None):
+        """Replace the directory name at the final mutation boundary."""
+        nonlocal replaced
+        assert src_dir_fd is not None
+        directory = next(profile_path.parent.glob(".profile.toml.stage-*"))
+        assert directory.stat().st_mode & 0o777 == 0o700
+        directory.rename(profile_path.parent / "moved-staging")
+        directory.mkdir()
+        (directory / source).write_text("UNSELECTED-CANARY")
+        replaced = True
+        return real_replace(source, destination, src_dir_fd=src_dir_fd)
+
+    monkeypatch.setattr(profiles.os, "replace", swap_before_replace)
+    update_profile(profile_path, expected_digest=report.review_digest)
+    assert replaced
+    assert resolve_profile(profile_path).catalog.effective_count == 5
+    assert "UNSELECTED-CANARY" not in profile_path.read_text()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory sync proof.")
+def test_postcommit_directory_sync_failure_reports_changed_pins(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed durability sync reports a warning after the update has already committed."""
+    from policynim.services import profiles
+
+    policy = profile_path.parent / "baseline" / "A.md"
+    policy.write_text(policy.read_text() + "\nA reviewed update.\n")
+    report, _, _ = diff_profile(profile_path)
+
+    def fail_sync(path: Path) -> None:
+        """Fail only the parent-directory sync after replacement."""
+        raise OSError("Injected directory sync failure.")
+
+    monkeypatch.setattr(profiles, "_sync_profile_directory", fail_sync)
+    result = CliRunner().invoke(
+        app,
+        [
+            "profile",
+            "update",
+            str(profile_path),
+            "--expect-digest",
+            report.review_digest,
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "pins changed" in json.loads(result.stdout)["diff"]["warnings"][0]
+    assert resolve_profile(profile_path).catalog.effective_count == 5
+    assert not list(profile_path.parent.glob(".profile.toml.stage-*"))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")

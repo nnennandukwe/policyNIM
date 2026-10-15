@@ -113,6 +113,12 @@ and duplicate directory aliases are rejected. Initialization won't overwrite an
 existing profile; failed or interrupted updates preserve the old profile and
 clean temporary files. Supported CLI writers share an advisory lock; external
 editors must finish their edits before an update because they don't honor that lock.
+Updates use a private staging directory and preserve POSIX file permissions.
+POSIX publication syncs the file and parent directory; a post-publication sync
+failure returns a warning because the pins have already changed. Windows uses
+atomic replacement without claiming power-loss durability. Keep profile directories
+trusted: these commands don't isolate files from other processes running as the
+same OS user, which can also edit the profile directly.
 Source-only preview doesn't claim an indexed generation.
 
 ## Provider and privacy boundary
