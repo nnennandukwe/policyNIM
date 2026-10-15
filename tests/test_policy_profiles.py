@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click import unstyle
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
@@ -163,7 +164,7 @@ def test_composition_flows_through_real_index_retrieval_and_runtime_rules(
     ).run()
     assert result.catalog_digest == resolved.catalog.digest
     assert result.corpus_path == result.profile_path == profile_path.as_posix()
-    assert result.source_roots == [str(root) for root in resolved.roots]
+    assert result.source_roots == [root.as_posix() for root in resolved.roots]
     assert result.document_count == 3
     assert {chunk.policy.policy_id for chunk in store.list_chunks()} == {"C", "D", "E"}
     assert {chunk.policy.policy_id for chunk in store.search([1.0, 0.0], top_k=100)} == {
@@ -703,10 +704,10 @@ def test_cli_help_describes_public_profile_commands() -> None:
     for command in ("init", "preview", "validate", "diff", "update"):
         result = runner.invoke(app, ["profile", command, "--help"])
         assert result.exit_code == 0
-        assert "--format" in result.stdout
+        assert "--format" in unstyle(result.stdout)
     update = runner.invoke(app, ["profile", "update", "--help"])
-    assert "--expect-digest" in update.stdout
-    assert "doesn't activate or rebuild" in update.stdout
+    assert "--expect-digest" in unstyle(update.stdout)
+    assert "doesn't activate or rebuild" in " ".join(unstyle(update.stdout).split())
 
 
 def test_initialization_resolves_symlinked_parent_paths(tmp_path: Path) -> None:
