@@ -732,6 +732,80 @@
         }
       ],
       "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-auth-001-insufficient-scope",
+      "kind": "violating",
+      "role": "mcp-server",
+      "input": "A hosted MCP server accepts a valid read-scoped token for a write operation instead of returning insufficient permission.",
+      "expected_policy_ids": [
+        "MCP-AUTH-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-AUTH-001",
+      "policy_revision": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TOKEN-4",
+          "quote": "Return 401 for invalid or expired access tokens and 403 for insufficient permission; don't treat an ID token as an API access token.",
+          "support": [
+            "MCP-AUTH:Error Handling",
+            "ASVS-TOKEN:9.2.2"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-input-001-malformed-output",
+      "kind": "violating",
+      "role": "mcp-server",
+      "input": "An MCP server declares outputSchema with an integer result but returns structuredContent with a string result.",
+      "expected_policy_ids": [
+        "SEC-INPUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-INPUT-001",
+      "policy_revision": "sha256:06cdfec9a2284e1cf9dbf5a99042c991abb16870a919251ec073ffcde9cad761",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "INPUT-3",
+          "quote": "MCP servers declaring an outputSchema must return conforming structured results and sanitize tool outputs.",
+          "support": [
+            "MCP-TOOLS:Output Schema",
+            "MCP-TOOLS:Security Considerations"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-trust-001-dependency-origin",
+      "kind": "violating",
+      "role": "deployment-operator",
+      "input": "A deployment upgrades a transitive server dependency from an unreviewed public repository while its expected source is an internal registry.",
+      "expected_policy_ids": [
+        "MCP-TRUST-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-TRUST-001",
+      "policy_revision": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRUST-2",
+          "quote": "Record server/dependency origin and reviewed versions, including transitive dependencies; apply a documented vulnerability remediation policy.",
+          "support": [
+            "ASVS-DEPENDENCY:15.1.1",
+            "ASVS-DEPENDENCY:15.1.2",
+            "ASVS-DEPENDENCY:15.2.1",
+            "ASVS-DEPENDENCY:15.2.4"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
     }
   ]
 }
