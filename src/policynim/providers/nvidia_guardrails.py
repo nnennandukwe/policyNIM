@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import Generator
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.operations import bounded_stage
 from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.settings import Settings
 from policynim.types import (
@@ -91,6 +92,7 @@ class NeMoGuardrailsPreflightGenerator(Generator):
             _close_component(rails)
             raise
 
+    @bounded_stage("guardrails_generation")
     def generate_preflight(
         self,
         request: PreflightRequest,
@@ -122,7 +124,9 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         if self._owns_rails:
             _close_component(self._rails)
 
+    @bounded_stage("output_rails")
     def _check_output_rails(self, draft: GeneratedPreflightDraft) -> str:
+        """Run output rails only while the inherited operation budget permits it."""
         content = json.dumps(draft.model_dump(mode="json"), sort_keys=True)
         rail_types = [self._rail_type_output] if self._rail_type_output is not None else None
         try:

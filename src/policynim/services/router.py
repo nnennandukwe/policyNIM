@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
+from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
 from policynim.storage.index_readiness import require_index_ready
@@ -99,7 +100,10 @@ class PolicyRouterService:
         embedder: Embedder,
         index_store: IndexStore,
         reranker: Reranker,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Assign operation-local dependencies and the outer deadline default."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         self._embedder = embedder
         self._index_store = index_store
         self._reranker = reranker
@@ -117,15 +121,17 @@ class PolicyRouterService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._embedder)
-        _close_component(self._reranker)
+        close_components(self._embedder, self._reranker)
 
+    @bounded_stage("retrieval")
     def route(self, request: RouteRequest) -> RouteResult:
         """Return task-aware selected policy evidence for a coding task."""
         _ensure_index_ready(self._index_store)
 
         profile = profile_task(request.task, explicit_task_type=request.task_type)
+        check_budget()
         task_embedding = self._embedder.embed_query(request.task)
+        check_budget()
         dense_candidates = self._index_store.search(
             task_embedding,
             top_k=max(request.top_k, _DEFAULT_ROUTING_CANDIDATE_POOL),
@@ -135,6 +141,7 @@ class PolicyRouterService:
             return _empty_route_result(request, profile)
 
         route_query = _build_route_query(profile, domain=request.domain)
+        check_budget()
         reranked_candidates = self._reranker.rerank(
             route_query,
             dense_candidates,
@@ -159,6 +166,7 @@ def create_policy_router_service(settings: Settings | None = None) -> PolicyRout
         embedder=embedder,
         index_store=index_store,
         reranker=reranker,
+        operation_timeout_seconds=active_settings.operation_timeout_seconds,
     )
 
 
@@ -209,12 +217,15 @@ def profile_task(task: str, *, explicit_task_type: TaskType | None = None) -> Ta
 
 
 def _create_default_router_components(settings: Settings) -> tuple[Embedder, Reranker]:
+    """Create owned adapters and clean up if the second constructor fails."""
     from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 
-    return (
-        NVIDIAEmbedder.from_settings(settings),
-        NVIDIAReranker.from_settings(settings),
-    )
+    embedder = NVIDIAEmbedder.from_settings(settings)
+    try:
+        return embedder, NVIDIAReranker.from_settings(settings)
+    except BaseException:
+        close_components(embedder)
+        raise
 
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
@@ -350,12 +361,6 @@ def _empty_route_result(request: RouteRequest, profile: TaskProfile) -> RouteRes
         ),
         retained_context=[],
     )
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = ["PolicyRouterService", "create_policy_router_service", "profile_task"]

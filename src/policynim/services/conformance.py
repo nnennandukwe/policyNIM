@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import PolicyConformanceEvaluator
+from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.types import (
     CompiledPolicyConstraint,
     EvalBackend,
@@ -23,7 +24,14 @@ _TRAJECTORY_ADHERENCE_THRESHOLD = 0.75
 class PolicyConformanceService:
     """Score policy conformance for one traced preflight result."""
 
-    def __init__(self, *, evaluator: PolicyConformanceEvaluator | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        evaluator: PolicyConformanceEvaluator | None = None,
+        operation_timeout_seconds: float = 120.0,
+    ) -> None:
+        """Assign operation-local dependencies and the outer deadline default."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         self._evaluator = evaluator
 
     def __enter__(self) -> PolicyConformanceService:
@@ -39,8 +47,9 @@ class PolicyConformanceService:
 
     def close(self) -> None:
         """Release owned evaluator resources."""
-        _close_component(self._evaluator)
+        close_components(self._evaluator)
 
+    @bounded_stage("conformance")
     def evaluate(
         self,
         request: PolicyConformanceRequest,
@@ -48,7 +57,9 @@ class PolicyConformanceService:
         backend: EvalBackend,
     ) -> PolicyConformanceResult:
         """Score deterministic conformance and optional evaluator judgment."""
+        check_budget()
         deterministic_metrics = _deterministic_metrics(request)
+        check_budget()
         evaluator_draft = (
             self._evaluator.evaluate_policy_conformance(request)
             if self._evaluator is not None
@@ -310,12 +321,6 @@ def _average(values: Sequence[float]) -> float:
     if not values:
         return 0.0
     return sum(values) / len(values)
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

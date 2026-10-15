@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Generator
+from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.compiler import create_policy_compiler_service
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import (
@@ -82,7 +83,10 @@ class PolicyRegenerationService:
         generator: Generator,
         conformance_service: _PolicyConformanceService,
         evidence_trace_service: PolicyEvidenceTraceService | None = None,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Assign operation-local dependencies and the outer deadline default."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         self._compiler_service = compiler_service
         self._generator = generator
         self._conformance_service = conformance_service
@@ -103,10 +107,9 @@ class PolicyRegenerationService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._compiler_service)
-        _close_component(self._generator)
-        _close_component(self._conformance_service)
+        close_components(self._compiler_service, self._generator, self._conformance_service)
 
+    @bounded_stage("regeneration")
     def regenerate(
         self,
         request: PreflightRegenerationRequest,
@@ -170,6 +173,7 @@ class PolicyRegenerationService:
                 else None
             )
             trace_steps = _initial_trace_steps(compiled_packet)
+            check_budget()
             result = self._generate_attempt_result(
                 preflight_request,
                 retained_context,
@@ -206,6 +210,7 @@ class PolicyRegenerationService:
                     attempts=attempts,
                 )
 
+            check_budget()
             conformance_result = self._conformance_service.evaluate(
                 PolicyConformanceRequest(
                     task=request.task,
@@ -278,6 +283,8 @@ class PolicyRegenerationService:
         regeneration_context: RegenerationContext | None,
         trace_steps: list[PolicyConformanceTraceStep],
     ) -> PreflightResult:
+        """Generate one candidate only if the shared budget still permits work."""
+        check_budget()
         generated = self._generator.generate_preflight(
             request,
             retained_context,
@@ -318,14 +325,13 @@ def create_policy_regeneration_service(
         generator = _create_default_generator(active_settings)
         conformance_service = _create_conformance_service(active_settings, backend=backend)
         return PolicyRegenerationService(
+            operation_timeout_seconds=active_settings.operation_timeout_seconds,
             compiler_service=compiler_service,
             generator=generator,
             conformance_service=conformance_service,
         )
     except Exception:
-        _close_component(conformance_service)
-        _close_component(generator)
-        _close_component(compiler_service)
+        close_components(conformance_service, generator, compiler_service)
         raise
 
 
@@ -638,12 +644,6 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, PolicyCompiler, Reranker
+from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -33,7 +34,10 @@ class PolicyCompilerService:
         embedder: Embedder | None = None,
         index_store: IndexStore | None = None,
         reranker: Reranker | None = None,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Assign operation-local dependencies and the outer deadline default."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         if router is None:
             if embedder is None or index_store is None or reranker is None:
                 raise ValueError(
@@ -61,9 +65,9 @@ class PolicyCompilerService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._router)
-        _close_component(self._compiler)
+        close_components(self._router, self._compiler)
 
+    @bounded_stage("compilation")
     def compile(self, request: CompileRequest) -> CompileResult:
         """Compile routed policy evidence into a grounded policy packet."""
         route_result = self._router.route(
@@ -81,6 +85,7 @@ class PolicyCompilerService:
                 retained_context=route_result.retained_context,
             )
 
+        check_budget()
         generated_draft = self._compiler.compile_policy_packet(
             request,
             selection_packet,
@@ -101,11 +106,16 @@ def create_policy_compiler_service(settings: Settings | None = None) -> PolicyCo
     """Build the default policy compiler service from application settings."""
     active_settings = settings or get_settings()
     router = create_policy_router_service(active_settings)
-    compiler = _create_default_policy_compiler(active_settings)
-    return PolicyCompilerService(
-        router=router,
-        compiler=compiler,
-    )
+    try:
+        compiler = _create_default_policy_compiler(active_settings)
+        return PolicyCompilerService(
+            router=router,
+            compiler=compiler,
+            operation_timeout_seconds=active_settings.operation_timeout_seconds,
+        )
+    except BaseException:
+        close_components(router)
+        raise
 
 
 def _create_default_policy_compiler(settings: Settings) -> PolicyCompiler:
@@ -250,12 +260,6 @@ def _ordered_unique(values: Sequence[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [

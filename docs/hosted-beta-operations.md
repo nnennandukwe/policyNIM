@@ -332,3 +332,55 @@ export POLICYNIM_BETA_MCP_URL=https://<generated-domain>/mcp
 export POLICYNIM_BETA_MCP_TOKEN=<beta-token>
 uv run --group test pytest -q -m live tests/test_hosted_mcp_live.py
 ```
+
+## Operation deadlines and NVIDIA client ownership
+
+Each search, route, compile, preflight, or regeneration operation gets one monotonic
+budget. Nested stages share it, including conformance and regeneration attempts.
+Evaluation gives each case its own budget, including optional conformance; ingestion
+bounds each embedding batch sequence separately from the evaluation case budget.
+CLI and MCP use the same checks. Index readiness and citation validation still run;
+a deadline never turns missing evidence into a successful result.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `POLICYNIM_OPERATION_TIMEOUT_SECONDS` | `120` | Shared budget for one operation or evaluation case. |
+| `POLICYNIM_NVIDIA_TIMEOUT_SECONDS` | `30` | Per-attempt HTTP timeout, reduced to the remaining budget. |
+| `POLICYNIM_NVIDIA_MAX_RETRIES` | `2` | Additional attempts after the first; allowed range is 0–10. |
+| `POLICYNIM_NVIDIA_RETRY_INITIAL_SECONDS` | `0.5` | Initial exponential-backoff ceiling. |
+| `POLICYNIM_NVIDIA_RETRY_MAX_SECONDS` | `8` | Maximum retry wait. |
+
+Timeouts and delay settings must be finite and positive. Settings use the normal
+precedence: explicit constructor values, process environment, configured dotenv,
+then defaults. No new storage format or optional dependency is required.
+
+429, 5xx, network failures, and HTTP timeouts can retry. Backoff grows exponentially,
+with jitter between half the ceiling and the ceiling, capped by the maximum wait.
+A valid `Retry-After` delta or HTTP date sets a minimum wait. If that wait exceeds
+the cap or leaves no remaining operation budget, the request fails with
+`deadline_exhausted` instead of retrying early. Invalid headers fall back to jitter.
+Authentication, rejected requests, retired endpoints, and malformed responses don't
+retry. Retry exhaustion retains the provider failure class, such as `rate_limit`
+or `timeout`.
+
+MCP owns reusable SDK and HTTP clients for one server lifespan. Operations borrow
+clients with matching endpoint, credential, and timeout settings; they don't mutate
+client defaults or close a borrowed client. The HTTPX transport supports use from
+multiple threads. Each operation still builds its own service/index graph, so
+requests don't share mutable retrieval state. CLI adapters own their clients and
+close them through the command's service cleanup.
+
+Cancellation signals the shared budget and interrupts retry waits. A synchronous
+HTTP call that's already running drains before its worker slot is released;
+HTTPX timeouts bound individual I/O phases rather than an absolute wall-clock
+interrupt. Budget checks reject late results and prevent another stage or attempt.
+Shutdown rejects new operations, signals active budgets, drains workers and service
+cleanup, then closes pooled clients. An upstream request may already have incurred
+usage when cancellation or a deadline occurs. Neither state proves zero usage.
+
+Hosted JSON events from `policynim.operations` contain stage latency, attempt number,
+provider failure class, and measured token usage or an explicit `unknown` marker.
+They don't include task text, policy text, credentials, response bodies, or exception
+messages. Token counts describe responses that supplied usage; they aren't a bill
+or proof that failed attempts were free. Stage events and attempt events are separate
+measurements and shouldn't be added together as total latency.

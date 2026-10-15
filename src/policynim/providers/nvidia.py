@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import math
-from collections.abc import Sequence
+import random
+import time
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from types import TracebackType
 from typing import Any
 
@@ -18,13 +22,14 @@ from openai import (
     AuthenticationError,
     BadRequestError,
     OpenAI,
-    RateLimitError,
 )
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.operations import bounded_stage, current_budget, emit_operation_event
+from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
 from policynim.types import (
     CompiledPolicyConstraint,
@@ -59,6 +64,9 @@ class NVIDIAEmbedder(Embedder):
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create an embedder with either an owned or injected SDK client."""
         api_key = api_key.strip()
@@ -66,9 +74,20 @@ class NVIDIAEmbedder(Embedder):
             raise ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
 
         base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._batch_size = batch_size
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -78,7 +97,11 @@ class NVIDIAEmbedder(Embedder):
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAEmbedder:
@@ -90,6 +113,10 @@ class NVIDIAEmbedder(Embedder):
             batch_size=settings.embed_batch_size,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
     def close(self) -> None:
@@ -97,6 +124,7 @@ class NVIDIAEmbedder(Embedder):
         if self._owns_client:
             _close_client(self._client)
 
+    @bounded_stage("embedding")
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed policy chunk text in batches."""
         normalized = [_normalize_text(text, field_name="document text") for text in texts]
@@ -109,6 +137,7 @@ class NVIDIAEmbedder(Embedder):
             embeddings.extend(self._request_embeddings(batch, input_type="passage"))
         return embeddings
 
+    @bounded_stage("embedding")
     def embed_query(self, text: str) -> list[float]:
         """Embed one search query."""
         normalized = _normalize_text(text, field_name="query")
@@ -122,83 +151,35 @@ class NVIDIAEmbedder(Embedder):
         input_type: str,
     ) -> list[list[float]]:
         """Request passage or query vectors with bounded retries and sanitized failures."""
-        for attempt in range(self._max_retries + 1):
-            try:
-                response = self._client.embeddings.create(
-                    model=self._model,
-                    input=list(texts),
-                    encoding_format="float",
-                    extra_body={
-                        "input_type": input_type,
-                        "truncate": "NONE",
-                    },
-                )
-                return _validate_embeddings_response(
-                    getattr(response, "data", None), expected_count=len(texts)
-                )
-            except (APIResponseValidationError, json.JSONDecodeError) as exc:
-                raise ProviderError(
-                    "NVIDIA embeddings response was invalid.",
-                    failure_class="invalid_response",
-                ) from exc
-            except AuthenticationError as exc:
-                raise _auth_error("embeddings") from exc
-            except BadRequestError as exc:
-                raise ProviderError(
-                    "NVIDIA embeddings request was rejected. "
-                    "Check the model and input configuration.",
-                    failure_class="bad_request",
-                ) from exc
-            except RateLimitError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="rate_limit",
-                ) from exc
-            except APIStatusError as exc:
-                if exc.status_code == 410:
-                    raise _endpoint_unavailable("embeddings", "EMBED", "BASE_URL") from exc
-                if exc.status_code in {401, 403}:
-                    raise _auth_error("embeddings") from exc
-                if exc.status_code == 429:
-                    if attempt < self._max_retries:
-                        continue
-                    raise ProviderError(
-                        "NVIDIA embeddings request failed after retries.",
-                        failure_class="rate_limit",
-                    ) from exc
-                if _should_retry_status(exc.status_code) and attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    f"NVIDIA embeddings request failed with status {exc.status_code}.",
-                    failure_class="http_status",
-                ) from exc
-            except APITimeoutError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="timeout",
-                ) from exc
-            except APIConnectionError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="connection",
-                ) from exc
-            except ProviderError:
-                raise
-            except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError(
-                    "Unexpected NVIDIA embeddings failure.",
-                    failure_class="unexpected",
-                ) from exc
 
-        raise ProviderError(
-            "NVIDIA embeddings request failed after retries.",
-            failure_class="unexpected",
+        def send(timeout: float) -> Any:
+            """Send one embedding attempt with a request-local timeout."""
+            return self._client.embeddings.create(
+                model=self._model,
+                input=list(texts),
+                encoding_format="float",
+                extra_body={"input_type": input_type, "truncate": "NONE"},
+                timeout=timeout,
+            )
+
+        response = _request_with_retry(
+            send,
+            operation="embeddings",
+            model_setting="EMBED",
+            endpoint_setting="BASE_URL",
+            **self._request_options(),
+        )
+        return _validate_embeddings_response(
+            getattr(response, "data", None), expected_count=len(texts)
+        )
+
+    def _request_options(self) -> dict[str, Any]:
+        """Keep retries and request timeouts separate from client defaults."""
+        return dict(
+            max_retries=self._max_retries,
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
 
 
@@ -214,6 +195,9 @@ class NVIDIAReranker(Reranker):
         timeout_seconds: float,
         max_retries: int,
         client: httpx.Client | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a reranker with either an owned or injected HTTP client."""
         api_key = api_key.strip()
@@ -221,8 +205,19 @@ class NVIDIAReranker(Reranker):
             raise ConfigurationError("NVIDIA_API_KEY is required for reranking.")
 
         base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = httpx.Client(
@@ -246,6 +241,10 @@ class NVIDIAReranker(Reranker):
             base_url=settings.nvidia_retrieval_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings, retrieval=True),
         )
 
     def __enter__(self) -> NVIDIAReranker:
@@ -264,6 +263,7 @@ class NVIDIAReranker(Reranker):
         if self._owns_client:
             self._client.close()
 
+    @bounded_stage("reranking")
     def rerank(
         self,
         query: str,
@@ -299,60 +299,25 @@ class NVIDIAReranker(Reranker):
     def _request_ranking(self, payload: dict[str, object]) -> Any:
         """Request passage rankings and classify failures without exposing response bodies."""
         endpoint = f"{self._model}/reranking"
-        for attempt in range(self._max_retries + 1):
+
+        def send(timeout: float) -> Any:
+            """Read and close one response before retrying or returning."""
+            response = self._client.post(endpoint, json=payload, timeout=timeout)
             try:
-                response = self._client.post(endpoint, json=payload)
                 response.raise_for_status()
                 return response.json()
-            except httpx.HTTPStatusError as exc:
-                status_code = exc.response.status_code
-                if status_code == 410:
-                    raise _endpoint_unavailable(
-                        "reranking", "RERANK", "RETRIEVAL_BASE_URL"
-                    ) from exc
-                if status_code in {401, 403}:
-                    raise _auth_error("reranking") from exc
-                if status_code == 429:
-                    if attempt < self._max_retries:
-                        continue
-                    raise ProviderError(
-                        "NVIDIA reranking request failed after retries.",
-                        failure_class="rate_limit",
-                    ) from exc
-                if _should_retry_status(status_code) and attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    f"NVIDIA reranking request failed with status {status_code}.",
-                    failure_class="http_status",
-                ) from exc
-            except httpx.ConnectError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA reranking request failed after retries.",
-                    failure_class="connection",
-                ) from exc
-            except (httpx.ReadTimeout, httpx.TimeoutException) as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA reranking request failed after retries.",
-                    failure_class="timeout",
-                ) from exc
-            except json.JSONDecodeError as exc:
-                raise ProviderError(
-                    "NVIDIA reranking response was not valid JSON.",
-                    failure_class="invalid_response",
-                ) from exc
-            except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError(
-                    "Unexpected NVIDIA reranking failure.",
-                    failure_class="unexpected",
-                ) from exc
+            finally:
+                _close_client(response)
 
-        raise ProviderError(
-            "NVIDIA reranking request failed after retries.",
-            failure_class="unexpected",
+        return _request_with_retry(
+            send,
+            operation="reranking",
+            model_setting="RERANK",
+            endpoint_setting="RETRIEVAL_BASE_URL",
+            max_retries=self._max_retries,
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
 
 
@@ -368,6 +333,9 @@ class NVIDIAGenerator(Generator):
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a generator with either an owned or injected SDK client."""
         api_key = api_key.strip()
@@ -375,8 +343,19 @@ class NVIDIAGenerator(Generator):
             raise ConfigurationError("NVIDIA_API_KEY is required for grounded generation.")
 
         base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -386,7 +365,11 @@ class NVIDIAGenerator(Generator):
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAGenerator:
@@ -397,8 +380,13 @@ class NVIDIAGenerator(Generator):
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
+    @bounded_stage("generation")
     def generate_preflight(
         self,
         request: PreflightRequest,
@@ -420,6 +408,9 @@ class NVIDIAGenerator(Generator):
             messages=messages,
             max_retries=self._max_retries,
             operation="grounded generation",
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
         return _parse_generation_draft(content)
 
@@ -441,6 +432,9 @@ class NVIDIAPolicyCompiler:
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a policy compiler with either an owned or injected SDK client."""
         api_key = api_key.strip()
@@ -448,8 +442,19 @@ class NVIDIAPolicyCompiler:
             raise ConfigurationError("NVIDIA_API_KEY is required for policy compilation.")
 
         base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -459,7 +464,11 @@ class NVIDIAPolicyCompiler:
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAPolicyCompiler:
@@ -470,8 +479,13 @@ class NVIDIAPolicyCompiler:
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
+    @bounded_stage("compilation")
     def compile_policy_packet(
         self,
         request: CompileRequest,
@@ -486,6 +500,9 @@ class NVIDIAPolicyCompiler:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy compilation",
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
         return _parse_compiled_policy_draft(content)
 
@@ -507,6 +524,9 @@ class NVIDIAPolicyConformanceEvaluator:
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a conformance evaluator with either an owned or injected client."""
         api_key = api_key.strip()
@@ -516,8 +536,19 @@ class NVIDIAPolicyConformanceEvaluator:
             )
 
         base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -527,7 +558,11 @@ class NVIDIAPolicyConformanceEvaluator:
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAPolicyConformanceEvaluator:
@@ -538,8 +573,13 @@ class NVIDIAPolicyConformanceEvaluator:
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
+    @bounded_stage("conformance")
     def evaluate_policy_conformance(
         self,
         request: PolicyConformanceRequest,
@@ -552,6 +592,9 @@ class NVIDIAPolicyConformanceEvaluator:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy conformance evaluation",
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
         return _parse_policy_conformance_draft(content, request)
 
@@ -568,6 +611,9 @@ def _request_chat_completion(
     messages: list[ChatCompletionMessageParam],
     max_retries: int,
     operation: str,
+    timeout_seconds: float = 30.0,
+    retry_initial_seconds: float = 0.5,
+    retry_max_seconds: float = 8.0,
 ) -> str:
     """Request structured chat output and sanitize provider failures."""
     options: dict[str, Any] = {"temperature": 0, "top_p": 1}
@@ -577,73 +623,160 @@ def _request_chat_completion(
             "top_p": 0.95,
             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         }
+
+    def send(timeout: float) -> Any:
+        """Send one chat attempt without mutating the shared SDK client."""
+        return client.chat.completions.create(
+            model=model, messages=messages, timeout=timeout, **options
+        )
+
+    response = _request_with_retry(
+        send,
+        operation=operation,
+        model_setting="CHAT",
+        endpoint_setting="BASE_URL",
+        max_retries=max_retries,
+        timeout_seconds=timeout_seconds,
+        retry_initial_seconds=retry_initial_seconds,
+        retry_max_seconds=retry_max_seconds,
+    )
+    return _extract_chat_content(response, operation=operation)
+
+
+def _validate_request_limits(
+    timeout: float,
+    retries: int,
+    operation_timeout: float,
+    initial: float,
+    maximum: float,
+) -> None:
+    """Reject invalid direct adapter settings before allocating a client."""
+    if any(
+        not math.isfinite(value) or value <= 0
+        for value in (timeout, operation_timeout, initial, maximum)
+    ):
+        raise ConfigurationError("Provider timeouts and retry delays must be finite and positive.")
+    if type(retries) is not int or not 0 <= retries <= 10:
+        raise ConfigurationError("NVIDIA retries must be an integer from 0 to 10.")
+
+
+def _request_with_retry(
+    send: Callable[[float], Any],
+    *,
+    operation: str,
+    model_setting: str,
+    endpoint_setting: str,
+    max_retries: int,
+    timeout_seconds: float,
+    retry_initial_seconds: float,
+    retry_max_seconds: float,
+) -> Any:
+    """Classify failures and bound every attempt and delay by the shared deadline."""
+    budget = current_budget()
     for attempt in range(max_retries + 1):
+        timeout = min(timeout_seconds, budget.remaining())
+        start = time.monotonic()
+        failure: str | None = None
+        usage: int | None = None
+        retry_error: Exception | None = None
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                **options,
-            )
-            return _extract_chat_content(response, operation=operation)
+            response = send(timeout)
+            response_usage = getattr(response, "usage", None)
+            total = getattr(response_usage, "total_tokens", None)
+            usage = total if type(total) is int and total >= 0 else None
+            budget.remaining()
+            return response
+        except (APIResponseValidationError, json.JSONDecodeError) as exc:
+            failure = "invalid_response"
+            raise ProviderError(
+                f"NVIDIA {operation} response was invalid.", failure_class=failure
+            ) from exc
         except AuthenticationError as exc:
+            failure = "auth"
             raise _auth_error(operation) from exc
         except BadRequestError as exc:
+            failure = "bad_request"
             raise ProviderError(
                 f"NVIDIA {operation} request was rejected. "
                 "Check the model and input configuration.",
-                failure_class="bad_request",
+                failure_class=failure,
             ) from exc
-        except RateLimitError as exc:
-            if attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed after retries.",
-                failure_class="rate_limit",
-            ) from exc
-        except APIStatusError as exc:
-            if exc.status_code == 410:
-                raise _endpoint_unavailable(operation, "CHAT", "BASE_URL") from exc
-            if exc.status_code in {401, 403}:
+        except (APIStatusError, httpx.HTTPStatusError) as exc:
+            status = (
+                exc.status_code if isinstance(exc, APIStatusError) else exc.response.status_code
+            )
+            failure = "rate_limit" if status == 429 else "http_status"
+            if status == 410:
+                failure = "endpoint_unavailable"
+                raise _endpoint_unavailable(operation, model_setting, endpoint_setting) from exc
+            if status in {401, 403}:
+                failure = "auth"
                 raise _auth_error(operation) from exc
-            if exc.status_code == 429:
-                if attempt < max_retries:
-                    continue
+            if not _should_retry_status(status):
                 raise ProviderError(
-                    f"NVIDIA {operation} request failed after retries.",
-                    failure_class="rate_limit",
+                    f"NVIDIA {operation} request failed with status {status}.",
+                    failure_class=failure,
                 ) from exc
-            if _should_retry_status(exc.status_code) and attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed with status {exc.status_code}.",
-                failure_class="http_status",
-            ) from exc
-        except APITimeoutError as exc:
-            if attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed after retries.",
-                failure_class="timeout",
-            ) from exc
-        except APIConnectionError as exc:
-            if attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed after retries.",
-                failure_class="connection",
-            ) from exc
-        except ProviderError:
+            retry_error = exc
+        except (APITimeoutError, httpx.TimeoutException) as exc:
+            failure, retry_error = "timeout", exc
+        except (APIConnectionError, httpx.TransportError) as exc:
+            failure, retry_error = "connection", exc
+        except ProviderError as exc:
+            failure = exc.failure_class
             raise
-        except Exception as exc:  # pragma: no cover - defensive guard.
+        except Exception as exc:
+            failure = "unexpected"
             raise ProviderError(
-                f"Unexpected NVIDIA {operation} failure.",
-                failure_class="unexpected",
+                f"Unexpected NVIDIA {operation} failure.", failure_class=failure
             ) from exc
+        finally:
+            emit_operation_event(
+                stage=operation,
+                attempt=attempt + 1,
+                failure_class=failure,
+                latency_ms=round((time.monotonic() - start) * 1000, 3),
+                usage_tokens=usage,
+                usage_status="measured" if usage is not None else "unknown",
+            )
+        assert retry_error is not None
+        budget.remaining()
+        if attempt >= max_retries:
+            raise ProviderError(
+                f"NVIDIA {operation} request failed after retries.", failure_class=failure
+            ) from retry_error
+        retry_after = _retry_after_seconds(retry_error)
+        exponential = min(retry_max_seconds, retry_initial_seconds * 2 ** min(attempt, 30))
+        delay = random.uniform(exponential / 2, exponential)
+        if retry_after is not None:
+            # Never shorten a provider's requested delay to fit the local cap.
+            if retry_after > retry_max_seconds:
+                raise ProviderError(
+                    "Provider retry delay exceeds the configured wait limit. Retry later.",
+                    failure_class="deadline_exhausted",
+                ) from retry_error
+            delay = max(delay, retry_after)
+        budget.wait(delay)
+    raise AssertionError("Retry loop must return or raise.")
 
-    raise ProviderError(
-        f"NVIDIA {operation} request failed after retries.",
-        failure_class="unexpected",
-    )
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Parse delta seconds or an HTTP date without trusting malformed headers."""
+    response = getattr(exc, "response", None)
+    raw = getattr(response, "headers", {}).get("retry-after")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (ValueError, TypeError):
+        try:
+            date = parsedate_to_datetime(raw)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=UTC)
+            seconds = (date - datetime.now(UTC)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 def _require_provider_endpoint(base_url: str) -> str:
