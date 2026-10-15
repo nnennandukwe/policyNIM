@@ -246,18 +246,22 @@ def test_invalid_decisions_fail_before_embeddings_and_writes(
     digest_a = target_digest(profile_path, "A")
     digest_b = target_digest(profile_path, "B")
     profile, _ = read_profile(profile_path)
-    a = Replacement(target_id="A", expected_digest=digest_a, replacement_id="D", reason="Reviewed.")
+    replacement_decision = Replacement(
+        target_id="A", expected_digest=digest_a, replacement_id="D", reason="Reviewed."
+    )
     exclusions: list[Exclusion] = []
-    replacements = [a]
+    replacements = [replacement_decision]
     if case == "unknown":
-        replacements = [a.model_copy(update={"target_id": "UNKNOWN"})]
+        replacements = [replacement_decision.model_copy(update={"target_id": "UNKNOWN"})]
     elif case == "stale":
-        replacements = [a.model_copy(update={"expected_digest": "sha256:" + "0" * 64})]
+        replacements = [
+            replacement_decision.model_copy(update={"expected_digest": "sha256:" + "0" * 64})
+        ]
     elif case == "same_id":
-        replacements = [a.model_copy(update={"replacement_id": "A"})]
+        replacements = [replacement_decision.model_copy(update={"replacement_id": "A"})]
     elif case == "cycle":
         replacements = [
-            a.model_copy(update={"replacement_id": "B"}),
+            replacement_decision.model_copy(update={"replacement_id": "B"}),
             Replacement(
                 target_id="B", expected_digest=digest_b, replacement_id="A", reason="Reviewed."
             ),
@@ -272,11 +276,11 @@ def test_invalid_decisions_fail_before_embeddings_and_writes(
             )
         )
     elif case == "multiple":
-        replacements.append(a.model_copy(update={"replacement_id": "E"}))
+        replacements.append(replacement_decision.model_copy(update={"replacement_id": "E"}))
     elif case == "contradiction":
         exclusions = [Exclusion(target_id="A", expected_digest=digest_a, reason="Reviewed.")]
     elif case == "missing_replacement":
-        replacements = [a.model_copy(update={"replacement_id": "UNKNOWN"})]
+        replacements = [replacement_decision.model_copy(update={"replacement_id": "UNKNOWN"})]
     elif case == "excluded_replacement":
         exclusions = [
             Exclusion(
