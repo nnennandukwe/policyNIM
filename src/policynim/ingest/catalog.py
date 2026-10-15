@@ -134,7 +134,7 @@ def resolve_pack_members(root: Path, manifest: PolicyPackManifest) -> list[Path]
 
 
 def read_pack_bytes(root: Path, member: str) -> bytes:
-    """Read a regular manifest member through directory descriptors without following symlinks."""
+    """Resolve bounded aliases, then open canonical components without following new symlinks."""
     relative = PurePosixPath(member)
     if relative.is_absolute() or ".." in relative.parts or not relative.parts:
         raise InvalidPolicyDocumentError("Pack members must stay inside their selected directory.")
@@ -143,7 +143,13 @@ def read_pack_bytes(root: Path, member: str) -> bytes:
     descriptor: int | None = None
     file_descriptor: int | None = None
     try:
-        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        # Callers supply the selected canonical root. Don't resolve it again after
+        # member validation: a replacement root symlink must fail the open below.
+        base = Path(os.path.abspath(root))
+        relative = PurePosixPath((base / member).resolve(strict=True).relative_to(base).as_posix())
+        if not relative.parts:
+            raise InvalidPolicyDocumentError("Pack members must resolve to regular files.")
+        descriptor = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         for part in relative.parts[:-1]:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
@@ -152,13 +158,11 @@ def read_pack_bytes(root: Path, member: str) -> bytes:
             relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
         )
         if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
-            raise InvalidPolicyDocumentError(
-                "Pack members must be regular files, without symlinks."
-            )
+            raise InvalidPolicyDocumentError("Pack members must resolve to regular files.")
         with os.fdopen(file_descriptor, "rb") as handle:
             file_descriptor = None
             return handle.read()
-    except OSError as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         raise InvalidPolicyDocumentError(
             "Couldn't read a selected pack member. Check regular files, permissions, and symlinks."
         ) from exc

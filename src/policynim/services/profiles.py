@@ -481,7 +481,7 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
 
 def serialize_profile(profile: PolicyProfile) -> str:
     """Render the schema as editable TOML without interpreting user strings as syntax."""
-    return tomlkit.dumps(profile.model_dump())
+    return tomlkit.dumps(profile.model_dump(exclude_defaults=True))
 
 
 def _update_pin_text(original: str, profile: PolicyProfile) -> str:

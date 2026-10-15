@@ -630,6 +630,127 @@ def test_cli_init_is_offline_and_never_overwrites(profile_path: Path) -> None:
     assert destination.read_bytes() == original
 
 
+def test_cli_generated_profile_accepts_hand_added_decisions(profile_path: Path) -> None:
+    """An operator can append documented decision tables and update pins through the CLI."""
+    runner = CliRunner()
+    destination = profile_path.parent / "editable.toml"
+    result = runner.invoke(
+        app,
+        [
+            "profile",
+            "init",
+            str(destination),
+            "--pack",
+            str(profile_path.parent / "baseline"),
+            "--pack",
+            str(profile_path.parent / "custom"),
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    preview = runner.invoke(app, ["profile", "preview", str(destination), "--format", "json"])
+    assert preview.exit_code == 0, preview.output
+    catalog = json.loads(preview.stdout)
+    digests = {
+        entry["policy"]["policy_id"]: entry["target_digest"] for entry in catalog["policies"]
+    }
+    with destination.open("a", encoding="utf-8") as handle:
+        handle.write(
+            '\n[[exclusions]]\ntarget_id = "B"\n'
+            f'expected_digest = "{digests["B"]}"\nreason = "No browser tier."\n'
+            '\n[[replacements]]\ntarget_id = "A"\nreplacement_id = "D"\n'
+            f'expected_digest = "{digests["A"]}"\nreason = "Use local practice."\n'
+            '\n[[conflicts]]\nleft = "A"\nright = "D"\nreason = "Choose one practice."\n'
+        )
+    for command in ("validate", "preview"):
+        result = runner.invoke(app, ["profile", command, str(destination), "--format", "json"])
+        assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["effective_count"] == 3
+    changed = profile_path.parent / "baseline" / "C.md"
+    changed.write_text(changed.read_text() + "\nA reviewed addition.\n")
+    diff = runner.invoke(app, ["profile", "diff", str(destination), "--format", "json"])
+    assert diff.exit_code == 0, diff.output
+    report = json.loads(diff.stdout)
+    assert report["changed"] == ["C"]
+    updated = runner.invoke(
+        app,
+        [
+            "profile",
+            "update",
+            str(destination),
+            "--expect-digest",
+            report["review_digest"],
+            "--format",
+            "json",
+        ],
+    )
+    assert updated.exit_code == 0, updated.output
+    assert resolve_profile(destination).catalog.effective_count == 3
+
+
+@pytest.mark.parametrize("member_kind", ["file", "directory", "manifest"])
+def test_internal_pack_symlinks_stay_supported(tmp_path: Path, member_kind: str) -> None:
+    """Bounded manifest, file, and directory aliases resolve identically on supported hosts."""
+    from policynim.ingest.loader import load_policy_documents
+
+    root = write_pack(tmp_path / "pack", "internal", ["A"])
+    original = root / ("pack.toml" if member_kind == "manifest" else "A.md")
+    if member_kind == "directory":
+        actual_directory = root / "actual"
+        actual_directory.mkdir()
+        original.rename(actual_directory / "A.md")
+        (root / "alias").symlink_to(actual_directory, target_is_directory=True)
+        manifest = root / "pack.toml"
+        manifest.write_text(manifest.read_text().replace('path = "A.md"', 'path = "alias/A.md"'))
+    else:
+        actual = root / ("actual.toml" if member_kind == "manifest" else "actual.md")
+        original.rename(actual)
+        original.symlink_to(actual)
+    assert load_policy_documents(root)[0].metadata.policy_id == "A"
+    path = tmp_path / "profile.toml"
+    initialize_profile(path, [root], profile_id="internal")
+    assert resolve_profile(path).catalog.effective_count == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor traversal proof.")
+@pytest.mark.parametrize("component", ["file", "directory"])
+def test_canonical_member_swap_cant_escape_after_alias_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component: str
+) -> None:
+    """Replacing a canonical target after resolving its alias can't expose outside bytes."""
+    from policynim.ingest import catalog
+
+    root = tmp_path / "pack"
+    actual = root / "actual"
+    actual.mkdir(parents=True)
+    (actual / "A.md").write_text("PUBLIC")
+    (root / "alias").symlink_to(actual, target_is_directory=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "A.md").write_text("PRIVATE-OUTSIDE-CANARY")
+    real_open = os.open
+    swapped = False
+
+    def swap_before_open(path, flags, *args, **kwargs):
+        """Race the canonical component's no-follow open after path resolution."""
+        nonlocal swapped
+        if not swapped and path == ("A.md" if component == "file" else "actual"):
+            swapped = True
+            if component == "file":
+                (actual / "A.md").unlink()
+                (actual / "A.md").symlink_to(outside / "A.md")
+            else:
+                actual.rename(root / "previous")
+                actual.symlink_to(outside, target_is_directory=True)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(catalog.os, "open", swap_before_open)
+    with pytest.raises(InvalidPolicyDocumentError, match="selected pack member"):
+        catalog.read_pack_bytes(root, "alias/A.md")
+    assert swapped
+
+
 def test_ingest_cant_write_into_any_selected_pack(profile_path: Path) -> None:
     """Output guards cover every pack root rather than the unused legacy corpus argument."""
     from test_index_identity import SpyEmbedder
