@@ -311,13 +311,12 @@ def initialize_profile(path: Path, roots: Sequence[Path], *, profile_id: str) ->
     pins = []
     for root in roots:
         pin, _, _ = _load_pack(root.resolve())
-        pins.append(
-            pin.model_copy(
-                update={
-                    "path": Path(os.path.relpath(root.resolve(), path.parent.resolve())).as_posix()
-                }
-            )
-        )
+        try:
+            selected_path = Path(os.path.relpath(root.resolve(), path.parent.resolve())).as_posix()
+        except ValueError:
+            # Windows can't express a relative path across drive roots.
+            selected_path = root.resolve().as_posix()
+        pins.append(pin.model_copy(update={"path": selected_path}))
     try:
         profile = PolicyProfile(schema_version=1, profile_id=profile_id, packs=pins)
     except ValidationError as exc:

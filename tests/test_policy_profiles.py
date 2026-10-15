@@ -800,3 +800,23 @@ def test_updates_preserve_quoted_policy_ids(tmp_path: Path, policy_id: str) -> N
     update_profile(path, expected_digest=report.review_digest)
     assert resolve_profile(path).catalog.show(policy_id).state == "active"
     assert "# Retain notes with = and # punctuation." in path.read_text()
+
+
+def test_profile_init_accepts_a_pack_without_a_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows cross-drive selections keep an explicit absolute pin instead of failing."""
+    from policynim.services import profiles
+
+    root = write_pack(tmp_path / "pack", "team.cross-drive", ["A"])
+    path = tmp_path / "config" / "profile.toml"
+
+    def cross_drive(*args):
+        """Simulate the standard library's cross-drive relative-path rejection."""
+        raise ValueError("path is on a different drive")
+
+    monkeypatch.setattr(profiles.os.path, "relpath", cross_drive)
+    initialize_profile(path, [root], profile_id="cross-drive")
+    profile, _ = read_profile(path)
+    assert profile.packs[0].path == root.resolve().as_posix()
+    assert resolve_profile(path).catalog.effective_count == 1
