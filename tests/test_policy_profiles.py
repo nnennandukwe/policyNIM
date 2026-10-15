@@ -813,10 +813,61 @@ def test_profile_init_accepts_a_pack_without_a_relative_path(
 
     def cross_drive(*args):
         """Simulate the standard library's cross-drive relative-path rejection."""
-        raise ValueError("path is on a different drive")
+        raise ValueError("Different drive roots.")
 
     monkeypatch.setattr(profiles.os.path, "relpath", cross_drive)
     initialize_profile(path, [root], profile_id="cross-drive")
     profile, _ = read_profile(path)
     assert profile.packs[0].path == root.resolve().as_posix()
     assert resolve_profile(path).catalog.effective_count == 1
+
+
+@pytest.mark.parametrize("value", ["//attacker/share", r"\\attacker\share", r"\\?\C:\packs"])
+def test_network_or_device_pack_paths_fail_before_discovery(value: str) -> None:
+    """Potential network inputs are rejected syntactically on every platform."""
+    from policynim.services.profiles import _normalize_pack_path
+
+    for windows in (False, True):
+        with pytest.raises(InvalidPolicyDocumentError, match="network shares"):
+            _normalize_pack_path(value, windows=windows)
+
+
+def test_native_windows_pack_paths_normalize_without_network_access() -> None:
+    """Pure path normalization handles native separators without opening a filesystem."""
+    from policynim.services.profiles import _normalize_pack_path
+
+    assert _normalize_pack_path(r"C:\packs\team", windows=True) == "C:/packs/team"
+    assert _normalize_pack_path(r"packs\team", windows=True) == "packs/team"
+    with pytest.raises(InvalidPolicyDocumentError, match="local directories"):
+        _normalize_pack_path("C:relative-pack", windows=True)
+
+
+def test_manifest_corpus_root_alias_keeps_legacy_source_paths(tmp_path: Path) -> None:
+    """A deliberately selected local directory alias works with descriptor-backed member reads."""
+    from policynim.ingest.loader import load_policy_documents
+
+    root = write_pack(tmp_path / "actual", "team.alias", ["A"])
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    documents = load_policy_documents(alias)
+    assert len(documents) == 1
+    assert documents[0].source_path == "alias/A.md"
+    assert build_policy_catalog(alias).show("A").path == "A.md"
+
+
+def test_initialization_rejects_network_roots_before_pack_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The public initializer rejects an explicit share before resolving or reading a pack."""
+    from policynim.services import profiles
+
+    def forbidden(*args):
+        """Any filesystem pack read would violate this rejection test's boundary."""
+        raise AssertionError("Pack I/O mustn't run for a network path.")
+
+    monkeypatch.setattr(profiles, "_load_pack", forbidden)
+    with pytest.raises(InvalidPolicyDocumentError, match="network shares"):
+        initialize_profile(
+            tmp_path / "profile.toml", [Path("//attacker/share")], profile_id="blocked"
+        )
+    assert not (tmp_path / "profile.toml").exists()

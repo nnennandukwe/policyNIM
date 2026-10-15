@@ -9,7 +9,7 @@ import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import NamedTemporaryFile
 from typing import Annotated, Literal, Self
 
@@ -44,14 +44,32 @@ class PackPin(StrictModel):
     @field_validator("path")
     @classmethod
     def local_path_only(cls, value: str) -> str:
-        """Reject remote schemes and control characters instead of fetching content."""
-        if (
-            (":" in value and not (os.name == "nt" and Path(value).drive))
-            or "\\" in value
-            or any(ord(char) < 32 for char in value)
-        ):
-            raise ValueError("Pack paths must name explicit local directories.")
-        return value
+        """Normalize native local paths while rejecting network shares and remote schemes."""
+        try:
+            return _normalize_pack_path(value, windows=os.name == "nt")
+        except InvalidPolicyDocumentError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+def _normalize_pack_path(value: str, *, windows: bool) -> str:
+    """Reject network/device prefixes before any path resolution can access a share."""
+    normalized = value.replace("\\", "/")
+    invalid = normalized.startswith("//") or any(
+        ord(char) < 32 or ord(char) == 127 for char in value
+    )
+    if windows:
+        drive = PureWindowsPath(value)
+        invalid = invalid or (
+            ":" in value and not (re.fullmatch(r"[A-Za-z]:", drive.drive) and drive.is_absolute())
+        )
+    else:
+        invalid = invalid or ":" in value or "\\" in value
+    if invalid:
+        raise InvalidPolicyDocumentError(
+            "Pack paths must name local directories; "
+            "network shares and remote schemes aren't allowed."
+        )
+    return normalized
 
 
 class Exclusion(StrictModel):
@@ -310,6 +328,7 @@ def initialize_profile(path: Path, roots: Sequence[Path], *, profile_id: str) ->
     """Create a new pinned profile without overwriting any existing file."""
     pins = []
     for root in roots:
+        root = Path(_normalize_pack_path(root.as_posix(), windows=os.name == "nt"))
         pin, _, _ = _load_pack(root.resolve())
         try:
             selected_path = Path(os.path.relpath(root.resolve(), path.parent.resolve())).as_posix()

@@ -38,7 +38,8 @@ def load_policy_documents(
 ) -> list[ParsedDocument]:
     """Load and normalize every policy document under the corpus root."""
     root_path = Path(root)
-    manifest = load_pack_manifest(root_path)
+    read_root = root_path.resolve()
+    manifest = load_pack_manifest(read_root)
     active_parser = parser or MarkdownParser(strict_metadata=manifest is not None)
     member_paths = (
         resolve_pack_members(root_path, manifest)
@@ -56,7 +57,7 @@ def load_policy_documents(
         source_path = _repo_relative_path(path, root_path)
         try:
             content = (
-                read_pack_bytes(root_path, path.relative_to(root_path).as_posix())
+                read_pack_bytes(read_root, path.relative_to(root_path).as_posix())
                 if manifest is not None
                 else path.read_bytes()
             )
