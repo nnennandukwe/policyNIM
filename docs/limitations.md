@@ -33,8 +33,9 @@ constraints, not setup mistakes.
   and only attempts ingestion when both the index and runtime-rules outputs are
   absent. Existing empty, corrupt, incomplete, or incompatible outputs require an
   explicit source-preserving rebuild into separate destinations.
-- Hosted observability is structured JSON request logging for auth rejects and
-  MCP tool calls only. There is no tracing or metrics pipeline yet.
+- Hosted observability includes structured JSON logs for auth rejects, MCP tool
+  calls, provider stages, attempts, failure classes, and measured or unknown token
+  usage. There's no tracing or metrics pipeline yet.
 
 ### NVIDIA Dependency For Live Retrieval, Conformance, And Regeneration
 

@@ -175,6 +175,10 @@ class BetaAuthService:
             usage=result.usage,
         )
 
+    def recognizes_api_key(self, *, token: str) -> bool:
+        """Identify local credentials without authorizing them or consuming quota."""
+        return self._store.recognizes_api_key(key_hash=_hash_api_key(token.strip()))
+
     def suspend_account(self, *, github_login: str) -> BetaAccount:
         """Suspend one hosted beta account by GitHub login."""
         account = self._require_account_by_login(github_login)

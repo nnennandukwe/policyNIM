@@ -342,8 +342,18 @@ Each server admits at most `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` expensive
 tool operations (default `10`, minimum `1`). Admission happens on the event loop
 before worker dispatch. Excess calls return a tool error asking the caller to
 retry later, without constructing a provider. An admitted operation constructs,
-uses, and closes its synchronous service on a worker thread. Cancellation retains
-the slot until that worker and its cleanup finish. This is a per-process bound,
+uses, and closes its synchronous service on a worker thread. Its provider adapters
+borrow immutable server-owned SDK/HTTP clients from the lifespan; the service
+doesn't close those borrowed clients. Nested retrieval, compilation, generation,
+and conformance stages share one operation deadline. Cancellation signals that
+budget immediately and retains the slot until active I/O and cleanup drain.
+Shutdown rejects new work, signals active budgets, drains workers, and closes the
+client pool. The pinned [SDK 2.2.0 session manager](https://raw.githubusercontent.com/modelcontextprotocol/python-sdk/v2.2.0/src/mcp/server/streamable_http_manager.py)
+enters that lifespan once per application, including stateless HTTP; per-request
+transports reuse its state. Local TCP tests verify sequential and concurrent
+provider-backed tool requests across both protocol versions before pool cleanup
+at application exit. See the [deadline and retry settings](hosted-beta-operations.md#operation-deadlines-and-nvidia-client-ownership).
+This is a per-process bound,
 not a distributed quota or a measured production capacity claim.
 
 The HTTP transport is stateless for both modern and legacy clients. Host and

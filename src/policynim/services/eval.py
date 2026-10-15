@@ -19,6 +19,7 @@ from typing import Any, cast
 
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
+from policynim.operations import ResourceStack, check_budget, close_components, operation_scope
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
@@ -247,6 +248,7 @@ class EvalService:
         regenerate: bool,
         max_regenerations: int,
     ) -> list[EvalCaseResult]:
+        """Score offline fixtures with the same per-case budget semantics as live evaluation."""
         store = _OfflineIndexStore(_OFFLINE_QUERY_CANDIDATES)
         embedder = _OfflineEmbedder()
         search_service = SearchService(
@@ -292,6 +294,7 @@ class EvalService:
                 backend=backend,
                 rerank_enabled=rerank_enabled,
                 max_regenerations=max_regenerations,
+                operation_timeout_seconds=self._settings.operation_timeout_seconds,
             )
         finally:
             search_service.close()
@@ -322,29 +325,33 @@ class EvalService:
             finally:
                 _close_component(ingest_service)
 
-            search_service = _create_live_search_service(
-                temp_settings,
-                rerank_enabled=rerank_enabled,
-            )
-            preflight_service = _create_live_preflight_service(
-                temp_settings,
-                rerank_enabled=rerank_enabled,
-            )
-            conformance_service = (
-                _create_live_conformance_service(temp_settings, backend=backend)
-                if backend != "default" and not regenerate
-                else None
-            )
-            regeneration_service = (
-                _create_live_regeneration_service(
+            with ResourceStack() as cleanup:
+                search_service = _create_live_search_service(
                     temp_settings,
-                    backend=backend,
                     rerank_enabled=rerank_enabled,
                 )
-                if regenerate
-                else None
-            )
-            try:
+                cleanup.callback(close_components, search_service)
+                preflight_service = _create_live_preflight_service(
+                    temp_settings,
+                    rerank_enabled=rerank_enabled,
+                )
+                cleanup.callback(close_components, preflight_service)
+                conformance_service = (
+                    _create_live_conformance_service(temp_settings, backend=backend)
+                    if backend != "default" and not regenerate
+                    else None
+                )
+                cleanup.callback(close_components, conformance_service)
+                regeneration_service = (
+                    _create_live_regeneration_service(
+                        temp_settings,
+                        backend=backend,
+                        rerank_enabled=rerank_enabled,
+                    )
+                    if regenerate
+                    else None
+                )
+                cleanup.callback(close_components, regeneration_service)
                 return _score_suite_cases(
                     suite.cases,
                     search_service=search_service,
@@ -354,12 +361,8 @@ class EvalService:
                     backend=backend,
                     rerank_enabled=rerank_enabled,
                     max_regenerations=max_regenerations,
+                    operation_timeout_seconds=self._settings.operation_timeout_seconds,
                 )
-            finally:
-                search_service.close()
-                preflight_service.close()
-                _close_component(conformance_service)
-                _close_component(regeneration_service)
 
     def _persist_mode_run(
         self,
@@ -447,68 +450,74 @@ def _score_suite_cases(
     backend: EvalBackend,
     rerank_enabled: bool,
     max_regenerations: int,
+    operation_timeout_seconds: float = 120.0,
 ) -> list[EvalCaseResult]:
+    """Give each evaluation case one budget across generation and optional conformance."""
     results: list[EvalCaseResult] = []
     trace_service = create_policy_evidence_trace_service()
     for case in cases:
-        if case.kind == "search":
-            result = search_service.search(
-                SearchRequest(query=case.input, domain=case.domain, top_k=case.top_k)
-            )
-            results.append(_score_search_case(case, result=result, rerank_enabled=rerank_enabled))
-            continue
-
-        if regeneration_service is not None:
-            regeneration_result = regeneration_service.regenerate(
-                PreflightRegenerationRequest(
-                    task=case.input,
-                    domain=case.domain,
-                    top_k=case.top_k,
-                    backend=_regeneration_backend(backend),
-                    max_regenerations=max_regenerations,
+        with operation_scope(seconds=operation_timeout_seconds):
+            if case.kind == "search":
+                result = search_service.search(
+                    SearchRequest(query=case.input, domain=case.domain, top_k=case.top_k)
                 )
+                results.append(
+                    _score_search_case(case, result=result, rerank_enabled=rerank_enabled)
+                )
+                continue
+
+            if regeneration_service is not None:
+                regeneration_result = regeneration_service.regenerate(
+                    PreflightRegenerationRequest(
+                        task=case.input,
+                        domain=case.domain,
+                        top_k=case.top_k,
+                        backend=_regeneration_backend(backend),
+                        max_regenerations=max_regenerations,
+                    )
+                )
+                results.append(
+                    _score_preflight_case(
+                        case,
+                        result=regeneration_result.final_result,
+                        conformance_result=regeneration_result.final_conformance_result,
+                        evidence_trace=regeneration_result.evidence_trace,
+                        regeneration_result=regeneration_result,
+                        rerank_enabled=rerank_enabled,
+                    )
+                )
+                continue
+
+            request = PreflightRequest(task=case.input, domain=case.domain, top_k=case.top_k)
+            conformance_result: PolicyConformanceResult | None = None
+            trace_result = preflight_service.preflight_with_trace(request)
+            result = trace_result.result
+            if conformance_service is not None and not result.insufficient_context:
+                check_budget()
+                conformance_result = conformance_service.evaluate(
+                    PolicyConformanceRequest(
+                        task=request.task,
+                        result=result,
+                        compiled_packet=trace_result.compiled_packet,
+                        trace_steps=trace_result.trace_steps,
+                    ),
+                    backend=backend,
+                )
+            evidence_trace = trace_service.build(
+                trace_result,
+                conformance_result=conformance_result,
+                include_chunk_text=False,
             )
             results.append(
                 _score_preflight_case(
                     case,
-                    result=regeneration_result.final_result,
-                    conformance_result=regeneration_result.final_conformance_result,
-                    evidence_trace=regeneration_result.evidence_trace,
-                    regeneration_result=regeneration_result,
+                    result=result,
+                    conformance_result=conformance_result,
+                    evidence_trace=evidence_trace,
+                    regeneration_result=None,
                     rerank_enabled=rerank_enabled,
                 )
             )
-            continue
-
-        request = PreflightRequest(task=case.input, domain=case.domain, top_k=case.top_k)
-        conformance_result: PolicyConformanceResult | None = None
-        trace_result = preflight_service.preflight_with_trace(request)
-        result = trace_result.result
-        if conformance_service is not None and not result.insufficient_context:
-            conformance_result = conformance_service.evaluate(
-                PolicyConformanceRequest(
-                    task=request.task,
-                    result=result,
-                    compiled_packet=trace_result.compiled_packet,
-                    trace_steps=trace_result.trace_steps,
-                ),
-                backend=backend,
-            )
-        evidence_trace = trace_service.build(
-            trace_result,
-            conformance_result=conformance_result,
-            include_chunk_text=False,
-        )
-        results.append(
-            _score_preflight_case(
-                case,
-                result=result,
-                conformance_result=conformance_result,
-                evidence_trace=evidence_trace,
-                regeneration_result=None,
-                rerank_enabled=rerank_enabled,
-            )
-        )
     return results
 
 
@@ -1258,13 +1267,22 @@ def _phoenix_timestamp() -> str:
 
 
 def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> SearchService:
+    """Build live search with the configured operation timeout."""
     from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 
-    return SearchService(
-        embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=create_index_store(settings),
-        reranker=NVIDIAReranker.from_settings(settings) if rerank_enabled else None,
-    )
+    with ResourceStack() as cleanup:
+        embedder = NVIDIAEmbedder.from_settings(settings)
+        cleanup.callback(close_components, embedder)
+        reranker = NVIDIAReranker.from_settings(settings) if rerank_enabled else None
+        cleanup.callback(close_components, reranker)
+        service = SearchService(
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            embedder=embedder,
+            index_store=create_index_store(settings),
+            reranker=reranker,
+        )
+        cleanup.pop_all()
+        return service
 
 
 def _create_live_preflight_service(
@@ -1272,6 +1290,7 @@ def _create_live_preflight_service(
     *,
     rerank_enabled: bool,
 ) -> PreflightService:
+    """Build live preflight with the configured operation timeout."""
     from policynim.providers import (
         NVIDIAEmbedder,
         NVIDIAGenerator,
@@ -1279,15 +1298,27 @@ def _create_live_preflight_service(
         NVIDIAReranker,
     )
 
-    return PreflightService(
-        embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=create_index_store(settings),
-        reranker=(
+    with ResourceStack() as cleanup:
+        embedder = NVIDIAEmbedder.from_settings(settings)
+        cleanup.callback(close_components, embedder)
+        reranker = (
             NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
-        ),
-        generator=NVIDIAGenerator.from_settings(settings),
-        compiler=NVIDIAPolicyCompiler.from_settings(settings),
-    )
+        )
+        cleanup.callback(close_components, reranker)
+        generator = NVIDIAGenerator.from_settings(settings)
+        cleanup.callback(close_components, generator)
+        compiler = NVIDIAPolicyCompiler.from_settings(settings)
+        cleanup.callback(close_components, compiler)
+        service = PreflightService(
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            embedder=embedder,
+            index_store=create_index_store(settings),
+            reranker=reranker,
+            generator=generator,
+            compiler=compiler,
+        )
+        cleanup.pop_all()
+        return service
 
 
 def _create_live_conformance_service(
@@ -1320,6 +1351,7 @@ def _create_live_regeneration_service(
     backend: EvalBackend,
     rerank_enabled: bool,
 ) -> PolicyRegenerationService:
+    """Build live regeneration with one timeout across all attempts."""
     from policynim.providers import (
         NVIDIAEmbedder,
         NVIDIAGenerator,
@@ -1327,33 +1359,33 @@ def _create_live_regeneration_service(
         NVIDIAReranker,
     )
 
-    compiler_service: PolicyCompilerService | None = None
-    generator: Generator | None = None
-    conformance_service: PolicyConformanceService | None = None
-    try:
+    with ResourceStack() as cleanup:
+        embedder = NVIDIAEmbedder.from_settings(settings)
+        cleanup.callback(close_components, embedder)
+        reranker = (
+            NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
+        )
+        cleanup.callback(close_components, reranker)
+        compiler = NVIDIAPolicyCompiler.from_settings(settings)
+        cleanup.callback(close_components, compiler)
         compiler_service = PolicyCompilerService(
-            embedder=NVIDIAEmbedder.from_settings(settings),
+            embedder=embedder,
             index_store=create_index_store(settings),
-            reranker=(
-                NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
-            ),
-            compiler=NVIDIAPolicyCompiler.from_settings(settings),
+            reranker=reranker,
+            compiler=compiler,
         )
         generator = NVIDIAGenerator.from_settings(settings)
-        conformance_service = _create_live_conformance_service(
-            settings,
-            backend=backend,
-        )
-        return PolicyRegenerationService(
+        cleanup.callback(close_components, generator)
+        conformance_service = _create_live_conformance_service(settings, backend=backend)
+        cleanup.callback(close_components, conformance_service)
+        service = PolicyRegenerationService(
+            operation_timeout_seconds=settings.operation_timeout_seconds,
             compiler_service=compiler_service,
             generator=generator,
             conformance_service=conformance_service,
         )
-    except Exception:
-        _close_component(conformance_service)
-        _close_component(generator)
-        _close_component(compiler_service)
-        raise
+        cleanup.pop_all()
+        return service
 
 
 def _close_component(component: object | None) -> None:

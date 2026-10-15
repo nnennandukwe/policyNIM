@@ -249,6 +249,8 @@ Start here when you want the longer version of a specific path:
   runtime/evidence, and troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
+- [docs/hosted-authorization.md](docs/hosted-authorization.md): external issuer
+  foundation, operation scopes, migration, and remaining OAuth acceptance checks
 - [docs/release.md](docs/release.md): CLI packaging, GitHub release, PyPI
   publish, and smoke-test checklist
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,
