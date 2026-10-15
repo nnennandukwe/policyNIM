@@ -844,11 +844,12 @@ def test_native_windows_pack_paths_normalize_without_network_access() -> None:
 
 def test_manifest_corpus_root_alias_keeps_legacy_source_paths(tmp_path: Path) -> None:
     """A deliberately selected local directory alias works with descriptor-backed member reads."""
-    from policynim.ingest.loader import load_policy_documents
+    from policynim.ingest.loader import discover_policy_paths, load_policy_documents
 
     root = write_pack(tmp_path / "actual", "team.alias", ["A"])
     alias = tmp_path / "alias"
     alias.symlink_to(root, target_is_directory=True)
+    assert discover_policy_paths(alias) == [alias / "A.md"]
     documents = load_policy_documents(alias)
     assert len(documents) == 1
     assert documents[0].source_path == "alias/A.md"

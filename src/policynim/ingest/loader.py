@@ -25,7 +25,7 @@ def discover_policy_paths(root: Path | str) -> list[Path]:
             "directory containing policy Markdown files."
         )
 
-    manifest = load_pack_manifest(root)
+    manifest = load_pack_manifest(root.resolve())
     if manifest is not None:
         return sorted(resolve_pack_members(root, manifest))
     return sorted(path for path in root.rglob("*.md") if path.name != "TEMPLATE.md")
