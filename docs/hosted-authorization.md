@@ -12,6 +12,9 @@ service behavior, including a real local TCP connection, with a deterministic
 introspection endpoint double. They don't prove an external login/token flow.
 OAuth remains disabled on existing deployments until an operator configures it.
 OAuth-only mode doesn't initialize or require a beta authentication database.
+OAuth operation quotas aren't implemented yet. Don't enable public OAuth access
+until #98 supplies principal accounting; use a separately bounded model-request
+budget for operator-led issuer acceptance checks.
 
 ## Selected issuer and client configuration
 
@@ -58,8 +61,7 @@ issuer they own:
    integer `exp`, string `scope`, and `token_type=Bearer`. An optional `nbf` must
    already have passed. ID tokens aren't accepted as API credentials.
 5. Set the PolicyNIM environment settings below and perform the live acceptance
-   checks before directing users to OAuth. Don't enable new paid infrastructure
-   merely to satisfy these instructions.
+   checks before directing users to OAuth.
 
 ```bash
 POLICYNIM_MCP_REQUIRE_AUTH=true
@@ -169,7 +171,8 @@ Before closing #97, record the actual issuer/client versions and deployment
 revision, then use a real client to discover the issuer, complete PKCE login,
 obtain a resource-bound token, and call the permitted tools. Verify wrong audience,
 issuer, expiry and scope rejection without provider work; token refresh, logout,
-revocation and recovery; and sanitized public readiness. Any NVIDIA calls need
-their own current authorization/budget. The old manual probe budget isn't reusable.
+revocation and recovery; and sanitized public readiness. Live model checks require
+a separately approved request budget; offline test results don't authorize
+provider traffic.
 Record source tests, issuer interoperability, deployment and live provider results
 separately. Keep #97 open while that external evidence is unavailable.

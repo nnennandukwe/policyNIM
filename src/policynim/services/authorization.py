@@ -30,6 +30,20 @@ LOGGER = logging.getLogger(__name__)
 class AuthorizationError(PolicyNIMError):
     """Reject service work before touching an index or provider."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: Literal[
+            "invalid_token", "insufficient_scope", "permission_denied"
+        ] = "permission_denied",
+        required_scopes: frozenset[str] = frozenset(),
+    ) -> None:
+        """Expose a stable denial code independently from the caller-facing message."""
+        super().__init__(message)
+        self.code = code
+        self.required_scopes = required_scopes
+
 
 @dataclass(frozen=True)
 class AuthenticatedPrincipal:
@@ -49,10 +63,14 @@ def authorize_operation(principal: AuthenticatedPrincipal, operation: str) -> No
     if required is None:
         raise AuthorizationError("permission_denied: Unknown protected operation.")
     if principal.expires_at is not None and principal.expires_at <= time.time():
-        raise AuthorizationError("invalid_token: Authenticate again before retrying.")
+        raise AuthorizationError(
+            "invalid_token: Authenticate again before retrying.", code="invalid_token"
+        )
     if not required.issubset(principal.scopes):
         raise AuthorizationError(
-            "insufficient_scope: Obtain a token with " + " ".join(sorted(required)) + "."
+            "insufficient_scope: Obtain a token with " + " ".join(sorted(required)) + ".",
+            code="insufficient_scope",
+            required_scopes=required,
         )
 
 
@@ -61,10 +79,14 @@ def principal_from_access_token(token: AccessToken) -> AuthenticatedPrincipal:
     claims = token.claims or {}
     source = claims.get("policynim_source", "oauth")
     if source not in ("oauth", "beta_key", "operator_key"):
-        raise AuthorizationError("invalid_token: Unsupported authentication source.")
+        raise AuthorizationError(
+            "invalid_token: Unsupported authentication source.", code="invalid_token"
+        )
     issuer = claims.get("iss")
     if not isinstance(issuer, str) or not issuer or not token.subject:
-        raise AuthorizationError("invalid_token: Missing authenticated identity.")
+        raise AuthorizationError(
+            "invalid_token: Missing authenticated identity.", code="invalid_token"
+        )
     return AuthenticatedPrincipal(
         issuer=issuer,
         subject=token.subject,

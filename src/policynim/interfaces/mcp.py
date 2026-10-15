@@ -50,7 +50,10 @@ from policynim.errors import (
     PolicyNIMError,
     ProviderError,
 )
-from policynim.interfaces.mcp_authorization import OperationAuthorizationApp
+from policynim.interfaces.mcp_authorization import (
+    OperationAuthorizationApp,
+    record_authorization_failure,
+)
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -427,6 +430,9 @@ async def _run_logged_tool(
             upstream_failure_class=_failure_class_from_error(exc),
             request_id=request_id,
         )
+        if isinstance(exc, AuthorizationError):
+            record_authorization_failure(exc)
+            raise ToolError(str(exc)) from exc
         if isinstance(exc, PolicyNIMError):
             raise ToolError(_safe_tool_error(exc)) from exc
         if isinstance(exc, _InvalidToolRequest):
@@ -506,6 +512,7 @@ def _register_tools(
             try:
                 authorize_operation(principal, operation)
             except AuthorizationError as exc:
+                record_authorization_failure(exc)
                 raise ToolError(str(exc)) from exc
         return principal
 

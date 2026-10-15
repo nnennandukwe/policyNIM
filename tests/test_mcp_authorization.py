@@ -856,3 +856,70 @@ def test_oauth_only_mode_doesnt_deny_an_issuer_token_in_an_old_key_list(tmp_path
     accepted = asyncio.run(verifier.verify_token(token))
     assert accepted is not None
     assert principal_from_access_token(accepted).source == "oauth"
+
+
+@pytest.mark.parametrize("expire_at_check", [2, 3])
+def test_dispatch_expiry_returns_http_challenge_before_provider_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_at_check: int
+) -> None:
+    """Expiry at handler or worker admission keeps HTTP refresh challenges and audit events."""
+    from types import SimpleNamespace
+
+    from policynim.services import authorization as auth_module
+
+    settings = oauth_settings(tmp_path)
+    install_issuer(monkeypatch, settings, token_claims())
+    clock = {"checks": 0, "expire_at": 999}
+    events: list[dict[str, object]] = []
+    factories: list[object] = []
+    now = time.time()
+
+    def current_time() -> float:
+        """Expire after introspection, leaving the SDK's own wall clock unchanged."""
+        clock["checks"] += 1
+        return now + 1000 if clock["checks"] >= clock["expire_at"] else now
+
+    def record(event: str, **fields: object) -> None:
+        """Capture audit events without their logger transport."""
+        events.append({"event": event, **fields})
+
+    class SearchFixture:
+        """Return a successful control without allocating model clients."""
+
+        def search(
+            self, request: SearchRequest, *, principal: AuthenticatedPrincipal | None = None
+        ) -> SearchResult:
+            """Keep the same service signature used by real search calls."""
+            return SearchResult(query=request.query, top_k=request.top_k, hits=[])
+
+        def close(self) -> None:
+            """The fixture owns no resources."""
+
+    def create_service(settings: Settings) -> SearchFixture:
+        """Track provider allocation before changing only the expiry condition."""
+        factories.append(object())
+        return SearchFixture()
+
+    monkeypatch.setattr(auth_module, "time", SimpleNamespace(time=current_time))
+    monkeypatch.setattr(mcp_module, "_emit_hosted_event", record)
+    monkeypatch.setattr(mcp_module, "create_search_service", create_service)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        params = {"name": "policy_search", "arguments": {"query": "q"}}
+        control = rpc(client, "tools/call", params)
+        assert control.status_code == 200
+        assert not control.json()["result"]["isError"]
+        assert len(factories) == 1
+        clock.update(checks=0, expire_at=expire_at_check)
+        rejected = rpc(client, "tools/call", params)
+        assert rejected.status_code == 401
+        assert rejected.json() == {"error": "invalid_token"}
+        assert 'error="invalid_token"' in rejected.headers["WWW-Authenticate"]
+        assert METADATA_PATH in rejected.headers["WWW-Authenticate"]
+        assert len(factories) == 1
+        auth_events = [event for event in events if event["event"] == "mcp.auth"]
+        assert [event["auth_result"] for event in auth_events] == ["unauthorized"]
+        clock.update(checks=0, expire_at=999)
+        assert rpc(client, "tools/call", params).status_code == 200
+        assert len(factories) == 2
