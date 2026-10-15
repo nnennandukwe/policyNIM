@@ -8,6 +8,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
@@ -19,12 +20,14 @@ from pydantic import ValidationError
 
 from policynim.contracts import IndexStore
 from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
 from policynim.types import (
     EmbeddedChunk,
     EmbeddingIdentity,
     IndexIdentity,
     PolicyChunk,
     PolicyMetadata,
+    PolicyProvenance,
     ScoredChunk,
 )
 
@@ -83,6 +86,59 @@ class SQLiteVecIndexStore(IndexStore):
         """Require a complete index in the embedding space configured for this store."""
         with closing(self._require_connection()) as conn:
             self._validate_identity(conn)
+
+    def inspect_readiness(self) -> IndexReadinessReport:
+        """Read counts and identity from one snapshot without changing existing data."""
+        try:
+            mode = self._path.stat().st_mode
+            if stat.S_ISDIR(mode):
+                return IndexReadinessReport(state="directory")
+            if not stat.S_ISREG(mode):
+                return IndexReadinessReport(state="invalid")
+            with closing(_connect(self._path, read_only=True)) as conn:
+                conn.execute("BEGIN")
+                if not _has_required_schema(conn):
+                    return IndexReadinessReport(state="invalid")
+                count = _count_chunks(conn)
+                policy_count = int(
+                    conn.execute(
+                        f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
+                    ).fetchone()[0]
+                )
+                try:
+                    identity = _read_identity(conn, allow_empty=True)
+                except IndexCompatibilityError as exc:
+                    if isinstance(exc.__cause__, sqlite3.Error) and is_sqlite_access_error(
+                        exc.__cause__
+                    ):
+                        return IndexReadinessReport(state="unreadable")
+                    return IndexReadinessReport(
+                        state="invalid" if count == 0 else "incompatible",
+                        chunk_count=count,
+                        policy_count=policy_count,
+                    )
+                if not identity.complete:
+                    state = "incomplete"
+                elif identity.embedding != self._embedding_identity:
+                    state = "incompatible"
+                elif count == 0:
+                    state = "empty"
+                else:
+                    state = "ready"
+                return IndexReadinessReport(
+                    state=state,
+                    chunk_count=count,
+                    policy_count=policy_count,
+                    identity=identity,
+                    compatible=state == "ready",
+                )
+        except FileNotFoundError:
+            return IndexReadinessReport(state="missing")
+        except OSError:
+            return IndexReadinessReport(state="unreadable")
+        except sqlite3.DatabaseError as exc:
+            state = "unreadable" if is_sqlite_access_error(exc) else "invalid"
+            return IndexReadinessReport(state=state)
 
     def _validate_identity(
         self, conn: sqlite3.Connection, *, require_complete: bool = True
@@ -217,6 +273,7 @@ class SQLiteVecIndexStore(IndexStore):
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
         with closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
             rows = conn.execute(
                 f"""
                 SELECT
@@ -230,7 +287,10 @@ class SQLiteVecIndexStore(IndexStore):
                     doc_type,
                     domain,
                     tags_json,
-                    grounded_in_json
+                    grounded_in_json,
+                    (SELECT value FROM {_METADATA_TABLE}
+                     WHERE key = 'provenance:' || {_CHUNKS_TABLE}.policy_id)
+                        AS policy_provenance_json
                 FROM {_CHUNKS_TABLE}
                 ORDER BY rowid ASC
                 """
@@ -272,6 +332,8 @@ class SQLiteVecIndexStore(IndexStore):
                         c.domain,
                         c.tags_json,
                         c.grounded_in_json,
+                        (SELECT value FROM {_METADATA_TABLE}
+                         WHERE key = 'provenance:' || c.policy_id) AS policy_provenance_json,
                         v.distance
                     FROM {_VECTORS_TABLE} AS v
                     JOIN {_CHUNKS_TABLE} AS c ON c.rowid = v.rowid
@@ -450,7 +512,17 @@ def _initialize_schema(conn: sqlite3.Connection, *, dimension: int) -> None:
 
 def _insert_chunks(conn: sqlite3.Connection, chunks: Sequence[EmbeddedChunk]) -> None:
     """Insert validated embedded chunks into the chunk and vector tables."""
+    metadata: dict[str, str] = {}
     for rowid, chunk in enumerate(chunks, start=1):
+        serialized = (
+            chunk.policy.provenance.model_dump_json()
+            if chunk.policy.provenance is not None
+            else "null"
+        )
+        existing = metadata.get(chunk.policy.policy_id)
+        if existing is not None and existing != serialized:
+            raise IndexCompatibilityError("Chunks disagree about one policy's provenance.")
+        metadata[chunk.policy.policy_id] = serialized
         conn.execute(
             f"""
             INSERT INTO {_CHUNKS_TABLE} (
@@ -488,6 +560,14 @@ def _insert_chunks(conn: sqlite3.Connection, chunks: Sequence[EmbeddedChunk]) ->
             f"INSERT INTO {_VECTORS_TABLE} (rowid, embedding) VALUES (?, ?)",
             (rowid, sqlite_vec.serialize_float32([float(value) for value in chunk.vector])),
         )
+    conn.executemany(
+        f"INSERT INTO {_METADATA_TABLE} (key, value) VALUES (?, ?)",
+        [
+            (f"provenance:{policy_id}", value)
+            for policy_id, value in metadata.items()
+            if value != "null"
+        ],
+    )
 
 
 def _has_required_schema(conn: sqlite3.Connection) -> bool:
@@ -515,7 +595,7 @@ def _metadata_value(conn: sqlite3.Connection, key: str) -> str | None:
     return str(row["value"]) if row is not None else None
 
 
-def _read_identity(conn: sqlite3.Connection) -> IndexIdentity:
+def _read_identity(conn: sqlite3.Connection, *, allow_empty: bool = False) -> IndexIdentity:
     """Validate metadata against the physical vector table, never infer missing identity."""
     if _metadata_value(conn, "schema_version") != _SCHEMA_VERSION:
         raise IndexCompatibilityError()
@@ -542,8 +622,12 @@ def _read_identity(conn: sqlite3.Connection) -> IndexIdentity:
         if match is None or int(match[1]) != identity.dimension:
             raise ValueError("Vector schema does not match metadata")
         count = conn.execute(f"SELECT COUNT(*) FROM {_VECTORS_TABLE}").fetchone()[0]
-        if count != _count_chunks(conn) or count == 0:
+        if count != _count_chunks(conn) or (count == 0 and not allow_empty):
             raise ValueError("Vector and policy inventory disagree")
+        for row in conn.execute(
+            f"SELECT value FROM {_METADATA_TABLE} WHERE key LIKE 'provenance:%'"
+        ):
+            PolicyProvenance.model_validate_json(str(row[0]))
         return identity
     except (ValidationError, TypeError, ValueError, sqlite3.DatabaseError) as exc:
         raise IndexCompatibilityError() from exc
@@ -624,6 +708,12 @@ def _scored_chunk_from_row(row: sqlite3.Row) -> ScoredChunk:
 
 def _policy_metadata_from_row(row: sqlite3.Row) -> PolicyMetadata:
     """Deserialize policy metadata fields from a SQLite chunk row."""
+    provenance = None
+    if "policy_provenance_json" in row.keys() and row["policy_provenance_json"] is not None:
+        try:
+            provenance = PolicyProvenance.model_validate_json(str(row["policy_provenance_json"]))
+        except ValidationError as exc:
+            raise IndexCompatibilityError("Stored policy provenance is invalid.") from exc
     return PolicyMetadata(
         policy_id=str(row["policy_id"]),
         title=str(row["title"]),
@@ -631,6 +721,7 @@ def _policy_metadata_from_row(row: sqlite3.Row) -> PolicyMetadata:
         domain=str(row["domain"]),
         tags=_json_string_list(str(row["tags_json"])),
         grounded_in=_json_string_list(str(row["grounded_in_json"])),
+        provenance=provenance,
     )
 
 

@@ -1453,7 +1453,7 @@ def test_healthz_returns_fallback_payload_when_service_construction_fails(monkey
     assert response.status_code == 503
     payload = response.json()
     assert payload["ready"] is False
-    assert payload["reason"] == "Local index readiness could not be inspected: OSError."
+    assert payload["reason"] == "Local index readiness couldn't be inspected: OSError."
     assert payload["mcp_url"] == "https://beta.example.com/mcp"
     assert "index_uri" not in payload
 
@@ -1482,7 +1482,7 @@ def test_healthz_returns_fallback_payload_when_probe_fails(monkeypatch) -> None:
     assert response.status_code == 503
     payload = response.json()
     assert payload["ready"] is False
-    assert payload["reason"] == ("Local index readiness could not be inspected: RuntimeError.")
+    assert payload["reason"] == ("Local index readiness couldn't be inspected: RuntimeError.")
     assert payload["mcp_url"] == "https://beta.example.com/mcp"
     assert "index_uri" not in payload
 
@@ -2072,3 +2072,38 @@ def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, fa
     assert "Retry or" not in text
     assert closed == [True]
     assert events[0]["upstream_failure_class"] == failure
+
+
+@pytest.mark.parametrize("failure_point", ["construction", "probe"])
+def test_healthz_os_errors_never_echo_untrusted_exception_text(monkeypatch, failure_point, caplog):
+    """Exercise both public fallback paths with secret-bearing OS error messages."""
+    error = PermissionError(13, "Authorization: Bearer health-secret-sentinel", "/private/policy")
+
+    def fail(*args, **kwargs):
+        """Inject the same OS failure at the selected public health boundary."""
+        raise error
+
+    if failure_point == "construction":
+        monkeypatch.setattr(mcp_module, "create_runtime_health_service", fail)
+    else:
+
+        class FailingHealthService:
+            """Fail during probing after health route construction succeeds."""
+
+            def check(self):
+                """Raise an OS error containing a private diagnostic payload."""
+                raise error
+
+        monkeypatch.setattr(
+            mcp_module, "create_runtime_health_service", lambda settings: FailingHealthService()
+        )
+    app = mcp_module._build_streamable_http_app(Settings())
+    with TestClient(app, base_url="http://localhost") as client:
+        response = client.get("/healthz")
+    assert response.status_code == 503
+    assert "health-secret-sentinel" not in response.text
+    assert "/private/policy" not in response.text
+    assert "PermissionError" in response.json()["reason"]
+    assert "test_mcp.py" in caplog.text
+    assert "health-secret-sentinel" not in caplog.text
+    assert "/private/policy" not in caplog.text

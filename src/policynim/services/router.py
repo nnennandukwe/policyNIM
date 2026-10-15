@@ -8,9 +8,9 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
-from policynim.errors import MissingIndexError
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import require_index_ready
 from policynim.types import (
     PolicyMetadata,
     PolicySelectionPacket,
@@ -219,9 +219,9 @@ def _create_default_router_components(settings: Settings) -> tuple[Embedder, Rer
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
     """Reject missing or incompatible vectors before contacting the embedding provider."""
-    if not index_store.exists() or index_store.count() == 0:
-        raise MissingIndexError("Run `policynim ingest` before routing policy selection.")
-    index_store.validate_identity()
+    require_index_ready(
+        index_store, missing_message="Run `policynim ingest` before routing policy selection."
+    )
 
 
 def _matching_signals(text: str, patterns: Sequence[_TaskPattern]) -> list[str]:

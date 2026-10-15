@@ -56,6 +56,7 @@ from policynim.services import (
     ensure_hosted_runtime_ready,
     format_health_failure_reason,
 )
+from policynim.services.health import log_health_failure
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
 from policynim.types import (
@@ -735,7 +736,7 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
         health_service = create_runtime_health_service(settings)
         fallback_reason = "Local index readiness could not be inspected."
     except Exception as exc:
-        LOGGER.exception("Could not construct runtime health service.")
+        log_health_failure("Health service construction failed.", exc)
         health_service = None
         fallback_reason = format_health_failure_reason(exc)
 
@@ -759,7 +760,7 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
         try:
             result = await asyncio.to_thread(health_service.check)
         except Exception as exc:
-            LOGGER.exception("Runtime health probe failed.")
+            log_health_failure("Runtime health probe failed.", exc)
             return _fallback_result(format_health_failure_reason(exc))
 
         status_code = 200 if result.ready else 503

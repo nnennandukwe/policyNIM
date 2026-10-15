@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 
 from policynim.errors import InvalidPolicyDocumentError
+from policynim.ingest.catalog import load_pack_manifest, resolve_pack_members
 from policynim.ingest.parser import DocumentParser, MarkdownParser
-from policynim.types import DocumentSection, ParsedDocument
+from policynim.types import DocumentSection, ParsedDocument, PolicyProvenance
 
 
 def discover_policy_paths(root: Path | str) -> list[Path]:
@@ -23,6 +25,9 @@ def discover_policy_paths(root: Path | str) -> list[Path]:
             "directory containing policy Markdown files."
         )
 
+    manifest = load_pack_manifest(root)
+    if manifest is not None:
+        return sorted(resolve_pack_members(root, manifest))
     return sorted(path for path in root.rglob("*.md") if path.name != "TEMPLATE.md")
 
 
@@ -32,21 +37,45 @@ def load_policy_documents(
     parser: DocumentParser | None = None,
 ) -> list[ParsedDocument]:
     """Load and normalize every policy document under the corpus root."""
-    active_parser = parser or MarkdownParser()
     root_path = Path(root)
+    manifest = load_pack_manifest(root_path)
+    active_parser = parser or MarkdownParser(strict_metadata=manifest is not None)
+    member_paths = (
+        resolve_pack_members(root_path, manifest)
+        if manifest is not None
+        else discover_policy_paths(root_path)
+    )
+    paths = sorted(member_paths)
+    members = (
+        dict(zip(member_paths, manifest.policies, strict=True)) if manifest is not None else {}
+    )
     documents: list[ParsedDocument] = []
     seen_policy_ids: dict[str, str] = {}
 
-    for path in discover_policy_paths(root_path):
+    for path in paths:
         source_path = _repo_relative_path(path, root_path)
         try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
+            content = path.read_bytes()
+            text = content.decode("utf-8")
+        except (OSError, UnicodeError) as exc:
             raise InvalidPolicyDocumentError(
                 f"Could not read policy document {source_path}."
             ) from exc
 
         document = active_parser.parse(source_path, text)
+        digest = "sha256:" + sha256(content).hexdigest()
+        if manifest is not None:
+            member = members[path]
+            if member.policy_id != document.metadata.policy_id:
+                raise InvalidPolicyDocumentError(
+                    f"pack.toml policy_id for {member.path} doesn't match its Markdown policy_id."
+                )
+            provenance = member.provenance(digest=digest, pack=manifest)
+        else:
+            provenance = PolicyProvenance(content_digest=digest)
+        document = document.model_copy(
+            update={"metadata": document.metadata.model_copy(update={"provenance": provenance})}
+        )
         duplicate_path = seen_policy_ids.get(document.metadata.policy_id)
         if duplicate_path is not None:
             raise InvalidPolicyDocumentError(

@@ -1613,9 +1613,11 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     assert payload["status"] == "action_required"
     assert payload["runtime_mode"] == "standalone"
     assert payload["config"]["expected_init_config_file"] == str(config_root / "config.env")
-    assert payload["next_steps"] == [
+    assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
-    ]
+    )
+    assert payload["inventory"]["source"]["document_count"] == 9
+    assert payload["index"]["state"] == "missing"
     assert "nvapi" not in result.stdout.lower()
 
 
@@ -1835,10 +1837,7 @@ def test_doctor_flags_invalid_sqlite_index_file(
     assert local_index_check == {
         "name": "local_index_path",
         "status": "action_required",
-        "message": (
-            "Configured local SQLite index is missing valid embedding identity, "
-            "is incomplete, or does not match the configured embedding model."
-        ),
+        "message": ("The local index isn't a readable PolicyNIM sqlite-vec database."),
     }
     assert "separate POLICYNIM_INDEX_DB_PATH" in " ".join(payload["next_steps"])
 
@@ -1873,10 +1872,12 @@ def test_doctor_flags_legacy_lancedb_directory_index_path(
             "Set POLICYNIM_INDEX_DB_PATH to a SQLite file path such as data/index.sqlite3."
         ),
     }
-    assert (
-        "Replace deprecated `POLICYNIM_LANCEDB_URI` with "
-        "`POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
-    ) in payload["next_steps"]
+    recovery = " ".join(payload["next_steps"])
+    assert "Replace deprecated `POLICYNIM_LANCEDB_URI`" in recovery
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH" in recovery
+    assert "legacy-only policy content" in recovery
+    assert "Preserve the old directory" in recovery
+    assert "uv run policynim ingest" in recovery
     assert (
         "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
         not in payload["next_steps"]
@@ -1907,9 +1908,11 @@ def test_doctor_flags_canonical_directory_index_path(
     )
     assert local_index_check["status"] == "action_required"
     assert "points to a directory" in local_index_check["message"]
-    assert (
-        "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
-    ) in payload["next_steps"]
+    recovery = " ".join(payload["next_steps"])
+    assert "Set a fresh `POLICYNIM_INDEX_DB_PATH`" in recovery
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH" in recovery
+    assert "authoritative Markdown sources" in recovery
+    assert "uv run policynim ingest" in recovery
     assert "POLICYNIM_LANCEDB_URI" not in " ".join(payload["next_steps"])
 
 
@@ -2101,7 +2104,7 @@ def test_support_bundle_does_not_label_installed_cwd_as_repo_root(
     assert payload["first_run"]["runtime_mode"] == "standalone"
     assert "<repo-root>" not in payload["redaction"]["path_markers"]
     assert str(workspace) not in result.stdout
-    assert "workspace" not in result.stdout
+    assert payload["doctor"]["paths"]["eval_workspace_dir"] == "<data-dir>/evals/workspace"
 
 
 def test_support_bundle_redacts_custom_absolute_runtime_paths(

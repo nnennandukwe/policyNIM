@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from policynim.contracts import IndexStore
 from policynim.errors import (
-    MissingIndexError,
     RuntimeCitationLinkError,
     RuntimeRulesArtifactInvalidError,
     RuntimeRulesArtifactMissingError,
@@ -22,6 +21,7 @@ from policynim.errors import (
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import require_index_ready
 from policynim.types import (
     Citation,
     CompiledRuntimeRule,
@@ -206,9 +206,9 @@ def _load_indexed_chunk_spans(index_store: IndexStore) -> list[_IndexedChunkSpan
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
     """Require a non-empty local index before runtime decisions can proceed."""
-    if not index_store.exists() or index_store.count() == 0:
-        raise MissingIndexError("Run `policynim ingest` before using runtime decisions.")
-    index_store.validate_identity()
+    require_index_ready(
+        index_store, missing_message="Run `policynim ingest` before using runtime decisions."
+    )
 
 
 def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRuntimeAction:

@@ -103,6 +103,51 @@ class IndexIdentity(StrictModel):
     complete: bool
 
 
+class PolicySource(StrictModel):
+    """A declared reference whose missing revision and attribution remain explicit."""
+
+    title: str = Field(min_length=1)
+    url: AnyHttpUrl
+    revision: str | None = Field(default=None, min_length=1)
+    sections: list[str] = Field(default_factory=list)
+    retrieved_on: date | None = None
+    license: str | None = Field(default=None, min_length=1)
+    attribution: str | None = Field(default=None, min_length=1)
+    change_notice: str | None = Field(default=None, min_length=1)
+
+    @field_validator("title", "revision", "license", "attribution", "change_notice")
+    @classmethod
+    def reject_blank_source_text(cls, value: str | None) -> str | None:
+        """Preserve unknown values while rejecting whitespace presented as provenance."""
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("Source text mustn't be blank.")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def reject_source_credentials(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        """Reject embedded credentials instead of exposing them through the catalog."""
+        if value.username or value.password:
+            raise ValueError("Source URLs mustn't contain credentials.")
+        return value
+
+
+class PolicyProvenance(StrictModel):
+    """Bind authored bytes to a declared pack and explicit authority limits."""
+
+    content_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    pack_id: str | None = None
+    pack_version: str | None = None
+    requirement_level: Literal["required", "recommended", "informational", "unknown"] = "unknown"
+    applicability: list[str] = Field(default_factory=list)
+    grounding_kind: Literal[
+        "upstream_requirement", "adaptation", "project_recommendation", "legacy_unknown"
+    ] = "legacy_unknown"
+    sources: list[PolicySource] = Field(default_factory=list)
+
+
 class PolicyMetadata(StrictModel):
     """Describes a normalized policy document."""
 
@@ -112,6 +157,7 @@ class PolicyMetadata(StrictModel):
     domain: str
     tags: list[str] = Field(default_factory=list)
     grounded_in: list[str] = Field(default_factory=list)
+    provenance: PolicyProvenance | None = None
 
 
 class PolicyChunk(StrictModel):
@@ -682,6 +728,7 @@ class IngestResult(StrictModel):
     document_count: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
     embedding_dimension: int = Field(ge=1)
+    catalog_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class HealthCheckResult(StrictModel):
