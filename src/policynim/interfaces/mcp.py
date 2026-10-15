@@ -10,13 +10,14 @@ import secrets
 import socket
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import lru_cache, partial
 from importlib.metadata import PackageNotFoundError, version
 from ipaddress import IPv6Address, ip_address
 from pathlib import Path
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Event, Lock
 from typing import Annotated, TypeVar
 from urllib.parse import urlsplit
 
@@ -54,6 +55,7 @@ from policynim.interfaces.mcp_authorization import (
     OperationAuthorizationApp,
     record_authorization_failure,
 )
+from policynim.operations import OperationBudget, operation_scope
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -131,23 +133,30 @@ async def _run_sync_until_complete(
     operation: Callable[[], _OperationResult],
     *,
     limiter: anyio.CapacityLimiter | None = None,
+    on_cancel: Callable[[], None] | None = None,
 ) -> _OperationResult:
     """Drain synchronous work and its cleanup before propagating cancellation."""
     worker = asyncio.create_task(
         to_thread.run_sync(operation, limiter=limiter, abandon_on_cancel=False)
     )
     cancellation: asyncio.CancelledError | None = None
-    with anyio.CancelScope(shield=True):
-        while True:
-            try:
-                await asyncio.shield(worker)
-                break
-            except asyncio.CancelledError as exc:
-                if worker.cancelled():
+    try:
+        await asyncio.shield(worker)
+    except asyncio.CancelledError as exc:
+        cancellation = exc
+        if on_cancel is not None:
+            on_cancel()
+        with anyio.CancelScope(shield=True):
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
                     break
-                cancellation = exc
-            except Exception:
-                break
+    # Observe a drained failure before an AnyIO cancellation checkpoint can raise.
+    if worker.done() and not worker.cancelled():
+        worker.exception()
     await checkpoint_if_cancelled()
     if cancellation is not None:
         raise cancellation
@@ -155,21 +164,72 @@ async def _run_sync_until_complete(
 
 
 class _ToolExecutor:
-    """Admit tool work immediately and retain its slot through worker cleanup."""
+    """Own shared clients and retain admission slots until all work and cleanup finish."""
 
-    def __init__(self, capacity: int) -> None:
-        """Allocate independent admission and worker limits for one server."""
-        self._admission = BoundedSemaphore(capacity)
-        self._workers = anyio.CapacityLimiter(capacity)
+    def __init__(self, capacity: int | None = None, *, settings: Settings | None = None) -> None:
+        """Keep default-server settings lazy until its first operation."""
+        from policynim.providers.lifecycle import NVIDIAClients
+
+        self._capacity = capacity
+        self._settings = settings
+        self._admission: BoundedSemaphore | None = None
+        self._workers: anyio.CapacityLimiter | None = None
+        self._clients = NVIDIAClients()
+        self._lock = Lock()
+        self._budgets: set[OperationBudget] = set()
+        self._closed = False
+        self._drained = Event()
+        self._drained.set()
 
     async def run(self, operation: Callable[[], _OperationResult]) -> _OperationResult:
-        """Run admitted work or reject overload before dispatching a worker."""
-        if not self._admission.acquire(blocking=False):
-            raise ToolError("server_busy: PolicyNIM is at capacity. Retry later.")
+        """Admit one budget, borrow shared clients, and cooperatively cancel later stages."""
+        from policynim.providers.lifecycle import borrow_clients
+
+        settings = self._settings or get_settings()
+        budget = OperationBudget(settings.operation_timeout_seconds)
+        with self._lock:
+            if self._closed:
+                raise ToolError("server_shutting_down: Retry later.")
+            if self._admission is None:
+                capacity = self._capacity or settings.mcp_max_concurrent_operations
+                self._admission = BoundedSemaphore(capacity)
+                self._workers = anyio.CapacityLimiter(capacity)
+            admission = self._admission
+            if not admission.acquire(blocking=False):
+                raise ToolError("server_busy: PolicyNIM is at capacity. Retry later.")
+            self._budgets.add(budget)
+            self._drained.clear()
+
+        def run_owned() -> _OperationResult:
+            """Scope clients and the deadline to this worker's service graph."""
+            with borrow_clients(self._clients), operation_scope(budget):
+                return operation()
+
         try:
-            return await _run_sync_until_complete(operation, limiter=self._workers)
+            return await _run_sync_until_complete(
+                run_owned, limiter=self._workers, on_cancel=budget.cancelled.set
+            )
         finally:
-            self._admission.release()
+            with self._lock:
+                self._budgets.remove(budget)
+                admission.release()
+                if not self._budgets:
+                    self._drained.set()
+
+    async def close(self) -> None:
+        """Reject new work, signal active requests, drain cleanup, and close clients."""
+        with self._lock:
+            self._closed = True
+            for budget in self._budgets:
+                budget.cancelled.set()
+
+        def drain_and_close() -> None:
+            """Keep the entire shutdown sequence owned even if its awaiting task is cancelled."""
+            self._drained.wait()
+            self._clients.close()
+
+        with anyio.CancelScope(shield=True):
+            await _run_sync_until_complete(drain_and_close)
 
 
 class _InMemoryRateLimiter:
@@ -236,6 +296,11 @@ def _configure_hosted_logger() -> None:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    operations_logger = logging.getLogger("policynim.operations")
+    operations_logger.handlers.clear()
+    operations_logger.addHandler(handler)
+    operations_logger.setLevel(logging.INFO)
+    operations_logger.propagate = False
     setattr(logger, "_policynim_configured", True)
 
 
@@ -475,6 +540,12 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
                 "against the current API catalog, including Docker build-time configuration."
             ),
             "timeout": "The policy model provider timed out. Retry later.",
+            "deadline_exhausted": "The operation couldn't finish within its deadline. Retry later.",
+            "retry_after_limit": (
+                "The provider requested a longer wait than this service allows. Retry later."
+            ),
+            "cancelled": "The operation was cancelled; upstream usage may already exist.",
+            "shutdown": "The policy server is shutting down. Retry later.",
             "rate_limit": "The policy model provider is rate limited. Retry later.",
             "connection": "The policy model provider is unavailable. Retry later.",
             "auth": "Policy model authentication failed. Ask the operator to check credentials.",
@@ -492,11 +563,21 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
     )
 
 
+class _ManagedMCPServer(MCPServer):
+    """Keep tool dispatch and transport lifespan bound to the same resource owner."""
+
+    runtime: _ToolExecutor
+
+
 def _register_tools(
-    server: MCPServer, *, capacity: int | None = None, require_principal: bool = False
-) -> MCPServer:
-    """Register tools, resolving an omitted capacity once when the first tool runs."""
-    executor = _ToolExecutor(capacity) if capacity is not None else None
+    server: _ManagedMCPServer, *, capacity: int | None = None, require_principal: bool = False
+) -> _ManagedMCPServer:
+    """Register authorized tools against the executor already owned by this server."""
+    executor = server.runtime
+    if capacity is not None:
+        if executor._admission is not None:
+            raise ValueError("Register tool capacity before serving requests.")
+        executor._capacity = capacity
 
     def get_principal(operation: str) -> AuthenticatedPrincipal | None:
         """Require fresh service authority for every hosted tool invocation."""
@@ -515,13 +596,6 @@ def _register_tools(
                 record_authorization_failure(exc)
                 raise ToolError(str(exc)) from exc
         return principal
-
-    def get_executor() -> _ToolExecutor:
-        """Initialize the server's fixed limit without import-time settings side effects."""
-        nonlocal executor
-        if executor is None:
-            executor = _ToolExecutor(get_settings().mcp_max_concurrent_operations)
-        return executor
 
     annotations = ToolAnnotations(
         read_only_hint=True,
@@ -549,7 +623,7 @@ def _register_tools(
                 task=task, domain=domain, top_k=top_k, principal=principal
             ),
             ctx=ctx,
-            executor=get_executor(),
+            executor=executor,
         )
         return PreflightResult.model_validate(result)
 
@@ -572,7 +646,7 @@ def _register_tools(
                 query=query, domain=domain, top_k=top_k, principal=principal
             ),
             ctx=ctx,
-            executor=get_executor(),
+            executor=executor,
         )
         return SearchResult.model_validate(result)
 
@@ -580,9 +654,12 @@ def _register_tools(
 
 
 def _new_mcp_server(
-    settings: Settings | None = None, *, beta_auth_service: BetaAuthService | None = None
-) -> MCPServer:
-    """Identify the application independently from its MCP SDK version."""
+    runtime: _ToolExecutor | None = None,
+    *,
+    settings: Settings | None = None,
+    beta_auth_service: BetaAuthService | None = None,
+) -> _ManagedMCPServer:
+    """Create one authorized server and resource owner without eagerly reading settings."""
     try:
         application_version = version("policynim")
     except PackageNotFoundError:
@@ -597,8 +674,23 @@ def _new_mcp_server(
             required_scopes=[],
             validate_token_resource=True,
         )
-    return MCPServer(
+
+    active_runtime = runtime if runtime is not None else _ToolExecutor()
+
+    @asynccontextmanager
+    async def lifespan(server: MCPServer) -> AsyncIterator[dict[str, object]]:
+        """Keep pooled clients alive through worker drain for HTTP and stdio transports."""
+        # SDK 2.2's HTTP manager owns this once for its application lifetime,
+        # including stateless requests. Server.run owns it for stdio.
+        # See test_stateless_http_retains_one_pool_across_sequential_and_concurrent_requests.
+        try:
+            yield {}
+        finally:
+            await active_runtime.close()
+
+    server = _ManagedMCPServer(
         "PolicyNIM",
+        lifespan=lifespan,
         version=application_version,
         auth=auth,
         token_verifier=verifier,
@@ -608,6 +700,9 @@ def _new_mcp_server(
         ),
     )
 
+    server.runtime = active_runtime
+    return server
+
 
 def _create_mcp_server(
     settings: Settings,
@@ -616,9 +711,9 @@ def _create_mcp_server(
     require_principal: bool = True,
 ) -> MCPServer:
     """Create a fresh MCP server configured from runtime settings."""
+    runtime = _ToolExecutor(settings.mcp_max_concurrent_operations, settings=settings)
     server = _register_tools(
-        _new_mcp_server(settings, beta_auth_service=beta_auth_service),
-        capacity=settings.mcp_max_concurrent_operations,
+        _new_mcp_server(runtime, settings=settings, beta_auth_service=beta_auth_service),
         require_principal=settings.mcp_require_auth and require_principal,
     )
     _register_health_route(server, settings)

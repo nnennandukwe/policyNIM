@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
+from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -23,7 +24,10 @@ class SearchService:
         embedder: Embedder,
         index_store: IndexStore,
         reranker: Reranker | None = None,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Assign operation-local dependencies and the outer deadline default."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         self._embedder = embedder
         self._index_store = index_store
         self._reranker = reranker
@@ -41,9 +45,9 @@ class SearchService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._embedder)
-        _close_component(self._reranker)
+        close_components(self._embedder, self._reranker)
 
+    @bounded_stage("search")
     def search(
         self, request: SearchRequest, *, principal: AuthenticatedPrincipal | None = None
     ) -> SearchResult:
@@ -52,7 +56,9 @@ class SearchService:
             authorize_operation(principal, "policy_search")
         _ensure_index_ready(self._index_store)
 
+        check_budget()
         query_embedding = self._embedder.embed_query(request.query)
+        check_budget()
         dense_candidates = self._index_store.search(
             query_embedding,
             top_k=max(request.top_k, _DEFAULT_RERANK_CANDIDATE_POOL),
@@ -69,6 +75,7 @@ class SearchService:
 
         hits = dense_candidates[: request.top_k]
         if self._reranker is not None:
+            check_budget()
             hits = self._reranker.rerank(request.query, dense_candidates, top_k=request.top_k)
 
         return SearchResult(
@@ -89,16 +96,20 @@ def create_search_service(settings: Settings | None = None) -> SearchService:
         embedder=embedder,
         index_store=index_store,
         reranker=reranker,
+        operation_timeout_seconds=active_settings.operation_timeout_seconds,
     )
 
 
 def _create_default_search_components(settings: Settings) -> tuple[Embedder, Reranker]:
+    """Create owned adapters and clean up if the second constructor fails."""
     from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 
-    return (
-        NVIDIAEmbedder.from_settings(settings),
-        NVIDIAReranker.from_settings(settings),
-    )
+    embedder = NVIDIAEmbedder.from_settings(settings)
+    try:
+        return embedder, NVIDIAReranker.from_settings(settings)
+    except BaseException as error:
+        close_components(embedder, primary_error=error)
+        raise
 
 
 def _ensure_index_ready(index_store: IndexStore) -> None:
@@ -106,9 +117,3 @@ def _ensure_index_ready(index_store: IndexStore) -> None:
     require_index_ready(
         index_store, missing_message="Run `policynim ingest` before searching the policy corpus."
     )
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()

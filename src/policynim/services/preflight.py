@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
+from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
 from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
 from policynim.services.router import PolicyRouterService
@@ -46,7 +47,10 @@ class PreflightService:
         embedder: Embedder | None = None,
         index_store: IndexStore | None = None,
         reranker: Reranker | None = None,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Assign operation-local dependencies and the outer deadline default."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         if compiler_service is None:
             if compiler is None:
                 raise ValueError(
@@ -86,9 +90,9 @@ class PreflightService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        _close_component(self._compiler_service)
-        _close_component(self._generator)
+        close_components(self._compiler_service, self._generator)
 
+    @bounded_stage("preflight")
     def preflight(
         self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
     ) -> PreflightResult:
@@ -99,6 +103,7 @@ class PreflightService:
         assert isinstance(output, PreflightResult)
         return output
 
+    @bounded_stage("preflight")
     def preflight_with_trace(
         self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
     ) -> PreflightTraceResult:
@@ -115,6 +120,7 @@ class PreflightService:
         *,
         with_trace: bool,
     ) -> PreflightResult | PreflightTraceResult:
+        """Compile and generate guidance while retaining the outer operation budget."""
         compile_result = self._compiler_service.compile(
             CompileRequest(task=request.task, domain=request.domain, top_k=request.top_k)
         )
@@ -142,6 +148,7 @@ class PreflightService:
             )
 
         retained_context = compile_result.retained_context
+        check_budget()
         generated = self._generator.generate_preflight(
             request,
             retained_context,
@@ -195,11 +202,16 @@ def create_preflight_service(settings: Settings | None = None) -> PreflightServi
     """Build the default preflight service from application settings."""
     active_settings = settings or get_settings()
     compiler_service = create_policy_compiler_service(active_settings)
-    generator = _create_default_generator(active_settings)
-    return PreflightService(
-        compiler_service=compiler_service,
-        generator=generator,
-    )
+    try:
+        generator = _create_default_generator(active_settings)
+        return PreflightService(
+            compiler_service=compiler_service,
+            generator=generator,
+            operation_timeout_seconds=active_settings.operation_timeout_seconds,
+        )
+    except BaseException as error:
+        close_components(compiler_service, primary_error=error)
+        raise
 
 
 def _create_default_generator(settings: Settings) -> Generator:
@@ -399,12 +411,6 @@ def _trace_step(
         summary=summary.strip() or kind,
         citation_ids=_ordered_unique(list(citation_ids)),
     )
-
-
-def _close_component(component: object | None) -> None:
-    close = getattr(component, "close", None)
-    if callable(close):
-        close()
 
 
 __all__ = [
