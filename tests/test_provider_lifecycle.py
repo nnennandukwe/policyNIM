@@ -360,3 +360,49 @@ def test_cancelling_shutdown_still_closes_pool_after_drain(monkeypatch) -> None:
         assert transport.closes == 1
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["search", "preflight", "regeneration"])
+def test_live_eval_factories_close_partial_provider_graphs(monkeypatch, kind: str) -> None:
+    """Evaluation factory failure closes every provider created before the failure."""
+    from types import SimpleNamespace
+
+    import policynim.providers as providers
+    import policynim.services.eval as evaluation
+
+    closed = []
+
+    def resource(name):
+        """Build a constructor result that records deterministic optional cleanup."""
+        return SimpleNamespace(close=lambda: closed.append(name))
+
+    for adapter, name in [
+        (providers.NVIDIAEmbedder, "embedder"),
+        (providers.NVIDIAReranker, "reranker"),
+        (providers.NVIDIAGenerator, "generator"),
+        (providers.NVIDIAPolicyCompiler, "compiler"),
+    ]:
+        monkeypatch.setattr(adapter, "from_settings", lambda active, name=name: resource(name))
+
+    def fail(*args, **kwargs):
+        """Reject a later construction after earlier resources already exist."""
+        raise RuntimeError("construction failed")
+
+    monkeypatch.setattr(evaluation, "create_index_store", lambda active: object())
+    if kind == "search":
+        monkeypatch.setattr(evaluation, "create_index_store", fail)
+    elif kind == "preflight":
+        monkeypatch.setattr(providers.NVIDIAPolicyCompiler, "from_settings", fail)
+    else:
+        monkeypatch.setattr(evaluation, "_create_live_conformance_service", fail)
+    factory = getattr(evaluation, "_create_live_" + kind + "_service")
+    kwargs = {"backend": "nemo"} if kind == "regeneration" else {}
+    with pytest.raises(RuntimeError, match="construction failed"):
+        factory(settings(), rerank_enabled=True, **kwargs)
+    expected = {
+        "search": {"embedder", "reranker"},
+        "preflight": {"embedder", "reranker", "generator"},
+        "regeneration": {"embedder", "reranker", "generator", "compiler"},
+    }[kind]
+    assert set(closed) == expected
+    assert len(closed) == len(expected)

@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 from collections.abc import Sequence
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -19,7 +20,7 @@ from typing import Any, cast
 
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
-from policynim.operations import check_budget, operation_scope
+from policynim.operations import check_budget, close_components, operation_scope
 from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
@@ -325,29 +326,33 @@ class EvalService:
             finally:
                 _close_component(ingest_service)
 
-            search_service = _create_live_search_service(
-                temp_settings,
-                rerank_enabled=rerank_enabled,
-            )
-            preflight_service = _create_live_preflight_service(
-                temp_settings,
-                rerank_enabled=rerank_enabled,
-            )
-            conformance_service = (
-                _create_live_conformance_service(temp_settings, backend=backend)
-                if backend != "default" and not regenerate
-                else None
-            )
-            regeneration_service = (
-                _create_live_regeneration_service(
+            with ExitStack() as cleanup:
+                search_service = _create_live_search_service(
                     temp_settings,
-                    backend=backend,
                     rerank_enabled=rerank_enabled,
                 )
-                if regenerate
-                else None
-            )
-            try:
+                cleanup.callback(close_components, search_service)
+                preflight_service = _create_live_preflight_service(
+                    temp_settings,
+                    rerank_enabled=rerank_enabled,
+                )
+                cleanup.callback(close_components, preflight_service)
+                conformance_service = (
+                    _create_live_conformance_service(temp_settings, backend=backend)
+                    if backend != "default" and not regenerate
+                    else None
+                )
+                cleanup.callback(close_components, conformance_service)
+                regeneration_service = (
+                    _create_live_regeneration_service(
+                        temp_settings,
+                        backend=backend,
+                        rerank_enabled=rerank_enabled,
+                    )
+                    if regenerate
+                    else None
+                )
+                cleanup.callback(close_components, regeneration_service)
                 return _score_suite_cases(
                     suite.cases,
                     search_service=search_service,
@@ -359,11 +364,6 @@ class EvalService:
                     max_regenerations=max_regenerations,
                     operation_timeout_seconds=self._settings.operation_timeout_seconds,
                 )
-            finally:
-                search_service.close()
-                preflight_service.close()
-                _close_component(conformance_service)
-                _close_component(regeneration_service)
 
     def _persist_mode_run(
         self,
@@ -1271,12 +1271,19 @@ def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> 
     """Build live search with the configured operation timeout."""
     from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 
-    return SearchService(
-        operation_timeout_seconds=settings.operation_timeout_seconds,
-        embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=create_index_store(settings),
-        reranker=NVIDIAReranker.from_settings(settings) if rerank_enabled else None,
-    )
+    with ExitStack() as cleanup:
+        embedder = NVIDIAEmbedder.from_settings(settings)
+        cleanup.callback(close_components, embedder)
+        reranker = NVIDIAReranker.from_settings(settings) if rerank_enabled else None
+        cleanup.callback(close_components, reranker)
+        service = SearchService(
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            embedder=embedder,
+            index_store=create_index_store(settings),
+            reranker=reranker,
+        )
+        cleanup.pop_all()
+        return service
 
 
 def _create_live_preflight_service(
@@ -1292,16 +1299,27 @@ def _create_live_preflight_service(
         NVIDIAReranker,
     )
 
-    return PreflightService(
-        operation_timeout_seconds=settings.operation_timeout_seconds,
-        embedder=NVIDIAEmbedder.from_settings(settings),
-        index_store=create_index_store(settings),
-        reranker=(
+    with ExitStack() as cleanup:
+        embedder = NVIDIAEmbedder.from_settings(settings)
+        cleanup.callback(close_components, embedder)
+        reranker = (
             NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
-        ),
-        generator=NVIDIAGenerator.from_settings(settings),
-        compiler=NVIDIAPolicyCompiler.from_settings(settings),
-    )
+        )
+        cleanup.callback(close_components, reranker)
+        generator = NVIDIAGenerator.from_settings(settings)
+        cleanup.callback(close_components, generator)
+        compiler = NVIDIAPolicyCompiler.from_settings(settings)
+        cleanup.callback(close_components, compiler)
+        service = PreflightService(
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            embedder=embedder,
+            index_store=create_index_store(settings),
+            reranker=reranker,
+            generator=generator,
+            compiler=compiler,
+        )
+        cleanup.pop_all()
+        return service
 
 
 def _create_live_conformance_service(
@@ -1342,34 +1360,33 @@ def _create_live_regeneration_service(
         NVIDIAReranker,
     )
 
-    compiler_service: PolicyCompilerService | None = None
-    generator: Generator | None = None
-    conformance_service: PolicyConformanceService | None = None
-    try:
+    with ExitStack() as cleanup:
+        embedder = NVIDIAEmbedder.from_settings(settings)
+        cleanup.callback(close_components, embedder)
+        reranker = (
+            NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
+        )
+        cleanup.callback(close_components, reranker)
+        compiler = NVIDIAPolicyCompiler.from_settings(settings)
+        cleanup.callback(close_components, compiler)
         compiler_service = PolicyCompilerService(
-            embedder=NVIDIAEmbedder.from_settings(settings),
+            embedder=embedder,
             index_store=create_index_store(settings),
-            reranker=(
-                NVIDIAReranker.from_settings(settings) if rerank_enabled else _PassThroughReranker()
-            ),
-            compiler=NVIDIAPolicyCompiler.from_settings(settings),
+            reranker=reranker,
+            compiler=compiler,
         )
         generator = NVIDIAGenerator.from_settings(settings)
-        conformance_service = _create_live_conformance_service(
-            settings,
-            backend=backend,
-        )
-        return PolicyRegenerationService(
+        cleanup.callback(close_components, generator)
+        conformance_service = _create_live_conformance_service(settings, backend=backend)
+        cleanup.callback(close_components, conformance_service)
+        service = PolicyRegenerationService(
             operation_timeout_seconds=settings.operation_timeout_seconds,
             compiler_service=compiler_service,
             generator=generator,
             conformance_service=conformance_service,
         )
-    except Exception:
-        _close_component(conformance_service)
-        _close_component(generator)
-        _close_component(compiler_service)
-        raise
+        cleanup.pop_all()
+        return service
 
 
 def _close_component(component: object | None) -> None:
