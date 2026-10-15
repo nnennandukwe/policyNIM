@@ -26,8 +26,11 @@ README files, templates, and author notes aren't policies. List and validation
 reports expose unselected files as `unlisted_markdown`; they aren't silently added.
 When copying `TEMPLATE.md` to create a new policy, register the new ID and path in
 the manifest before ingestion. The bundled
-`policynim.baseline@0.1.0` manifest lists the existing nine policies without
-changing their IDs or content.
+`policynim.baseline@0.2.0` manifest selects 15 policies, including nine maintained
+security policies with pinned source metadata. Existing IDs remain stable. See
+the [security coverage matrix](security-mcp-coverage.md) for changes and notices.
+This source-pack version doesn't change the software/package version or establish
+an indexed/deployed inventory.
 
 A local pack can use this shape:
 

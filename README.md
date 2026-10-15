@@ -61,6 +61,12 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 (default `10`). Excess calls receive a retry-later error. See the
 [MCP workflow](docs/workflows.md) for transport and public-origin configuration.
 
+The maintained source baseline includes application-security and MCP trust guidance
+with pinned references, role boundaries, and authored scenarios. See the
+[coverage matrix and source licenses](docs/security-mcp-coverage.md). Policy text
+has source-specific notices; software licensing remains separate. Source contents
+don't establish the hosted service's indexed generation.
+
 ## Inspect Policies Without An API Key
 
 These new commands are available from this source checkout or a wheel built from
