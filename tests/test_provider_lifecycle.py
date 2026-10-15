@@ -332,3 +332,31 @@ def test_pool_close_failure_still_attempts_all_owned_clients() -> None:
     assert closed == ["sdk", "retrieval"]
     assert first.is_closed and second.is_closed
     assert pool._closed and not pool._clients
+
+
+def test_cancelling_shutdown_still_closes_pool_after_drain(monkeypatch) -> None:
+    """Direct task cancellation during shutdown can't skip the final pool close."""
+    transport = BlockingTransport(1)
+    clients = install_sdk(monkeypatch, transport)
+    active_settings = settings()
+
+    async def scenario() -> None:
+        """Cancel shutdown while a request holds a shared transport open."""
+        executor = _ToolExecutor(1, settings=active_settings)
+        request = asyncio.create_task(
+            executor.run(
+                lambda: NVIDIAEmbedder.from_settings(active_settings).embed_query("private")
+            )
+        )
+        assert await asyncio.to_thread(transport.started.wait, 2)
+        budget = next(iter(executor._budgets))
+        shutdown = asyncio.create_task(executor.close())
+        assert await asyncio.to_thread(budget.cancelled.wait, 2)
+        shutdown.cancel()
+        transport.release.set()
+        await asyncio.gather(request, shutdown, return_exceptions=True)
+        assert not executor._budgets
+        assert clients[0].is_closed()
+        assert transport.closes == 1
+
+    asyncio.run(scenario())

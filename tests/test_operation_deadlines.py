@@ -541,3 +541,75 @@ def test_injected_sdk_retries_dont_multiply_adapter_attempts(monkeypatch) -> Non
             adapter.close()
             assert not client.is_closed()
     assert len(requests) == 2
+
+
+def test_malformed_embedding_attempt_is_logged_as_invalid(monkeypatch, caplog) -> None:
+    """HTTP success with invalid vectors must fail the attempt's diagnostic event."""
+    import json
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("policynim.operations"), "propagate", True)
+    caplog.set_level(logging.INFO, logger="policynim.operations")
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": []}))
+    ) as http:
+        with OpenAI(
+            api_key="test", base_url="https://provider.invalid", http_client=http, max_retries=0
+        ) as client:
+            adapter = NVIDIAEmbedder(
+                api_key="test",
+                model="test",
+                base_url="https://provider.invalid",
+                batch_size=2,
+                timeout_seconds=1,
+                max_retries=2,
+                client=client,
+            )
+            with pytest.raises(ProviderError):
+                adapter.embed_query("private")
+    attempts = [
+        json.loads(record.message) for record in caplog.records if '"attempt"' in record.message
+    ]
+    assert len(attempts) == 1
+    assert attempts[0]["failure_class"] == "invalid_response"
+
+
+def test_direct_guardrails_factory_honors_configured_timeout(monkeypatch) -> None:
+    """Direct optional-adapter calls must start with the settings deadline."""
+    from test_nemo_guardrails_preflight_generator import (
+        MockGenerator,
+        MockRails,
+        draft_json,
+        make_chunk,
+        make_draft,
+        rail_result,
+    )
+
+    import policynim.providers.nvidia_guardrails as guardrails
+    from policynim.operations import current_budget
+    from policynim.settings import Settings
+    from policynim.types import PreflightRequest
+
+    draft = make_draft()
+    base = MockGenerator([draft])
+    rails = MockRails([rail_result(status="passed", content=draft_json(draft))])
+    seen = []
+    original = base.generate_preflight
+
+    def generate(*args, **kwargs):
+        """Read the actual budget inherited by the underlying generator."""
+        seen.append(current_budget().remaining())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(base, "generate_preflight", generate)
+    monkeypatch.setattr(guardrails.NVIDIAGenerator, "from_settings", lambda settings: base)
+    monkeypatch.setattr(guardrails, "_create_default_output_rails", lambda **kwargs: (rails, None))
+    adapter = guardrails.NeMoGuardrailsPreflightGenerator.from_settings(
+        Settings(**NO_ENV, nvidia_api_key="test", operation_timeout_seconds=2)
+    )
+    try:
+        adapter.generate_preflight(PreflightRequest(task="fix backend logging"), [make_chunk()])
+    finally:
+        adapter.close()
+    assert len(seen) == 1
+    assert 0 < seen[0] <= 2

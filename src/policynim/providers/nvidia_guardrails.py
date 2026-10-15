@@ -57,7 +57,10 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         rail_type_output: Any | None = None,
         owns_rails: bool = False,
         model: str | None = None,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Own output rails and inherit the configured outer operation timeout."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         if rails is None:
             try:
                 rails, rail_type_output = _create_default_output_rails(
@@ -86,6 +89,7 @@ class NeMoGuardrailsPreflightGenerator(Generator):
                 rails=rails,
                 rail_type_output=rail_type_output,
                 owns_rails=True,
+                operation_timeout_seconds=settings.operation_timeout_seconds,
             )
         except Exception:
             _close_component(base_generator)

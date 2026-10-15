@@ -162,15 +162,15 @@ class NVIDIAEmbedder(Embedder):
                 timeout=timeout,
             )
 
-        response = _request_with_retry(
+        return _request_with_retry(
             send,
+            validate=lambda response: _validate_embeddings_response(
+                getattr(response, "data", None), expected_count=len(texts)
+            ),
             operation="embeddings",
             model_setting="EMBED",
             endpoint_setting="BASE_URL",
             **self._request_options(),
-        )
-        return _validate_embeddings_response(
-            getattr(response, "data", None), expected_count=len(texts)
         )
 
     def _request_options(self) -> dict[str, Any]:
@@ -282,21 +282,14 @@ class NVIDIAReranker(Reranker):
             "passages": [{"text": candidate.text} for candidate in candidates],
             "truncate": "END",
         }
-        response = self._request_ranking(payload)
-        scores = _extract_rerank_scores(response, expected_count=len(candidates))
-
-        if not all(math.isfinite(score) for score in scores):
-            raise ProviderError(
-                "NVIDIA reranking response returned a non-finite score.",
-                failure_class="invalid_response",
-            )
+        scores = self._request_ranking(payload, expected_count=len(candidates))
         ranked = sorted(zip(candidates, scores, strict=True), key=lambda row: row[1], reverse=True)
         return [
             candidate.model_copy(update={"score": _rerank_score(score, model=self._model)})
             for candidate, score in ranked[:top_k]
         ]
 
-    def _request_ranking(self, payload: dict[str, object]) -> Any:
+    def _request_ranking(self, payload: dict[str, object], *, expected_count: int) -> list[float]:
         """Request passage rankings and classify failures without exposing response bodies."""
         endpoint = f"{self._model}/reranking"
 
@@ -309,8 +302,19 @@ class NVIDIAReranker(Reranker):
             finally:
                 _close_client(response)
 
+        def validate(response: Any) -> list[float]:
+            """Classify malformed scores inside the attempt diagnostic boundary."""
+            scores = _extract_rerank_scores(response, expected_count=expected_count)
+            if not all(math.isfinite(score) for score in scores):
+                raise ProviderError(
+                    "NVIDIA reranking response returned a non-finite score.",
+                    failure_class="invalid_response",
+                )
+            return scores
+
         return _request_with_retry(
             send,
+            validate=validate,
             operation="reranking",
             model_setting="RERANK",
             endpoint_setting="RETRIEVAL_BASE_URL",
@@ -402,17 +406,17 @@ class NVIDIAGenerator(Generator):
             compiled_packet=compiled_packet,
             regeneration_context=regeneration_context,
         )
-        content = _request_chat_completion(
+        return _request_chat_completion(
             self._client,
             model=self._model,
             messages=messages,
             max_retries=self._max_retries,
             operation="grounded generation",
+            parse=_parse_generation_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
             retry_max_seconds=self._retry_max_seconds,
         )
-        return _parse_generation_draft(content)
 
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
@@ -494,17 +498,17 @@ class NVIDIAPolicyCompiler:
     ) -> GeneratedCompiledPolicyDraft:
         """Compile a routed policy-selection packet into grounded constraints."""
         messages = _build_policy_compiler_messages(request, selection_packet, context)
-        content = _request_chat_completion(
+        return _request_chat_completion(
             self._client,
             model=self._model,
             messages=messages,
             max_retries=self._max_retries,
             operation="policy compilation",
+            parse=_parse_compiled_policy_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
             retry_max_seconds=self._retry_max_seconds,
         )
-        return _parse_compiled_policy_draft(content)
 
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
@@ -586,17 +590,17 @@ class NVIDIAPolicyConformanceEvaluator:
     ) -> GeneratedPolicyConformanceDraft:
         """Judge final and optional trajectory adherence for a preflight trace."""
         messages = _build_policy_conformance_messages(request)
-        content = _request_chat_completion(
+        return _request_chat_completion(
             self._client,
             model=self._model,
             messages=messages,
             max_retries=self._max_retries,
             operation="policy conformance evaluation",
+            parse=lambda content: _parse_policy_conformance_draft(content, request),
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
             retry_max_seconds=self._retry_max_seconds,
         )
-        return _parse_policy_conformance_draft(content, request)
 
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
@@ -611,10 +615,11 @@ def _request_chat_completion(
     messages: list[ChatCompletionMessageParam],
     max_retries: int,
     operation: str,
+    parse: Callable[[str], Any],
     timeout_seconds: float = 30.0,
     retry_initial_seconds: float = 0.5,
     retry_max_seconds: float = 8.0,
-) -> str:
+) -> Any:
     """Request structured chat output and sanitize provider failures."""
     options: dict[str, Any] = {"temperature": 0, "top_p": 1}
     if model == "nvidia/nemotron-3-super-120b-a12b":
@@ -630,8 +635,9 @@ def _request_chat_completion(
             model=model, messages=messages, timeout=timeout, **options
         )
 
-    response = _request_with_retry(
+    return _request_with_retry(
         send,
+        validate=lambda response: parse(_extract_chat_content(response, operation=operation)),
         operation=operation,
         model_setting="CHAT",
         endpoint_setting="BASE_URL",
@@ -640,7 +646,6 @@ def _request_chat_completion(
         retry_initial_seconds=retry_initial_seconds,
         retry_max_seconds=retry_max_seconds,
     )
-    return _extract_chat_content(response, operation=operation)
 
 
 def _validate_request_limits(
@@ -670,6 +675,7 @@ def _request_with_retry(
     timeout_seconds: float,
     retry_initial_seconds: float,
     retry_max_seconds: float,
+    validate: Callable[[Any], Any] | None = None,
 ) -> Any:
     """Classify failures and bound every attempt and delay by the shared deadline."""
     budget = current_budget()
@@ -685,7 +691,9 @@ def _request_with_retry(
             total = getattr(response_usage, "total_tokens", None)
             usage = total if type(total) is int and total >= 0 else None
             budget.remaining()
-            return response
+            validated = validate(response) if validate is not None else response
+            budget.remaining()
+            return validated
         except (APIResponseValidationError, json.JSONDecodeError) as exc:
             failure = "invalid_response"
             raise ProviderError(
@@ -730,6 +738,9 @@ def _request_with_retry(
             raise ProviderError(
                 f"Unexpected NVIDIA {operation} failure.", failure_class=failure
             ) from exc
+        except BaseException:
+            failure = "cancelled"
+            raise
         finally:
             emit_operation_event(
                 stage=operation,

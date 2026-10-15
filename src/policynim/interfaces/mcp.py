@@ -202,9 +202,14 @@ class _ToolExecutor:
             self._closed = True
             for budget in self._budgets:
                 budget.cancelled.set()
+
+        def drain_and_close() -> None:
+            """Keep the entire shutdown sequence owned even if its awaiting task is cancelled."""
+            self._drained.wait()
+            self._clients.close()
+
         with anyio.CancelScope(shield=True):
-            await _run_sync_until_complete(self._drained.wait)
-            await _run_sync_until_complete(self._clients.close)
+            await _run_sync_until_complete(drain_and_close)
 
 
 class _InMemoryRateLimiter:
