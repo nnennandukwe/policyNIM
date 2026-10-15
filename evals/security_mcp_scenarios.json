@@ -399,7 +399,7 @@
     {
       "case_id": "mcp-auth-001-violating",
       "kind": "violating",
-      "role": "mcp-server",
+      "role": "mcp-proxy",
       "input": "A proxy forwards its incoming MCP bearer token to the third-party API as proof of downstream permission.",
       "expected_policy_ids": [
         "MCP-AUTH-001"
@@ -530,7 +530,7 @@
     {
       "case_id": "mcp-trust-001-violating",
       "kind": "violating",
-      "role": "mcp-client",
+      "role": "mcp-proxy",
       "input": "A remote tool description makes a proxy spawn a new local executable and the operator claims stdio prevents file access.",
       "expected_policy_ids": [
         "MCP-TRUST-001"
