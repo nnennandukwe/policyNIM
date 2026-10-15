@@ -613,3 +613,40 @@ def test_direct_guardrails_factory_honors_configured_timeout(monkeypatch) -> Non
         adapter.close()
     assert len(seen) == 1
     assert 0 < seen[0] <= 2
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_provider_attempts_report_interruptions_without_claiming_cancellation(
+    monkeypatch, caplog, interruption
+) -> None:
+    """Process interrupts propagate after recording unknown usage and an interrupted attempt."""
+    import json
+    import logging
+
+    from policynim.operations import operation_scope
+    from policynim.providers.nvidia import _request_with_retry
+
+    monkeypatch.setattr(logging.getLogger("policynim.operations"), "propagate", True)
+    caplog.set_level(logging.INFO, logger="policynim.operations")
+    calls = []
+
+    def send(timeout):
+        """Interrupt the first provider attempt without returning a response."""
+        calls.append(timeout)
+        raise interruption()
+
+    with pytest.raises(interruption), operation_scope():
+        _request_with_retry(
+            send,
+            operation="test",
+            model_setting="CHAT",
+            endpoint_setting="BASE_URL",
+            max_retries=2,
+            timeout_seconds=1,
+            retry_initial_seconds=0.5,
+            retry_max_seconds=8,
+        )
+    events = [json.loads(record.message) for record in caplog.records]
+    assert len(calls) == len(events) == 1
+    assert events[0]["failure_class"] == "interrupted"
+    assert events[0]["usage_status"] == "unknown"

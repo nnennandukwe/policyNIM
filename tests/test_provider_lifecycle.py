@@ -516,3 +516,48 @@ def test_resource_stack_retains_original_error_and_attempts_every_close() -> Non
     from policynim.interfaces.mcp import _failure_class_from_error
 
     assert _failure_class_from_error(caught.value) == "auth"
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_cleanup_propagates_interrupt_after_attempting_other_closes(interruption) -> None:
+    """A constructor error can't replace an interrupt delivered during cleanup."""
+    from types import SimpleNamespace
+
+    from policynim.errors import ConfigurationError
+    from policynim.operations import close_components
+
+    closed = []
+
+    def interrupt():
+        """Record cleanup and inject a process interruption."""
+        closed.append("interrupt")
+        raise interruption()
+
+    with pytest.raises(interruption):
+        close_components(
+            SimpleNamespace(close=interrupt),
+            SimpleNamespace(close=lambda: closed.append("later")),
+            primary_error=ConfigurationError("setup failed"),
+        )
+    assert closed == ["interrupt", "later"]
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_resource_stack_preserves_interrupt_through_later_close_errors(interruption) -> None:
+    """Cleanup must retain an interrupt even if another close hook fails afterward."""
+    from policynim.errors import ConfigurationError
+    from policynim.operations import ResourceStack
+
+    closed = []
+
+    def close(name, error):
+        """Record each close before injecting its specified failure."""
+        closed.append(name)
+        raise error
+
+    with pytest.raises(interruption):
+        with ResourceStack() as cleanup:
+            cleanup.callback(close, "last", RuntimeError("later cleanup failed"))
+            cleanup.callback(close, "first", interruption())
+            raise ConfigurationError("setup failed")
+    assert closed == ["first", "last"]

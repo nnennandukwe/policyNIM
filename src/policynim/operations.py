@@ -139,6 +139,7 @@ def close_components(
 ) -> None:
     """Attempt all optional close hooks, then propagate the first cleanup failure."""
     failure: BaseException | None = None
+    interruption: BaseException | None = None
     for component in components:
         close = getattr(component, "close", None)
         if callable(close):
@@ -146,6 +147,12 @@ def close_components(
                 close()
             except BaseException as exc:
                 failure = failure or exc
+                if not isinstance(exc, Exception):
+                    interruption = interruption or exc
+    if interruption is not None:
+        if primary_error is not None and not isinstance(primary_error, Exception):
+            raise primary_error from interruption
+        raise interruption from primary_error
     if failure is not None:
         if primary_error is not None:
             raise primary_error from failure
@@ -166,6 +173,30 @@ class ResourceStack(ExitStack):
             super().__exit__(exc_type, exc_value, traceback)
             return False
         except BaseException as cleanup_error:
+            if exc_value is not None and not isinstance(exc_value, Exception):
+                raise exc_value from cleanup_error
+            interruption = _interruption_in_chain(cleanup_error)
+            if interruption is not None:
+                if interruption is cleanup_error:
+                    raise
+                raise interruption from cleanup_error
             if exc_value is not None and cleanup_error is not exc_value:
                 raise exc_value from cleanup_error
             raise
+
+
+def _interruption_in_chain(error: BaseException) -> BaseException | None:
+    """Find an interruption retained by a later close failure without looping on cycles."""
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if not isinstance(current, Exception):
+            return current
+        pending.extend(
+            item for item in (current.__cause__, current.__context__) if item is not None
+        )
+    return None

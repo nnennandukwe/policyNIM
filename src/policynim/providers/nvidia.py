@@ -739,7 +739,7 @@ def _request_with_retry(
                 f"Unexpected NVIDIA {operation} failure.", failure_class=failure
             ) from exc
         except BaseException:
-            failure = "cancelled"
+            failure = "interrupted"
             raise
         finally:
             emit_operation_event(
