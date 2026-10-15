@@ -1,0 +1,811 @@
+{
+  "schema_version": 1,
+  "name": "security-mcp-source-coverage",
+  "scope": "authored_source_scenarios",
+  "evaluation_status": "not_model_evaluated",
+  "review_status": "author_reviewed_not_independent",
+  "changed_policy_revisions": {
+    "SEC-AUTH-001": "sha256:afe79fb014bd7ed70e15df2e7f211a879c1f3fee7abf92c3f1f17b079cf54a36",
+    "SEC-SESSION-001": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
+    "SEC-SECRET-001": "sha256:0952a78dca591e649a7a29b07c65ef6449c8a18af59a979f55599c1e07747893",
+    "SEC-INPUT-001": "sha256:06cdfec9a2284e1cf9dbf5a99042c991abb16870a919251ec073ffcde9cad761",
+    "SEC-EGRESS-001": "sha256:34a7617dd88e5c8eddfef7e74b0f730bf11c969f017e40ad5ff3fef6765a5273",
+    "MCP-AUTH-001": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+    "MCP-CONSENT-001": "sha256:16a74960423e217e8aae97b9354fb5c8408b3a0cc1e95c0b6af034badc8f500d",
+    "MCP-TRUST-001": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+    "MCP-CONTENT-001": "sha256:29d90c83f374632040b16bdde0253028f455c5bcf03521ab50f44e4b0b02af01"
+  },
+  "source_aliases": {
+    "ASVS-AUTHZ": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x17-V8-Authorization.md",
+    "ASVS-SESSION": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x16-V7-Session-Management.md",
+    "ASVS-TOKEN": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x18-V9-Self-contained-Tokens.md",
+    "ASVS-DATA": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x23-V14-Data-Protection.md",
+    "ASVS-LOG": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x25-V16-Security-Logging-and-Error-Handling.md",
+    "ASVS-INPUT": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x11-V2-Validation-and-Business-Logic.md",
+    "ASVS-ENCODE": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x10-V1-Encoding-and-Sanitization.md",
+    "ASVS-DEPENDENCY": "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x24-V15-Secure-Coding-and-Architecture.md",
+    "CS-AUTHZ": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Authorization_Cheat_Sheet.md",
+    "CS-SECRET": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md",
+    "CS-LOG": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md",
+    "CS-SSRF": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md",
+    "MCP-AUTH": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/specification/2026-07-28/basic/authorization/index.mdx",
+    "MCP-SECURITY": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/docs/2026-07-28/tutorials/security/security_best_practices.mdx",
+    "MCP-TOOLS": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/specification/2026-07-28/server/tools.mdx"
+  },
+  "cases": [
+    {
+      "case_id": "sec-auth-001-applicable",
+      "kind": "applicable",
+      "role": "application-server",
+      "input": "A signed-in reader requests another tenant's record; the service denies access before reading the protected object.",
+      "expected_policy_ids": [
+        "SEC-AUTH-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-AUTH-001",
+      "policy_revision": "sha256:afe79fb014bd7ed70e15df2e7f211a879c1f3fee7abf92c3f1f17b079cf54a36",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "AUTH-1",
+          "quote": "Enforce function, object, field, and tenant permissions at a trusted service boundary on every request; a successful login alone grants no operation permission.",
+          "support": [
+            "ASVS-AUTHZ:8.2.1",
+            "ASVS-AUTHZ:8.2.2",
+            "ASVS-AUTHZ:8.2.3",
+            "ASVS-AUTHZ:8.3.1",
+            "ASVS-AUTHZ:8.4.1",
+            "CS-AUTHZ:Validate the Permissions on Every Request"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-auth-001-violating",
+      "kind": "violating",
+      "role": "application-server",
+      "input": "The handler treats any valid login token as permission to delete any user's object.",
+      "expected_policy_ids": [
+        "SEC-AUTH-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-AUTH-001",
+      "policy_revision": "sha256:afe79fb014bd7ed70e15df2e7f211a879c1f3fee7abf92c3f1f17b079cf54a36",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "AUTH-1",
+          "quote": "Enforce function, object, field, and tenant permissions at a trusted service boundary on every request; a successful login alone grants no operation permission.",
+          "support": [
+            "ASVS-AUTHZ:8.2.1",
+            "ASVS-AUTHZ:8.2.2",
+            "ASVS-AUTHZ:8.2.3",
+            "ASVS-AUTHZ:8.3.1",
+            "ASVS-AUTHZ:8.4.1",
+            "CS-AUTHZ:Validate the Permissions on Every Request"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-auth-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "public-static-publisher",
+      "input": "Publish a deliberately public static document with no accounts, protected objects, or privileged actions.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SEC-AUTH-001"
+      ],
+      "policy_id": "SEC-AUTH-001",
+      "policy_revision": "sha256:afe79fb014bd7ed70e15df2e7f211a879c1f3fee7abf92c3f1f17b079cf54a36",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "A deliberately public operation can omit caller authentication only with documented public data and action boundaries; its input and output safeguards still apply."
+    },
+    {
+      "case_id": "sec-session-001-applicable",
+      "kind": "applicable",
+      "role": "mcp-server",
+      "input": "After reconnect, a valid access token resolves the principal; a handle owned by another principal is rejected.",
+      "expected_policy_ids": [
+        "SEC-SESSION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-SESSION-001",
+      "policy_revision": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "SESSION-3",
+          "quote": "Authenticate every protected MCP request; never accept possession of a legacy session ID or application state handle as authentication.",
+          "support": [
+            "MCP-SECURITY:State Handle Hijacking"
+          ]
+        },
+        {
+          "requirement_id": "SESSION-4",
+          "quote": "Bind state handles to the verified principal and reject cross-principal reuse, including reconnects; don't trust a user ID supplied alongside the handle.",
+          "support": [
+            "MCP-SECURITY:State Handle Hijacking",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-session-001-violating",
+      "kind": "violating",
+      "role": "mcp-server",
+      "input": "An attacker copies Mcp-Session-Id from a legacy client and the server treats it as the authenticated user.",
+      "expected_policy_ids": [
+        "SEC-SESSION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-SESSION-001",
+      "policy_revision": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "SESSION-3",
+          "quote": "Authenticate every protected MCP request; never accept possession of a legacy session ID or application state handle as authentication.",
+          "support": [
+            "MCP-SECURITY:State Handle Hijacking"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-session-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "stateless-public-tool",
+      "input": "Serve a public deterministic calculator with no credentials or persistent state.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SEC-SESSION-001"
+      ],
+      "policy_id": "SEC-SESSION-001",
+      "policy_revision": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "A stateless public tool with no protected state doesn't need a login-session store. Stdio process trust belongs to MCP-TRUST-001; adding a session ID doesn't create execution isolation."
+    },
+    {
+      "case_id": "sec-secret-001-applicable",
+      "kind": "applicable",
+      "role": "application-server",
+      "input": "A failed token exchange records the error class and request ID while stripping its synthetic bearer credential.",
+      "expected_policy_ids": [
+        "SEC-SECRET-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-SECRET-001",
+      "policy_revision": "sha256:0952a78dca591e649a7a29b07c65ef6449c8a18af59a979f55599c1e07747893",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "SECRET-2",
+          "quote": "Remove or mask credentials before logs, traces, analytics, exception text, or public responses; retain safe event fields instead of raw request or token bodies.",
+          "support": [
+            "ASVS-LOG:16.2.5",
+            "ASVS-LOG:16.5.1",
+            "CS-LOG:Data to exclude"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-secret-001-violating",
+      "kind": "violating",
+      "role": "application-server",
+      "input": "A debug exception copies the Authorization header into a trace attachment.",
+      "expected_policy_ids": [
+        "SEC-SECRET-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-SECRET-001",
+      "policy_revision": "sha256:0952a78dca591e649a7a29b07c65ef6449c8a18af59a979f55599c1e07747893",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "SECRET-2",
+          "quote": "Remove or mask credentials before logs, traces, analytics, exception text, or public responses; retain safe event fields instead of raw request or token bodies.",
+          "support": [
+            "ASVS-LOG:16.2.5",
+            "ASVS-LOG:16.5.1",
+            "CS-LOG:Data to exclude"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-secret-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "public-copy-editor",
+      "input": "Edit public prose with no credentials, protected data, telemetry, or runtime configuration.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SEC-SECRET-001"
+      ],
+      "policy_id": "SEC-SECRET-001",
+      "policy_revision": "sha256:0952a78dca591e649a7a29b07c65ef6449c8a18af59a979f55599c1e07747893",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "A public configuration key name can appear in diagnostics. Its secret value can't. A secret manager doesn't remove the need for startup validation or output redaction."
+    },
+    {
+      "case_id": "sec-input-001-applicable",
+      "kind": "applicable",
+      "role": "application-server",
+      "input": "A tools/call request with a string where the schema requires an integer is rejected before an application write.",
+      "expected_policy_ids": [
+        "SEC-INPUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-INPUT-001",
+      "policy_revision": "sha256:06cdfec9a2284e1cf9dbf5a99042c991abb16870a919251ec073ffcde9cad761",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "INPUT-1",
+          "quote": "Validate untrusted input types, shape, ranges, and business constraints at trusted boundaries, including tool arguments.",
+          "support": [
+            "ASVS-INPUT:2.1.1",
+            "ASVS-INPUT:2.2.1",
+            "ASVS-INPUT:2.2.2",
+            "MCP-TOOLS:Security Considerations"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-input-001-violating",
+      "kind": "violating",
+      "role": "application-server",
+      "input": "A server concatenates a schema-valid tool argument into a shell command.",
+      "expected_policy_ids": [
+        "SEC-INPUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-INPUT-001",
+      "policy_revision": "sha256:06cdfec9a2284e1cf9dbf5a99042c991abb16870a919251ec073ffcde9cad761",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "INPUT-2",
+          "quote": "Use parameterized database and process APIs; apply output encoding at the target interpreter boundary rather than relying on input validation alone.",
+          "support": [
+            "ASVS-ENCODE:1.1.2",
+            "ASVS-ENCODE:1.2.1",
+            "ASVS-ENCODE:1.2.4",
+            "ASVS-ENCODE:1.2.5"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-input-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "offline-comment-editor",
+      "input": "Correct a spelling error in a source comment without processing inputs or changing executable code.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SEC-INPUT-001"
+      ],
+      "policy_id": "SEC-INPUT-001",
+      "policy_revision": "sha256:06cdfec9a2284e1cf9dbf5a99042c991abb16870a919251ec073ffcde9cad761",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "An internal producer still needs validation when its output crosses a trust boundary. A schema-valid string can contain malicious instructions; MCP-CONTENT-001 covers that separate risk."
+    },
+    {
+      "case_id": "sec-egress-001-applicable",
+      "kind": "applicable",
+      "role": "application-server",
+      "input": "Discovery metadata redirects to a link-local metadata endpoint; the client rejects the redirect before connecting.",
+      "expected_policy_ids": [
+        "SEC-EGRESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-EGRESS-001",
+      "policy_revision": "sha256:34a7617dd88e5c8eddfef7e74b0f730bf11c969f017e40ad5ff3fef6765a5273",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "EGRESS-2",
+          "quote": "Apply destination checks to every redirect and the address actually used to connect; block private, loopback, link-local, and cloud-metadata targets unless explicitly authorized for that integration.",
+          "support": [
+            "MCP-SECURITY:Server-Side Request Forgery (SSRF)",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-egress-001-violating",
+      "kind": "violating",
+      "role": "application-server",
+      "input": "A public hostname passes validation but reconnects to a private address after DNS rebinding.",
+      "expected_policy_ids": [
+        "SEC-EGRESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-EGRESS-001",
+      "policy_revision": "sha256:34a7617dd88e5c8eddfef7e74b0f730bf11c969f017e40ad5ff3fef6765a5273",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "EGRESS-2",
+          "quote": "Apply destination checks to every redirect and the address actually used to connect; block private, loopback, link-local, and cloud-metadata targets unless explicitly authorized for that integration.",
+          "support": [
+            "MCP-SECURITY:Server-Side Request Forgery (SSRF)",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-egress-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "offline-parser",
+      "input": "Parse a bundled local text fixture without any outbound network calls.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SEC-EGRESS-001"
+      ],
+      "policy_id": "SEC-EGRESS-001",
+      "policy_revision": "sha256:34a7617dd88e5c8eddfef7e74b0f730bf11c969f017e40ad5ff3fef6765a5273",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "An approved private API needs a narrow destination rule and equivalent redirect/DNS protections; a development loopback exception doesn't authorize arbitrary internal network access."
+    },
+    {
+      "case_id": "mcp-auth-001-applicable",
+      "kind": "applicable",
+      "role": "mcp-server",
+      "input": "The resource rejects a validly signed token whose aud names a different API before running the requested tool.",
+      "expected_policy_ids": [
+        "MCP-AUTH-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-AUTH-001",
+      "policy_revision": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "TOKEN-1",
+          "quote": "MCP servers must validate token integrity, issuer trust, validity, intended audience, and operation permissions before using claims; reject wrong-audience and expired credentials.",
+          "support": [
+            "ASVS-TOKEN:9.1.1",
+            "ASVS-TOKEN:9.1.2",
+            "ASVS-TOKEN:9.1.3",
+            "ASVS-TOKEN:9.2.1",
+            "ASVS-TOKEN:9.2.3",
+            "MCP-AUTH:Token Handling"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-auth-001-violating",
+      "kind": "violating",
+      "role": "mcp-proxy",
+      "input": "A proxy forwards its incoming MCP bearer token to the third-party API as proof of downstream permission.",
+      "expected_policy_ids": [
+        "MCP-AUTH-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-AUTH-001",
+      "policy_revision": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TOKEN-2",
+          "quote": "MCP clients must request resource-bound access tokens and send only credentials intended for that MCP resource; servers and proxies must never pass the inbound token through to a downstream API.",
+          "support": [
+            "MCP-AUTH:Token Handling",
+            "MCP-SECURITY:Token Passthrough"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-auth-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "direct-stdio-client",
+      "input": "Launch a reviewed direct stdio server with local process credentials and no hosted HTTP endpoint.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "MCP-AUTH-001"
+      ],
+      "policy_id": "MCP-AUTH-001",
+      "policy_revision": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "The MCP HTTP authorization flow doesn't apply to direct stdio process credentials. A public endpoint can be unauthenticated by explicit design; protected operations still need their own authorization."
+    },
+    {
+      "case_id": "mcp-consent-001-applicable",
+      "kind": "applicable",
+      "role": "mcp-proxy",
+      "input": "A new MCP client encounters its own consent screen even though the browser already approved the proxy's upstream client ID.",
+      "expected_policy_ids": [
+        "MCP-CONSENT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-CONSENT-001",
+      "policy_revision": "sha256:16a74960423e217e8aae97b9354fb5c8408b3a0cc1e95c0b6af034badc8f500d",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONSENT-1",
+          "quote": "A proxy using a shared upstream client ID must obtain and check per-user, per-client consent before the third-party authorization flow; a prior upstream consent cookie can't substitute for it.",
+          "support": [
+            "MCP-SECURITY:Confused Deputy Problem"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-consent-001-violating",
+      "kind": "violating",
+      "role": "mcp-proxy",
+      "input": "The proxy reuses another MCP client's consent cookie and completes the authorization redirect without checking the requesting client.",
+      "expected_policy_ids": [
+        "MCP-CONSENT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-CONSENT-001",
+      "policy_revision": "sha256:16a74960423e217e8aae97b9354fb5c8408b3a0cc1e95c0b6af034badc8f500d",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONSENT-1",
+          "quote": "A proxy using a shared upstream client ID must obtain and check per-user, per-client consent before the third-party authorization flow; a prior upstream consent cookie can't substitute for it.",
+          "support": [
+            "MCP-SECURITY:Confused Deputy Problem"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-consent-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "direct-stdio-client",
+      "input": "Connect a direct stdio client with no third-party OAuth proxy or downstream authorization flow.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "MCP-CONSENT-001"
+      ],
+      "policy_id": "MCP-CONSENT-001",
+      "policy_revision": "sha256:16a74960423e217e8aae97b9354fb5c8408b3a0cc1e95c0b6af034badc8f500d",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "Direct stdio launch consent belongs to MCP-TRUST-001. A service principal without an interactive user needs its documented grant policy; don't invent a human consent screen for it."
+    },
+    {
+      "case_id": "mcp-trust-001-applicable",
+      "kind": "applicable",
+      "role": "mcp-client",
+      "input": "The host shows the pinned command, accepts cancellation without spawning, and tests the configured sandbox's filesystem restrictions.",
+      "expected_policy_ids": [
+        "MCP-TRUST-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-TRUST-001",
+      "policy_revision": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRUST-1",
+          "quote": "Before one-click local server configuration executes code, show the full command and arguments, identify the execution risk, obtain explicit approval, and allow cancellation.",
+          "support": [
+            "MCP-SECURITY:Local MCP Server Compromise"
+          ]
+        },
+        {
+          "requirement_id": "TRUST-5",
+          "quote": "Run local servers with restricted resources and an appropriate maintained sandbox; avoid unnecessary inherited credentials and verify denied filesystem/network access through the chosen isolation mechanism.",
+          "support": [
+            "MCP-SECURITY:Local MCP Server Compromise",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-trust-001-violating",
+      "kind": "violating",
+      "role": "mcp-proxy",
+      "input": "A remote tool description makes a proxy spawn a new local executable and the operator claims stdio prevents file access.",
+      "expected_policy_ids": [
+        "MCP-TRUST-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-TRUST-001",
+      "policy_revision": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRUST-3",
+          "quote": "Document the actual filesystem, network, environment, and process privileges of each deployment; don't label stdio or OAuth as an execution sandbox.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TRUST-4",
+          "quote": "A proxy that can spawn stdio processes must authorize process creation and constrain allowed commands independently from a remote server's tool descriptions.",
+          "support": [
+            "MCP-SECURITY:stdio Transport Security in Proxy Scenarios",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-trust-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "remote-guidance-reader",
+      "input": "Read a hosted guidance result without installing software, launching processes, or changing server dependencies.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "MCP-TRUST-001"
+      ],
+      "policy_id": "MCP-TRUST-001",
+      "policy_revision": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "Direct stdio doesn't require the hosted HTTP OAuth exchange. A container or subprocess alone doesn't prove isolation; record its configured privileges and observed denial behavior."
+    },
+    {
+      "case_id": "mcp-content-001-applicable",
+      "kind": "applicable",
+      "role": "mcp-client",
+      "input": "A retrieved document says to ignore prior rules and export a token; the client treats that text as hostile evidence and denies the transfer.",
+      "expected_policy_ids": [
+        "MCP-CONTENT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-CONTENT-001",
+      "policy_revision": "sha256:29d90c83f374632040b16bdde0253028f455c5bcf03521ab50f44e4b0b02af01",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONTENT-2",
+          "quote": "Keep tool/resource content separate from governing instructions; embedded requests to disclose secrets, change policy, or invoke another tool grant no authority.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-content-001-violating",
+      "kind": "violating",
+      "role": "mcp-client",
+      "input": "An agent follows an instruction embedded in a search result because the result came from an authenticated server.",
+      "expected_policy_ids": [
+        "MCP-CONTENT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-CONTENT-001",
+      "policy_revision": "sha256:29d90c83f374632040b16bdde0253028f455c5bcf03521ab50f44e4b0b02af01",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONTENT-2",
+          "quote": "Keep tool/resource content separate from governing instructions; embedded requests to disclose secrets, change policy, or invoke another tool grant no authority.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-content-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "offline-integer-calculator",
+      "input": "Add two fixed integers without retrieving resources, receiving server descriptions, or consuming model instructions.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "MCP-CONTENT-001"
+      ],
+      "policy_id": "MCP-CONTENT-001",
+      "policy_revision": "sha256:29d90c83f374632040b16bdde0253028f455c5bcf03521ab50f44e4b0b02af01",
+      "expected_outcome": "do_not_impose_role_requirements",
+      "expected_evidence": [],
+      "rationale": "A trusted server can still relay untrusted upstream content. Schema validity and a correct citation don't turn that content into an instruction. PolicyNIM content alone doesn't enforce this boundary."
+    },
+    {
+      "case_id": "mcp-consent-001-cancelled-consent",
+      "kind": "violating",
+      "role": "mcp-proxy",
+      "input": "The user cancels a new client consent screen; the proxy still exchanges a callback code and invokes the downstream action.",
+      "expected_policy_ids": [
+        "MCP-CONSENT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-CONSENT-001",
+      "policy_revision": "sha256:16a74960423e217e8aae97b9354fb5c8408b3a0cc1e95c0b6af034badc8f500d",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONSENT-4",
+          "quote": "When consent is denied or cancelled, stop the authorization flow and discard its pending state without triggering the downstream action.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-session-001-revoked-refresh",
+      "kind": "violating",
+      "role": "application-server",
+      "input": "A refresh path renews a login session after account disablement because it checks only the old session ID.",
+      "expected_policy_ids": [
+        "SEC-SESSION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-SESSION-001",
+      "policy_revision": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "SESSION-1",
+          "quote": "Document risk-based idle and absolute login-session limits; enforce expiry and termination on the trusted backend, including refresh, logout, privilege changes, suspected compromise, and account disablement.",
+          "support": [
+            "ASVS-SESSION:7.1.1",
+            "ASVS-SESSION:7.2.1",
+            "ASVS-SESSION:7.3.1",
+            "ASVS-SESSION:7.3.2",
+            "ASVS-SESSION:7.4.1",
+            "ASVS-SESSION:7.4.2",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-egress-001-executable-auth-url",
+      "kind": "violating",
+      "role": "mcp-client",
+      "input": "A server supplies javascript: as its OAuth authorization URL and the client opens it as executable browser content.",
+      "expected_policy_ids": [
+        "SEC-EGRESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-EGRESS-001",
+      "policy_revision": "sha256:34a7617dd88e5c8eddfef7e74b0f730bf11c969f017e40ad5ff3fef6765a5273",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "EGRESS-3",
+          "quote": "Require HTTPS for production OAuth URLs and reject executable schemes; keep loopback development exceptions explicit and isolated from production.",
+          "support": [
+            "MCP-SECURITY:OAuth Authorization URL Validation",
+            "MCP-SECURITY:Server-Side Request Forgery (SSRF)"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-trust-001-cancelled-launch",
+      "kind": "violating",
+      "role": "mcp-client",
+      "input": "The user cancels one-click local MCP configuration but the client starts the command anyway.",
+      "expected_policy_ids": [
+        "MCP-TRUST-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-TRUST-001",
+      "policy_revision": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRUST-1",
+          "quote": "Before one-click local server configuration executes code, show the full command and arguments, identify the execution risk, obtain explicit approval, and allow cancellation.",
+          "support": [
+            "MCP-SECURITY:Local MCP Server Compromise"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-auth-001-insufficient-scope",
+      "kind": "violating",
+      "role": "mcp-server",
+      "input": "A hosted MCP server accepts a valid read-scoped token for a write operation instead of returning insufficient permission.",
+      "expected_policy_ids": [
+        "MCP-AUTH-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-AUTH-001",
+      "policy_revision": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TOKEN-4",
+          "quote": "Return 401 for invalid or expired access tokens and 403 for insufficient permission; don't treat an ID token as an API access token.",
+          "support": [
+            "MCP-AUTH:Error Handling",
+            "ASVS-TOKEN:9.2.2"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "sec-input-001-malformed-output",
+      "kind": "violating",
+      "role": "mcp-server",
+      "input": "An MCP server declares outputSchema with an integer result but returns structuredContent with a string result.",
+      "expected_policy_ids": [
+        "SEC-INPUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SEC-INPUT-001",
+      "policy_revision": "sha256:06cdfec9a2284e1cf9dbf5a99042c991abb16870a919251ec073ffcde9cad761",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "INPUT-3",
+          "quote": "MCP servers declaring an outputSchema must return conforming structured results and sanitize tool outputs.",
+          "support": [
+            "MCP-TOOLS:Output Schema",
+            "MCP-TOOLS:Security Considerations"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    },
+    {
+      "case_id": "mcp-trust-001-dependency-origin",
+      "kind": "violating",
+      "role": "deployment-operator",
+      "input": "A deployment upgrades a transitive server dependency from an unreviewed public repository while its expected source is an internal registry.",
+      "expected_policy_ids": [
+        "MCP-TRUST-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "MCP-TRUST-001",
+      "policy_revision": "sha256:014026ff5d2fb10bacaa2854f0174690f1877d859d1b53b730ce940f3b0bd775",
+      "expected_outcome": "flag_violation",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRUST-2",
+          "quote": "Record server/dependency origin and reviewed versions, including transitive dependencies; apply a documented vulnerability remediation policy.",
+          "support": [
+            "ASVS-DEPENDENCY:15.1.1",
+            "ASVS-DEPENDENCY:15.1.2",
+            "ASVS-DEPENDENCY:15.2.1",
+            "ASVS-DEPENDENCY:15.2.4"
+          ]
+        }
+      ],
+      "rationale": "The stated change exercises this policy's role and requirement."
+    }
+  ]
+}
