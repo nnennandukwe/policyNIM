@@ -75,4 +75,4 @@ jobs:
         run: uv sync --locked --group test --group dev
 
       - name: Verify Windows profile readers and writers offline
-        run: uv run --no-sync pytest -q tests/test_policy_profiles.py tests/test_policy_catalog.py
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py
