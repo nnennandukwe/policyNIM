@@ -733,3 +733,78 @@ def test_introspection_diagnostics_dont_log_credentials(
     assert "private-token-and-secret" not in caplog.text
     assert "private-access-token" not in caplog.text
     assert "fixture-introspection-secret" not in caplog.text
+
+
+def test_oauth_denials_keep_sanitized_auth_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the existing auth audit event for both SDK and operation denials."""
+    settings = oauth_settings(tmp_path)
+    install_issuer(monkeypatch, settings, token_claims(scope="policies:read"))
+    events: list[dict[str, object]] = []
+
+    def record(event: str, **fields: object) -> None:
+        """Capture the exact sanitized fields passed to the hosted event emitter."""
+        events.append({"event": event, **fields})
+
+    monkeypatch.setattr(mcp_module, "_emit_hosted_event", record)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        assert rpc(client, "tools/list", token=None).status_code == 401
+        assert rpc(client, "tools/list").status_code == 200
+        denied = rpc(
+            client,
+            "tools/call",
+            {"name": "policy_preflight", "arguments": {"task": "private-task-input"}},
+        )
+        assert denied.status_code == 403
+    assert [event["auth_result"] for event in events] == ["unauthorized", "insufficient_scope"]
+    assert all(event["event"] == "mcp.auth" for event in events)
+    assert all(event["request_id"] is None and event["tool_name"] is None for event in events)
+    assert "private-task-input" not in str(events)
+    assert "issuer-access-token" not in str(events)
+    assert "fixture-introspection-secret" not in str(events)
+
+
+@pytest.mark.parametrize("oauth", [False, True])
+def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool) -> None:
+    """A real local subprocess remains usable with either hosted credential configuration."""
+    import os
+    import sys
+    import textwrap
+
+    from mcp import Client
+    from mcp.client.stdio import StdioServerParameters
+
+    root = Path(__file__).resolve().parents[1]
+    script = textwrap.dedent(f"""
+        from fixtures.mcp_fixture_server import OfflineSettings, offline_services
+        from policynim.interfaces import mcp
+        settings = OfflineSettings(
+            default_top_k=3, mcp_require_auth=True, mcp_bearer_tokens=['local-fixture'],
+            mcp_public_base_url='https://policy.example',
+            mcp_oauth_issuer_url={repr(ISSUER) if oauth else "None"},
+            mcp_oauth_client_id={'"resource-client"' if oauth else "None"},
+            mcp_oauth_client_secret={'"fixture-secret"' if oauth else "None"},
+        )
+        with offline_services(settings):
+            mcp.run_server('stdio')
+    """)
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", script],
+        cwd=tmp_path,
+        env={"PYTHONPATH": os.pathsep.join([str(root / "src"), str(root / "tests")])},
+    )
+
+    async def exercise() -> None:
+        """Call a tool over stdio without creating an HTTP auth context or using an issuer."""
+        async with asyncio.timeout(15):
+            async with Client(params, read_timeout_seconds=5) as client:
+                result = await client.call_tool("policy_search", {"query": "local"})
+                assert result.is_error is False
+                assert result.structured_content is not None
+                assert result.structured_content["query"] == "local"
+
+    asyncio.run(exercise())

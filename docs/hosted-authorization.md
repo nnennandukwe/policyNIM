@@ -111,7 +111,9 @@ Each protected HTTP request is introspected again. Each tool invocation checks
 its scopes and expiry before admission/provider allocation, and search/preflight
 services check again before their pipelines. A frozen principal carries issuer,
 subject, client ID, scopes, credential source and expiry into service work.
-It contains no access token. Local CLI operations remain trusted local calls.
+It contains no access token. Local CLI and stdio MCP operations remain trusted
+local calls, even when hosted auth is configured. OAuth authentication and scope
+denials retain sanitized `mcp.auth` events without credentials or request bodies.
 
 The shared public corpus doesn't grant access to another user's evaluation jobs.
 No hosted evaluation-job route is introduced here; unknown protected operations

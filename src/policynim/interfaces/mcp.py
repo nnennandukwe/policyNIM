@@ -39,7 +39,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
@@ -606,12 +606,13 @@ def _create_mcp_server(
     settings: Settings,
     *,
     beta_auth_service: BetaAuthService | None = None,
+    require_principal: bool = True,
 ) -> MCPServer:
     """Create a fresh MCP server configured from runtime settings."""
     server = _register_tools(
         _new_mcp_server(settings, beta_auth_service=beta_auth_service),
         capacity=settings.mcp_max_concurrent_operations,
-        require_principal=settings.mcp_require_auth,
+        require_principal=settings.mcp_require_auth and require_principal,
     )
     _register_health_route(server, settings)
     if settings.beta_signup_enabled and beta_auth_service is not None:
@@ -1273,6 +1274,37 @@ class _BearerProtectedASGIApp:
         return JSONResponse({"error": "Unauthorized."}, status_code=401)
 
 
+class _OAuthAuthAuditApp:
+    """Retain sanitized denial events when the SDK owns HTTP authentication."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        """Wrap the SDK's responses without reading credentials or request bodies."""
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Record protected-route authentication and permission denials once."""
+        if not _is_protected_mcp_request(scope, _STREAMABLE_HTTP_PATH):
+            await self._app(scope, receive, send)
+            return
+
+        async def record_denial(message: Message) -> None:
+            """Observe only the response status; forward every ASGI message unchanged."""
+            if message["type"] == "http.response.start" and message["status"] in (401, 403):
+                _emit_hosted_event(
+                    "mcp.auth",
+                    auth_result="unauthorized"
+                    if message["status"] == 401
+                    else "insufficient_scope",
+                    tool_name=None,
+                    latency_ms=None,
+                    upstream_failure_class=None,
+                    request_id=None,
+                )
+            await send(message)
+
+        await self._app(scope, receive, record_denial)
+
+
 class _MCPHostOriginApp:
     """Enforce root hosting and validate MCP before authentication or slash redirects."""
 
@@ -1419,7 +1451,9 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
             same_site="lax",
             https_only=_beta_session_https_only(settings),
         )
-    if not settings.mcp_require_auth or settings.mcp_oauth_issuer_url is not None:
+    if settings.mcp_oauth_issuer_url is not None:
+        return _MCPHostOriginApp(_OAuthAuthAuditApp(app), security)
+    if not settings.mcp_require_auth:
         return _MCPHostOriginApp(app, security)
     app = _BearerProtectedASGIApp(
         app,
@@ -1468,7 +1502,7 @@ def run_server(transport: str = "stdio") -> None:
             raise
         return
 
-    server = _create_mcp_server(settings)
+    server = _create_mcp_server(settings, require_principal=False)
     server.run(transport="stdio")
 
 
