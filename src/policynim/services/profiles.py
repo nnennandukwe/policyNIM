@@ -512,27 +512,29 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
                 )
     finally:
         try:
-            if (
-                staged is not None
-                and _staging_identity(staged, directory_descriptor) == staged_identity
-            ):
-                if directory_descriptor is None:
-                    staged.unlink(missing_ok=True)
-                else:
-                    os.unlink(staged.name, dir_fd=directory_descriptor)
-        finally:
-            if directory_descriptor is not None:
-                os.close(directory_descriptor)
+            try:
+                if (
+                    staged is not None
+                    and _staging_identity(staged, directory_descriptor) == staged_identity
+                ):
+                    if directory_descriptor is None:
+                        staged.unlink(missing_ok=True)
+                    else:
+                        os.unlink(staged.name, dir_fd=directory_descriptor)
+            finally:
+                if directory_descriptor is not None:
+                    os.close(directory_descriptor)
             current_directory = staging_directory.lstat()
             if (current_directory.st_dev, current_directory.st_ino) == directory_identity:
-                try:
-                    staging_directory.rmdir()
-                except OSError:
-                    # Preserve unexpected entries rather than deleting another writer's data.
-                    report.warnings.append(
-                        "Profile staging cleanup couldn't finish. Preserve unexpected entries "
-                        "and inspect the profile before retrying."
-                    )
+                staging_directory.rmdir()
+            else:
+                raise OSError("Profile staging directory moved.")
+        except OSError:
+            # Cleanup can't reverse a commit or replace a primary validation error.
+            report.warnings.append(
+                "Profile staging cleanup couldn't finish. Preserve unexpected entries "
+                "and inspect the profile before retrying."
+            )
     return report
 
 

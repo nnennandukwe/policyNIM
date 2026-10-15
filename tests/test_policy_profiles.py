@@ -1159,8 +1159,9 @@ def test_profile_serializer_keeps_toml_1_0_escape_compatibility(profile_path: Pa
 
 
 @pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")
+@pytest.mark.parametrize("replacement_present", [False, True])
 def test_update_uses_private_staging_directory_descriptor(
-    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch, replacement_present: bool
 ) -> None:
     """Moving the private staging directory can't redirect publication to another entry."""
     from policynim.services import profiles
@@ -1176,16 +1177,49 @@ def test_update_uses_private_staging_directory_descriptor(
         directory = next(profile_path.parent.glob(".profile.toml.stage-*"))
         assert directory.stat().st_mode & 0o777 == 0o700
         directory.rename(profile_path.parent / "moved-staging")
-        directory.mkdir()
-        (directory / source).write_text("UNSELECTED-CANARY")
+        if replacement_present:
+            directory.mkdir()
+            (directory / source).write_text("UNSELECTED-CANARY")
         replaced = True
         return real_replace(source, destination, src_dir_fd=src_dir_fd)
 
     monkeypatch.setattr(profiles.os, "replace", swap_before_replace)
-    update_profile(profile_path, expected_digest=report.review_digest)
+    result = update_profile(profile_path, expected_digest=report.review_digest)
     assert replaced
+    assert "cleanup couldn't finish" in result.warnings[0]
     assert resolve_profile(profile_path).catalog.effective_count == 5
     assert "UNSELECTED-CANARY" not in profile_path.read_text()
+
+
+def test_postcommit_cleanup_failure_keeps_cli_success(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI reports changed pins and a cleanup warning after a committed update."""
+    report, _, _ = diff_profile(profile_path)
+    real_rmdir = Path.rmdir
+
+    def fail_cleanup(path: Path) -> None:
+        """Refuse removal of only the owned staging directory."""
+        if path.name.startswith(".profile.toml.stage-"):
+            raise PermissionError("Injected cleanup failure.")
+        real_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", fail_cleanup)
+    result = CliRunner().invoke(
+        app,
+        [
+            "profile",
+            "update",
+            str(profile_path),
+            "--expect-digest",
+            report.review_digest,
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "cleanup couldn't finish" in json.loads(result.stdout)["diff"]["warnings"][0]
+    assert resolve_profile(profile_path).catalog.effective_count == 5
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory sync proof.")
