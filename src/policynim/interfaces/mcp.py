@@ -500,6 +500,9 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
             ),
             "timeout": "The policy model provider timed out. Retry later.",
             "deadline_exhausted": "The operation deadline was exhausted. Retry later.",
+            "retry_delay_exceeded": (
+                "The provider requested a retry delay above the configured limit. Retry later."
+            ),
             "cancelled": "The operation was cancelled; upstream usage may already exist.",
             "shutdown": "The policy server is shutting down. Retry later.",
             "rate_limit": "The policy model provider is rate limited. Retry later.",
@@ -575,7 +578,9 @@ def _register_tools(
     return server
 
 
-def _new_mcp_server(runtime: _ToolExecutor | None = None) -> MCPServer:
+def _new_mcp_server(
+    runtime: _ToolExecutor | None = None, *, close_runtime: bool = True
+) -> MCPServer:
     """Identify the application independently from its MCP SDK version."""
     try:
         application_version = version("policynim")
@@ -588,7 +593,7 @@ def _new_mcp_server(runtime: _ToolExecutor | None = None) -> MCPServer:
         try:
             yield {}
         finally:
-            if runtime is not None:
+            if close_runtime and runtime is not None:
                 await runtime.close()
 
     return MCPServer(
@@ -1189,6 +1194,29 @@ def _is_protected_mcp_request(scope: Scope, protected_path: str) -> bool:
     return scope["type"] == "http" and get_route_path(scope).rstrip("/") == protected_path
 
 
+class _RuntimeLifespanASGIApp:
+    """Own a shared tool runtime for the lifetime of the hosted ASGI worker."""
+
+    def __init__(self, app: ASGIApp, runtime: _ToolExecutor) -> None:
+        self._app = app
+        self._runtime = runtime
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Close the runtime only after the process-level HTTP lifespan ends."""
+        if scope["type"] != "lifespan":
+            await self._app(scope, receive, send)
+            return
+
+        lifespan_context = self._app.router.lifespan_context  # type: ignore[attr-defined]
+        async with lifespan_context(self._app):
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+                await receive()
+            await self._runtime.close()
+            await send({"type": "lifespan.shutdown.complete"})
+
+
 class _BearerProtectedASGIApp:
     """Protect the MCP HTTP route with exact-match bearer token auth."""
 
@@ -1367,7 +1395,13 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
 def _build_streamable_http_app(settings: Settings) -> ASGIApp:
     """Create the streamable-http ASGI app, wrapping auth only when required."""
     beta_auth_service = _build_beta_auth_service(settings)
-    server = _create_mcp_server(settings, beta_auth_service=beta_auth_service)
+    runtime = _ToolExecutor(settings.mcp_max_concurrent_operations, settings=settings)
+    server = _register_tools(
+        _new_mcp_server(runtime, close_runtime=False), runtime=runtime
+    )
+    _register_health_route(server, settings)
+    if settings.beta_signup_enabled and beta_auth_service is not None:
+        _register_beta_routes(server, settings, beta_auth_service)
     security = _transport_security(settings)
     app = server.streamable_http_app(
         streamable_http_path=_STREAMABLE_HTTP_PATH,
@@ -1375,6 +1409,7 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
         stateless_http=True,
         transport_security=security,
     )
+    app = _RuntimeLifespanASGIApp(app, runtime)
     if settings.beta_signup_enabled:
         session_secret = settings.beta_session_secret
         if session_secret is None or not session_secret.strip():

@@ -764,7 +764,7 @@ def _request_with_retry(
             if retry_after > retry_max_seconds:
                 raise ProviderError(
                     "Provider retry delay exceeds the configured wait limit. Retry later.",
-                    failure_class="deadline_exhausted",
+                    failure_class="retry_delay_exceeded",
                 ) from retry_error
             delay = max(delay, retry_after)
         budget.wait(delay)
