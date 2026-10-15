@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
+from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
 from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
 from policynim.services.router import PolicyRouterService
 from policynim.settings import Settings, get_settings
@@ -88,14 +89,22 @@ class PreflightService:
         _close_component(self._compiler_service)
         _close_component(self._generator)
 
-    def preflight(self, request: PreflightRequest) -> PreflightResult:
+    def preflight(
+        self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> PreflightResult:
         """Run the grounded preflight pipeline."""
+        if principal is not None:
+            authorize_operation(principal, "policy_preflight")
         output = self._run_preflight(request, with_trace=False)
         assert isinstance(output, PreflightResult)
         return output
 
-    def preflight_with_trace(self, request: PreflightRequest) -> PreflightTraceResult:
+    def preflight_with_trace(
+        self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> PreflightTraceResult:
         """Run preflight and retain internal data needed for eval scoring."""
+        if principal is not None:
+            authorize_operation(principal, "policy_preflight")
         output = self._run_preflight(request, with_trace=True)
         assert isinstance(output, PreflightTraceResult)
         return output

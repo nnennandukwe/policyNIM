@@ -9,11 +9,13 @@ import socket
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, cast
+from urllib.parse import urlsplit
 
 from pydantic import (
     AliasChoices,
     AnyHttpUrl,
     Field,
+    SecretStr,
     ValidationError,
     ValidationInfo,
     field_validator,
@@ -99,6 +101,11 @@ class Settings(BaseSettings):
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None
+    mcp_oauth_issuer_url: str | None = None
+    mcp_oauth_client_id: str | None = None
+    mcp_oauth_client_secret: SecretStr | None = None
+    mcp_oauth_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 5.0
+    mcp_oauth_allow_legacy_keys: bool = False
     beta_signup_enabled: bool = False
     beta_auth_db_path: Path = Path("data/runtime/auth.sqlite3")
     beta_session_secret: str | None = None
@@ -342,7 +349,58 @@ class Settings(BaseSettings):
                     "POLICYNIM_MCP_PUBLIC_BASE_URL must not include a query string or fragment."
                 )
 
-        if self.mcp_require_auth and not self.mcp_bearer_tokens and not self.beta_signup_enabled:
+        if self.mcp_oauth_issuer_url is not None:
+            issuer = self.mcp_oauth_issuer_url
+            try:
+                AnyHttpUrl(issuer)
+            except ValidationError:
+                raise ValueError(
+                    "POLICYNIM_MCP_OAUTH_ISSUER_URL must be a valid HTTPS URL."
+                ) from None
+            parsed = urlsplit(issuer)
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or any(character.isspace() for character in issuer)
+                or issuer.endswith("/")
+            ):
+                raise ValueError(
+                    "POLICYNIM_MCP_OAUTH_ISSUER_URL must be an HTTPS Keycloak realm URL "
+                    "without credentials, query, fragment or trailing slash."
+                )
+            if not self.mcp_require_auth:
+                raise ValueError("OAuth requires POLICYNIM_MCP_REQUIRE_AUTH=true.")
+            if not self.mcp_oauth_client_id or not self.mcp_oauth_client_id.strip():
+                raise ValueError("Set POLICYNIM_MCP_OAUTH_CLIENT_ID for token introspection.")
+            if (
+                self.mcp_oauth_client_secret is None
+                or not self.mcp_oauth_client_secret.get_secret_value().strip()
+            ):
+                raise ValueError("Set POLICYNIM_MCP_OAUTH_CLIENT_SECRET for token introspection.")
+            if self.mcp_public_base_url is None or self.mcp_public_base_url.scheme != "https":
+                raise ValueError("OAuth requires an HTTPS POLICYNIM_MCP_PUBLIC_BASE_URL.")
+            if self.beta_signup_enabled and not self.mcp_oauth_allow_legacy_keys:
+                raise ValueError(
+                    "Disable POLICYNIM_BETA_SIGNUP_ENABLED before disabling OAuth legacy keys. "
+                    "The beta portal issues legacy keys, not OAuth access tokens."
+                )
+        elif (
+            self.mcp_oauth_client_id is not None
+            or self.mcp_oauth_client_secret is not None
+            or self.mcp_oauth_allow_legacy_keys
+        ):
+            raise ValueError("Set POLICYNIM_MCP_OAUTH_ISSUER_URL before OAuth client settings.")
+
+        if (
+            self.mcp_require_auth
+            and not self.mcp_bearer_tokens
+            and not self.beta_signup_enabled
+            and self.mcp_oauth_issuer_url is None
+        ):
             raise ValueError(
                 "POLICYNIM_MCP_BEARER_TOKENS must be set when POLICYNIM_MCP_REQUIRE_AUTH is true "
                 "and self-serve beta signup is disabled."

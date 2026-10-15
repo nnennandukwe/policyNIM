@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from policynim.errors import MissingIndexError
 from policynim.interfaces import mcp as mcp_module
+from policynim.services.authorization import AuthenticatedPrincipal
 from policynim.settings import Settings
 from policynim.types import (
     Citation,
@@ -58,7 +59,9 @@ class OfflineSearchService:
         self.events = events
         events.append("search.created")
 
-    def search(self, request: SearchRequest) -> SearchResult:
+    def search(
+        self, request: SearchRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> SearchResult:
         """Return cited fixture data or a controlled provider failure."""
         if request.query == "missing-index":
             raise MissingIndexError("Run `policynim ingest` first.")
@@ -97,7 +100,9 @@ class OfflinePreflightService:
         self.events = events
         events.append("preflight.created")
 
-    def preflight(self, request: PreflightRequest) -> PreflightResult:
+    def preflight(
+        self, request: PreflightRequest, *, principal: AuthenticatedPrincipal | None = None
+    ) -> PreflightResult:
         """Return grounded guidance or an explicit lack of supporting policy."""
         if request.task == "uncovered-task":
             return PreflightResult(

@@ -5,6 +5,11 @@ recovery notes, or operator deployment checklist.
 
 ## Self-Serve Hosted Beta
 
+This guide describes the existing bearer-key deployment. For the optional
+external issuer foundation, migration, and remaining interoperability gate, see
+[hosted authorization](hosted-authorization.md). GitHub portal sign-in doesn't
+obtain an MCP OAuth token.
+
 The hosted beta is the fastest path for a new user:
 
 1. Open `https://<railway-domain>/beta`.
