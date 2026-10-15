@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -162,12 +163,15 @@ class IntrospectionTokenVerifier:
             return None
         endpoint = issuer.rstrip("/") + "/protocol/openid-connect/token/introspect"
         try:
-            async with httpx.AsyncClient(
-                timeout=self._settings.mcp_oauth_timeout_seconds,
-                follow_redirects=False,
-                trust_env=False,
-                transport=self._transport,
-            ) as client:
+            async with (
+                asyncio.timeout(self._settings.mcp_oauth_timeout_seconds),
+                httpx.AsyncClient(
+                    timeout=self._settings.mcp_oauth_timeout_seconds,
+                    follow_redirects=False,
+                    trust_env=False,
+                    transport=self._transport,
+                ) as client,
+            ):
                 response = await client.post(
                     endpoint,
                     data={
@@ -183,7 +187,7 @@ class IntrospectionTokenVerifier:
                 if isinstance(payload, dict) and payload.get("active") is False:
                     return None
                 claims = _IntrospectionClaims.model_validate(payload)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, TimeoutError):
             LOGGER.warning("OAuth introspection failed: issuer_unavailable.")
             return None
         except (ValueError, ValidationError):

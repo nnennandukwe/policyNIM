@@ -69,24 +69,32 @@ POLICYNIM_MCP_PUBLIC_BASE_URL=https://policy.example
 POLICYNIM_MCP_OAUTH_ISSUER_URL=https://identity.example/realms/policynim
 POLICYNIM_MCP_OAUTH_CLIENT_ID=https://policy.example/mcp
 POLICYNIM_MCP_OAUTH_TIMEOUT_SECONDS=5
+POLICYNIM_MCP_OAUTH_MAX_CONCURRENT_REQUESTS=64
 POLICYNIM_MCP_OAUTH_ALLOW_LEGACY_KEYS=false
 ```
 
 Set `POLICYNIM_MCP_OAUTH_CLIENT_SECRET` through the secret manager. Don't put it
 in a client command, committed file, URL, or support output. Issuer/client
-settings are absent by default. Supplying a partial configuration fails startup.
+settings default to absent values. Supplying a partial configuration fails startup.
 Issuer URLs require HTTPS without credentials, query, fragment, or trailing
-slash. Public resource hosting also requires HTTPS. Existing settings precedence
-is preserved: direct constructor values, process environment, then dotenv/config
+slash. Public resource hosting also requires HTTPS. The change preserves existing settings precedence: direct constructor values, process environment, then dotenv/config
 sources as defined by `Settings`.
 
 The verifier posts to the fixed realm endpoint
 `<issuer>/protocol/openid-connect/token/introspect` with `client_secret_post` form
 authentication over HTTPS. HTTPX encodes the client ID and secret as form fields;
 they aren't placed in the URL or forwarded to NVIDIA. It doesn't follow redirects, use environment proxies, accept
-token-selected endpoints, or cache successful token validation. Timeout is
-bounded between greater than zero and 30 seconds; the default is five seconds.
+token-selected endpoints, or cache successful token validation. The total introspection deadline is
+bounded between greater than zero and 30 seconds; it defaults to five seconds.
 A fresh HTTP client closes after each introspection, including failure.
+
+A separate HTTP guard admits at most 64 concurrent requests carrying an
+Authorization header, including headers sent to public routes where the SDK also
+authenticates them. The configured limit can range from 1 to 256. It holds a slot
+through response cleanup and rejects excess requests with HTTP `429`,
+`error=auth_busy` and `Retry-After: 1` before contacting the issuer. Public health
+and metadata without an Authorization header remain accessible. This request cap operates separately from Foundation's model-operation cap and
+from the future principal usage accounting in #98.
 
 ## Discovery and operation permissions
 
@@ -104,25 +112,25 @@ uses the issuer's own discovery/login/token endpoints to obtain its access token
 
 Missing, expired, inactive, malformed, foreign-issuer or foreign-audience tokens
 receive HTTP `401` with `WWW-Authenticate: Bearer` and `resource_metadata`.
-Authenticated POST bodies are capped at 1 MiB before dispatch.
+The HTTP boundary caps authenticated POST bodies at 1 MiB before dispatch.
 Insufficient tool scopes receive HTTP `403` with `error="insufficient_scope"`,
 the complete required `scope` set, and the same metadata URL. Both `/mcp` and
 `/mcp/` remain behind authorization. Host/Origin checks run before authentication.
 
-The SDK's `validate_token_resource=True` is explicit. The verifier checks exact
+The server explicitly sets the SDK's `validate_token_resource=True`. The verifier checks exact
 issuer and audience membership before returning that resource to the SDK.
-Each protected HTTP request is introspected again. Each tool invocation checks
+The server introspects each protected HTTP request again. Each tool invocation checks
 its scopes and expiry before admission/provider allocation, and search/preflight
 services check again before their pipelines. A frozen principal carries issuer,
 subject, client ID, scopes, credential source and expiry into service work.
 It contains no access token. Local CLI and stdio MCP operations remain trusted
-local calls, even when hosted auth is configured. OAuth authentication and scope
+local calls, even with hosted auth configured. OAuth authentication and scope
 denials retain sanitized `mcp.auth` events without credentials or request bodies.
 
 The shared public corpus doesn't grant access to another user's evaluation jobs.
-No hosted evaluation-job route is introduced here; unknown protected operations
-are denied by the service permission function. Job ownership remains part of the
-future job implementation, not an implicit benefit of corpus read scope.
+This foundation doesn't introduce hosted evaluation-job routes. The service
+permission function denies unknown protected operations. Future job implementation
+must enforce ownership separately from corpus read scope.
 
 ## Existing-key migration and recovery
 

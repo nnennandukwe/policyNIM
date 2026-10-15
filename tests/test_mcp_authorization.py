@@ -336,6 +336,8 @@ def test_legacy_key_migration_rotation_revocation_and_recovery(tmp_path: Path) -
         ({"mcp_public_base_url": "http://policy.example"}, "PUBLIC_BASE_URL"),
         ({"mcp_oauth_issuer_url": None}, "ISSUER_URL"),
         ({"mcp_oauth_timeout_seconds": 0}, "mcp_oauth_timeout_seconds"),
+        ({"mcp_oauth_max_concurrent_requests": 0}, "mcp_oauth_max_concurrent_requests"),
+        ({"mcp_oauth_max_concurrent_requests": 257}, "mcp_oauth_max_concurrent_requests"),
     ],
 )
 def test_oauth_settings_reject_unsafe_or_partial_configuration(
@@ -357,6 +359,7 @@ def test_oauth_settings_environment_parity(tmp_path: Path, monkeypatch: pytest.M
         "POLICYNIM_MCP_OAUTH_CLIENT_SECRET": "fixture-introspection-secret",
         "POLICYNIM_MCP_OAUTH_ALLOW_LEGACY_KEYS": "false",
         "POLICYNIM_MCP_OAUTH_TIMEOUT_SECONDS": "5",
+        "POLICYNIM_MCP_OAUTH_MAX_CONCURRENT_REQUESTS": "64",
     }.items():
         monkeypatch.setenv(name, value)
     loaded = Settings()
@@ -367,6 +370,7 @@ def test_oauth_settings_environment_parity(tmp_path: Path, monkeypatch: pytest.M
         "mcp_oauth_client_secret",
         "mcp_oauth_allow_legacy_keys",
         "mcp_oauth_timeout_seconds",
+        "mcp_oauth_max_concurrent_requests",
     ]:
         assert getattr(loaded, field) == getattr(direct, field)
     assert "fixture-introspection-secret" not in repr(loaded)
@@ -923,3 +927,72 @@ def test_dispatch_expiry_returns_http_challenge_before_provider_work(
         clock.update(checks=0, expire_at=999)
         assert rpc(client, "tools/call", params).status_code == 200
         assert len(factories) == 2
+
+
+@pytest.mark.parametrize("limited_path", ["/mcp", METADATA_PATH, "/healthz"])
+def test_oauth_authentication_capacity_precedes_issuer_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limited_path: str
+) -> None:
+    """Bound pre-authentication connections while public unauthenticated probes stay responsive."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    settings = oauth_settings(tmp_path, mcp_oauth_max_concurrent_requests=1)
+    started = Event()
+    release = Event()
+    requests: list[httpx.Request] = []
+
+    async def introspect(request: httpx.Request) -> httpx.Response:
+        """Hold the sole admitted issuer connection until the test releases it."""
+        requests.append(request)
+        started.set()
+        while not release.is_set():
+            await asyncio.sleep(0.001)
+        return httpx.Response(200, json=token_claims())
+
+    verifier = IntrospectionTokenVerifier(settings, transport=httpx.MockTransport(introspect))
+    monkeypatch.setattr(mcp_module, "IntrospectionTokenVerifier", lambda *args, **kwargs: verifier)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            admitted = executor.submit(rpc, client, "tools/list")
+            try:
+                assert started.wait(5)
+                excess = client.get(limited_path, headers={"Authorization": "Bearer invalid"})
+                assert excess.status_code == 429
+                assert excess.headers["Retry-After"] == "1"
+                assert excess.json()["error"] == "auth_busy"
+                assert "WWW-Authenticate" not in excess.headers
+                assert len(requests) == 1
+                assert client.get(METADATA_PATH).status_code == 200
+                assert client.get("/healthz").status_code == 503
+                assert len(requests) == 1
+            finally:
+                release.set()
+            assert admitted.result(timeout=10).status_code == 200
+        assert rpc(client, "tools/list").status_code == 200
+        assert len(requests) == 2
+
+
+def test_introspection_total_deadline_and_recovery(tmp_path: Path) -> None:
+    """A slow issuer can't retain a connection beyond the total configured deadline."""
+    settings = oauth_settings(tmp_path, mcp_oauth_timeout_seconds=0.01)
+    slow = True
+
+    async def introspect(request: httpx.Request) -> httpx.Response:
+        """Delay only the first attempt, independently of socket read timeout behavior."""
+        if slow:
+            await asyncio.sleep(1)
+        return httpx.Response(200, json=token_claims())
+
+    verifier = IntrospectionTokenVerifier(settings, transport=httpx.MockTransport(introspect))
+
+    async def exercise() -> None:
+        """Reject the slow attempt and accept a later healthy response from the same issuer."""
+        nonlocal slow
+        assert await asyncio.wait_for(verifier.verify_token("fixture"), timeout=0.5) is None
+        slow = False
+        assert await verifier.verify_token("fixture") is not None
+
+    asyncio.run(exercise())

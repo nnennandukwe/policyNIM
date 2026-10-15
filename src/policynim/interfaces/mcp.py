@@ -1288,22 +1288,46 @@ class _BearerProtectedASGIApp:
         return JSONResponse({"error": "Unauthorized."}, status_code=401)
 
 
-class _OAuthAuthAuditApp:
-    """Retain sanitized denial events when the SDK owns HTTP authentication."""
+class _OAuthRequestGuardApp:
+    """Bound authentication requests and retain sanitized denial events."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, capacity: int) -> None:
         """Wrap the SDK's responses without reading credentials or request bodies."""
         self._app = app
+        self._admission = BoundedSemaphore(capacity)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Record protected-route authentication and permission denials once."""
-        if not _is_protected_mcp_request(scope, _STREAMABLE_HTTP_PATH):
+        protected = _is_protected_mcp_request(scope, _STREAMABLE_HTTP_PATH)
+        attempts_auth = scope["type"] == "http" and "authorization" in Headers(scope=scope)
+        if not protected and not attempts_auth:
             await self._app(scope, receive, send)
+            return
+
+        admitted = attempts_auth and self._admission.acquire(blocking=False)
+        if attempts_auth and not admitted:
+            _emit_hosted_event(
+                "mcp.auth",
+                auth_result="auth_busy",
+                tool_name=None,
+                latency_ms=None,
+                upstream_failure_class=None,
+                request_id=None,
+            )
+            await JSONResponse(
+                {"error": "auth_busy", "message": "Too many authentication requests. Retry later."},
+                status_code=429,
+                headers={"Retry-After": "1"},
+            )(scope, receive, send)
             return
 
         async def record_denial(message: Message) -> None:
             """Observe only the response status; forward every ASGI message unchanged."""
-            if message["type"] == "http.response.start" and message["status"] in (401, 403):
+            if (
+                protected
+                and message["type"] == "http.response.start"
+                and message["status"] in (401, 403)
+            ):
                 _emit_hosted_event(
                     "mcp.auth",
                     auth_result="unauthorized"
@@ -1316,7 +1340,11 @@ class _OAuthAuthAuditApp:
                 )
             await send(message)
 
-        await self._app(scope, receive, record_denial)
+        try:
+            await self._app(scope, receive, record_denial)
+        finally:
+            if admitted:
+                self._admission.release()
 
 
 class _MCPHostOriginApp:
@@ -1466,7 +1494,10 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
             https_only=_beta_session_https_only(settings),
         )
     if settings.mcp_oauth_issuer_url is not None:
-        return _MCPHostOriginApp(_OAuthAuthAuditApp(app), security)
+        return _MCPHostOriginApp(
+            _OAuthRequestGuardApp(app, capacity=settings.mcp_oauth_max_concurrent_requests),
+            security,
+        )
     if not settings.mcp_require_auth:
         return _MCPHostOriginApp(app, security)
     app = _BearerProtectedASGIApp(
