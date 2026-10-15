@@ -7,7 +7,6 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import quote
 
 import httpx
 from anyio import to_thread
@@ -151,10 +150,12 @@ class IntrospectionTokenVerifier:
             ) as client:
                 response = await client.post(
                     endpoint,
-                    auth=httpx.BasicAuth(
-                        quote(client_id, safe=""), quote(secret.get_secret_value(), safe="")
-                    ),
-                    data={"token": token, "token_type_hint": "access_token"},
+                    data={
+                        "client_id": client_id,
+                        "client_secret": secret.get_secret_value(),
+                        "token": token,
+                        "token_type_hint": "access_token",
+                    },
                     headers={"Accept": "application/json"},
                 )
                 response.raise_for_status()

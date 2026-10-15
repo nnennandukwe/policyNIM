@@ -1170,6 +1170,13 @@ def _beta_session_https_only(settings: Settings) -> bool:
 
 
 def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
+    """Initialize beta storage only when portal or legacy key authentication uses it."""
+    if (
+        settings.mcp_oauth_issuer_url is not None
+        and not settings.beta_signup_enabled
+        and not settings.mcp_oauth_allow_legacy_keys
+    ):
+        return None
     if not settings.beta_signup_enabled and not settings.mcp_require_auth:
         return None
     try:

@@ -231,7 +231,7 @@ def test_discovery_scope_challenges_and_principal_propagation(
         str(request.url) == ISSUER + "/protocol/openid-connect/token/introspect"
         for request in requests
     )
-    assert all(request.headers["Authorization"].startswith("Basic ") for request in requests)
+    assert all("Authorization" not in request.headers for request in requests)
 
 
 @pytest.mark.parametrize("fault", ["inactive", "unavailable", "redirect", "malformed"])
@@ -636,27 +636,32 @@ def test_oauth_sdk_clients_cross_real_http(
     assert len(requests) >= 8
 
 
-def test_introspection_basic_auth_encodes_resource_client_id(tmp_path: Path) -> None:
-    """URL-shaped client IDs and reserved secret characters survive OAuth Basic auth."""
-    import base64
-    from urllib.parse import quote
+def test_introspection_form_auth_preserves_resource_client_credentials(tmp_path: Path) -> None:
+    """URL-shaped IDs and reserved secret characters retain their configured values."""
+    from urllib.parse import parse_qs
 
     secret = "fixture:secret &space"
     settings = oauth_settings(
         tmp_path, mcp_oauth_client_id=RESOURCE, mcp_oauth_client_secret=secret
     )
-    headers: list[str] = []
+    requests: list[httpx.Request] = []
 
     def introspect(request: httpx.Request) -> httpx.Response:
-        """Inspect only deterministic fixture credentials, without printing secrets."""
-        headers.append(request.headers["Authorization"])
+        """Parse credentials as the selected issuer's form-based authenticator does."""
+        requests.append(request)
+        form = parse_qs(request.content.decode())
+        assert form["client_id"] == [RESOURCE]
+        assert form["client_secret"] == [secret]
+        assert form["token"] == ["fixture"]
+        assert form["token_type_hint"] == ["access_token"]
+        assert "Authorization" not in request.headers
+        assert request.url.query == b""
+        assert secret not in str(request.url)
         return httpx.Response(200, json=token_claims())
 
     verifier = IntrospectionTokenVerifier(settings, transport=httpx.MockTransport(introspect))
     assert asyncio.run(verifier.verify_token("fixture")) is not None
-    assert base64.b64decode(headers[0].removeprefix("Basic ")).decode() == (
-        quote(RESOURCE, safe="") + ":" + quote(secret, safe="")
-    )
+    assert len(requests) == 1
 
 
 def test_concurrent_http_requests_keep_principals_separate(
@@ -808,3 +813,34 @@ def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool
                 assert result.structured_content["query"] == "local"
 
     asyncio.run(exercise())
+
+
+def test_oauth_only_startup_doesnt_require_beta_storage(tmp_path: Path) -> None:
+    """An unavailable beta volume doesn't block an issuer-only resource server."""
+    from policynim.errors import ConfigurationError
+
+    blocked = tmp_path / "unavailable-beta-volume"
+    blocked.write_text("This fixture is a file, so a database can't be created underneath it.")
+    settings = oauth_settings(tmp_path, beta_auth_db_path=blocked / "auth.sqlite3")
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        assert client.get(METADATA_PATH).status_code == 200
+        assert rpc(client, "tools/list", token=None).status_code == 401
+    assert blocked.read_text().startswith("This fixture is a file")
+    with pytest.raises(ConfigurationError, match="Hosted beta auth initialization failed"):
+        mcp_module._build_streamable_http_app(
+            oauth_settings(
+                tmp_path,
+                beta_auth_db_path=blocked / "auth.sqlite3",
+                mcp_oauth_allow_legacy_keys=True,
+            )
+        )
+
+
+def test_oauth_legacy_mode_initializes_needed_beta_storage(tmp_path: Path) -> None:
+    """Legacy compatibility can still read persisted keys after portal signup is disabled."""
+    settings = oauth_settings(tmp_path, mcp_oauth_allow_legacy_keys=True)
+    assert not settings.beta_auth_db_path.exists()
+    mcp_module._build_streamable_http_app(settings)
+    assert settings.beta_auth_db_path.is_file()

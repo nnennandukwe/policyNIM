@@ -11,6 +11,7 @@ MCP client was available during implementation. Offline tests cover HTTP and
 service behavior, including a real local TCP connection, with a deterministic
 introspection endpoint double. They don't prove an external login/token flow.
 OAuth remains disabled on existing deployments until an operator configures it.
+OAuth-only mode doesn't initialize or require a beta authentication database.
 
 ## Selected issuer and client configuration
 
@@ -38,7 +39,7 @@ issuer they own:
 
 1. Choose the exact public resource URL, such as `https://policy.example/mcp`.
    Create a confidential Keycloak resource client whose client ID equals that
-   URL. Keep its introspection secret in the deployment's secret manager.
+   URL and permits `client_secret_post` authentication. Keep its introspection secret in the deployment's secret manager.
 2. Add optional client scopes `policies:read` and `policies:evaluate`. Include
    each scope in the token scope claim. Attach an Audience mapper to each scope
    whose Included Custom Audience equals the exact resource URL. Include the
@@ -78,8 +79,9 @@ is preserved: direct constructor values, process environment, then dotenv/config
 sources as defined by `Settings`.
 
 The verifier posts to the fixed realm endpoint
-`<issuer>/protocol/openid-connect/token/introspect` with HTTP Basic client
-authentication. It doesn't follow redirects, use environment proxies, accept
+`<issuer>/protocol/openid-connect/token/introspect` with `client_secret_post` form
+authentication over HTTPS. HTTPX encodes the client ID and secret as form fields;
+they aren't placed in the URL or forwarded to NVIDIA. It doesn't follow redirects, use environment proxies, accept
 token-selected endpoints, or cache successful token validation. Timeout is
 bounded between greater than zero and 30 seconds; the default is five seconds.
 A fresh HTTP client closes after each introspection, including failure.
