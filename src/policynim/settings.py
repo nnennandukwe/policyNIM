@@ -84,8 +84,11 @@ class Settings(BaseSettings):
     nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_retrieval_base_url: str = "https://ai.api.nvidia.com/v1/retrieval"
-    nvidia_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
-    nvidia_max_retries: Annotated[int, Field(ge=0)] = 2
+    nvidia_timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 30.0
+    nvidia_max_retries: Annotated[int, Field(ge=0, le=10)] = 2
+    operation_timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 120.0
+    nvidia_retry_initial_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 0.5
+    nvidia_retry_max_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 8.0
     mcp_host: str = "127.0.0.1"
     mcp_port: Annotated[
         int,

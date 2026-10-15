@@ -31,7 +31,8 @@ class SpyRerankClient:
         self.calls: list[dict[str, object]] = []
         self.closed = False
 
-    def post(self, endpoint: str, json: dict[str, object]) -> SpyResponse:
+    def post(self, endpoint: str, json: dict[str, object], *, timeout: float) -> SpyResponse:
+        """Accept request-local timeouts and return or raise the configured response."""
         self.calls.append({"endpoint": endpoint, "json": json})
         return SpyResponse(self._payload)
 
@@ -57,7 +58,8 @@ class OwnedClientSpy:
 class RateLimitedRerankClient:
     """Client stub that always raises HTTP 429 for reranking."""
 
-    def post(self, endpoint: str, json: dict[str, object]) -> SpyResponse:
+    def post(self, endpoint: str, json: dict[str, object], *, timeout: float) -> SpyResponse:
+        """Accept request-local timeouts and return or raise the configured response."""
         request = httpx.Request("POST", f"https://example.invalid/{endpoint}")
         response = httpx.Response(429, request=request)
         raise httpx.HTTPStatusError("rate limited", request=request, response=response)
