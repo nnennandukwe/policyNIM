@@ -12,6 +12,7 @@ import httpx
 from openai import OpenAI
 
 from policynim.errors import ProviderError
+from policynim.operations import close_components
 from policynim.settings import Settings
 
 
@@ -64,14 +65,7 @@ class NVIDIAClients:
         with self._lock:
             self._closed = True
             clients, self._clients = list(self._clients.values()), {}
-            failure: Exception | None = None
-            for client in clients:
-                try:
-                    client.close()
-                except Exception as exc:
-                    failure = failure or exc
-            if failure is not None:
-                raise failure
+            close_components(*clients)
 
 
 _POOL: ContextVar[NVIDIAClients | None] = ContextVar("policynim_nvidia_clients", default=None)

@@ -302,7 +302,8 @@ def test_cli_deadline_failure_exits_nonzero_and_closes_service(monkeypatch) -> N
     assert index.last_query_embedding is None
 
 
-def test_pool_close_failure_still_attempts_all_owned_clients() -> None:
+@pytest.mark.parametrize("error", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_pool_close_failure_still_attempts_all_owned_clients(error) -> None:
     """One broken SDK close can't prevent another pooled transport from closing."""
     closed = []
 
@@ -318,7 +319,7 @@ def test_pool_close_failure_still_attempts_all_owned_clients() -> None:
             """Record cleanup before reporting a controlled close failure."""
             closed.append(self.name)
             if self.fail:
-                raise RuntimeError("close failure")
+                raise error("close failure")
 
     pool = lifecycle.NVIDIAClients()
     first = httpx.Client(transport=RecordingTransport("sdk", True))
@@ -327,7 +328,7 @@ def test_pool_close_failure_still_attempts_all_owned_clients() -> None:
         ("sdk", "https://a.invalid", 1, "test"): first,
         ("retrieval", "https://b.invalid", 1, "test"): second,
     }
-    with pytest.raises(RuntimeError, match="close failure"):
+    with pytest.raises(error, match="close failure"):
         pool.close()
     assert closed == ["sdk", "retrieval"]
     assert first.is_closed and second.is_closed
