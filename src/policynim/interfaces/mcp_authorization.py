@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -50,10 +51,13 @@ def _challenge_response(error: AuthorizationError, metadata_url: str) -> JSONRes
 class OperationAuthorizationApp:
     """Challenge scope escalation before MCP dispatch or provider allocation."""
 
-    def __init__(self, app: ASGIApp, *, metadata_url: str) -> None:
+    def __init__(
+        self, app: ASGIApp, *, metadata_url: str, body_timeout_seconds: float = 30.0
+    ) -> None:
         """Wrap the protected route after the SDK's authentication middleware."""
         self._app = app
         self._metadata_url = metadata_url
+        self._body_timeout_seconds = body_timeout_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Inspect a bounded request body and replay it unchanged after permission checks."""
@@ -64,14 +68,24 @@ class OperationAuthorizationApp:
         body = bytearray()
         request = Request(scope, receive)
         try:
-            async for chunk in request.stream():
-                body.extend(chunk)
-                if len(body) > MAX_AUTH_BODY_BYTES:
-                    await JSONResponse({"error": "Request body too large."}, status_code=413)(
-                        scope, receive, send
-                    )
-                    return
+            async with asyncio.timeout(self._body_timeout_seconds):
+                async for chunk in request.stream():
+                    body.extend(chunk)
+                    if len(body) > MAX_AUTH_BODY_BYTES:
+                        await JSONResponse({"error": "Request body too large."}, status_code=413)(
+                            scope, receive, send
+                        )
+                        return
         except ClientDisconnect:
+            return
+        except TimeoutError:
+            await JSONResponse(
+                {
+                    "error": "request_timeout",
+                    "message": "Request body timed out. Retry the request.",
+                },
+                status_code=408,
+            )(scope, receive, send)
             return
         try:
             payload = json.loads(body)

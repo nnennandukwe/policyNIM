@@ -320,7 +320,8 @@ def test_legacy_key_migration_rotation_revocation_and_recovery(tmp_path: Path) -
         assert await disabled.verify_token("operator-fixture") is None
 
     asyncio.run(exercise())
-    assert issued.api_key in external_tokens  # checked externally only after rotation
+    assert issued.api_key not in external_tokens
+    assert len(external_tokens) == 2  # only OAuth-only attempts consult the issuer
 
 
 @pytest.mark.parametrize(
@@ -338,6 +339,8 @@ def test_legacy_key_migration_rotation_revocation_and_recovery(tmp_path: Path) -
         ({"mcp_oauth_timeout_seconds": 0}, "mcp_oauth_timeout_seconds"),
         ({"mcp_oauth_max_concurrent_requests": 0}, "mcp_oauth_max_concurrent_requests"),
         ({"mcp_oauth_max_concurrent_requests": 257}, "mcp_oauth_max_concurrent_requests"),
+        ({"mcp_oauth_request_body_timeout_seconds": 0}, "mcp_oauth_request_body_timeout_seconds"),
+        ({"mcp_oauth_request_body_timeout_seconds": 301}, "mcp_oauth_request_body_timeout_seconds"),
     ],
 )
 def test_oauth_settings_reject_unsafe_or_partial_configuration(
@@ -360,6 +363,7 @@ def test_oauth_settings_environment_parity(tmp_path: Path, monkeypatch: pytest.M
         "POLICYNIM_MCP_OAUTH_ALLOW_LEGACY_KEYS": "false",
         "POLICYNIM_MCP_OAUTH_TIMEOUT_SECONDS": "5",
         "POLICYNIM_MCP_OAUTH_MAX_CONCURRENT_REQUESTS": "64",
+        "POLICYNIM_MCP_OAUTH_REQUEST_BODY_TIMEOUT_SECONDS": "30",
     }.items():
         monkeypatch.setenv(name, value)
     loaded = Settings()
@@ -371,6 +375,7 @@ def test_oauth_settings_environment_parity(tmp_path: Path, monkeypatch: pytest.M
         "mcp_oauth_allow_legacy_keys",
         "mcp_oauth_timeout_seconds",
         "mcp_oauth_max_concurrent_requests",
+        "mcp_oauth_request_body_timeout_seconds",
     ]:
         assert getattr(loaded, field) == getattr(direct, field)
     assert "fixture-introspection-secret" not in repr(loaded)
@@ -994,5 +999,115 @@ def test_introspection_total_deadline_and_recovery(tmp_path: Path) -> None:
         assert await asyncio.wait_for(verifier.verify_token("fixture"), timeout=0.5) is None
         slow = False
         assert await verifier.verify_token("fixture") is not None
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("rejection", ["suspended", "quota", "revoked"])
+def test_known_local_key_denials_never_reach_the_issuer(tmp_path: Path, rejection: str) -> None:
+    """Distinguish a rejected issued key from an unrecognized opaque issuer token."""
+    settings = oauth_settings(
+        tmp_path,
+        mcp_oauth_allow_legacy_keys=True,
+        beta_daily_request_quota=1 if rejection == "quota" else 500,
+    )
+    store = AuthStore(path=settings.beta_auth_db_path)
+    service = BetaAuthService(store=store, settings=settings)
+    account = store.upsert_account_from_github(
+        github_user_id=42, github_login="fixture-user", email=None, now=datetime.now(UTC)
+    )
+    key = service.issue_api_key(account_id=account.account_id).api_key
+    issuer = Mock(side_effect=AssertionError("Known local secret reached the issuer"))
+    verifier = IntrospectionTokenVerifier(
+        settings, beta_auth_service=service, transport=httpx.MockTransport(issuer)
+    )
+
+    async def exercise() -> None:
+        """Accept the active key, change only its local authorization, then reject it."""
+        assert await verifier.verify_token(key) is not None
+        if rejection == "suspended":
+            service.suspend_account(github_login=account.github_login)
+        elif rejection == "revoked":
+            service.revoke_api_key(github_login=account.github_login)
+        assert await verifier.verify_token(key) is None
+
+    asyncio.run(exercise())
+    issuer.assert_not_called()
+
+
+def test_opaque_issuer_token_survives_missing_beta_database(tmp_path: Path) -> None:
+    """A failed local lookup neither blocks issuer verification nor creates an empty database."""
+    settings = oauth_settings(tmp_path, mcp_oauth_allow_legacy_keys=True)
+    store = AuthStore(path=settings.beta_auth_db_path)
+    service = BetaAuthService(store=store, settings=settings)
+    verifier = IntrospectionTokenVerifier(
+        settings,
+        beta_auth_service=service,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=token_claims())),
+    )
+    assert asyncio.run(verifier.verify_token("pnm_opaque-issuer-token")) is not None
+    backup = tmp_path / "auth-preserved.sqlite3"
+    settings.beta_auth_db_path.replace(backup)
+    accepted = asyncio.run(verifier.verify_token("pnm_opaque-issuer-token"))
+    assert accepted is not None
+    assert principal_from_access_token(accepted).source == "oauth"
+    assert backup.is_file()
+    assert not settings.beta_auth_db_path.exists()
+
+
+def test_partial_http_body_times_out_and_releases_auth_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real TCP client can't retain an authentication slot by withholding the body."""
+    from urllib.parse import urlsplit
+
+    from test_mcp_protocol import _serve_http
+
+    settings = oauth_settings(
+        tmp_path, mcp_oauth_max_concurrent_requests=1, mcp_oauth_request_body_timeout_seconds=0.02
+    )
+    install_issuer(monkeypatch, settings, token_claims())
+    app = mcp_module._build_streamable_http_app(settings)
+    message = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
+        },
+    }
+
+    async def exercise() -> None:
+        """Send a complete control, withhold one body, then verify a later request succeeds."""
+        async with _serve_http(app) as origin:
+            headers = {
+                "Authorization": "Bearer fixture",
+                "Mcp-Method": "tools/list",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Accept": "application/json, text/event-stream",
+            }
+            async with httpx.AsyncClient(base_url=origin, timeout=3, trust_env=False) as client:
+                assert (await client.post("/mcp", json=message, headers=headers)).status_code == 200
+                target = urlsplit(origin)
+                reader, writer = await asyncio.open_connection(target.hostname, target.port)
+                try:
+                    writer.write(
+                        (
+                            f"POST /mcp HTTP/1.1\r\nHost: {target.netloc}\r\n"
+                            "Authorization: Bearer fixture\r\nContent-Type: application/json\r\n"
+                            "Accept: application/json, text/event-stream\r\n"
+                            "Content-Length: 100\r\n\r\n{"
+                        ).encode()
+                    )
+                    await writer.drain()
+                    response = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=1)
+                    assert b" 408 " in response.splitlines()[0]
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+                assert (await client.post("/mcp", json=message, headers=headers)).status_code == 200
 
     asyncio.run(exercise())

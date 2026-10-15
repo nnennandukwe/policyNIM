@@ -70,6 +70,7 @@ POLICYNIM_MCP_OAUTH_ISSUER_URL=https://identity.example/realms/policynim
 POLICYNIM_MCP_OAUTH_CLIENT_ID=https://policy.example/mcp
 POLICYNIM_MCP_OAUTH_TIMEOUT_SECONDS=5
 POLICYNIM_MCP_OAUTH_MAX_CONCURRENT_REQUESTS=64
+POLICYNIM_MCP_OAUTH_REQUEST_BODY_TIMEOUT_SECONDS=30
 POLICYNIM_MCP_OAUTH_ALLOW_LEGACY_KEYS=false
 ```
 
@@ -113,6 +114,9 @@ uses the issuer's own discovery/login/token endpoints to obtain its access token
 Missing, expired, inactive, malformed, foreign-issuer or foreign-audience tokens
 receive HTTP `401` with `WWW-Authenticate: Bearer` and `resource_metadata`.
 The HTTP boundary caps authenticated POST bodies at 1 MiB before dispatch.
+Incomplete bodies receive HTTP `408 request_timeout` after 30 seconds by default,
+releasing their HTTP admission slot. The body deadline can range above zero up
+to 300 seconds.
 Insufficient tool scopes receive HTTP `403` with `error="insufficient_scope"`,
 the complete required `scope` set, and the same metadata URL. Both `/mcp` and
 `/mcp/` remain behind authorization. Host/Origin checks run before authentication.
@@ -155,6 +159,14 @@ it doesn't obtain an MCP OAuth token.
 5. For recovery, restore a known-good issuer/client configuration. An operator
    can deliberately re-enable compatibility with a retained key while repairing
    the issuer. Preserve audit history. Don't disable auth or Host/Origin checks.
+
+In compatibility mode, a bounded read-only lookup recognizes locally issued
+key hashes, including revoked keys, before any issuer request. Recognition grants
+no access; the existing transactional authenticator still checks revocation,
+account status and quota. Known denied keys never reach the issuer. Unknown opaque
+tokens, including ones starting with `pnm_`, can still be verified by the issuer.
+If local recognition storage fails, unrecognized tokens can continue to issuer
+verification; local authorization never succeeds from a failed lookup.
 
 In compatibility mode, beta key rotation revokes the previous key immediately;
 operator revoke and account suspension block subsequent authentication. The

@@ -534,3 +534,25 @@ def test_auth_store_failed_admission_rolls_back_quota(
     assert recovered.quota_consumed is True
     assert recovered.account == account
     assert recovered.usage is not None and recovered.usage.request_count == 1
+
+
+def test_key_recognition_preserves_literal_database_paths_and_revoked_history(
+    tmp_path: Path,
+) -> None:
+    """URI metacharacters remain filename bytes, and recognition never grants revoked access."""
+    path = tmp_path / "auth ?mode=memory#%.sqlite3"
+    store = AuthStore(path=path)
+    now = datetime.now(UTC)
+    account = store.upsert_account_from_github(
+        github_user_id=42, github_login="fixture-user", email=None, now=now
+    )
+    digest = _hash_api_key("pnm_fixture")
+    store.rotate_api_key(
+        account_id=account.account_id, key_prefix="pnm_fixture", key_hash=digest, now=now
+    )
+    assert store.recognizes_api_key(key_hash=digest)
+    assert not store.recognizes_api_key(key_hash=_hash_api_key("pnm_unknown"))
+    store.revoke_active_key(account_id=account.account_id, now=now)
+    assert store.recognizes_api_key(key_hash=digest)
+    assert store.authenticate_api_key(key_hash=digest) is None
+    assert path.is_file()

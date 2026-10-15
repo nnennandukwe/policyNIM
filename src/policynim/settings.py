@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     mcp_oauth_client_secret: SecretStr | None = None
     mcp_oauth_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 5.0
     mcp_oauth_max_concurrent_requests: Annotated[int, Field(ge=1, le=256)] = 64
+    mcp_oauth_request_body_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 30.0
     mcp_oauth_allow_legacy_keys: bool = False
     beta_signup_enabled: bool = False
     beta_auth_db_path: Path = Path("data/runtime/auth.sqlite3")

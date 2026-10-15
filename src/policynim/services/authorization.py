@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Literal
@@ -17,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, Va
 from policynim.errors import PolicyNIMError
 from policynim.services.beta_auth import BetaAuthService
 from policynim.settings import Settings
+from policynim.types import BetaAuthDecision
 
 READ_SCOPE = "policies:read"
 EVALUATE_SCOPE = "policies:evaluate"
@@ -146,8 +148,16 @@ class IntrospectionTokenVerifier:
     async def verify_token(self, token: str) -> AccessToken | None:
         """Fail closed on inactive, malformed, expired or foreign tokens."""
         if self._settings.mcp_oauth_allow_legacy_keys:
-            principal = await self._legacy_principal(token)
-            if principal is not None:
+            decision = await self._legacy_decision(token)
+            if decision is not None:
+                if decision.status != "authorized":
+                    return None
+                if decision.source != "break_glass" and decision.account is None:
+                    return None
+                principal = legacy_principal(
+                    token=token,
+                    account_id=decision.account.account_id if decision.account else None,
+                )
                 return AccessToken(
                     token=token,
                     client_id=principal.client_id,
@@ -216,16 +226,23 @@ class IntrospectionTokenVerifier:
             claims={"iss": claims.iss, "policynim_source": "oauth"},
         )
 
-    async def _legacy_principal(self, token: str) -> AuthenticatedPrincipal | None:
+    async def _legacy_decision(self, token: str) -> BetaAuthDecision | None:
         """Allow only explicitly enabled old credentials during a staged migration."""
         if token in self._settings.mcp_bearer_tokens:
-            return legacy_principal(token=token)
+            return BetaAuthDecision(status="authorized", source="break_glass")
         if self._beta_auth_service is not None and token.startswith("pnm_"):
             service = self._beta_auth_service
-            decision = await to_thread.run_sync(
-                lambda: service.authenticate_api_key(token=token),
-                abandon_on_cancel=False,
-            )
-            if decision.status == "authorized" and decision.account is not None:
-                return legacy_principal(token=token, account_id=decision.account.account_id)
+            recognized = False
+            try:
+                recognized = await to_thread.run_sync(
+                    lambda: service.recognizes_api_key(token=token), abandon_on_cancel=False
+                )
+                if recognized:
+                    return await to_thread.run_sync(
+                        lambda: service.authenticate_api_key(token=token), abandon_on_cancel=False
+                    )
+            except (sqlite3.Error, OSError, PolicyNIMError):
+                LOGGER.warning("Legacy credential lookup failed: storage_unavailable.")
+                if recognized:
+                    return BetaAuthDecision(status="unauthorized", source="api_key")
         return None

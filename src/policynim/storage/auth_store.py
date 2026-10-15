@@ -327,6 +327,17 @@ class AuthStore:
         with closing(self._connect()) as conn:
             return self._fetch_account_by_key_hash(conn, key_hash)
 
+    def recognizes_api_key(self, *, key_hash: str) -> bool:
+        """Recognize issued or revoked hashes without granting access or creating a database."""
+        uri = self._path.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True, timeout=0.1)) as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM api_keys WHERE key_hash = ? LIMIT 1", (key_hash,)
+                ).fetchone()
+                is not None
+            )
+
     def consume_quota_for_api_key(
         self,
         *,

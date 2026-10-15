@@ -1465,7 +1465,11 @@ def _build_streamable_http_app(settings: Settings) -> ASGIApp:
         metadata = build_resource_metadata_url(resource)
         for route in app.routes:
             if isinstance(route, Route) and route.path == _STREAMABLE_HTTP_PATH:
-                route.app = OperationAuthorizationApp(route.app, metadata_url=str(metadata))
+                route.app = OperationAuthorizationApp(
+                    route.app,
+                    metadata_url=str(metadata),
+                    body_timeout_seconds=settings.mcp_oauth_request_body_timeout_seconds,
+                )
                 # Keep slash visits inside authentication instead of the router's redirect.
                 app.router.routes.append(Route(_STREAMABLE_HTTP_PATH + "/", endpoint=route.app))
         app.router.routes[:] = [
