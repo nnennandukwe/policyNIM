@@ -133,8 +133,6 @@ class IntrospectionTokenVerifier:
                     resource=self.resource,
                     claims={"iss": principal.issuer, "policynim_source": principal.source},
                 )
-        if token in self._settings.mcp_bearer_tokens:
-            return None
         issuer = self._settings.mcp_oauth_issuer_url
         client_id = self._settings.mcp_oauth_client_id
         secret = self._settings.mcp_oauth_client_secret

@@ -844,3 +844,15 @@ def test_oauth_legacy_mode_initializes_needed_beta_storage(tmp_path: Path) -> No
     assert not settings.beta_auth_db_path.exists()
     mcp_module._build_streamable_http_app(settings)
     assert settings.beta_auth_db_path.is_file()
+
+
+def test_oauth_only_mode_doesnt_deny_an_issuer_token_in_an_old_key_list(tmp_path: Path) -> None:
+    """A stale compatibility list can't override authority verified by the external issuer."""
+    token = "opaque-issuer-token"
+    verifier = IntrospectionTokenVerifier(
+        oauth_settings(tmp_path, mcp_bearer_tokens=[token]),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=token_claims())),
+    )
+    accepted = asyncio.run(verifier.verify_token(token))
+    assert accepted is not None
+    assert principal_from_access_token(accepted).source == "oauth"
