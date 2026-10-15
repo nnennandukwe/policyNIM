@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,9 +23,7 @@ def exclusive_file_lock(path: Path) -> Iterator[None]:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise OSError("Writer lock must be a regular file.")
         if os.name == "nt":
-            import msvcrt
-
-            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            _lock_windows_descriptor(descriptor)
         else:
             import fcntl
 
@@ -31,3 +31,17 @@ def exclusive_file_lock(path: Path) -> Iterator[None]:
         yield
     finally:
         os.close(descriptor)
+
+
+def _lock_windows_descriptor(descriptor: int) -> None:
+    """Retry only Windows lock contention; cancellation and fatal errors still propagate."""
+    import msvcrt
+
+    while True:
+        try:
+            getattr(msvcrt, "locking")(descriptor, getattr(msvcrt, "LK_NBLCK"), 1)
+            return
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                raise
+            time.sleep(0.05)

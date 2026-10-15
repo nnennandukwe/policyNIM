@@ -997,3 +997,94 @@ def test_profile_serializer_keeps_toml_1_0_escape_compatibility(profile_path: Pa
     report, _, _ = diff_profile(profile_path)
     update_profile(profile_path, expected_digest=report.review_digest)
     assert read_profile(profile_path)[0].exclusions[0].reason == reason
+
+
+@pytest.mark.skipif(os.name == "nt", reason="This checks POSIX permission bits.")
+def test_raced_profile_target_cant_broaden_staging_permissions(
+    profile_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A post-check symlink swap can't copy public permissions onto private staged text."""
+    from policynim.services import profiles
+
+    profile_path.write_text(profile_path.read_text() + "\n# PRIVATE-PROFILE-CANARY\n")
+    profile_path.chmod(0o600)
+    original = profile_path.read_bytes()
+    report, _, _ = diff_profile(profile_path)
+    backup = profile_path.with_suffix(".original")
+    public = profile_path.parent / "public.toml"
+    public.write_text("# Public unrelated file.\n")
+    public.chmod(0o644)
+    real_check, real_chmod = Path.is_symlink, profiles.os.chmod
+    changed = False
+    modes: list[int] = []
+
+    def swap_after_check(path: Path) -> bool:
+        """Race only the profile's explicit symlink check, leaving its opened content private."""
+        nonlocal changed
+        result = real_check(path)
+        if path == profile_path and not changed:
+            changed = True
+            path.rename(backup)
+            path.symlink_to(public)
+        return result
+
+    def observe_mode(path, mode, *args, **kwargs):
+        """Record permissions chosen for owned staging files without printing their text."""
+        if Path(path).name.startswith(".profile.toml."):
+            modes.append(mode)
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_symlink", swap_after_check)
+    monkeypatch.setattr(profiles.os, "chmod", observe_mode)
+    with pytest.raises(InvalidPolicyDocumentError):
+        update_profile(profile_path, expected_digest=report.review_digest)
+    assert changed
+    assert all(mode & 0o077 == 0 for mode in modes)
+    assert backup.read_bytes() == original
+    assert profile_path.is_symlink()
+
+
+@pytest.mark.parametrize("failure", [None, "fatal", "cancel"])
+def test_windows_lock_waits_past_native_retry_limit(
+    monkeypatch: pytest.MonkeyPatch, failure: str | None
+) -> None:
+    """The retry policy survives contention while preserving cancellation and real failures."""
+    import errno
+    import sys
+    from types import ModuleType
+
+    from policynim.storage import file_lock
+
+    native = ModuleType("msvcrt")
+    calls = 0
+
+    def locking(descriptor: int, mode: int, length: int) -> None:
+        """Model contention beyond ten native attempts or a terminal descriptor error."""
+        nonlocal calls
+        calls += 1
+        assert (descriptor, mode, length) == (7, 2, 1)
+        if failure == "fatal":
+            raise OSError(errno.EBADF, "Invalid descriptor.")
+        if calls <= 15:
+            raise OSError(errno.EACCES, "Held by the other writer.")
+
+    def wait(seconds: float) -> None:
+        """Avoid real delay while preserving the caller's cancellation boundary."""
+        if failure == "cancel":
+            raise KeyboardInterrupt
+
+    setattr(native, "locking", locking)
+    setattr(native, "LK_NBLCK", 2)
+    monkeypatch.setitem(sys.modules, "msvcrt", native)
+    monkeypatch.setattr(file_lock.time, "sleep", wait)
+    if failure == "fatal":
+        with pytest.raises(OSError, match="Invalid descriptor"):
+            file_lock._lock_windows_descriptor(7)
+        assert calls == 1
+    elif failure == "cancel":
+        with pytest.raises(KeyboardInterrupt):
+            file_lock._lock_windows_descriptor(7)
+        assert calls == 1
+    else:
+        file_lock._lock_windows_descriptor(7)
+        assert calls == 16

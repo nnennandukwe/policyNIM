@@ -446,6 +446,11 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
         raise InvalidPolicyDocumentError(
             "Profile updates won't replace a symlink; use its real path."
         )
+    with path.open("r", encoding="utf-8") as original_handle:
+        observed_text = original_handle.read()
+        observed_mode = os.fstat(original_handle.fileno()).st_mode & 0o777
+    if observed_text != original:
+        raise InvalidPolicyDocumentError("Profile changed before staging; rerun the profile diff.")
     staged: Path | None = None
     try:
         with NamedTemporaryFile(
@@ -460,7 +465,7 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
             handle.write(_update_pin_text(original, current))
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(staged, path.stat().st_mode & 0o777)
+        os.chmod(staged, observed_mode)
         # Revalidate inputs and manual edits immediately before replacing the profile.
         final_report, _, final_original = diff_profile(path)
         if final_original != original or final_report.review_digest != expected_digest:
