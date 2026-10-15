@@ -109,7 +109,8 @@ The repo ships three related templates:
 - `.env.production.example` is the hosted Railway and Docker reference
 - `.env.example` remains a backward-compatible alias for the development defaults
 
-Leave `POLICYNIM_CORPUS_DIR` unset to use the bundled sample corpus.
+Leave `POLICYNIM_CORPUS_DIR` and `POLICYNIM_PROFILE` unset to use the bundled sample corpus.
+Use a [local profile](policy-profiles.md) for explicit baseline-plus-custom composition.
 
 ## Important Runtime Settings
 
@@ -117,6 +118,7 @@ Core retrieval and grounding:
 
 - `NVIDIA_API_KEY`
 - `POLICYNIM_CORPUS_DIR`
+- `POLICYNIM_PROFILE` (mutually exclusive with the replacement directory)
 - `POLICYNIM_INDEX_DB_PATH`
 - `POLICYNIM_DEFAULT_TOP_K`
 - `POLICYNIM_NVIDIA_CHAT_MODEL`

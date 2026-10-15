@@ -20,9 +20,21 @@ class CatalogPolicy(StrictModel):
     """One selected source policy and the text users can inspect without a model."""
 
     state: Literal["active", "excluded", "replaced"] = "active"
+    target_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    reason: str | None = None
+    replacement_id: str | None = None
     path: str
     policy: PolicyMetadata
     body: str
+
+
+class CatalogPack(StrictModel):
+    """The exact selected local pack identity shown during source inspection."""
+
+    path: str
+    pack_id: str
+    version: str
+    digest: str
 
 
 class PolicyCatalog(StrictModel):
@@ -31,6 +43,9 @@ class PolicyCatalog(StrictModel):
     schema_version: Literal[1] = 1
     scope: Literal["source"] = "source"
     digest: str
+    profile_id: str | None = None
+    profile_digest: str | None = None
+    pack_pins: list[CatalogPack] = Field(default_factory=list)
     authored_count: int
     effective_count: int
     indexed_count: int | None = None
@@ -51,6 +66,12 @@ def build_policy_catalog(
     root: Path | None = None, *, settings: Settings | None = None
 ) -> PolicyCatalog:
     """Compile a stable catalog from explicit source bytes and declared metadata."""
+    if root is None:
+        active_settings = settings or get_settings()
+        if active_settings.profile is not None:
+            from policynim.services.profiles import resolve_profile
+
+            return resolve_profile(active_settings.profile).catalog
     corpus = (
         root if root is not None else resolve_corpus_root((settings or get_settings()).corpus_dir)
     )
@@ -63,6 +84,16 @@ def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -
     policies = sorted(
         [
             CatalogPolicy(
+                target_digest="sha256:"
+                + sha256(
+                    (
+                        doc.metadata.model_dump_json()
+                        + "\n"
+                        + doc.body
+                        + "\n"
+                        + doc.source_path.removeprefix(root.name + "/")
+                    ).encode("utf-8")
+                ).hexdigest(),
                 path=doc.source_path.removeprefix(root.name + "/"),
                 policy=doc.metadata,
                 body=doc.body,

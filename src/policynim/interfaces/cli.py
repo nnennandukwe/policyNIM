@@ -33,6 +33,7 @@ from policynim.errors import (
     PolicyNIMError,
 )
 from policynim.interfaces.mcp import run_server
+from policynim.interfaces.profile_cli import app as profile_app
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
     create_beta_auth_service,
@@ -108,6 +109,9 @@ policies_app = typer.Typer(
 app.add_typer(policies_app, name="policies")
 
 
+app.add_typer(profile_app, name="profile")
+
+
 @policies_app.command("list")
 def policies_list(
     output_format: Annotated[
@@ -131,7 +135,10 @@ def policies_list(
             if provenance is not None and provenance.pack_id is not None
             else "legacy directory (pack unknown)"
         )
-        typer.echo(f"{entry.policy.policy_id}  {entry.policy.domain}  {pack}  {entry.policy.title}")
+        typer.echo(
+            f"{entry.policy.policy_id}  {entry.state}  {entry.policy.domain}  {pack}  "
+            f"{entry.policy.title}"
+        )
     if catalog.unlisted_markdown:
         typer.echo(
             f"Unlisted Markdown: {len(catalog.unlisted_markdown)} file(s) aren't selected. "
@@ -155,7 +162,9 @@ def policies_show(
         typer.echo(entry.model_dump_json(indent=2))
         return
     typer.echo(f"{entry.policy.policy_id}: {entry.policy.title}")
-    typer.echo(f"Source: {entry.path}")
+    typer.echo(f"Source: {entry.path}; state: {entry.state}")
+    if entry.reason is not None:
+        typer.echo(f"Decision: {entry.reason}")
     if entry.policy.provenance is not None:
         typer.echo(f"Revision: {entry.policy.provenance.content_digest}")
         typer.echo(f"Grounding: {entry.policy.provenance.grounding_kind}")
@@ -376,7 +385,12 @@ def inventory(
         return
     typer.echo("PolicyNIM inventory (local process; remote deployment isn't inspected)")
     source = report.source
-    typer.echo(f"Source directory: {source.root or 'unavailable'}")
+    if source.profile_path is not None:
+        typer.echo(f"Source profile: {source.profile_path}")
+        for source_root in source.roots:
+            typer.echo(f"Source directory: {source_root}")
+    else:
+        typer.echo(f"Source directory: {source.root or 'unavailable'}")
     typer.echo(f"Source documents: {_inventory_count(source.document_count)}")
     typer.echo(f"Source policy IDs: {_inventory_count(source.policy_count)}")
     typer.echo(f"Source chunks: {_inventory_count(source.chunk_count)}")

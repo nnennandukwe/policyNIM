@@ -6,7 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from policynim.errors import InvalidPolicyDocumentError
-from policynim.ingest.catalog import load_pack_manifest, resolve_pack_members
+from policynim.ingest.catalog import load_pack_manifest, read_pack_bytes, resolve_pack_members
 from policynim.ingest.parser import DocumentParser, MarkdownParser
 from policynim.types import DocumentSection, ParsedDocument, PolicyProvenance
 
@@ -55,7 +55,11 @@ def load_policy_documents(
     for path in paths:
         source_path = _repo_relative_path(path, root_path)
         try:
-            content = path.read_bytes()
+            content = (
+                read_pack_bytes(root_path, path.relative_to(root_path).as_posix())
+                if manifest is not None
+                else path.read_bytes()
+            )
             text = content.decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise InvalidPolicyDocumentError(
