@@ -82,7 +82,7 @@ def inspect_generation(
 
     def inspect(settings: Settings, store: GenerationStore) -> dict[str, object]:
         """Hold a reader lease while assembling one validated report."""
-        with store.pin(generation_id or settings.generation_id) as snapshot:
+        with store.pin(generation_id or settings.generation_id, force_validation=True) as snapshot:
             return {
                 "status": "ok",
                 "generation_id": snapshot.generation_id,

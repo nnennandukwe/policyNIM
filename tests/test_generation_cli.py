@@ -141,3 +141,33 @@ def test_text_catalog_views_identify_generation_and_explicit_source_scope(
         source = runner.invoke(app, ["policies", *args, "--source"])
         assert source.exit_code == 0, source.output
         assert active not in source.stdout and "source" in source.stdout.lower()
+
+
+def test_operator_inspection_revalidates_bytes_after_a_warm_runtime_reader(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The operator command must check artifact bytes even when runtime validation is cached."""
+    import policynim.storage.generations as generation_module
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    with store.pin():
+        pass
+    read_regular = generation_module._read_regular
+    reads: list[str] = []
+
+    def record(path: Path, **kwargs):
+        """Observe full index hashing across actual CLI invocations."""
+        if path.name == "index.sqlite3":
+            reads.append(path.name)
+        return read_regular(path, **kwargs)
+
+    monkeypatch.setattr(generation_cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(generation_module, "_read_regular", record)
+    for expected_reads in (1, 2):
+        result = CliRunner().invoke(app, ["generation", "inspect", "--format", "json"])
+        assert result.exit_code == 0, result.output
+        assert len(reads) == expected_reads
+    assert not list((store.root / "leases").rglob("*.lock"))
