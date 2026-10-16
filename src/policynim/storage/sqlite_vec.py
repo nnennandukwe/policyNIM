@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from threading import RLock
 from uuid import uuid4
 
 import sqlite_vec
@@ -56,6 +57,7 @@ class SQLiteVecIndexStore(IndexStore):
         self._embedding_identity = embedding_identity
         self._generation_snapshot = generation_snapshot
         self._closed = False
+        self._reader_lock = RLock()
         self._pending_ingest: tuple[str, tuple[int, int, int, int]] | None = None
 
     @property
@@ -127,68 +129,69 @@ class SQLiteVecIndexStore(IndexStore):
 
     def inspect_identity(self) -> IndexIdentity:
         """Inspect persisted identity without altering the database or calling a provider."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             return _read_identity(conn)
 
     def validate_identity(self) -> None:
         """Require a complete index in the embedding space configured for this store."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             self._validate_identity(conn)
 
     def inspect_readiness(self) -> IndexReadinessReport:
         """Read counts and identity from one snapshot without changing existing data."""
-        self._require_open()
-        try:
-            mode = self._path.stat().st_mode
-            if stat.S_ISDIR(mode):
-                return IndexReadinessReport(state="directory")
-            if not stat.S_ISREG(mode):
-                return IndexReadinessReport(state="invalid")
-            with closing(_connect(self._path, read_only=True)) as conn:
-                self._require_open()
-                conn.execute("BEGIN")
-                if not _has_required_schema(conn):
+        with self._reader_lock:
+            self._require_open()
+            try:
+                mode = self._path.stat().st_mode
+                if stat.S_ISDIR(mode):
+                    return IndexReadinessReport(state="directory")
+                if not stat.S_ISREG(mode):
                     return IndexReadinessReport(state="invalid")
-                count = _count_chunks(conn)
-                policy_count = int(
-                    conn.execute(
-                        f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
-                    ).fetchone()[0]
-                )
-                try:
-                    identity = _read_identity(conn, allow_empty=True)
-                except IndexCompatibilityError as exc:
-                    if isinstance(exc.__cause__, sqlite3.Error) and is_sqlite_access_error(
-                        exc.__cause__
-                    ):
-                        return IndexReadinessReport(state="unreadable")
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    self._require_open()
+                    conn.execute("BEGIN")
+                    if not _has_required_schema(conn):
+                        return IndexReadinessReport(state="invalid")
+                    count = _count_chunks(conn)
+                    policy_count = int(
+                        conn.execute(
+                            f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
+                        ).fetchone()[0]
+                    )
+                    try:
+                        identity = _read_identity(conn, allow_empty=True)
+                    except IndexCompatibilityError as exc:
+                        if isinstance(exc.__cause__, sqlite3.Error) and is_sqlite_access_error(
+                            exc.__cause__
+                        ):
+                            return IndexReadinessReport(state="unreadable")
+                        return IndexReadinessReport(
+                            state="invalid" if count == 0 else "incompatible",
+                            chunk_count=count,
+                            policy_count=policy_count,
+                        )
+                    if not identity.complete:
+                        state = "incomplete"
+                    elif identity.embedding != self._embedding_identity:
+                        state = "incompatible"
+                    elif count == 0:
+                        state = "empty"
+                    else:
+                        state = "ready"
                     return IndexReadinessReport(
-                        state="invalid" if count == 0 else "incompatible",
+                        state=state,
                         chunk_count=count,
                         policy_count=policy_count,
+                        identity=identity,
+                        compatible=state == "ready",
                     )
-                if not identity.complete:
-                    state = "incomplete"
-                elif identity.embedding != self._embedding_identity:
-                    state = "incompatible"
-                elif count == 0:
-                    state = "empty"
-                else:
-                    state = "ready"
-                return IndexReadinessReport(
-                    state=state,
-                    chunk_count=count,
-                    policy_count=policy_count,
-                    identity=identity,
-                    compatible=state == "ready",
-                )
-        except FileNotFoundError:
-            return IndexReadinessReport(state="missing")
-        except OSError:
-            return IndexReadinessReport(state="unreadable")
-        except sqlite3.DatabaseError as exc:
-            state = "unreadable" if is_sqlite_access_error(exc) else "invalid"
-            return IndexReadinessReport(state=state)
+            except FileNotFoundError:
+                return IndexReadinessReport(state="missing")
+            except OSError:
+                return IndexReadinessReport(state="unreadable")
+            except sqlite3.DatabaseError as exc:
+                state = "unreadable" if is_sqlite_access_error(exc) else "invalid"
+                return IndexReadinessReport(state=state)
 
     def _validate_identity(
         self, conn: sqlite3.Connection, *, require_complete: bool = True
@@ -301,31 +304,33 @@ class SQLiteVecIndexStore(IndexStore):
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
-        self._require_open()
-        if not self._path.exists() or self._path.is_dir():
-            return False
-        try:
-            with closing(_connect(self._path, read_only=True)) as conn:
-                return _has_required_schema(conn) and _count_chunks(conn) > 0
-        except (OSError, sqlite3.DatabaseError):
-            return False
+        with self._reader_lock:
+            self._require_open()
+            if not self._path.exists() or self._path.is_dir():
+                return False
+            try:
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    return _has_required_schema(conn) and _count_chunks(conn) > 0
+            except (OSError, sqlite3.DatabaseError):
+                return False
 
     def count(self) -> int:
         """Return the number of rows in the local index."""
-        self._require_open()
-        if not self._path.exists() or self._path.is_dir():
-            return 0
-        try:
-            with closing(_connect(self._path, read_only=True)) as conn:
-                if not _has_required_schema(conn):
-                    return 0
-                return _count_chunks(conn)
-        except (OSError, sqlite3.DatabaseError):
-            return 0
+        with self._reader_lock:
+            self._require_open()
+            if not self._path.exists() or self._path.is_dir():
+                return 0
+            try:
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    if not _has_required_schema(conn):
+                        return 0
+                    return _count_chunks(conn)
+            except (OSError, sqlite3.DatabaseError):
+                return 0
 
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             conn.execute("BEGIN")
             rows = conn.execute(
                 f"""
@@ -358,7 +363,7 @@ class SQLiteVecIndexStore(IndexStore):
         domain: str | None = None,
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             conn.execute("BEGIN")
             self._validate_identity(conn)
             if top_k <= 0:
@@ -406,10 +411,11 @@ class SQLiteVecIndexStore(IndexStore):
                 candidate_limit = min(row_count, max(candidate_limit * 2, candidate_limit + top_k))
 
     def close(self) -> None:
-        """Release a managed lease once; raw stores keep their per-operation connection behavior."""
-        if self._generation_snapshot is not None and not self._closed:
-            self._closed = True
-            self._generation_snapshot.close()
+        """Finish admitted SQLite reads before releasing a managed lease."""
+        with self._reader_lock:
+            if self._generation_snapshot is not None and not self._closed:
+                self._closed = True
+                self._generation_snapshot.close()
 
     def reset_for_tests(self) -> None:
         """Reset the backing SQLite file and WAL sidecars for deterministic tests."""

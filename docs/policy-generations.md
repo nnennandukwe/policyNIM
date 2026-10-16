@@ -77,7 +77,8 @@ reader admission available. Readers hold kernel-backed leases, so pruning retain
 active, previous, recent, and in-flight generations.
 Dead processes release their locks; later cleanup can remove their stale markers.
 An index reader inherited through POSIX fork retains its lease until all holders
-release it. Managed SQLite opens recheck artifact metadata before and after
+release it. Closing an index reader waits for admitted SQLite reads to close their
+connections before releasing its lease. Managed SQLite opens recheck artifact metadata before and after
 opening the connection, rejecting observed replacements before provider work.
 Runtime readers reuse successful validation only while all five artifact identities,
 membership, metadata-change stamps, and embedding settings match. The process cache
@@ -85,7 +86,10 @@ holds at most eight snapshots and 32 MiB of serialized source models; larger
 snapshots receive full validation. Filesystems without reliable change stamps also
 receive full validation. Operator inspection and export always validate all bytes.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
-preserved with warnings. Cleanup diagnostics identify the managed relative path
+preserved with warnings. After interruption, cleanup can remove empty folders with
+managed stage/trash names; unmatched names and nonempty unowned entries stay
+preserved. Dangling staging links stay in place and produce a warning.
+Cleanup diagnostics identify the managed relative path
 and a safe cause. All processes must use the same store and filesystem locking
 semantics. This isn't a sandbox against arbitrary writes by the same OS
 user; external edits can invalidate an object and will fail later inspection.

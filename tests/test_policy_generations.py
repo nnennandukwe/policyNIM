@@ -2388,3 +2388,163 @@ def test_interrupted_trash_retains_manifest_until_last_data_removal(
         assert (trash / "manifest.json").is_file()
     assert not store.prune(keep_recent=0).warnings
     assert not list((store.root / "trash").iterdir())
+
+
+@pytest.mark.parametrize("boundary", ["before_open", "after_open"])
+def test_closing_a_store_waits_for_its_inflight_sqlite_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    """Real close and prune can't retire a generation while an admitted SQLite read uses it."""
+    from threading import Event, Thread, current_thread
+
+    from policynim.services.index_store import create_index_store
+    from policynim.storage import sqlite_vec as adapter
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    generations = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = generations.migrate(settings, index_path=index, rules_path=rules).generation_id
+    held = create_index_store(settings)
+    expected = held.list_chunks()
+    entered, release, close_started, closed = Event(), Event(), Event(), Event()
+    connect = adapter._connect
+    results: list[object] = []
+    failures: list[BaseException] = []
+
+    def paused_connect(path: Path, **kwargs):
+        """Pause only this actual reader, leaving publishers and inspectors independent."""
+        if path != held.path or current_thread() is not reader:
+            return connect(path, **kwargs)
+        connection = connect(path, **kwargs) if boundary == "after_open" else None
+        entered.set()
+        try:
+            assert release.wait(15)
+        except BaseException:
+            if connection is not None:
+                connection.close()
+            raise
+        return connection if connection is not None else connect(path, **kwargs)
+
+    def read() -> None:
+        """Capture read completion after independent publication and retention."""
+        try:
+            results.extend(held.list_chunks())
+        except BaseException as error:
+            failures.append(error)
+
+    def close() -> None:
+        """Signal when concurrent cleanup actually releases the adapter's lease."""
+        close_started.set()
+        try:
+            held.close()
+            closed.set()
+        except BaseException as error:
+            failures.append(error)
+
+    monkeypatch.setattr(adapter, "_connect", paused_connect)
+    reader, closer = Thread(target=read), Thread(target=close)
+    reader.start()
+    try:
+        assert entered.wait(3)
+        closer.start()
+        assert close_started.wait(3)
+        assert settings.corpus_dir is not None
+        policy = settings.corpus_dir / "A.md"
+        for suffix in ("second", "third"):
+            policy.write_text(policy.read_text() + f"\n{suffix}\n")
+            generations.build(settings, MockEmbedder())
+        retained = generations.prune(keep_recent=0)
+        assert first in retained.kept
+        assert (generations.root / "objects" / first).is_dir()
+        assert not closed.is_set()
+    finally:
+        release.set()
+        reader.join(timeout=5)
+        if closer.ident is not None:
+            closer.join(timeout=5)
+        held.close()
+    assert not reader.is_alive() and not closer.is_alive()
+    assert closed.is_set() and not failures
+    assert results == expected
+    assert first in generations.prune(keep_recent=0).removed
+    assert not (generations.root / "objects" / first).exists()
+
+
+@pytest.mark.parametrize("location", ["staging", "trash"])
+def test_empty_cleanup_directory_recovers_after_the_last_marker_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, location: str
+) -> None:
+    """A real interruption at final rmdir leaves no permanent empty recovery folder."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    assert settings.corpus_dir is not None
+    policy = settings.corpus_dir / "A.md"
+    if location == "trash":
+        for suffix in ("second", "third"):
+            policy.write_text(policy.read_text() + f"\n{suffix}\n")
+            store.build(settings, MockEmbedder())
+    before = (store.root / "active.json").read_bytes()
+    original_rmdir = Path.rmdir
+    interrupted: list[Path] = []
+
+    def rmdir(path: Path) -> None:
+        """Fail only the first final empty-directory removal in the selected namespace."""
+        if path.parent == store.root / location and not interrupted:
+            assert not list(path.iterdir())
+            interrupted.append(path)
+            raise OSError("Injected final directory removal interruption.")
+        original_rmdir(path)
+
+    def fail_prepare(step: str) -> None:
+        """Enter real precommit stage cleanup after its known artifacts were created."""
+        if step == "index_prepare":
+            raise GenerationError("prepare", "Injected preparation failure.")
+
+    monkeypatch.setattr(Path, "rmdir", rmdir)
+    if location == "staging":
+        failed = GenerationStore(root=store.root, embedding=identity, fault=fail_prepare)
+        with pytest.raises(GenerationError):
+            failed.build(settings, MockEmbedder())
+    else:
+        assert store.prune(keep_recent=0).warnings
+    assert len(interrupted) == 1
+    assert interrupted[0].is_dir() and not list(interrupted[0].iterdir())
+    assert not store.prune(keep_recent=0).warnings
+    assert not interrupted[0].exists()
+    assert (store.root / "active.json").read_bytes() == before
+
+
+def test_unknown_empty_cleanup_directories_are_preserved(tmp_path: Path) -> None:
+    """Empty operator folders don't become owned artifacts just because cleanup runs."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    unknown = [store.root / location / "operator-notes" for location in ("staging", "trash")]
+    for directory in unknown:
+        directory.mkdir()
+    result = store.prune(keep_recent=0)
+    assert len(result.warnings) == 2
+    assert all(path.is_dir() for path in unknown)
+
+
+def test_dangling_staging_link_is_preserved_with_a_cleanup_warning(tmp_path: Path) -> None:
+    """A dangling entry remains available for inspection and gets a managed-path warning."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    link = store.root / "staging" / "dangling"
+    try:
+        link.symlink_to(tmp_path / "missing-target")
+    except (OSError, NotImplementedError):
+        pytest.skip("This platform doesn't allow creating the symlink fixture.")
+    before = (store.root / "active.json").read_bytes()
+    result = store.prune(keep_recent=0)
+    assert any(
+        "staging/dangling" in item and "Unexpected staging entry" in item
+        for item in result.warnings
+    )
+    assert link.is_symlink()
+    assert (store.root / "active.json").read_bytes() == before

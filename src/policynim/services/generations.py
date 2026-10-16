@@ -822,9 +822,11 @@ class GenerationStore:
 
     def _remove_stage(self, stage: Path, expected_identity: tuple[int, int] | None = None) -> None:
         """Remove only the observed transaction directory or a verified owned stale stage."""
-        if not stage.exists():
+        try:
+            mode = stage.lstat().st_mode
+        except FileNotFoundError:
             return
-        if stage.is_symlink() or not stage.is_dir():
+        if not stat.S_ISDIR(mode):
             raise GenerationError("cleanup", "Unexpected staging entry was preserved.")
         names = {path.name for path in stage.iterdir()}
         if not names <= (_FILES | {".owner"}):
@@ -836,13 +838,16 @@ class GenerationStore:
         elif ".owner" in names:
             if _read_regular(stage / ".owner") != _STAGE_OWNER:
                 raise GenerationError("cleanup", "Stage ownership doesn't match.")
-        else:
+        elif names or not re.fullmatch(r"build-[a-z0-9_]{8}", stage.name):
             self._inspect(stage)
         for name in names:
             path = stage / name
             if not stat.S_ISREG(path.lstat().st_mode):
                 raise GenerationError("cleanup", "Unexpected staging file was preserved.")
-        for name in names:
+        removal_order = sorted(names - {".owner"})
+        if ".owner" in names:
+            removal_order.append(".owner")
+        for name in removal_order:
             self._step("stage_remove_" + name)
             (stage / name).unlink()
         stage.rmdir()
@@ -1163,6 +1168,9 @@ class GenerationStore:
         names = {entry.name for entry in path.iterdir()}
         if not names <= (_FILES | {".owner"}):
             raise GenerationError("cleanup", "Unexpected trash contents were preserved.")
+        if not names:
+            path.rmdir()
+            return
         marker = path / ".owner"
         if marker.exists():
             record = TrashRecord.model_validate_json(_read_regular(marker))
