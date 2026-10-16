@@ -103,6 +103,10 @@ class GenerationLease(Protocol):
         """Release the retained generation once its index reader closes."""
         ...
 
+    def validate_read(self) -> None:
+        """Reject observed artifact changes before an owned index operation proceeds."""
+        ...
+
 
 class IndexStore(Protocol):
     """Stores and searches policy chunks."""

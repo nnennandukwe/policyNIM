@@ -70,6 +70,9 @@ and activation share a separate short lock; embedding and full validation leave
 reader admission available. Readers hold kernel-backed leases, so pruning retains
 active, previous, recent, and in-flight generations.
 Dead processes release their locks; later cleanup can remove their stale markers.
+An index reader inherited through POSIX fork retains its lease until all holders
+release it. Managed SQLite opens recheck artifact metadata before and after
+opening the connection, rejecting observed replacements before provider work.
 Runtime readers reuse successful validation only while all five artifact identities,
 membership, metadata-change stamps, and embedding settings match. The process cache
 holds at most eight snapshots and 32 MiB of serialized source models; larger

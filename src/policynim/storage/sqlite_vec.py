@@ -87,6 +87,8 @@ class SQLiteVecIndexStore(IndexStore):
         """Prevent reuse after a managed reader released its generation lease."""
         if self._closed:
             raise MissingIndexError("The pinned generation reader is closed; create a new service.")
+        if self._generation_snapshot is not None:
+            self._generation_snapshot.validate_read()
 
     def _require_mutable(self) -> None:
         """Reject managed generation writes even through a raw SQLite adapter."""
@@ -143,6 +145,7 @@ class SQLiteVecIndexStore(IndexStore):
             if not stat.S_ISREG(mode):
                 return IndexReadinessReport(state="invalid")
             with closing(_connect(self._path, read_only=True)) as conn:
+                self._require_open()
                 conn.execute("BEGIN")
                 if not _has_required_schema(conn):
                     return IndexReadinessReport(state="invalid")
@@ -425,6 +428,7 @@ class SQLiteVecIndexStore(IndexStore):
 
         conn = _connect(self._path, read_only=True)
         try:
+            self._require_open()
             if not _has_required_schema(conn):
                 raise MissingIndexError(f"Local SQLite index at {self._path} is not initialized.")
             if _count_chunks(conn) == 0:

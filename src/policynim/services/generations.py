@@ -131,6 +131,7 @@ class GenerationSnapshot:
     _lease: AbstractContextManager[None] | None = field(default=None, repr=False)
     _lease_path: Path | None = field(default=None, repr=False)
     _lease_identity: tuple[int, int] | None = field(default=None, repr=False)
+    _artifact_identity: ArtifactToken | None = field(default=None, repr=False)
 
     @property
     def indexed_catalog(self) -> PolicyCatalog:
@@ -180,6 +181,13 @@ class GenerationSnapshot:
             if path is not None:
                 _remove_reader_marker(path, identity)
 
+    def validate_read(self) -> None:
+        """Check the validated artifact identities without hashing corpus or index bytes."""
+        if self._lease is None or self._artifact_identity is None:
+            raise GenerationError("read", "The pinned reader is closed; create a new service.")
+        if GenerationStore._artifact_token(self.directory) != self._artifact_identity:
+            raise GenerationError("read", "Pinned generation artifacts changed; inspect them.")
+
 
 def _remove_reader_marker(path: Path, identity: tuple[int, int] | None) -> None:
     """Remove only the empty marker this reader created, preserving substituted entries."""
@@ -191,7 +199,14 @@ def _remove_reader_marker(path: Path, identity: tuple[int, int] | None) -> None:
             and stat.S_ISREG(observed.st_mode)
             and observed.st_size == 0
         ):
-            path.unlink()
+            with try_exclusive_file_lock(path) as acquired:
+                if not acquired:
+                    return
+            current = path.lstat()
+            if (current.st_dev, current.st_ino) == identity and current.st_size == 0:
+                path.unlink()
+            else:
+                LOGGER.warning("An unexpected reader-lease entry was preserved for inspection.")
         else:
             LOGGER.warning("An unexpected reader-lease entry was preserved for inspection.")
     except FileNotFoundError:
@@ -570,7 +585,8 @@ class GenerationStore:
             expected_embedding=self.embedding,
         )
 
-    def _artifact_token(self, directory: Path) -> ArtifactToken:
+    @staticmethod
+    def _artifact_token(directory: Path) -> ArtifactToken:
         """Check membership and file identities without reading or hashing corpus/index bytes."""
         try:
             observed = directory.lstat()
@@ -607,11 +623,8 @@ class GenerationStore:
         directory = self.root / "objects" / generation_id
         key = (str(directory.absolute()), generation_id, self.embedding.model_dump_json())
         token = self._artifact_token(directory)
-        if any(item[-1] is None for item in token):
-            return self._inspect(
-                directory, expected_id=generation_id, expected_embedding=self.embedding
-            )
-        if not force and self._fault is None:
+        reusable = all(item[-1] is not None for item in token)
+        if reusable and not force and self._fault is None:
             with _CACHE_LOCK:
                 cached = _VALIDATION_CACHE.get(key)
                 if cached is not None and cached.token == token:
@@ -625,11 +638,8 @@ class GenerationStore:
                 return result
         with _validation_slot(key):
             token = self._artifact_token(directory)
-            if any(item[-1] is None for item in token):
-                return self._inspect(
-                    directory, expected_id=generation_id, expected_embedding=self.embedding
-                )
-            if not force and self._fault is None:
+            reusable = all(item[-1] is not None for item in token)
+            if reusable and not force and self._fault is None:
                 with _CACHE_LOCK:
                     cached = _VALIDATION_CACHE.get(key)
                     if cached is not None and cached.token == token:
@@ -648,7 +658,8 @@ class GenerationStore:
             )
             if self._artifact_token(directory) != token:
                 raise GenerationError("inspect", "Generation changed during validation.")
-            if self._fault is None:
+            snapshot._artifact_identity = token
+            if reusable and self._fault is None:
                 size = (
                     len(snapshot.catalog.model_dump_json().encode())
                     + len(snapshot.rules.model_dump_json().encode())

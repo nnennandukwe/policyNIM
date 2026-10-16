@@ -1505,6 +1505,133 @@ def test_cached_snapshot_models_arent_shared_with_callers(tmp_path: Path) -> Non
         assert (second.catalog.model_dump_json(), second.documents[0].body) == expected
 
 
+def test_forked_reader_keeps_its_marker_after_parent_close(tmp_path: Path) -> None:
+    """An inherited kernel lease must retain its object until the forked reader closes too."""
+    import os
+    import subprocess
+    import sys
+
+    if not hasattr(os, "fork"):
+        pytest.skip("Inherited descriptors require POSIX fork support.")
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    assert settings.corpus_dir is not None
+    member = next(settings.corpus_dir.rglob("*.md"))
+    for revision in range(3):
+        member.write_text(member.read_text() + f"\nLater revision {revision}.\n")
+        store.build(settings, MockEmbedder())
+    script = r"""
+import json,os,sys
+from pathlib import Path
+from policynim.services.generations import GenerationStore
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+from policynim.types import EmbeddingIdentity
+store=GenerationStore(root=Path(sys.argv[1]),embedding=EmbeddingIdentity.model_validate_json(sys.argv[3]))
+snapshot=store.pin(sys.argv[2])
+reader=SQLiteVecIndexStore(path=snapshot.index_path,embedding_identity=store.embedding,generation_snapshot=snapshot)
+expected=reader.count()
+go_read,go_write=os.pipe()
+result_read,result_write=os.pipe()
+pid=os.fork()
+if pid==0:
+ os.close(go_write);os.close(result_read)
+ os.write(result_write,b'r')
+ os.read(go_read,1)
+ try:
+  assert snapshot.index_path.exists() and reader.count()==expected
+  reader.close()
+  os.write(result_write,b'y')
+ except BaseException:
+  os.write(result_write,b'n')
+  os._exit(2)
+ os._exit(0)
+os.close(go_read);os.close(result_write)
+assert os.read(result_read,1)==b'r'
+reader.close()
+try:
+ retained=sys.argv[2] in store.prune(keep_recent=0).kept
+finally:
+ os.write(go_write,b'g')
+ child_read=os.read(result_read,1)==b'y'
+ _,status=os.waitpid(pid,0)
+ os.close(go_write);os.close(result_read)
+assert retained and child_read and os.waitstatus_to_exitcode(status)==0
+assert sys.argv[2] in store.prune(keep_recent=0).removed
+print(json.dumps({'inherited_reader_retained':True,'released_object_pruned':True}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(store.root), first, identity.model_dump_json()],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["inherited_reader_retained"]
+
+
+@pytest.mark.parametrize("replacement_time", ["before_open", "during_open"])
+def test_pinned_search_rejects_observed_index_replacement_before_provider_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replacement_time: str
+) -> None:
+    """Per-open identity checks reject a changed pinned index without returning mixed evidence."""
+    import os
+    import sqlite3
+
+    from test_index_identity import SpyEmbedder
+    from test_preflight_service import MockReranker
+
+    import policynim.services.search as search_module
+    from policynim.errors import GenerationError
+    from policynim.storage import sqlite_vec as adapter
+    from policynim.storage.index_store import pinned_generation
+    from policynim.types import SearchRequest
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    embedder = SpyEmbedder()
+    monkeypatch.setattr(
+        search_module, "_create_default_search_components", lambda _: (embedder, MockReranker())
+    )
+    with search_module.create_search_service(settings) as service:
+        snapshot = pinned_generation(service._index_store)
+        assert snapshot is not None and settings.corpus_dir is not None
+        member = next(settings.corpus_dir.rglob("*.md"))
+        member.write_text(member.read_text() + "\nNext generation content.\n")
+        second = store.build(settings, MockEmbedder()).generation_id
+        replacement = tmp_path / "replacement.sqlite3"
+        data = (store.root / "objects" / second / "index.sqlite3").read_bytes()
+        replacement.write_bytes(data)
+        original = adapter._connect
+        opened: list[sqlite3.Connection] = []
+
+        def connect(path: Path, **kwargs):
+            """Replace only this pinned index immediately before its actual SQLite open."""
+            if path == snapshot.index_path:
+                if replacement_time == "during_open" and replacement.exists():
+                    os.replace(replacement, path)
+                connection = original(path, **kwargs)
+                opened.append(connection)
+                return connection
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(adapter, "_connect", connect)
+        if replacement_time == "before_open":
+            os.replace(replacement, snapshot.index_path)
+        with pytest.raises(GenerationError):
+            service.search(SearchRequest(query="deployment"))
+        assert embedder.calls == 0
+        assert snapshot.index_path.read_bytes() == data
+        if replacement_time == "before_open":
+            assert not opened
+        else:
+            assert opened
+            with pytest.raises(sqlite3.ProgrammingError):
+                opened[0].execute("SELECT 1")
+
+
 def test_cache_rejects_same_size_tamper_with_restored_mtime(tmp_path: Path) -> None:
     """Native metadata-change stamps invalidate reuse even when size and mtime are restored."""
     import os
