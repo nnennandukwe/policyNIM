@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     nvidia_api_key: str | None = Field(default=None, validation_alias="NVIDIA_API_KEY")
     policynim_env: str = Field(default="development", validation_alias="POLICYNIM_ENV")
     corpus_dir: Path | None = None
+    profile: Path | None = None
     index_db_path: Path = Field(
         default=Path("data/index.sqlite3"),
         validation_alias=AliasChoices("POLICYNIM_INDEX_DB_PATH", "POLICYNIM_LANCEDB_URI"),
@@ -201,6 +202,21 @@ class Settings(BaseSettings):
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:
         """Treat empty configured corpus values as unset."""
         return _normalize_optional_setting(value)
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def validate_profile_path(cls, value: Any) -> Any:
+        """Keep an explicit empty profile from silently falling back to public sources."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("POLICYNIM_PROFILE must name a profile file or be unset.")
+        return value
+
+    @model_validator(mode="after")
+    def exclusive_source_selection(self) -> Settings:
+        """Reject ambiguous profile and legacy replacement-directory selection."""
+        if self.profile is not None and self.corpus_dir is not None:
+            raise ValueError("Set only one of POLICYNIM_PROFILE and POLICYNIM_CORPUS_DIR.")
+        return self
 
     @field_validator("index_db_path", mode="before")
     @classmethod

@@ -11,6 +11,9 @@ reference that used to live in the root README.
 - `policynim doctor [--format text|json]`
 - `policynim inventory [--format text|json]`
 - `policynim policies list|validate [--format text|json]`
+- `policynim profile init <path> [--pack <directory>] [--id <name>]`
+- `policynim profile validate|preview|diff <path> [--format text|json]`
+- `policynim profile update <path> --expect-digest <review-digest>`
 - `policynim policies show <policy-id> [--format text|json]`
 - `policynim init`
 - `policynim ingest`
@@ -71,7 +74,8 @@ inspection separate from remote deployment evidence. See
 Use `policynim policies list`, `show <policy-id>`, and `validate` for a source-only
 catalog with pack identity, content revisions, and declared provenance. A
 `pack.toml` manifest makes membership explicit; plain directories remain supported.
-See [policy packs](policy-packs.md) before authoring a manifest.
+See [policy packs](policy-packs.md) before authoring a manifest, and
+[local profiles](policy-profiles.md) to compose explicit packs with reviewed decisions.
 
 ## Core Workflows
 
@@ -101,7 +105,7 @@ uv run policynim ingest
 
 What this does:
 
-- loads the bundled policy corpus, or the directory from `POLICYNIM_CORPUS_DIR`
+- resolves `POLICYNIM_PROFILE` when selected, otherwise loads the bundled corpus or `POLICYNIM_CORPUS_DIR`
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings

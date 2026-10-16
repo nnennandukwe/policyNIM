@@ -89,7 +89,7 @@ or prove that source content matches an existing index.
 
 Run `uv run policynim doctor` for setup checks and recovery instructions. A wheel
 built from this revision uses the direct `policynim` entrypoint. See the
-[policy inventory and recovery guide](docs/policy-inventory.md) and
+[local profile composition guide](docs/policy-profiles.md), [policy inventory and recovery guide](docs/policy-inventory.md) and
 [policy pack format](docs/policy-packs.md).
 
 ## What To Run First

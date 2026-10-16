@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Literal, Self
@@ -80,7 +82,7 @@ def load_pack_manifest(root: Path) -> PolicyPackManifest | None:
             return None
         if not path.resolve().is_relative_to(root.resolve()):
             raise InvalidPolicyDocumentError("pack.toml must stay within the policy root.")
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(read_pack_bytes(root, MANIFEST_NAME).decode("utf-8"))
         return PolicyPackManifest.model_validate(data)
     except tomllib.TOMLDecodeError as exc:
         raise InvalidPolicyDocumentError(f"Invalid pack.toml TOML: {exc}") from exc
@@ -129,3 +131,83 @@ def resolve_pack_members(root: Path, manifest: PolicyPackManifest) -> list[Path]
         resolved_paths.add(resolved)
         paths.append(path)
     return paths
+
+
+def read_pack_bytes(root: Path, member: str) -> bytes:
+    """Resolve bounded aliases, then open canonical components without following new symlinks."""
+    relative = PurePosixPath(member)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise InvalidPolicyDocumentError("Pack members must stay inside their selected directory.")
+    if os.name == "nt":
+        return _read_windows_pack_member(root, relative)
+    descriptor: int | None = None
+    file_descriptor: int | None = None
+    try:
+        # Callers supply the selected canonical root. Don't resolve it again after
+        # member validation: a replacement root symlink must fail the open below.
+        base = Path(os.path.abspath(root))
+        descriptor = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        relative = PurePosixPath((base / member).resolve(strict=True).relative_to(base).as_posix())
+        if not relative.parts:
+            raise InvalidPolicyDocumentError("Pack members must resolve to regular files.")
+        for part in relative.parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        file_descriptor = os.open(
+            relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+        )
+        if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+            raise InvalidPolicyDocumentError("Pack members must resolve to regular files.")
+        with os.fdopen(file_descriptor, "rb") as handle:
+            file_descriptor = None
+            return handle.read()
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise InvalidPolicyDocumentError(
+            "Couldn't read a selected pack member. Check regular files, permissions, and symlinks."
+        ) from exc
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _read_windows_pack_member(root: Path, member: PurePosixPath) -> bytes:
+    """Check the opened Windows handle's final path before reading any policy bytes."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            root / member, os.O_RDONLY | getattr(os, "O_BINARY") | getattr(os, "O_NOINHERIT")
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("Pack members must be regular files.")
+        kernel = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+        final_path = kernel.GetFinalPathNameByHandleW
+        final_path.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+        final_path.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = final_path(getattr(msvcrt, "get_osfhandle")(descriptor), buffer, len(buffer), 0)
+        if not length or length >= len(buffer):
+            raise OSError("Couldn't validate the opened policy handle.")
+        name = buffer.value
+        if name.startswith("\\\\?\\UNC\\"):
+            name = "\\\\" + name[8:]
+        elif name.startswith("\\\\?\\"):
+            name = name[4:]
+        if not Path(name).is_relative_to(root.resolve()):
+            raise OSError("Opened member escaped its selected pack.")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            return handle.read()
+    except OSError as exc:
+        raise InvalidPolicyDocumentError(
+            "Couldn't validate a selected pack member. Check paths, permissions, and symlinks."
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)

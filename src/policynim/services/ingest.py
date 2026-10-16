@@ -65,7 +65,10 @@ class IngestService:
         corpus_root: Path,
         embedding_model: str,
         runtime_rules_artifact_path: Path,
+        profile_path: Path | None = None,
     ) -> None:
+        """Inject providers and outputs; an optional pinned profile replaces corpus selection."""
+        self._profile_path = profile_path
         self._embedder = embedder
         self._index_store = index_store
         self._corpus_root = corpus_root
@@ -103,9 +106,20 @@ class IngestService:
             raise IndexCompatibilityError(
                 "Fresh index builds require a separate runtime-rules destination."
             )
+        from policynim.services.profiles import resolve_profile
+
+        if self._profile_path is not None:
+            resolved = resolve_profile(self._profile_path)
+            documents, catalog, roots = resolved.documents, resolved.catalog, resolved.roots
+        else:
+            documents = load_policy_documents(self._corpus_root)
+            catalog = compile_policy_catalog(documents, root=self._corpus_root)
+            roots = [self._corpus_root]
         if any(
-            output.resolve().is_relative_to(self._corpus_root.resolve())
+            output.resolve().is_relative_to(root.resolve())
+            or (self._profile_path is not None and output.resolve() == self._profile_path.resolve())
             for output in (self._index_store.uri, rules_path)
+            for root in roots
         ):
             raise IndexCompatibilityError("Output destinations must be outside policy sources.")
         observed_index = _artifact_identity(self._index_store.uri)
@@ -115,8 +129,6 @@ class IngestService:
                 "Ingestion requires new index and runtime-rules destinations, "
                 "even for the same model."
             )
-        documents = load_policy_documents(self._corpus_root)
-        catalog = compile_policy_catalog(documents, root=self._corpus_root)
         runtime_rules_artifact = _compile_runtime_rules_artifact(documents)
         chunks = chunk_policy_documents(documents)
         vectors = self._embedder.embed_documents([chunk.text for chunk in chunks])
@@ -140,7 +152,9 @@ class IngestService:
             _cleanup_staged_runtime_rules_artifact(staged_artifact_path)
 
         return IngestResult(
-            corpus_path=self._corpus_root.as_posix(),
+            corpus_path=(self._profile_path or self._corpus_root).as_posix(),
+            profile_path=self._profile_path.as_posix() if self._profile_path else None,
+            source_roots=[root.as_posix() for root in roots],
             index_uri=self._index_store.uri.as_posix(),
             table_name=self._index_store.table_name,
             embedding_model=self._embedding_model,
@@ -155,8 +169,13 @@ def create_ingest_service(settings: Settings | None = None) -> IngestService:
     """Build the default ingest service from application settings."""
     active_settings = settings or get_settings()
     index_store = create_index_store(active_settings)
-    corpus_root = resolve_corpus_root(active_settings.corpus_dir)
+    corpus_root = (
+        active_settings.profile.parent
+        if active_settings.profile is not None
+        else resolve_corpus_root(active_settings.corpus_dir)
+    )
     return IngestService(
+        profile_path=active_settings.profile,
         embedder=_create_default_embedder(active_settings),
         index_store=index_store,
         corpus_root=corpus_root,

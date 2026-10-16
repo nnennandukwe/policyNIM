@@ -36,6 +36,8 @@ dependencies = [
   "pydantic-settings==2.13.1",
   "sqlite-vec==0.1.9",
   "starlette==0.52.1",
+  # Preserve TOML 1.0 output for Python 3.11/3.12 tomllib readers.
+  "tomlkit==0.14.0",
   "typer==0.24.1",
 ]
 

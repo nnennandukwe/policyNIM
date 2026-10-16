@@ -6,7 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from policynim.errors import InvalidPolicyDocumentError
-from policynim.ingest.catalog import load_pack_manifest, resolve_pack_members
+from policynim.ingest.catalog import load_pack_manifest, read_pack_bytes, resolve_pack_members
 from policynim.ingest.parser import DocumentParser, MarkdownParser
 from policynim.types import DocumentSection, ParsedDocument, PolicyProvenance
 
@@ -25,7 +25,7 @@ def discover_policy_paths(root: Path | str) -> list[Path]:
             "directory containing policy Markdown files."
         )
 
-    manifest = load_pack_manifest(root)
+    manifest = load_pack_manifest(root.resolve())
     if manifest is not None:
         return sorted(resolve_pack_members(root, manifest))
     return sorted(path for path in root.rglob("*.md") if path.name != "TEMPLATE.md")
@@ -38,7 +38,8 @@ def load_policy_documents(
 ) -> list[ParsedDocument]:
     """Load and normalize every policy document under the corpus root."""
     root_path = Path(root)
-    manifest = load_pack_manifest(root_path)
+    read_root = root_path.resolve()
+    manifest = load_pack_manifest(read_root)
     active_parser = parser or MarkdownParser(strict_metadata=manifest is not None)
     member_paths = (
         resolve_pack_members(root_path, manifest)
@@ -55,7 +56,11 @@ def load_policy_documents(
     for path in paths:
         source_path = _repo_relative_path(path, root_path)
         try:
-            content = path.read_bytes()
+            content = (
+                read_pack_bytes(read_root, path.relative_to(root_path).as_posix())
+                if manifest is not None
+                else path.read_bytes()
+            )
             text = content.decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise InvalidPolicyDocumentError(

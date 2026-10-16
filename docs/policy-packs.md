@@ -105,3 +105,6 @@ entries are active; reviewed additions, exclusions, and replacements belong to
 profile composition work. Complete generation activation, reader pinning, and
 rollback belong to publication work. This manifest format doesn't implement those
 operations or fetch remote packs.
+
+For baseline plus local additions, use a [pinned profile](policy-profiles.md).
+`POLICYNIM_CORPUS_DIR` keeps its replacement-directory behavior.

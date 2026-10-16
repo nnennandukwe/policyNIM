@@ -2797,6 +2797,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "sqlite-vec" },
     { name = "starlette" },
+    { name = "tomlkit" },
     { name = "typer" },
 ]
 
@@ -2851,6 +2852,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = "==2.13.1" },
     { name = "sqlite-vec", specifier = "==0.1.9" },
     { name = "starlette", specifier = "==0.52.1" },
+    { name = "tomlkit", specifier = "==0.14.0" },
     { name = "typer", specifier = "==0.24.1" },
 ]
 provides-extras = ["nvidia-guardrails", "nvidia-eval", "nvidia-eval-launcher"]

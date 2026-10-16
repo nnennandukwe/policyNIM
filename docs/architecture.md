@@ -38,7 +38,7 @@ frontmatter. Frontmatter is preferred, not required.
 
 Ingest flow:
 
-1. discover policy files from the bundled corpus or `POLICYNIM_CORPUS_DIR`
+1. resolve pinned `POLICYNIM_PROFILE` packs and decisions when configured; otherwise discover the bundled corpus or `POLICYNIM_CORPUS_DIR`
 2. parse Markdown into normalized documents
 3. infer missing metadata when possible
 4. extract heading-aware sections with stable line spans

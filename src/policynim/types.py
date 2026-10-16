@@ -722,6 +722,8 @@ class IngestResult(StrictModel):
     """Summary of one completed ingest run."""
 
     corpus_path: str
+    profile_path: str | None = None
+    source_roots: list[str] = Field(default_factory=list)
     index_uri: str
     table_name: str
     embedding_model: str
