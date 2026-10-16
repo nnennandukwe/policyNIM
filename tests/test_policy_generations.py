@@ -487,6 +487,7 @@ payload=json.loads(sys.argv[1])
 settings=Settings(_env_file=None,corpus_dir=Path(payload["source"]),
                   nvidia_embed_model=payload["model"],nvidia_base_url=payload["endpoint"])
 def terminate(name):
+ "Terminate the child process at the selected publication boundary."
  if name==payload["point"]: os._exit(73)
 GenerationStore(root=Path(payload["root"]),embedding=EmbeddingIdentity(
  model=payload["model"],endpoint=payload["endpoint"]),fault=terminate).build(settings,MockEmbedder())
@@ -979,10 +980,28 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
                 content="ok",
             )
         )
-    assert executed.generation_id == active
+        failed = execution.execute(
+            FileWriteActionRequest(
+                kind="file_write",
+                task="verify failure evidence",
+                session_id="generation-proof",
+                cwd=tmp_path,
+                path=tmp_path,
+                content="mustn't replace a directory",
+            )
+        )
+    assert executed.generation_id == failed.generation_id == active
+    assert failed.execution_outcome == "failed"
+    from policynim.storage import RuntimeEvidenceStore
+
+    events = RuntimeEvidenceStore(path=settings.runtime_evidence_db_path).list_session_events(
+        "generation-proof"
+    )
+    assert [event.event_kind for event in events] == ["decision", "allowed", "decision", "failed"]
+    assert all(event.generation_id == active for event in events)
     with create_runtime_evidence_report_service(settings) as reports:
         report = reports.report_session("generation-proof")
-    assert report.executions[0].generation_id == active
+    assert all(item.generation_id == active for item in report.executions)
 
 
 @pytest.mark.parametrize("failure", [None, "embedding", "close"])
@@ -1035,3 +1054,120 @@ def test_owned_ingestion_provider_closes_before_publication(
             result = service.run()
             assert result.generation_id == store.inspect().generation_id
     assert calls == ["create", "embed", "close"]
+
+
+@pytest.mark.parametrize("recovery", ["rollback", "activate", "import", "migrate"])
+def test_offline_recovery_can_replace_corrupt_active_object_without_modifying_it(
+    tmp_path: Path,
+    recovery: str,
+) -> None:
+    """Validate the recovery target independently and preserve damaged old bytes."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    bundle = tmp_path / "trusted.zip"
+    digest = store.export_bundle(bundle)
+    source = settings.corpus_dir
+    assert source is not None
+    member = next(source.rglob("*.md"))
+    original_text = member.read_text()
+    member.write_text(original_text + "\nReviewed next revision.\n")
+    second = store.build(settings, embedder=MockEmbedder()).generation_id
+    member.write_text(original_text)
+    damaged = store.root / "objects" / second / "index.sqlite3"
+    damaged.write_bytes(damaged.read_bytes() + b"corrupt active canary")
+    preserved = damaged.read_bytes()
+    if recovery == "rollback":
+        result = store.rollback(expected_active=second)
+    elif recovery == "activate":
+        result = store.activate(first, expected_active=second)
+    elif recovery == "import":
+        result = store.import_bundle(bundle, expected_digest=digest)
+    else:
+        result = store.migrate(settings, index_path=index, rules_path=rules)
+    assert result.generation_id == first
+    assert store.inspect().generation_id == first
+    assert damaged.read_bytes() == preserved
+
+
+def test_paid_build_rejects_corrupt_active_state_before_provider_construction(
+    tmp_path: Path,
+) -> None:
+    """Offline recovery is explicit; ordinary builds can't spend usage on damaged active state."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    damaged = store.root / "objects" / active / "index.sqlite3"
+    damaged.write_bytes(damaged.read_bytes() + b"damaged")
+    before = (store.root / "active.json").read_bytes()
+    calls = []
+
+    def provider():
+        """Record any unauthorized construction before damaged-state rejection."""
+        calls.append("create")
+        return MockEmbedder()
+
+    with pytest.raises(GenerationError):
+        store.build(settings, embedder_factory=provider)
+    assert calls == []
+    assert (store.root / "active.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("filename", ["security:v1.md", "security\\v1.md", ".md"])
+@pytest.mark.parametrize("producer", ["build", "migrate"])
+def test_legacy_logical_filenames_survive_generation_and_bundle_transport(
+    tmp_path: Path,
+    filename: str,
+    producer: str,
+) -> None:
+    """Captured paths are logical evidence, so valid POSIX legacy names need no materialization."""
+    import os
+
+    from policynim.ingest.loader import load_policy_documents
+
+    if os.name == "nt" and (":" in filename or "\\" in filename):
+        pytest.skip("These legacy filename characters require a POSIX source filesystem.")
+    source = tmp_path / "legacy-policies"
+    source.mkdir()
+    (source / filename).write_text(
+        "---\npolicy_id: LEGACY-001\ntitle: Legacy\n---\n# Legacy\nReview changes.\n"
+    )
+    identity = EmbeddingIdentity(model="test-embed", endpoint="https://example.invalid/v1")
+    settings = Settings(
+        **NO_ENV,
+        corpus_dir=source,
+        index_db_path=tmp_path / "legacy.sqlite3",
+        runtime_rules_artifact_path=tmp_path / "legacy-rules.json",
+        nvidia_embed_model=identity.model,
+        nvidia_base_url=identity.endpoint,
+    )
+    expected = load_policy_documents(source)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    if producer == "migrate":
+        with IngestService(
+            embedder=MockEmbedder(),
+            index_store=SQLiteVecIndexStore(
+                path=settings.index_db_path, embedding_identity=identity
+            ),
+            corpus_root=source,
+            embedding_model=identity.model,
+            runtime_rules_artifact_path=settings.runtime_rules_artifact_path,
+        ) as service:
+            service.run()
+        result = store.migrate(
+            settings,
+            index_path=settings.index_db_path,
+            rules_path=settings.runtime_rules_artifact_path,
+        )
+    else:
+        result = store.build(settings, embedder=MockEmbedder())
+    bundle = tmp_path / "legacy.zip"
+    digest = store.export_bundle(bundle)
+    imported = GenerationStore(root=tmp_path / "imported", embedding=identity)
+    assert (
+        imported.import_bundle(bundle, expected_digest=digest).generation_id == result.generation_id
+    )
+    with imported.pin() as snapshot:
+        assert snapshot.documents == expected

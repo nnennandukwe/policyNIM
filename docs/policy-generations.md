@@ -12,7 +12,9 @@ runtime rules. Validation binds artifact hashes, model/provider/endpoint and
 vector dimension, schemas, exact chunks/provenance, and source-derived rules.
 Activation replaces `active.json` once, retaining both active and previous IDs.
 A failed preparation preserves the prior pointer. Cleanup or sync failures after
-activation return committed results with warnings.
+activation return committed results with warnings. POSIX publication syncs files
+and directories. Windows coverage establishes process-crash consistency;
+power-loss durability isn't certified.
 
 ## Inspect or migrate an installation
 
@@ -54,6 +56,14 @@ policynim generation rollback --expect-active CURRENT-ID --format json
 policynim generation activate RETAINED-ID --expect-active CURRENT-ID --format json
 policynim generation prune --keep-recent 2 --format json
 ```
+
+If an active object is damaged, failed `generation inspect --format json` still
+reports a valid owned `activation` record when it can read one. Use its active ID
+as the rollback token. Rollback, activate, import, and migration validate the
+replacement independently and preserve damaged old bytes. A malformed pointer or
+unowned store still fails; recover into a separate operator-owned store rather
+than guessing state. Paid builds reject damaged active state before provider
+construction.
 
 Publishers serialize under one stable process lock. Readers hold kernel-backed
 leases, so pruning retains active, previous, recent, and in-flight generations.

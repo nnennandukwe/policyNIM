@@ -420,6 +420,11 @@ class GenerationStore:
                 "Source, catalog, index, rules, schema or model identity couldn't be validated.",
             ) from exc
 
+    def read_activation(self) -> GenerationPointer | None:
+        """Read owned pointer metadata for recovery even if a referenced object is damaged."""
+        with self._locked():
+            return self._pointer()
+
     def inspect(self, generation_id: str | None = None) -> GenerationSnapshot:
         """Inspect one retained generation without providers; pin() retains it for ongoing work."""
         with self._locked():
@@ -476,11 +481,7 @@ class GenerationStore:
         result: PublicationResult | None = None
         try:
             with self._locked(initialize=True):
-                pointer = self._pointer()
-                if pointer is not None:
-                    self._inspect(
-                        self.root / "objects" / pointer.active, expected_id=pointer.active
-                    )
+                self._pointer()
                 result = operation()
                 try:
                     retention = self._prune(keep_recent=2)
@@ -568,8 +569,6 @@ class GenerationStore:
     def _activate(self, prepared: GenerationSnapshot) -> PublicationResult:
         """Install a complete object before atomically replacing the active/previous pointer."""
         pointer = self._pointer()
-        if pointer is not None:
-            self._inspect(self.root / "objects" / pointer.active, expected_id=pointer.active)
         target = self.root / "objects" / prepared.generation_id
         if target.exists():
             self._inspect(
@@ -761,7 +760,14 @@ class GenerationStore:
                 _attach_embeddings(chunks, vectors)
             )
 
-        result = self._execute(lambda: self._publish(snapshot, prepare_index))
+        def publish() -> PublicationResult:
+            """Reject damaged active state before constructing an embedding provider."""
+            pointer = self._pointer()
+            if pointer is not None:
+                self._inspect(self.root / "objects" / pointer.active, expected_id=pointer.active)
+            return self._publish(snapshot, prepare_index)
+
+        result = self._execute(publish)
         result.source_roots = [root.as_posix() for root in roots]
         result.profile_path = settings.profile.as_posix() if settings.profile else None
         return result

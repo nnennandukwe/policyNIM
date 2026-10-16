@@ -79,3 +79,35 @@ def test_cli_errors_are_nonzero_sanitized_and_dont_create_store(
         assert "PRIVATE-CANARY" not in result.output and "private-canary" not in result.output
     assert bundle.read_bytes() == b"PRIVATE-CANARY"
     assert not settings.generations_dir.exists()
+
+
+def test_inspection_error_exposes_owned_pointer_for_corrupt_active_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Read the token from failed inspection and recover through the public rollback command."""
+    from test_ingest_service import MockEmbedder
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    source = settings.corpus_dir
+    assert source is not None
+    member = next(source.rglob("*.md"))
+    member.write_text(member.read_text() + "\nNext revision.\n")
+    second = store.build(settings, embedder=MockEmbedder()).generation_id
+    damaged = store.root / "objects" / second / "index.sqlite3"
+    damaged.write_bytes(b"PRIVATE-CANARY damaged index")
+    monkeypatch.setattr(generation_cli, "get_settings", lambda: settings)
+    runner = CliRunner()
+    inspected = runner.invoke(app, ["generation", "inspect", "--format", "json"])
+    assert inspected.exit_code == 1 and "PRIVATE-CANARY" not in inspected.output
+    activation = json.loads(inspected.stdout)["activation"]
+    assert activation["active"] == second and activation["previous"] == first
+    recovered = runner.invoke(
+        app, ["generation", "rollback", "--expect-active", activation["active"], "--format", "json"]
+    )
+    assert recovered.exit_code == 0, recovered.output
+    assert json.loads(recovered.stdout)["generation_id"] == first
+    assert damaged.read_bytes() == b"PRIVATE-CANARY damaged index"

@@ -47,15 +47,13 @@ class SourceMember(StrictModel):
     @field_validator("path")
     @classmethod
     def bounded_member(cls, value: str) -> str:
-        """Keep snapshot member names portable even though inspection doesn't open these paths."""
+        """Keep logical member paths relative; inspection never opens their original names."""
         path = PurePosixPath(value)
         if (
             not path.parts
             or path.is_absolute()
             or ".." in path.parts
-            or "\\" in value
-            or ":" in value
-            or path.suffix != ".md"
+            or not path.name.lower().endswith(".md")
             or path.name == "TEMPLATE.md"
         ):
             raise ValueError("Snapshot members must be relative Markdown paths.")

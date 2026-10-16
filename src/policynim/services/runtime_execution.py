@@ -535,7 +535,9 @@ def _append_terminal_event(
     event_kind: RuntimeEvidenceEventKind,
     action_started: bool,
 ) -> None:
+    """Persist the final outcome with the same generation as its execution result."""
     record = RuntimeExecutionEvidenceRecord(
+        generation_id=result.generation_id,
         event_id=str(uuid4()),
         execution_id=result.execution_id,
         session_id=result.session_id,

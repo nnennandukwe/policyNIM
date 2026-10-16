@@ -120,6 +120,7 @@ env.update(POLICYNIM_MCP_HOST="127.0.0.1",POLICYNIM_MCP_PORT="8000",
 process=subprocess.Popen(["policynim","mcp","--transport","streamable-http"],env=env,
                          stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 async def discover(modern):
+ "List tools through the requested MCP handshake without calling providers."
  async with httpx2.AsyncClient(timeout=10) as client:
   async with streamable_http_client("http://127.0.0.1:8000/mcp",http_client=client) as (read,write):
    async with ClientSession(read,write) as session:

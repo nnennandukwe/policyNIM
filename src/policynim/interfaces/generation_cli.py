@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 import typer
 
-from policynim.errors import PolicyNIMError
+from policynim.errors import GenerationError, PolicyNIMError
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage.generations import GenerationStore
@@ -32,6 +32,7 @@ def _run(
     output_format: str,
 ) -> None:
     """Run one offline action with safe errors and consistent machine output."""
+    store: GenerationStore | None = None
     try:
         settings = get_settings().model_copy(deep=True)
         store = GenerationStore(
@@ -51,10 +52,20 @@ def _run(
                 "permissions, and the expected digest. Existing data is preserved."
             )
         )
+        failure: dict[str, object] = {"status": "error", "message": message}
+        if isinstance(exc, GenerationError) and store is not None:
+            try:
+                pointer = store.read_activation()
+            except (PolicyNIMError, OSError, ValueError):
+                pass
+            else:
+                failure["activation"] = pointer.model_dump(mode="json") if pointer else None
         if output_format == "json":
-            typer.echo(json.dumps({"status": "error", "message": message}))
+            typer.echo(json.dumps(failure))
         else:
             typer.echo(message, err=True)
+            if failure.get("activation") is not None:
+                typer.echo("Activation: " + json.dumps(failure["activation"]), err=True)
         raise typer.Exit(code=1) from exc
     if output_format == "json":
         typer.echo(json.dumps(payload, indent=2))
