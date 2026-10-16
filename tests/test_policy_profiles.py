@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.interfaces.cli import app
 from policynim.services.catalog import build_policy_catalog
+from policynim.services.index_store import create_index_store
 from policynim.services.ingest import IngestService
 from policynim.services.inventory import inspect_source_inventory
 from policynim.services.profiles import (
@@ -31,7 +32,6 @@ from policynim.services.profiles import (
     update_profile,
 )
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import RuntimeRulesArtifact
 
 NO_ENV: dict[str, Any] = {"_env_file": None}

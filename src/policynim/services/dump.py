@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from policynim.contracts import IndexStore
 from policynim.operations import close_components
+from policynim.services.index_store import create_index_store
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import PolicyChunk
 
 

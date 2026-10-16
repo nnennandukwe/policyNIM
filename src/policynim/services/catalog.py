@@ -81,8 +81,7 @@ def build_policy_catalog(
             or (resolve_runtime_path(active_settings.generations_dir) / "active.json").exists()
             or (resolve_runtime_path(active_settings.generations_dir) / "active.json").is_symlink()
         ):
-            from policynim.storage import create_index_store
-            from policynim.storage.index_store import pinned_generation
+            from policynim.services.index_store import create_index_store, pinned_generation
 
             store = create_index_store(active_settings)
             try:

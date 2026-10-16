@@ -417,8 +417,8 @@ def test_reranker_rejects_nonfinite_scores_without_retry(score):
 
 def test_negative_nvidia_logits_reach_policy_compilation_routing(tmp_path):
     """Exercise the observed hosted failure through real SQLite and mocked NVIDIA HTTP."""
+    from policynim.services.index_store import create_index_store
     from policynim.services.router import PolicyRouterService
-    from policynim.storage import create_index_store
     from policynim.types import EmbeddedChunk, RouteRequest
 
     class QueryEmbedder:

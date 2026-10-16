@@ -1161,7 +1161,7 @@ def test_invalid_runtime_regex_fails_before_embedding(tmp_path: Path) -> None:
 def test_default_index_factory_pins_the_active_complete_generation(tmp_path: Path) -> None:
     """Runtime store selection uses active generation state rather than standalone paths."""
     from policynim.errors import MissingIndexError
-    from policynim.storage import create_index_store
+    from policynim.services.index_store import create_index_store
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
@@ -1227,8 +1227,8 @@ def test_generation_pin_obeys_deadline_while_publisher_lock_is_held(tmp_path: Pa
 
     from policynim.errors import ProviderError
     from policynim.operations import operation_scope
+    from policynim.services.index_store import create_index_store
     from policynim.storage.file_lock import exclusive_file_lock
-    from policynim.storage.index_store import create_index_store
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
@@ -1695,7 +1695,7 @@ def test_warm_readers_reuse_validation_but_operator_and_changed_files_reinspect(
     """Count actual artifact reads while exercising the default factory across store instances."""
     import policynim.services.generations as generation_module
     from policynim.errors import GenerationError
-    from policynim.storage import create_index_store
+    from policynim.services.index_store import create_index_store
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
@@ -1818,8 +1818,8 @@ def test_pinned_search_rejects_observed_index_replacement_before_provider_use(
 
     import policynim.services.search as search_module
     from policynim.errors import GenerationError
+    from policynim.services.index_store import pinned_generation
     from policynim.storage import sqlite_vec as adapter
-    from policynim.storage.index_store import pinned_generation
     from policynim.types import SearchRequest
 
     settings, identity, index, rules = seed_legacy(tmp_path)

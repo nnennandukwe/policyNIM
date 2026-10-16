@@ -7,7 +7,7 @@ from test_index_identity import chunk, create_legacy_health_service, make_ingest
 
 from policynim.errors import MissingIndexError
 from policynim.services import ingest as ingest_module
-from policynim.storage import create_index_store
+from policynim.services.index_store import create_index_store
 from policynim.storage import sqlite_vec as storage_module
 from policynim.types import EmbeddingIdentity
 

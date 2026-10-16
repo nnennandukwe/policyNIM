@@ -11,10 +11,9 @@ from policynim.errors import GenerationError, InvalidPolicyDocumentError
 from policynim.ingest.chunking import chunk_policy_documents
 from policynim.ingest.loader import load_policy_documents
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
+from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.storage.index_readiness import IndexReadinessReport, inspect_index_readiness
-from policynim.storage.index_store import pinned_generation
 from policynim.types import GenerationID, StrictModel
 
 

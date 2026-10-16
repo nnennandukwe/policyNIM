@@ -10,10 +10,10 @@ import pytest
 
 from policynim.errors import MissingIndexError
 from policynim.services.health import RuntimeHealthService, ensure_hosted_runtime_ready
+from policynim.services.index_store import create_index_store
 from policynim.services.ingest import IngestService
 from policynim.services.search import SearchService
 from policynim.settings import Settings
-from policynim.storage import create_index_store
 from policynim.types import EmbeddedChunk, PolicyMetadata, SearchRequest
 
 NO_ENV: dict[str, Any] = {"_env_file": None}

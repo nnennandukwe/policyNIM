@@ -123,7 +123,7 @@ import policynim.storage
 
 def test_create_index_store_resolves_index_db_path(tmp_path: Path) -> None:
     """Build the canonical SQLite index store from the configured path."""
-    from policynim.storage import create_index_store
+    from policynim.services.index_store import create_index_store
 
     store = create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3"), legacy=True)
 

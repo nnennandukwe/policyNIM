@@ -13,8 +13,8 @@ import sqlite_vec
 from typer.testing import CliRunner
 
 from policynim.interfaces.cli import app
+from policynim.services.index_store import create_index_store
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import EmbeddedChunk, PolicyMetadata
 
 

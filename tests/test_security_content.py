@@ -11,9 +11,9 @@ import pytest
 
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.services.catalog import build_policy_catalog
+from policynim.services.index_store import create_index_store
 from policynim.services.ingest import IngestService
 from policynim.settings import Settings
-from policynim.storage import create_index_store
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = json.loads((ROOT / "evals/security_mcp_scenarios.json").read_text())

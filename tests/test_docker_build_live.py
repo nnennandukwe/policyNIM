@@ -101,8 +101,8 @@ import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from policynim.settings import get_settings
-from policynim.storage import create_index_store
-from policynim.storage.index_store import pinned_generation
+from policynim.services.index_store import create_index_store
+from policynim.services.index_store import pinned_generation
 from policynim.services.health import create_runtime_health_service
 settings=get_settings()
 assert not settings.nvidia_api_key

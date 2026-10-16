@@ -10,10 +10,9 @@ from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError, GenerationError, IndexCompatibilityError
 from policynim.operations import ResourceStack, close_components
 from policynim.runtime_paths import resolve_runtime_path
+from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.storage.index_readiness import inspect_index_readiness
-from policynim.storage.index_store import pinned_generation
 from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
 from policynim.types import HealthCheckResult
 

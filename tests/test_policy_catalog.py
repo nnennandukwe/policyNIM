@@ -104,8 +104,8 @@ def test_provenance_round_trips_through_real_sqlite(tmp_path: Path) -> None:
     """Both dump and retrieval preserve declared source details and actual content revision."""
     from policynim.ingest.chunking import chunk_policy_documents
     from policynim.ingest.loader import load_policy_documents
+    from policynim.services.index_store import create_index_store
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
     from policynim.types import EmbeddedChunk
 
     root = tmp_path / "pack"
@@ -141,9 +141,9 @@ def test_invalid_manifest_fails_before_real_ingest_provider_work(tmp_path: Path)
     from test_index_identity import SpyEmbedder
 
     from policynim.errors import InvalidPolicyDocumentError
+    from policynim.services.index_store import create_index_store
     from policynim.services.ingest import IngestService
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
 
     root = tmp_path / "pack"
     manifest = write_pack(root)
@@ -279,9 +279,9 @@ def test_index_provenance_compatibility_and_failure_gate(tmp_path: Path, mutatio
     from policynim.errors import IndexCompatibilityError
     from policynim.ingest.chunking import chunk_policy_documents
     from policynim.ingest.loader import load_policy_documents
+    from policynim.services.index_store import create_index_store
     from policynim.services.search import SearchService
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
     from policynim.types import EmbeddedChunk, SearchRequest
 
     root = tmp_path / "pack"
@@ -319,9 +319,9 @@ def test_ingestion_returns_the_catalog_compiled_before_embedding(tmp_path: Path)
     from test_index_identity import SpyEmbedder
 
     from policynim.services.catalog import build_policy_catalog
+    from policynim.services.index_store import create_index_store
     from policynim.services.ingest import IngestService
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
 
     root = tmp_path / "pack"
     write_pack(root)
@@ -344,8 +344,8 @@ def test_catalog_rejection_blocks_embedding_and_publication(monkeypatch, tmp_pat
 
     from policynim.errors import InvalidPolicyDocumentError
     from policynim.services import ingest as ingest_module
+    from policynim.services.index_store import create_index_store
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
 
     root = tmp_path / "pack"
     write_pack(root)

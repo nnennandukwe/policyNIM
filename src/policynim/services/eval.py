@@ -23,12 +23,11 @@ from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_pat
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
+from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.services.preflight import PreflightService
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
-from policynim.storage.index_store import pinned_generation
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,

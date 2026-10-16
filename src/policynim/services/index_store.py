@@ -1,4 +1,4 @@
-"""Index-store factory helpers for storage wiring."""
+"""Application composition for index readers pinned to a generation."""
 
 from __future__ import annotations
 

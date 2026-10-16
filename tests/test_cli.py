@@ -91,7 +91,7 @@ def write_env_file(path: Path, **values: str) -> None:
 
 def write_ready_sqlite_index(path: Path) -> None:
     """Write a minimal populated PolicyNIM sqlite-vec index for doctor tests."""
-    from policynim.storage import create_index_store
+    from policynim.services.index_store import create_index_store
 
     create_index_store(Settings(index_db_path=path), legacy=True).replace(
         [
