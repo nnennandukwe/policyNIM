@@ -10,12 +10,15 @@ import re
 import sqlite3
 import stat
 import zipfile
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, closing, contextmanager
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from pathlib import Path
 from tempfile import mkdtemp
+from threading import Lock
 from types import TracebackType
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -123,9 +126,11 @@ class GenerationSnapshot:
     catalog: PolicyCatalog
     documents: list[ParsedDocument]
     rules: RuntimeRulesArtifact
+    indexed_policy_count: int = 0
     activation: GenerationPointer | None = None
     _lease: AbstractContextManager[None] | None = field(default=None, repr=False)
     _lease_path: Path | None = field(default=None, repr=False)
+    _lease_identity: tuple[int, int] | None = field(default=None, repr=False)
 
     @property
     def indexed_catalog(self) -> PolicyCatalog:
@@ -135,9 +140,7 @@ class GenerationSnapshot:
                 "scope": "generation",
                 "generation_id": self.generation_id,
                 "pack_pins": self.manifest.pack_pins,
-                "indexed_count": len(
-                    {chunk.policy.policy_id for chunk in chunk_policy_documents(self.documents)}
-                ),
+                "indexed_count": self.indexed_policy_count,
             },
             deep=True,
         )
@@ -168,20 +171,112 @@ class GenerationSnapshot:
     def close(self) -> None:
         """Release the reader lease once; dead processes also release the kernel lock."""
         lease, self._lease = self._lease, None
-        if lease is not None:
-            lease.__exit__(None, None, None)
-        if self._lease_path is not None:
-            try:
-                observed = self._lease_path.lstat()
-                if stat.S_ISREG(observed.st_mode) and observed.st_size == 0:
-                    self._lease_path.unlink()
-                else:
-                    LOGGER.warning("An unexpected reader-lease entry was preserved for inspection.")
-            except FileNotFoundError:
-                pass
-            except OSError:
-                LOGGER.warning("Reader lease released; its stale marker needs retention cleanup.")
-            self._lease_path = None
+        path, self._lease_path = self._lease_path, None
+        identity, self._lease_identity = self._lease_identity, None
+        try:
+            if lease is not None:
+                lease.__exit__(None, None, None)
+        finally:
+            if path is not None:
+                _remove_reader_marker(path, identity)
+
+
+def _remove_reader_marker(path: Path, identity: tuple[int, int] | None) -> None:
+    """Remove only the empty marker this reader created, preserving substituted entries."""
+    try:
+        observed = path.lstat()
+        if (
+            identity is not None
+            and (observed.st_dev, observed.st_ino) == identity
+            and stat.S_ISREG(observed.st_mode)
+            and observed.st_size == 0
+        ):
+            path.unlink()
+        else:
+            LOGGER.warning("An unexpected reader-lease entry was preserved for inspection.")
+    except FileNotFoundError:
+        pass
+    except OSError:
+        LOGGER.warning("Reader lease released; its stale marker needs retention cleanup.")
+
+
+ArtifactToken = tuple[tuple[str, int, int, int, int, int, int, int | None], ...]
+
+
+def _file_change_stamp(path: Path, observed: os.stat_result) -> int | None:
+    """Use a metadata-change stamp, or disable cache reuse when the filesystem can't supply one."""
+    if os.name != "nt":
+        return observed.st_ctime_ns
+    # Windows st_ctime records creation. FILE_BASIC_INFO supplies ChangeTime:
+    # https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_basic_info
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class FileBasicInfo(ctypes.Structure):
+        """Match the documented native FILE_BASIC_INFO layout."""
+
+        _fields_ = [
+            ("CreationTime", ctypes.c_longlong),
+            ("LastAccessTime", ctypes.c_longlong),
+            ("LastWriteTime", ctypes.c_longlong),
+            ("ChangeTime", ctypes.c_longlong),
+            ("FileAttributes", wintypes.DWORD),
+        ]
+
+    try:
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
+        )
+        with os.fdopen(descriptor, "rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino):
+                return None
+            kernel = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+            get_info = kernel.GetFileInformationByHandleEx
+            get_info.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+            get_info.restype = wintypes.BOOL
+            info = FileBasicInfo()
+            if not get_info(
+                getattr(msvcrt, "get_osfhandle")(handle.fileno()),
+                0,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            ):
+                return None
+            stamp = int(getattr(info, "ChangeTime"))
+            return stamp if stamp > 0 else None
+    except (AttributeError, OSError):
+        return None
+
+
+@dataclass(frozen=True)
+class _CachedGeneration:
+    """One verified immutable object identity; cache entries never own reader handles."""
+
+    token: ArtifactToken
+    snapshot: GenerationSnapshot
+    size: int
+
+
+_VALIDATION_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
+_CACHE_LOCK = Lock()
+_VALIDATION_LOCKS = tuple(Lock() for _ in range(16))
+_CACHE_MAX_ENTRIES = 8
+_CACHE_MAX_BYTES = 32 * 1024 * 1024
+
+
+@contextmanager
+def _validation_slot(key: tuple[str, str, str]) -> Iterator[None]:
+    """Share cold inspection work without holding the publication or warm-cache locks."""
+    lock = _VALIDATION_LOCKS[hash(key) % len(_VALIDATION_LOCKS)]
+    while not lock.acquire(timeout=0.05):
+        check_budget()
+    try:
+        check_budget()
+        yield
+    finally:
+        lock.release()
 
 
 def _json_bytes(model: StrictModel) -> bytes:
@@ -311,6 +406,16 @@ class GenerationStore:
                 _sync_directory(self.root)
             yield
 
+    @contextmanager
+    def _writer(self, *, initialize: bool = False) -> Iterator[None]:
+        """Serialize preparation and retention while allowing readers during provider I/O."""
+        with self._locked(initialize=initialize):
+            pass
+        with exclusive_file_lock(self.root / ".writer.lock", on_wait=check_budget):
+            with self._locked():
+                self._pointer()
+            yield
+
     def _pointer(self) -> GenerationPointer | None:
         """Read the sole canonical activation record without inferring missing state."""
         path = self.root / "active.json"
@@ -411,7 +516,15 @@ class GenerationStore:
                 expected_chunks, key=lambda chunk: chunk.chunk_id
             ):
                 raise ValueError("Index chunks don't match the effective source snapshot.")
-            return GenerationSnapshot(generation_id, directory, manifest, catalog, documents, rules)
+            return GenerationSnapshot(
+                generation_id,
+                directory,
+                manifest,
+                catalog,
+                documents,
+                rules,
+                indexed_policy_count=len({chunk.policy.policy_id for chunk in expected_chunks}),
+            )
         except GenerationError:
             raise
         except Exception as exc:
@@ -426,13 +539,12 @@ class GenerationStore:
             return self._pointer()
 
     def inspect(self, generation_id: str | None = None) -> GenerationSnapshot:
-        """Inspect one retained generation without providers; pin() retains it for ongoing work."""
-        with self._locked():
-            return self._inspect_id(generation_id)
+        """Force full validation under a reader lease without retaining it after this call."""
+        with self.pin(generation_id, force_validation=True) as snapshot:
+            return replace(snapshot, _lease=None, _lease_path=None, _lease_identity=None)
 
-    def _inspect_id(self, generation_id: str | None = None) -> GenerationSnapshot:
-        """Resolve an explicit or active object ID under the publisher lock."""
-        pointer = self._pointer()
+    def _selected_id(self, generation_id: str | None, pointer: GenerationPointer | None) -> str:
+        """Validate an explicit or active ID before using it as a local artifact name."""
         selected = (
             generation_id if generation_id is not None else (pointer.active if pointer else None)
         )
@@ -442,45 +554,158 @@ class GenerationStore:
                 "No active generation exists; import a verified bundle "
                 "or run explicit generation migration.",
             )
-        # Validate explicit IDs before converting them into local artifact paths.
         try:
-            selected = GenerationPointer(schema_version=1, active=selected).active
+            return GenerationPointer(schema_version=1, active=selected).active
         except ValueError as exc:
             raise GenerationError(
                 "open", "A generation ID must contain exactly 64 lowercase hex digits."
             ) from exc
+
+    def _inspect_id(self, generation_id: str | None = None) -> GenerationSnapshot:
+        """Fully inspect a selected object while the caller owns writer serialization."""
+        selected = self._selected_id(generation_id, self._pointer())
         return self._inspect(
             self.root / "objects" / selected,
             expected_id=selected,
             expected_embedding=self.embedding,
         )
 
-    def pin(self, generation_id: str | None = None) -> GenerationSnapshot:
-        """Acquire a unique reader lease while publication and retention are serialized."""
-        snapshot: GenerationSnapshot | None = None
+    def _artifact_token(self, directory: Path) -> ArtifactToken:
+        """Check membership and file identities without reading or hashing corpus/index bytes."""
         try:
+            observed = directory.lstat()
+            if not stat.S_ISDIR(observed.st_mode) or directory.is_symlink():
+                raise ValueError("Not an immutable object directory.")
+            if {path.name for path in directory.iterdir()} != _FILES:
+                raise ValueError("Generation membership changed.")
+            token = []
+            for name in [".", *sorted(_FILES)]:
+                path = directory if name == "." else directory / name
+                info = path.lstat()
+                if name != "." and not stat.S_ISREG(info.st_mode):
+                    raise ValueError("Not a regular immutable artifact.")
+                token.append(
+                    (
+                        name,
+                        info.st_dev,
+                        info.st_ino,
+                        info.st_mode,
+                        info.st_nlink,
+                        info.st_size,
+                        info.st_mtime_ns,
+                        info.st_ctime_ns if name == "." else _file_change_stamp(path, info),
+                    )
+                )
+            return tuple(token)
+        except (OSError, ValueError) as exc:
+            raise GenerationError(
+                "inspect", "Generation artifact identity or membership changed."
+            ) from exc
+
+    def _reader_snapshot(self, generation_id: str, *, force: bool) -> GenerationSnapshot:
+        """Reuse full validation only for unchanged artifact identities and embedding settings."""
+        directory = self.root / "objects" / generation_id
+        key = (str(directory.absolute()), generation_id, self.embedding.model_dump_json())
+        token = self._artifact_token(directory)
+        if any(item[-1] is None for item in token):
+            return self._inspect(
+                directory, expected_id=generation_id, expected_embedding=self.embedding
+            )
+        if not force and self._fault is None:
+            with _CACHE_LOCK:
+                cached = _VALIDATION_CACHE.get(key)
+                if cached is not None and cached.token == token:
+                    _VALIDATION_CACHE.move_to_end(key)
+                else:
+                    cached = None
+            if cached is not None:
+                result = deepcopy(cached.snapshot)
+                if self._artifact_token(directory) != token:
+                    raise GenerationError("inspect", "Generation changed while opening its reader.")
+                return result
+        with _validation_slot(key):
+            token = self._artifact_token(directory)
+            if any(item[-1] is None for item in token):
+                return self._inspect(
+                    directory, expected_id=generation_id, expected_embedding=self.embedding
+                )
+            if not force and self._fault is None:
+                with _CACHE_LOCK:
+                    cached = _VALIDATION_CACHE.get(key)
+                    if cached is not None and cached.token == token:
+                        _VALIDATION_CACHE.move_to_end(key)
+                    else:
+                        cached = None
+                if cached is not None:
+                    result = deepcopy(cached.snapshot)
+                    if self._artifact_token(directory) != token:
+                        raise GenerationError(
+                            "inspect", "Generation changed while opening its reader."
+                        )
+                    return result
+            snapshot = self._inspect(
+                directory, expected_id=generation_id, expected_embedding=self.embedding
+            )
+            if self._artifact_token(directory) != token:
+                raise GenerationError("inspect", "Generation changed during validation.")
+            if self._fault is None:
+                size = (
+                    len(snapshot.catalog.model_dump_json().encode())
+                    + len(snapshot.rules.model_dump_json().encode())
+                    + sum(len(doc.model_dump_json().encode()) for doc in snapshot.documents)
+                )
+                with _CACHE_LOCK:
+                    _VALIDATION_CACHE.pop(key, None)
+                    if size <= _CACHE_MAX_BYTES:
+                        while _VALIDATION_CACHE and (
+                            len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
+                            or sum(entry.size for entry in _VALIDATION_CACHE.values()) + size
+                            > _CACHE_MAX_BYTES
+                        ):
+                            _VALIDATION_CACHE.popitem(last=False)
+                        _VALIDATION_CACHE[key] = _CachedGeneration(token, snapshot, size)
+            return deepcopy(snapshot)
+
+    def pin(
+        self, generation_id: str | None = None, *, force_validation: bool = False
+    ) -> GenerationSnapshot:
+        """Register a lease atomically, then validate outside the short publication lock."""
+        with ResourceStack() as cleanup:
             with self._locked():
-                snapshot = self._inspect_id(generation_id)
-                snapshot.activation = self._pointer()
-                check_budget()
-                directory = self.root / "leases" / snapshot.generation_id
+                pointer = self._pointer()
+                selected = self._selected_id(generation_id, pointer)
+                directory = self.root / "leases" / selected
                 if directory.is_symlink():
                     raise GenerationError("pin", "The reader lease directory can't be a symlink.")
                 directory.mkdir(exist_ok=True, mode=0o700)
                 lease_path = directory / (uuid4().hex + ".lock")
+                descriptor = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as handle:
+                    observed = os.fstat(handle.fileno())
+                    identity = observed.st_dev, observed.st_ino
+                    cleanup.callback(_remove_reader_marker, lease_path, identity)
                 lease = exclusive_file_lock(lease_path)
                 lease.__enter__()
-                snapshot._lease, snapshot._lease_path = lease, lease_path
+                cleanup.callback(lease.__exit__, None, None, None)
+                observed = lease_path.lstat()
+                if (observed.st_dev, observed.st_ino) != identity:
+                    raise GenerationError("pin", "Reader lease identity changed.")
+            snapshot = self._reader_snapshot(selected, force=force_validation)
+            check_budget()
+            snapshot.activation = pointer
+            snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
+                lease,
+                lease_path,
+                identity,
+            )
+            cleanup.pop_all()
             return snapshot
-        except BaseException as error:
-            close_components(snapshot, primary_error=error)
-            raise
 
     def _execute(self, operation: Callable[[], PublicationResult]) -> PublicationResult:
         """Preserve a committed result if publisher cleanup fails after activation."""
         result: PublicationResult | None = None
         try:
-            with self._locked(initialize=True):
+            with self._writer(initialize=True):
                 self._pointer()
                 result = operation()
                 try:
@@ -568,7 +793,6 @@ class GenerationStore:
 
     def _activate(self, prepared: GenerationSnapshot) -> PublicationResult:
         """Install a complete object before atomically replacing the active/previous pointer."""
-        pointer = self._pointer()
         target = self.root / "objects" / prepared.generation_id
         if target.exists():
             self._inspect(
@@ -582,6 +806,16 @@ class GenerationStore:
             _sync_directory(target.parent)
             self._step("staging_parent_fsync")
             _sync_directory(prepared.directory.parent)
+        self._inspect(target, expected_id=prepared.generation_id, expected_embedding=self.embedding)
+        token = self._artifact_token(target)
+        with self._locked():
+            return self._commit_activation(prepared, target, token)
+
+    def _commit_activation(
+        self, prepared: GenerationSnapshot, target: Path, token: ArtifactToken
+    ) -> PublicationResult:
+        """Commit verified identities while activation and reader registration are serialized."""
+        pointer = self._pointer()
         previous = (
             pointer.active
             if pointer and pointer.active != prepared.generation_id
@@ -608,9 +842,10 @@ class GenerationStore:
                 raise GenerationError(
                     "activate", "Active state changed before commit; inspect and retry."
                 )
-            self._inspect(
-                target, expected_id=prepared.generation_id, expected_embedding=self.embedding
-            )
+            if self._artifact_token(target) != token:
+                raise GenerationError(
+                    "activate", "Generation changed before commit; preserve and inspect it."
+                )
             os.replace(temporary, self.root / "active.json")
             # No operation after this point may report an aborted publication.
             try:
@@ -910,16 +1145,29 @@ class GenerationStore:
                 remaining -= 1
         for _, snapshot in candidates:
             generation_id = snapshot.generation_id
-            if generation_id in protected or self._has_readers(generation_id, result.warnings):
+            if generation_id in protected:
                 result.kept.append(generation_id)
                 continue
             self._inspect(snapshot.directory, expected_id=generation_id)
-            trash = self.root / "trash" / (generation_id + "-" + uuid4().hex)
-            self._step("prune_rename")
-            snapshot.directory.rename(trash)
-            _sync_directory(self.root / "objects")
-            _sync_directory(trash.parent)
-            result.removed.append(generation_id)
+            token = self._artifact_token(snapshot.directory)
+            with self._locked():
+                if self._has_readers(generation_id, result.warnings):
+                    result.kept.append(generation_id)
+                    continue
+                if self._pointer() != pointer:
+                    raise GenerationError(
+                        "prune", "Activation changed during retention; inspect before retrying."
+                    )
+                trash = self.root / "trash" / (generation_id + "-" + uuid4().hex)
+                self._step("prune_rename")
+                if self._artifact_token(snapshot.directory) != token:
+                    raise GenerationError(
+                        "prune", "An object changed before retention; preserve and inspect it."
+                    )
+                snapshot.directory.rename(trash)
+                _sync_directory(self.root / "objects")
+                _sync_directory(trash.parent)
+                result.removed.append(generation_id)
         for trash in (self.root / "trash").iterdir():
             try:
                 self._clean_trash(trash)
@@ -940,14 +1188,14 @@ class GenerationStore:
 
     def prune(self, *, keep_recent: int = 2) -> RetentionResult:
         """Retain active, previous, recent, and every leased generation without provider calls."""
-        with self._locked():
+        with self._writer():
             return self._prune(keep_recent=keep_recent)
 
     def export_bundle(self, destination: Path, generation_id: str | None = None) -> str:
         """Write a deterministic verified ZIP without overwriting existing operator files."""
         if destination.resolve().is_relative_to(self.root.resolve()):
             raise GenerationError("export", "Bundle outputs must stay outside the managed store.")
-        with self.pin(generation_id) as snapshot:
+        with self.pin(generation_id, force_validation=True) as snapshot:
             buffer = io.BytesIO()
             expanded_size = 0
             with zipfile.ZipFile(

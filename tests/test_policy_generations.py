@@ -165,6 +165,8 @@ def test_same_dimension_other_model_is_rejected(tmp_path: Path) -> None:
     settings, identity, index, rules = seed_legacy(tmp_path)
     generations = GenerationStore(root=tmp_path / "generations", embedding=identity)
     generations.migrate(settings, index_path=index, rules_path=rules)
+    with generations.pin():
+        pass
     wrong = GenerationStore(
         root=generations.root,
         embedding=identity.model_copy(update={"model": "different-model-with-two-dimensions"}),
@@ -1002,6 +1004,10 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
     with create_runtime_evidence_report_service(settings) as reports:
         report = reports.report_session("generation-proof")
     assert all(item.generation_id == active for item in report.executions)
+    from policynim.interfaces.cli import _runtime_evidence_report_markdown
+
+    markdown = _runtime_evidence_report_markdown(report)
+    assert "| Generation |" in markdown and markdown.count(active) == 2
 
 
 @pytest.mark.parametrize("failure", [None, "embedding", "close"])
@@ -1171,3 +1177,329 @@ def test_legacy_logical_filenames_survive_generation_and_bundle_transport(
     )
     with imported.pin() as snapshot:
         assert snapshot.documents == expected
+
+
+def test_paid_preparation_doesnt_block_new_readers_or_allow_pruning_its_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A real blocked provider keeps writers serialized while health and search read prior state."""
+    from threading import Event, Thread
+
+    from test_index_identity import SpyEmbedder
+    from test_preflight_service import MockReranker
+
+    import policynim.services.search as search_module
+    from policynim.services.health import create_runtime_health_service
+    from policynim.types import SearchRequest
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    source = settings.corpus_dir
+    assert source is not None
+    member = next(source.rglob("*.md"))
+    member.write_text(member.read_text() + "\nNew prepared revision.\n")
+    blocked, release, read_done, prune_done = Event(), Event(), Event(), Event()
+    errors: list[BaseException] = []
+    observed: list[str | None] = []
+
+    class BlockingEmbedder(MockEmbedder):
+        def embed_documents(self, texts):
+            """Pause the actual provider boundary until the reader has attempted work."""
+            blocked.set()
+            assert release.wait(10)
+            return super().embed_documents(texts)
+
+    def publish() -> None:
+        """Exercise real preparation and activation while recording any worker failure."""
+        try:
+            store.build(settings, embedder=BlockingEmbedder())
+        except BaseException as exc:
+            errors.append(exc)
+
+    def read() -> None:
+        """Exercise real default health and search against the still-active generation."""
+        try:
+            observed.append(create_runtime_health_service(settings).check().generation_id)
+            with search_module.create_search_service(settings) as service:
+                result = service.search(SearchRequest(query="deployment"))
+                observed.append(result.generation_id)
+                assert all("New prepared revision" not in hit.text for hit in result.hits)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            read_done.set()
+
+    def prune() -> None:
+        """Retention must wait for the serialized producer before inspecting staging."""
+        try:
+            store.prune(keep_recent=0)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            prune_done.set()
+
+    monkeypatch.setattr(
+        search_module,
+        "_create_default_search_components",
+        lambda _: (SpyEmbedder(), MockReranker()),
+    )
+    writer, reader, pruner = Thread(target=publish), Thread(target=read), Thread(target=prune)
+    writer.start()
+    try:
+        assert blocked.wait(3)
+        pruner.start()
+        assert not prune_done.wait(0.1)
+        reader.start()
+        read_while_blocked = read_done.wait(3)
+    finally:
+        release.set()
+        for worker in (writer, reader, pruner):
+            if worker.ident is not None:
+                worker.join(5)
+    assert read_while_blocked, "Reader admission waited for the embedding provider"
+    assert not errors
+    assert observed == [first, first]
+    assert prune_done.is_set() and store.inspect().generation_id != first
+
+
+def test_warm_readers_reuse_validation_but_operator_and_changed_files_reinspect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Count actual artifact reads while exercising the default factory across store instances."""
+    import policynim.storage.generations as generation_module
+    from policynim.errors import GenerationError
+    from policynim.storage import create_index_store
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    read_regular = generation_module._read_regular
+    reads: list[str] = []
+
+    def record(path: Path, **kwargs):
+        """Observe corpus/index bytes rather than a cache implementation detail."""
+        if path.name in {"index.sqlite3", "snapshot.json", "catalog.json", "runtime_rules.json"}:
+            reads.append(path.name)
+        return read_regular(path, **kwargs)
+
+    monkeypatch.setattr(generation_module, "_read_regular", record)
+    first = create_index_store(settings)
+    first.close()
+    assert "index.sqlite3" in reads
+    count = len(reads)
+    second = create_index_store(settings)
+    second.close()
+    assert len(reads) == count, "Unchanged reader rehashed the complete artifacts"
+    store.inspect()
+    assert len(reads) > count
+    damaged = store.root / "objects" / active / "index.sqlite3"
+    damaged.write_bytes(damaged.read_bytes() + b"changed artifact")
+    with pytest.raises(GenerationError):
+        create_index_store(settings)
+    assert damaged.read_bytes().endswith(b"changed artifact")
+
+
+def test_cached_snapshot_models_arent_shared_with_callers(tmp_path: Path) -> None:
+    """Mutating one returned model can't change what a later reader sees."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    with store.pin() as first:
+        expected = first.catalog.model_dump_json(), first.documents[0].body
+        first.catalog.policies[0].body = "caller mutation"
+        first.documents[0].body = "caller mutation"
+    with store.pin() as second:
+        assert (second.catalog.model_dump_json(), second.documents[0].body) == expected
+
+
+def test_cache_rejects_same_size_tamper_with_restored_mtime(tmp_path: Path) -> None:
+    """Native metadata-change stamps invalidate reuse even when size and mtime are restored."""
+    import os
+
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    with store.pin() as snapshot:
+        path = snapshot.rules_path
+    before = path.stat()
+    contents = path.read_bytes()
+    changed = contents.replace(b'"schema_version": 1', b'"schema_version": 9')
+    assert changed != contents and len(changed) == len(contents)
+    path.write_bytes(changed)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert path.stat().st_size == before.st_size
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+    with pytest.raises(GenerationError):
+        store.pin()
+    assert path.read_bytes() == changed
+    assert not list((store.root / "leases").rglob("*.lock"))
+
+
+def test_missing_change_stamp_forces_full_reader_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Filesystems lacking a trustworthy change stamp can't authorize cached acceptance."""
+    import policynim.storage.generations as generation_module
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    with store.pin():
+        pass
+    monkeypatch.setattr(generation_module, "_file_change_stamp", lambda *args: None)
+    original = store._inspect
+    inspected: list[Path] = []
+
+    def record(directory: Path, **kwargs):
+        """Observe complete validation after cache eligibility becomes unavailable."""
+        inspected.append(directory)
+        return original(directory, **kwargs)
+
+    monkeypatch.setattr(store, "_inspect", record)
+    for _ in range(2):
+        with store.pin():
+            pass
+    assert len(inspected) == 2
+
+
+def test_cold_reader_validation_doesnt_block_publication_and_keeps_its_object(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A paused cold inspector holds a lease while later publishers and retention finish."""
+    from threading import Event, Thread
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    publisher = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = publisher.migrate(settings, index_path=index, rules_path=rules).generation_id
+    reader_store = GenerationStore(root=publisher.root, embedding=identity)
+    inspecting, release = Event(), Event()
+    original = reader_store._inspect
+    errors: list[BaseException] = []
+    observed: list[str] = []
+
+    def pause(directory: Path, **kwargs):
+        """Pause after lease registration but before complete source/index validation."""
+        inspecting.set()
+        assert release.wait(10)
+        return original(directory, **kwargs)
+
+    def read() -> None:
+        """Keep the selected ID through validation even after active state changes."""
+        try:
+            with reader_store.pin() as snapshot:
+                observed.append(snapshot.generation_id)
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(reader_store, "_inspect", pause)
+    reader = Thread(target=read)
+    reader.start()
+    try:
+        assert inspecting.wait(3)
+        assert settings.corpus_dir is not None
+        member = next(settings.corpus_dir.rglob("*.md"))
+        for revision in range(3):
+            member.write_text(member.read_text() + f"\nLater revision {revision}.\n")
+            publisher.build(settings, MockEmbedder())
+        assert first in publisher.prune(keep_recent=0).kept
+        assert (publisher.root / "objects" / first).is_dir()
+    finally:
+        release.set()
+        reader.join(5)
+    assert not reader.is_alive() and not errors
+    assert observed == [first]
+    assert first in publisher.prune(keep_recent=0).removed
+
+
+def test_concurrent_cold_readers_share_validation_and_deadline_releases_waiter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Waiting for a shared inspection respects the request budget and releases only its lease."""
+    from threading import Event, Thread
+
+    from policynim.errors import ProviderError
+    from policynim.operations import operation_scope
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    first = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first.migrate(settings, index_path=index, rules_path=rules)
+    second = GenerationStore(root=first.root, embedding=identity)
+    inspecting, release = Event(), Event()
+    original = first._inspect
+    errors: list[BaseException] = []
+
+    def pause(directory: Path, **kwargs):
+        """Hold one cold inspection outside publication serialization."""
+        inspecting.set()
+        assert release.wait(5)
+        return original(directory, **kwargs)
+
+    def read() -> None:
+        """Finish the cache population after a separate waiter exhausts its deadline."""
+        try:
+            with first.pin():
+                pass
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(first, "_inspect", pause)
+    reader = Thread(target=read)
+    reader.start()
+    try:
+        assert inspecting.wait(3)
+        with pytest.raises(ProviderError) as error, operation_scope(seconds=0.1):
+            second.pin()
+        assert error.value.failure_class == "deadline_exhausted"
+        assert len(list((first.root / "leases").rglob("*.lock"))) == 1
+    finally:
+        release.set()
+        reader.join(5)
+    assert not reader.is_alive() and not errors
+    assert not list((first.root / "leases").rglob("*.lock"))
+
+    def unexpected_inspection(*args, **kwargs):
+        """The next reader must reuse the other store's successful full validation."""
+        pytest.fail("Concurrent successful validation wasn't reused")
+
+    monkeypatch.setattr(second, "_inspect", unexpected_inspection)
+    with second.pin():
+        pass
+
+
+def test_publisher_inspection_never_holds_reader_admission_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every full publication/retention inspection allows independent pointer readers."""
+    from threading import Event, Thread
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original = store._inspect
+    admissions: list[bool] = []
+
+    def inspect(directory: Path, **kwargs):
+        """Try actual reader admission while each full inspector has control."""
+        admitted = Event()
+
+        def read_pointer() -> None:
+            """Take the actual publication mutex from a separate thread."""
+            store.read_activation()
+            admitted.set()
+
+        reader = Thread(target=read_pointer)
+        reader.start()
+        admissions.append(admitted.wait(1))
+        reader.join(0.1)
+        return original(directory, **kwargs)
+
+    monkeypatch.setattr(store, "_inspect", inspect)
+    store.build(settings, MockEmbedder())
+    assert admissions and all(admissions)

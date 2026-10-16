@@ -111,3 +111,33 @@ def test_inspection_error_exposes_owned_pointer_for_corrupt_active_recovery(
     assert recovered.exit_code == 0, recovered.output
     assert json.loads(recovered.stdout)["generation_id"] == first
     assert damaged.read_bytes() == b"PRIVATE-CANARY damaged index"
+
+
+def test_text_catalog_views_identify_generation_and_explicit_source_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Text show/validate expose the same authoritative scope and ID as JSON."""
+    from policynim.interfaces import cli
+    from policynim.services.catalog import build_policy_catalog
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    active = (
+        GenerationStore(root=settings.generations_dir, embedding=identity)
+        .migrate(settings, index_path=index, rules_path=rules)
+        .generation_id
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_policy_catalog",
+        lambda source_only=False: build_policy_catalog(settings=settings, source_only=source_only),
+    )
+    runner = CliRunner()
+    for args in (["show", "A"], ["validate"]):
+        result = runner.invoke(app, ["policies", *args])
+        assert result.exit_code == 0, result.output
+        assert active in result.stdout and "generation" in result.stdout.lower()
+        source = runner.invoke(app, ["policies", *args, "--source"])
+        assert source.exit_code == 0, source.output
+        assert active not in source.stdout and "source" in source.stdout.lower()

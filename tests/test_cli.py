@@ -4378,7 +4378,7 @@ def test_evidence_report_command_prints_markdown(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "# Runtime Evidence Report" in result.stdout
     assert "session-1" in result.stdout
-    assert "| exec-1 | shell_command | allow | allowed |" in result.stdout
+    assert "| exec-1 | unknown | shell_command | allow | allowed |" in result.stdout
     assert service.closed is True
 
 

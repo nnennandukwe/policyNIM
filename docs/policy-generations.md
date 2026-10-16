@@ -65,9 +65,16 @@ unowned store still fails; recover into a separate operator-owned store rather
 than guessing state. Paid builds reject damaged active state before provider
 construction.
 
-Publishers serialize under one stable process lock. Readers hold kernel-backed
-leases, so pruning retains active, previous, recent, and in-flight generations.
+Publishers and retention serialize under a stable writer lock. Reader selection
+and activation share a separate short lock; embedding and full validation leave
+reader admission available. Readers hold kernel-backed leases, so pruning retains
+active, previous, recent, and in-flight generations.
 Dead processes release their locks; later cleanup can remove their stale markers.
+Runtime readers reuse successful validation only while all five artifact identities,
+membership, metadata-change stamps, and embedding settings match. The process cache
+holds at most eight snapshots and 32 MiB of serialized source models; larger
+snapshots receive full validation. Filesystems without reliable change stamps also
+receive full validation. Operator inspection and export always validate all bytes.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
 preserved with warnings. All processes must use the same store and filesystem
 locking semantics. This isn't a sandbox against arbitrary writes by the same OS

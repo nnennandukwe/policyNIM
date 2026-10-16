@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import Field
 
 from policynim.contracts import IndexStore
-from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.errors import GenerationError, IndexCompatibilityError, MissingIndexError
 from policynim.types import IndexIdentity, StrictModel
 
 IndexReadinessState = Literal[
@@ -84,6 +84,13 @@ def require_index_ready(index_store: IndexStore, *, missing_message: str) -> Non
     report = inspect_index_readiness(index_store)
     if report.state == "ready":
         return
+    from policynim.storage.index_store import pinned_generation
+
+    if pinned_generation(index_store) is not None:
+        detail = report.reason
+        if report.state == "unreadable":
+            detail += " Correct access or contention; don't rebuild to diagnose permissions."
+        raise GenerationError("read", detail)
     if report.state in {"incompatible", "incomplete"}:
         raise IndexCompatibilityError(report.reason)
     if report.state == "missing":

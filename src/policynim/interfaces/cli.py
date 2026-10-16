@@ -177,6 +177,7 @@ def policies_show(
         )
         return
     typer.echo(f"{entry.policy.policy_id}: {entry.policy.title}")
+    typer.echo(f"Scope: {catalog.scope}; generation: {catalog.generation_id or 'unknown'}")
     typer.echo(f"Source: {entry.path}; state: {entry.state}")
     if entry.reason is not None:
         typer.echo(f"Decision: {entry.reason}")
@@ -213,7 +214,10 @@ def policies_validate(
     if output_format == "json":
         typer.echo(json.dumps(result, indent=2))
     else:
-        typer.echo(f"Valid source catalog: {catalog.effective_count} policies; {catalog.digest}")
+        typer.echo(
+            f"Valid {catalog.scope} catalog: {catalog.effective_count} policies; {catalog.digest}"
+        )
+        typer.echo(f"Generation: {catalog.generation_id or 'unknown (source inspection only)'}")
         typer.echo(
             "Validation checks structure and declared metadata; it doesn't certify compliance."
         )
@@ -1302,10 +1306,10 @@ def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) ->
     lines.extend(
         [
             (
-                "| Execution | Action | Decision | Outcome | Confirmation | "
+                "| Execution | Generation | Action | Decision | Outcome | Confirmation | "
                 "Started | Completed | Failure |"
             ),
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for execution in summary.executions:
@@ -1313,6 +1317,7 @@ def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) ->
             " | ".join(
                 [
                     f"| {_markdown_cell(execution.execution_id)}",
+                    _markdown_cell(execution.generation_id or "unknown"),
                     _markdown_cell(execution.action_kind),
                     _markdown_cell(execution.decision),
                     _markdown_cell(execution.execution_outcome or "incomplete"),
