@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from test_policy_generations import NO_ENV, clean_environment, seed_legacy  # noqa: F401
 from typer.testing import CliRunner
 
@@ -171,3 +172,23 @@ def test_operator_inspection_revalidates_bytes_after_a_warm_runtime_reader(
         assert result.exit_code == 0, result.output
         assert len(reads) == expected_reads
     assert not list((store.root / "leases").rglob("*.lock"))
+
+
+@pytest.mark.parametrize("command", ["inspect", "export"])
+def test_explicit_blank_id_never_falls_back_to_active(
+    monkeypatch, tmp_path: Path, command: str
+) -> None:
+    """An empty shell variable must fail selection rather than inspecting/exporting active state."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    monkeypatch.setattr(generation_cli, "get_settings", lambda: settings)
+    destination = tmp_path / "blank-id.zip"
+    args = ["generation", command]
+    if command == "export":
+        args.append(str(destination))
+    result = CliRunner().invoke(app, [*args, "--id", "", "--format", "json"])
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["status"] == "error"
+    assert not destination.exists()

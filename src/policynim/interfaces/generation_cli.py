@@ -82,7 +82,8 @@ def inspect_generation(
 
     def inspect(settings: Settings, store: GenerationStore) -> dict[str, object]:
         """Hold a reader lease while assembling one validated report."""
-        with store.pin(generation_id or settings.generation_id, force_validation=True) as snapshot:
+        selected = generation_id if generation_id is not None else settings.generation_id
+        with store.pin(selected, force_validation=True) as snapshot:
             return {
                 "status": "ok",
                 "generation_id": snapshot.generation_id,
@@ -141,7 +142,8 @@ def export_generation(
 
     def export(settings: Settings, store: GenerationStore) -> dict[str, object]:
         """Pin the selected object through export and checksum readback."""
-        with store.pin(generation_id or settings.generation_id) as snapshot:
+        selected = generation_id if generation_id is not None else settings.generation_id
+        with store.pin(selected) as snapshot:
             digest = store.export_bundle(destination, snapshot.generation_id)
             return {"status": "ok", "generation_id": snapshot.generation_id, "digest": digest}
 

@@ -805,7 +805,13 @@ class GenerationStore:
     def _activate(self, prepared: GenerationSnapshot) -> PublicationResult:
         """Install a complete object before atomically replacing the active/previous pointer."""
         target = self.root / "objects" / prepared.generation_id
-        if target.exists():
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            occupied = False
+        else:
+            occupied = True
+        if occupied:
             self._inspect(
                 target, expected_id=prepared.generation_id, expected_embedding=self.embedding
             )
@@ -970,10 +976,24 @@ class GenerationStore:
                 with closing(sqlite3.connect(destination)) as output:
                     source.backup(output)
 
-        result = self._execute(lambda: self._publish(snapshot, copy_index, rules_bytes))
+        def publish() -> PublicationResult:
+            """Reject changed source selection after waiting for serialized publication."""
+            self._require_fresh_sources(snapshot, settings)
+            return self._publish(snapshot, copy_index, rules_bytes)
+
+        result = self._execute(publish)
         result.source_roots = [root.as_posix() for root in roots]
         result.profile_path = settings.profile.as_posix() if settings.profile else None
         return result
+
+    def _require_fresh_sources(self, snapshot: SourceSnapshot, settings: Settings) -> None:
+        """Keep queued producers from activating inputs changed while writer ownership waited."""
+        current, roots = capture_sources(settings)
+        self._guard_outputs(roots, settings)
+        if current != snapshot:
+            raise GenerationError(
+                "prepare", "Sources changed while waiting for publication; review and retry."
+            )
 
     def build(
         self,
@@ -1008,6 +1028,7 @@ class GenerationStore:
 
         def publish() -> PublicationResult:
             """Reject damaged active state before constructing an embedding provider."""
+            self._require_fresh_sources(snapshot, settings)
             pointer = self._pointer()
             if pointer is not None:
                 self._inspect(self.root / "objects" / pointer.active, expected_id=pointer.active)
@@ -1182,20 +1203,30 @@ class GenerationStore:
         for trash in (self.root / "trash").iterdir():
             try:
                 self._clean_trash(trash)
-            except Exception:
-                result.warnings.append(
-                    "Owned trash cleanup needs inspection; unexpected entries remain."
-                )
+            except Exception as error:
+                result.warnings.append(self._retention_warning(trash, error))
         for stage in (self.root / "staging").iterdir():
             try:
                 self._remove_stage(stage)
-            except Exception:
-                result.warnings.append(
-                    "Staging cleanup needs inspection; unexpected entries remain."
-                )
+            except Exception as error:
+                result.warnings.append(self._retention_warning(stage, error))
         result.kept.sort()
         result.removed.sort()
         return result
+
+    def _retention_warning(self, path: Path, error: Exception) -> str:
+        """Record managed locations and safe causes without echoing raw filesystem error text."""
+        reason = type(error).__name__
+        if isinstance(error, GenerationError):
+            reason += ": " + str(error)
+        elif isinstance(error, OSError):
+            reason += f" (errno={error.errno})"
+        warning = (
+            f"Retention cleanup for {path.relative_to(self.root).as_posix()!r} "
+            f"needs inspection: {reason}"
+        )
+        LOGGER.warning("%s", warning)
+        return warning
 
     def prune(self, *, keep_recent: int = 2) -> RetentionResult:
         """Retain active, previous, recent, and every leased generation without provider calls."""
@@ -1217,6 +1248,16 @@ class GenerationStore:
                     info.compress_type = zipfile.ZIP_DEFLATED
                     info.external_attr = (stat.S_IFREG | 0o600) << 16
                     artifact = _read_regular(snapshot.directory / name, max_bytes=256 * 1024 * 1024)
+                    expected = (
+                        "sha256:" + snapshot.generation_id
+                        if name == "manifest.json"
+                        else snapshot.manifest.artifacts[name]
+                    )
+                    if digest_bytes(artifact) != expected:
+                        raise GenerationError(
+                            "export",
+                            "An artifact changed after validation; preserve and inspect it.",
+                        )
                     expanded_size += len(artifact)
                     if expanded_size > 512 * 1024 * 1024:
                         raise GenerationError(
@@ -1288,6 +1329,7 @@ class GenerationStore:
                 "import", "Bundle checksum, membership, size or encoding isn't valid."
             ) from exc
 
+        incoming: SourceSnapshot | None = None
         if source_settings is not None:
             try:
                 incoming = SourceSnapshot.model_validate_json(contents["snapshot.json"])
@@ -1313,4 +1355,11 @@ class GenerationStore:
             self._step("staging_validate")
             return self._inspect(stage, expected_embedding=self.embedding, staging=True)
 
-        return self._execute(lambda: self._publish_stage(prepare))
+        def publish() -> PublicationResult:
+            """Recheck source-match inputs after any writer wait before installing the bundle."""
+            if source_settings is not None:
+                assert incoming is not None
+                self._require_fresh_sources(incoming, source_settings)
+            return self._publish_stage(prepare)
+
+        return self._execute(publish)

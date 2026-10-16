@@ -298,6 +298,241 @@ def test_same_dimension_other_model_is_rejected(tmp_path: Path) -> None:
         wrong.pin()
 
 
+def test_dangling_object_entry_rejects_before_stage_installation(tmp_path: Path) -> None:
+    """Unexpected names stay preserved, and failed activation leaves no ownerless stage."""
+    import os
+
+    from policynim.errors import GenerationError
+
+    if os.name == "nt":
+        pytest.skip("Creating test symlinks requires Windows elevation.")
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    original = GenerationStore(root=tmp_path / "original", embedding=identity)
+    first = original.migrate(settings, index_path=index, rules_path=rules).generation_id
+    bundle = tmp_path / "original.zip"
+    digest = original.export_bundle(bundle)
+    store = GenerationStore(root=tmp_path / "destination", embedding=identity)
+    current = store.build(settings, MockEmbedder()).generation_id
+    assert current != first
+    target = store.root / "objects" / first
+    missing = tmp_path / "preserved-missing-target"
+    target.symlink_to(missing, target_is_directory=True)
+    pointer = (store.root / "active.json").read_bytes()
+    steps: list[str] = []
+    observed = GenerationStore(root=store.root, embedding=identity, fault=steps.append)
+    with pytest.raises(GenerationError) as error:
+        observed.import_bundle(bundle, expected_digest=digest)
+    assert error.value.phase == "inspect"
+    assert "object_rename" not in steps
+    assert target.is_symlink() and target.readlink() == missing
+    assert not missing.exists()
+    assert (store.root / "active.json").read_bytes() == pointer
+    assert not list((store.root / "staging").iterdir())
+
+
+def test_queued_build_rejects_changed_sources_before_provider_construction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A waiting build can't restore captured stale policy text over a newer publication."""
+    from threading import Event, Thread, current_thread
+
+    import policynim.services.generations as generation_module
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    assert settings.corpus_dir is not None
+    member = next(settings.corpus_dir.rglob("*.md"))
+    old = member.read_text()
+    newer = old + "\nNewest reviewed revision.\n"
+    member.write_text(newer)
+    blocked, release, captured = Event(), Event(), Event()
+    original_capture = generation_module.capture_sources
+    successful: list[str] = []
+    first_errors: list[BaseException] = []
+    queued_errors: list[BaseException] = []
+    factory_calls: list[str] = []
+
+    def capture(settings: Settings):
+        """Observe the queued caller's detached snapshot before it acquires writer ownership."""
+        result = original_capture(settings)
+        if current_thread().name == "queued-publisher":
+            captured.set()
+        return result
+
+    class BlockingEmbedder(MockEmbedder):
+        def embed_documents(self, texts):
+            """Keep the first actual producer in flight while the other caller captures old text."""
+            blocked.set()
+            assert release.wait(10)
+            return super().embed_documents(texts)
+
+    def publish_newer() -> None:
+        """Finish the newer captured revision before the waiting producer can acquire its lock."""
+        try:
+            successful.append(store.build(settings, BlockingEmbedder()).generation_id)
+        except BaseException as error:
+            first_errors.append(error)
+
+    def provider():
+        """Record construction so stale queued work must reject before any usage can begin."""
+        factory_calls.append("create")
+        return MockEmbedder()
+
+    def publish_queued() -> None:
+        """Try to publish an earlier source snapshot after a real writer wait."""
+        try:
+            store.build(settings, embedder_factory=provider)
+        except BaseException as error:
+            queued_errors.append(error)
+
+    monkeypatch.setattr(generation_module, "capture_sources", capture)
+    writer = Thread(target=publish_newer, name="newer-publisher")
+    queued = Thread(target=publish_queued, name="queued-publisher")
+    writer.start()
+    try:
+        assert blocked.wait(3)
+        member.write_text(old)
+        queued.start()
+        assert captured.wait(3)
+        member.write_text(newer)
+    finally:
+        release.set()
+        for thread in (writer, queued):
+            if thread.ident is not None:
+                thread.join(5)
+    assert not writer.is_alive() and not queued.is_alive()
+    assert not first_errors and len(successful) == 1
+    assert len(queued_errors) == 1 and isinstance(queued_errors[0], GenerationError)
+    assert factory_calls == []
+    with store.pin() as snapshot:
+        assert snapshot.generation_id == successful[0]
+        assert snapshot.activation is not None and snapshot.activation.previous == first
+        assert any("Newest reviewed revision" in document.body for document in snapshot.documents)
+    assert member.read_text() == newer
+
+
+def test_retention_records_safe_cause_and_location_for_each_failed_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Cleanup diagnostics identify owned locations and causes without raw private error text."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    trash = store.root / "trash" / "permission-case"
+    trash.mkdir()
+    stage = store.root / "staging" / "unexpected-case"
+    stage.mkdir()
+    canary = stage / "private.txt"
+    canary.write_text("PRIVATE-CANARY")
+
+    def deny(path: Path) -> None:
+        """Inject a filesystem access error at the actual retention cleanup boundary."""
+        raise PermissionError(13, "PRIVATE-CANARY")
+
+    monkeypatch.setattr(store, "_clean_trash", deny)
+    with caplog.at_level("WARNING", logger="policynim.services.generations"):
+        result = store.prune(keep_recent=0)
+    output = "\n".join(result.warnings) + caplog.text
+    assert (
+        "trash/permission-case" in output and "PermissionError" in output and "errno=13" in output
+    )
+    assert "staging/unexpected-case" in output and "GenerationError" in output
+    assert "Unexpected staging contents" in output
+    assert "PRIVATE-CANARY" not in output
+    assert trash.is_dir() and canary.read_text() == "PRIVATE-CANARY"
+
+
+@pytest.mark.parametrize("producer", ["migrate", "source_matched_import"])
+def test_waiting_source_bound_producers_recheck_before_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, producer: str
+) -> None:
+    """Source-bound offline producers reject changed selection and permit a valid retry."""
+    from contextlib import contextmanager
+
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    bundle = tmp_path / "input.zip"
+    digest = store.export_bundle(bundle)
+    before = (
+        index.read_bytes(),
+        rules.read_bytes(),
+        bundle.read_bytes(),
+        (store.root / "active.json").read_bytes(),
+    )
+    assert settings.corpus_dir is not None
+    member = next(settings.corpus_dir.rglob("*.md"))
+    original_text = member.read_text()
+    original_writer = store._writer
+
+    @contextmanager
+    def changed_selection(*, initialize: bool = False):
+        """Change mutable inputs after actual writer ownership but before its operation begins."""
+        with original_writer(initialize=initialize):
+            member.write_text(original_text + "\nChanged while waiting.\n")
+            yield
+
+    def publish():
+        """Exercise the actual public producer and its explicit freshness contract."""
+        if producer == "migrate":
+            return store.migrate(settings, index_path=index, rules_path=rules)
+        return store.import_bundle(bundle, expected_digest=digest, source_settings=settings)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_writer", changed_selection)
+        with pytest.raises(GenerationError, match="Sources changed while waiting"):
+            publish()
+    assert before == (
+        index.read_bytes(),
+        rules.read_bytes(),
+        bundle.read_bytes(),
+        (store.root / "active.json").read_bytes(),
+    )
+    assert not list((store.root / "staging").iterdir())
+    assert "Changed while waiting" in member.read_text()
+    member.write_text(original_text)
+    result = publish()
+    assert store.inspect().generation_id == result.generation_id
+
+
+@pytest.mark.parametrize("artifact", ["manifest.json", "index.sqlite3"])
+def test_export_rejects_bytes_changed_after_validation_before_packaging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, artifact: str
+) -> None:
+    """The exported bytes must match the validated manifest before any destination is written."""
+    import policynim.services.generations as generation_module
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    target = store.root / "objects" / active / artifact
+    pointer = (store.root / "active.json").read_bytes()
+    original = generation_module._read_regular
+    calls: list[str] = []
+
+    def replace_before_read(path: Path, **kwargs):
+        """Change the bytes only on the packaging read, after full validation already passed."""
+        if path == target:
+            calls.append(path.name)
+            if len(calls) == 2:
+                target.write_bytes(target.read_bytes() + b" \n")
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(generation_module, "_read_regular", replace_before_read)
+    destination = tmp_path / "must-not-exist.zip"
+    with pytest.raises(GenerationError):
+        store.export_bundle(destination)
+    assert len(calls) == 2
+    assert not destination.exists()
+    assert target.read_bytes().endswith(b" \n")
+    assert (store.root / "active.json").read_bytes() == pointer
+
+
 @pytest.mark.parametrize("mutation", ["missing", "equal_count_orphan"])
 @pytest.mark.parametrize("producer", ["migrate", "import"])
 def test_publication_rejects_unpaired_vector_rows_without_changing_prior_state(

@@ -65,6 +65,10 @@ unowned store still fails; recover into a separate operator-owned store rather
 than guessing state. Paid builds reject damaged active state before provider
 construction.
 
+Builds, migration, and imports that require a source match recheck their inputs
+after waiting for writer ownership. Changed source selections stop before
+embedding or staging; review the current selection and retry.
+
 Publishers and retention serialize under a stable writer lock. Reader selection
 and activation share a separate short lock; embedding and full validation leave
 reader admission available. Readers hold kernel-backed leases, so pruning retains
@@ -80,6 +84,7 @@ snapshots receive full validation. Filesystems without reliable change stamps al
 receive full validation. Operator inspection and export always validate all bytes.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
 preserved with warnings. All processes must use the same store and filesystem
+Cleanup diagnostics identify the managed relative path and a safe cause.
 locking semantics. This isn't a sandbox against arbitrary writes by the same OS
 user; external edits can invalidate an object and will fail later inspection.
 
@@ -93,7 +98,8 @@ policynim generation import reviewed-generation.zip --expect-digest sha256:CHECK
 Transport uses a deterministic ZIP with exactly the five required flat files.
 Import requires a trusted checksum, rejects unsafe/extra/duplicate entries and
 oversized content, then runs the same full inspector before activation. Export
-refuses to overwrite an existing file. Bundles contain selected source text,
+checks the packaged bytes against the validated manifest before creating the
+destination and refuses to overwrite an existing file. Bundles contain selected source text,
 including retained excluded/replaced policies and notices; review their content
 before sharing a private profile.
 
