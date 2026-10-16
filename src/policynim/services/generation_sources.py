@@ -10,7 +10,11 @@ from typing import Annotated
 from pydantic import Field, field_validator
 
 from policynim.errors import InvalidPolicyDocumentError
-from policynim.ingest.catalog import PolicyPackManifest, read_pack_bytes
+from policynim.ingest.catalog import (
+    PolicyPackManifest,
+    normalize_pack_member_path,
+    read_pack_bytes,
+)
 from policynim.ingest.loader import discover_policy_paths, load_policy_documents
 from policynim.ingest.parser import MarkdownParser
 from policynim.runtime_paths import resolve_corpus_root
@@ -57,7 +61,7 @@ class SourceMember(StrictModel):
             or path.name == "TEMPLATE.md"
         ):
             raise ValueError("Snapshot members must be relative Markdown paths.")
-        return value
+        return path.as_posix()
 
 
 class SourcePack(StrictModel):
@@ -79,7 +83,16 @@ class SourcePack(StrictModel):
         paths = [member.path for member in self.members]
         if len(set(paths)) != len(paths):
             raise InvalidPolicyDocumentError("Snapshot membership repeats a file.")
-        declarations = {member.path: member for member in manifest.policies} if manifest else {}
+        declarations = (
+            {
+                normalize_pack_member_path(member.path).as_posix(): member
+                for member in manifest.policies
+            }
+            if manifest
+            else {}
+        )
+        if manifest is not None and len(declarations) != len(manifest.policies):
+            raise InvalidPolicyDocumentError("Snapshot manifest repeats a normalized member.")
         if manifest is not None and set(paths) != set(declarations):
             raise InvalidPolicyDocumentError("Snapshot membership doesn't match its manifest.")
         documents: list[ParsedDocument] = []

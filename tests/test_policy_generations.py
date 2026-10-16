@@ -99,6 +99,127 @@ def seed_legacy(tmp_path: Path, ids: list[str] | None = None):
     return settings, identity, index, rules
 
 
+@pytest.mark.parametrize("spelling", ["./A.md", "nested//./A.md"])
+@pytest.mark.parametrize("producer", ["build", "migrate"])
+@pytest.mark.parametrize("profiled", [False, True])
+def test_normalized_pack_members_survive_generation_and_bundle_transport(
+    tmp_path: Path, spelling: str, producer: str, profiled: bool
+) -> None:
+    """Every spelling accepted by the ordinary pack loader keeps its captured identity."""
+    from pathlib import PurePosixPath
+
+    from policynim.ingest.loader import load_policy_documents
+    from policynim.services.generation_sources import SourceSnapshot
+    from policynim.services.profiles import initialize_profile, resolve_profile
+
+    source = write_pack(tmp_path / "policies", "test.paths", ["A"])
+    relative = PurePosixPath(spelling).as_posix()
+    if relative != "A.md":
+        destination = source / relative
+        destination.parent.mkdir()
+        (source / "A.md").rename(destination)
+    manifest = source / "pack.toml"
+    raw_manifest = manifest.read_text().replace('path = "A.md"', f'path = "{spelling}"')
+    manifest.write_text(raw_manifest)
+    profile = tmp_path / "profile.toml" if profiled else None
+    if profile is not None:
+        initialize_profile(profile, [source], profile_id="paths")
+        expected = resolve_profile(profile).documents
+    else:
+        expected = load_policy_documents(source)
+    identity = EmbeddingIdentity(model="test-embed", endpoint="https://example.invalid/v1")
+    settings = Settings(
+        **NO_ENV,
+        corpus_dir=source if profile is None else None,
+        profile=profile,
+        nvidia_embed_model=identity.model,
+        nvidia_base_url=identity.endpoint,
+        index_db_path=tmp_path / "legacy.sqlite3",
+        runtime_rules_artifact_path=tmp_path / "legacy-rules.json",
+    )
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    if producer == "migrate":
+        with IngestService(
+            embedder=MockEmbedder(),
+            index_store=SQLiteVecIndexStore(
+                path=settings.index_db_path, embedding_identity=identity
+            ),
+            corpus_root=source,
+            profile_path=profile,
+            embedding_model=identity.model,
+            runtime_rules_artifact_path=settings.runtime_rules_artifact_path,
+        ) as service:
+            service.run()
+        result = store.migrate(
+            settings,
+            index_path=settings.index_db_path,
+            rules_path=settings.runtime_rules_artifact_path,
+        )
+    else:
+        result = store.build(settings, MockEmbedder())
+    with store.pin() as snapshot:
+        assert snapshot.documents == expected
+        captured = SourceSnapshot.model_validate_json(
+            (snapshot.directory / "snapshot.json").read_bytes()
+        )
+        assert captured.packs[0].manifest_text == raw_manifest
+        assert captured.packs[0].members[0].path == relative
+    bundle = tmp_path / "paths.zip"
+    digest = store.export_bundle(bundle)
+    manifest.rename(source / "pack.toml.preserved")
+    imported = GenerationStore(root=tmp_path / "imported", embedding=identity)
+    assert (
+        imported.import_bundle(bundle, expected_digest=digest).generation_id == result.generation_id
+    )
+    with imported.pin() as snapshot:
+        assert snapshot.documents == expected
+
+
+def test_snapshot_manifest_rejects_normalized_duplicate_declarations(tmp_path: Path) -> None:
+    """Pure reconstruction must reject aliases even when one declaration matches the document."""
+    from policynim.errors import InvalidPolicyDocumentError
+    from policynim.ingest.loader import load_policy_documents
+    from policynim.services.generation_sources import SourceMember, SourcePack
+
+    source = write_pack(tmp_path / "policies", "test.paths", ["A"])
+    manifest = source / "pack.toml"
+    raw = manifest.read_text().replace('policy_id = "A"', 'policy_id = "B"')
+    raw += '\n[[policies]]\npolicy_id = "A"\npath = "./A.md"\n'
+    manifest.write_text(raw)
+    with pytest.raises(InvalidPolicyDocumentError, match="repeats a member"):
+        load_policy_documents(source)
+    snapshot = SourcePack(
+        root_name="policies",
+        manifest_text=raw,
+        members=[SourceMember(path="./A.md", text=(source / "A.md").read_text())],
+    )
+    with pytest.raises(InvalidPolicyDocumentError, match="repeats a normalized member"):
+        snapshot.parse()
+
+
+@pytest.mark.parametrize("filename", ["invalid:v1.md", "invalid\\v1.md"])
+def test_snapshot_manifest_cant_promote_legacy_only_filename_syntax(
+    tmp_path: Path, filename: str
+) -> None:
+    """Captured manifests retain the ordinary pack contract without narrowing legacy directories."""
+    from policynim.errors import InvalidPolicyDocumentError
+    from policynim.services.generation_sources import SourceMember, SourcePack
+
+    source = write_pack(tmp_path / "policies", "test.paths", ["A"])
+    raw = (
+        (source / "pack.toml")
+        .read_text()
+        .replace('path = "A.md"', "path = " + json.dumps(filename))
+    )
+    snapshot = SourcePack(
+        root_name="policies",
+        manifest_text=raw,
+        members=[SourceMember(path=filename, text=(source / "A.md").read_text())],
+    )
+    with pytest.raises(InvalidPolicyDocumentError, match="relative Markdown"):
+        snapshot.parse()
+
+
 def test_profile_snapshot_survives_source_removal(tmp_path: Path) -> None:
     """The sealed effective catalog stays valid after all original packs/profile are unavailable."""
     import shutil
