@@ -6,9 +6,11 @@ NVIDIA only when explicitly invoked. The default path is `data/generations` in a
 source checkout or hosted process; standalone installations use their user data
 root's `generations` directory. Absolute paths work for an operator-owned store.
 
-Each content-addressed object contains five files: the manifest, captured raw
-source/profile text and license notices, effective catalog, SQLite index, and
-runtime rules. Validation binds artifact hashes, model/provider/endpoint and
+Each object contains `manifest.json`, `snapshot.json`, `catalog.json`,
+`index.sqlite3`, and `runtime_rules.json`. Its ID is the SHA256 digest of the
+manifest bytes. The snapshot keeps raw policy text and pack manifests, parsed
+profile configuration, and license notices. Validation binds artifact hashes,
+model/provider/endpoint and
 vector dimension, schemas, exact chunks/provenance, and source-derived rules.
 Activation replaces `active.json` once, retaining both active and previous IDs.
 A failed preparation preserves the prior pointer. Cleanup or sync failures after
@@ -100,9 +102,8 @@ Import requires a trusted checksum, rejects unsafe/extra/duplicate entries and
 oversized content, then runs the same full inspector before activation. Export
 checks the packaged bytes against the validated manifest before creating the
 destination and refuses to overwrite an existing file. Bundles contain selected
-source text,
-including retained excluded/replaced policies and notices; review their content
-before sharing a private profile.
+source text, including retained excluded/replaced policies and notices; review
+their content before sharing a private profile.
 
 Both Dockerfiles consume `artifacts/public-generation/generation.zip` and its
 checked-in `generation.sha256`. Their source-match guard rejects a bundle that
