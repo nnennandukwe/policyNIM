@@ -52,6 +52,8 @@ class SourceMember(StrictModel):
     @classmethod
     def bounded_member(cls, value: str) -> str:
         """Keep logical member paths relative; inspection never opens their original names."""
+        # Legacy POSIX filenames may contain colon or backslash characters.
+        # These keys identify captured evidence; consumers never materialize them.
         path = PurePosixPath(value)
         if (
             not path.parts

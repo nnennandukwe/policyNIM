@@ -23,6 +23,7 @@ from policynim.contracts import (
     RuntimeEvidenceStoreProtocol,
 )
 from policynim.errors import RuntimeEvidencePersistenceError
+from policynim.operations import ResourceStack, close_components
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.runtime_decision import create_runtime_decision_service
 from policynim.settings import Settings, get_settings
@@ -232,14 +233,21 @@ def create_runtime_execution_service(
 ) -> RuntimeExecutionService:
     """Build the default runtime execution service from application settings."""
     active_settings = settings or get_settings()
-    return RuntimeExecutionService(
-        decision_service=create_runtime_decision_service(active_settings),
-        evidence_store=RuntimeEvidenceStore(
+    with ResourceStack() as cleanup:
+        decision_service = create_runtime_decision_service(active_settings)
+        cleanup.callback(close_components, decision_service)
+        evidence_store = RuntimeEvidenceStore(
             path=resolve_runtime_path(active_settings.runtime_evidence_db_path)
-        ),
-        confirmer=confirmer,
-        shell_timeout_seconds=active_settings.runtime_shell_timeout_seconds,
-    )
+        )
+        cleanup.callback(close_components, evidence_store)
+        service = RuntimeExecutionService(
+            decision_service=decision_service,
+            evidence_store=evidence_store,
+            confirmer=confirmer,
+            shell_timeout_seconds=active_settings.runtime_shell_timeout_seconds,
+        )
+        cleanup.pop_all()
+        return service
 
 
 def _sanitize_request(request: RuntimeActionRequest) -> RuntimeExecutionRequest:

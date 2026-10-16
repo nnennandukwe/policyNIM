@@ -2548,3 +2548,93 @@ def test_dangling_staging_link_is_preserved_with_a_cleanup_warning(tmp_path: Pat
     )
     assert link.is_symlink()
     assert (store.root / "active.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("boundary", ["evidence_database", "http_client"])
+def test_failed_runtime_executor_setup_releases_its_pinned_reader_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    """Real partial factory failures close owned decisions even when exception refs retain them."""
+    import sqlite3
+
+    import policynim.services.runtime_execution as runtime_module
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "runtime_evidence_db_path": tmp_path / "evidence.sqlite3",
+        }
+    )
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    before = (store.root / "active.json").read_bytes()
+    original_factory = runtime_module.create_runtime_decision_service
+    original_client = runtime_module.httpx.Client
+    retained: list[object] = []
+
+    def decisions(selected: Settings):
+        """Retain the actual decision object so GC can't hide a missing explicit close."""
+        result = original_factory(selected)
+        retained.append(result)
+        return result
+
+    def client(*args, **kwargs):
+        """Fail after both the decision reader and evidence store have been constructed."""
+        raise RuntimeError("Injected HTTP client setup failure.")
+
+    monkeypatch.setattr(runtime_module, "create_runtime_decision_service", decisions)
+    if boundary == "evidence_database":
+        settings.runtime_evidence_db_path.mkdir()
+        expected = (OSError, sqlite3.Error)
+    else:
+        monkeypatch.setattr(runtime_module.httpx, "Client", client)
+        expected = (RuntimeError,)
+    with pytest.raises(expected):
+        runtime_module.create_runtime_execution_service(settings)
+    assert retained
+    assert not list((store.root / "leases").rglob("*.lock"))
+    assert (store.root / "active.json").read_bytes() == before
+    monkeypatch.setattr(runtime_module.httpx, "Client", original_client)
+    retry = settings.model_copy(update={"runtime_evidence_db_path": tmp_path / "retry.sqlite3"})
+    with runtime_module.create_runtime_execution_service(retry):
+        assert list((store.root / "leases").rglob("*.lock"))
+    assert not list((store.root / "leases").rglob("*.lock"))
+
+
+@pytest.mark.parametrize("filename", ["security:v1.md", "security\\v1.md"])
+def test_foreign_legacy_member_names_import_as_evidence_without_source_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    """A foreign POSIX snapshot uses logical citation keys, never destination filenames."""
+    import policynim.services.generations as generation_module
+    from policynim.services.generation_sources import SourceMember, capture_sources
+
+    settings, identity, _, _ = seed_legacy(tmp_path)
+    source = settings.corpus_dir
+    assert source is not None
+    (source / "pack.toml").unlink()
+    snapshot, roots = capture_sources(settings)
+    member = snapshot.packs[0].members[0]
+    snapshot.packs[0].members[0] = SourceMember(path=filename, text=member.text)
+    monkeypatch.setattr(generation_module, "capture_sources", lambda _: (snapshot, roots))
+    producer = GenerationStore(root=tmp_path / "producer", embedding=identity)
+    built = producer.build(settings, MockEmbedder())
+    archive = tmp_path / "foreign.zip"
+    checksum = producer.export_bundle(archive)
+    source.rename(tmp_path / "archived-original-inputs")
+    consumer = GenerationStore(root=tmp_path / "consumer", embedding=identity)
+    assert (
+        consumer.import_bundle(archive, expected_digest=checksum).generation_id
+        == built.generation_id
+    )
+    with consumer.pin() as read:
+        assert any(document.source_path == f"policies/{filename}" for document in read.documents)
+        assert {path.name for path in read.directory.iterdir()} == {
+            "manifest.json",
+            "snapshot.json",
+            "catalog.json",
+            "index.sqlite3",
+            "runtime_rules.json",
+        }
+    assert not source.exists()
