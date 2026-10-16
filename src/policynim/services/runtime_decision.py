@@ -18,10 +18,13 @@ from policynim.errors import (
     RuntimeRulesArtifactInvalidError,
     RuntimeRulesArtifactMissingError,
 )
-from policynim.runtime_paths import resolve_runtime_path
+from policynim.operations import close_components
+from policynim.services.index_store import (
+    create_index_store,
+    pinned_generation,
+    require_index_ready,
+)
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
-from policynim.storage.index_readiness import require_index_ready
 from policynim.types import (
     Citation,
     CompiledRuntimeRule,
@@ -58,7 +61,7 @@ class _IndexedChunkSpan:
 
 
 class RuntimeDecisionService:
-    """Load compiled runtime rules, match actions, and attach indexed evidence."""
+    """Match deterministic rules and attach verified source or indexed evidence."""
 
     def __init__(
         self,
@@ -66,8 +69,14 @@ class RuntimeDecisionService:
         index_store: IndexStore,
         runtime_rules_artifact_path: Path,
     ) -> None:
+        """Retain the selected dependencies and immutable operation settings."""
         self._index_store = index_store
         self._runtime_rules_artifact_path = runtime_rules_artifact_path
+        self._snapshot = pinned_generation(index_store)
+        if self._snapshot is not None and runtime_rules_artifact_path != self._snapshot.rules_path:
+            raise RuntimeRulesArtifactInvalidError(
+                "Runtime index and rules must belong to the same pinned generation."
+            )
 
     def __enter__(self) -> RuntimeDecisionService:
         return self
@@ -82,11 +91,15 @@ class RuntimeDecisionService:
 
     def close(self) -> None:
         """Release owned resources held by this service."""
-        return None
+        close_components(self._index_store)
 
     def decide(self, request: RuntimeActionRequest) -> RuntimeDecisionResult:
         """Return a deterministic runtime decision for one action request."""
-        artifact = _load_runtime_rules_artifact(self._runtime_rules_artifact_path)
+        artifact = (
+            self._snapshot.rules
+            if self._snapshot is not None
+            else _load_runtime_rules_artifact(self._runtime_rules_artifact_path)
+        )
         _validate_runtime_rule_matchers(
             artifact,
             artifact_path=self._runtime_rules_artifact_path,
@@ -106,27 +119,58 @@ class RuntimeDecisionService:
                 summary=_ALLOW_SUMMARY,
                 matched_rules=[],
                 citations=[],
+                generation_id=self._snapshot.generation_id if self._snapshot else None,
             )
-        indexed_chunks = _load_indexed_chunk_spans(self._index_store)
+        if self._snapshot is not None:
+            _ensure_index_ready(self._index_store)
+            citations = _source_rule_citations(matched_rules, self._snapshot.generation_id)
+        else:
+            citations = _link_citations(
+                matched_rules, indexed_chunks=_load_indexed_chunk_spans(self._index_store)
+            )
 
         return RuntimeDecisionResult(
             request=request,
             decision=_decision_for_rules(matched_rules),
             summary=_summary_for_rules(matched_rules),
             matched_rules=matched_rules,
-            citations=_link_citations(matched_rules, indexed_chunks=indexed_chunks),
+            citations=citations,
+            generation_id=self._snapshot.generation_id if self._snapshot else None,
         )
 
 
 def create_runtime_decision_service(settings: Settings | None = None) -> RuntimeDecisionService:
     """Build the default runtime decision service from application settings."""
-    active_settings = settings or get_settings()
-    return RuntimeDecisionService(
-        index_store=create_index_store(active_settings),
-        runtime_rules_artifact_path=resolve_runtime_path(
-            active_settings.runtime_rules_artifact_path
-        ),
-    )
+    active_settings = (settings or get_settings()).model_copy(deep=True)
+    store = create_index_store(active_settings)
+    try:
+        snapshot = pinned_generation(store)
+        if snapshot is None:
+            raise RuntimeRulesArtifactInvalidError(
+                "Runtime needs a complete generation. Migrate the legacy index/rules first."
+            )
+        return RuntimeDecisionService(
+            index_store=store, runtime_rules_artifact_path=snapshot.rules_path
+        )
+    except BaseException as error:
+        close_components(store, primary_error=error)
+        raise
+
+
+def _source_rule_citations(rules: list[CompiledRuntimeRule], generation_id: str) -> list[Citation]:
+    """Cite rule spans verified from this generation's raw source snapshot."""
+    citations: dict[str, Citation] = {}
+    for rule in rules:
+        evidence_id = f"source:{generation_id}:{rule.policy_id}:{rule.start_line}-{rule.end_line}"
+        citations[evidence_id] = Citation(
+            policy_id=rule.policy_id,
+            title=rule.title,
+            path=rule.source_path,
+            section="Runtime rules",
+            lines=f"{rule.start_line}-{rule.end_line}",
+            chunk_id=evidence_id,
+        )
+    return list(citations.values())
 
 
 def _load_runtime_rules_artifact(artifact_path: Path) -> RuntimeRulesArtifact:

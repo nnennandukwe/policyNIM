@@ -11,6 +11,19 @@ class PolicyNIMError(Exception):
         self.failure_class = failure_class
 
 
+class GenerationError(PolicyNIMError):
+    """A bounded generation failure with a phase and source-preserving recovery action."""
+
+    def __init__(self, phase: str, detail: str) -> None:
+        """Preserve a safe phase and recovery action without echoing artifact contents."""
+        self.phase = phase
+        super().__init__(
+            f"Generation {phase} failed: {detail} Preserve existing data and run "
+            "`policynim generation inspect` before retrying.",
+            failure_class=f"generation_{phase}",
+        )
+
+
 class ConfigurationError(PolicyNIMError):
     """Raised when required configuration is missing or invalid."""
 

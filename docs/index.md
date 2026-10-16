@@ -50,3 +50,6 @@ operations into separate pages so the root README can stay short.
   opt-in live and Docker test knobs
 
 - [policy-profiles.md](policy-profiles.md): compose pinned local packs, inspect decisions, and review updates offline
+
+- [Complete policy generations](policy-generations.md): atomic activation, migration, rollback,
+  retained readers, and verified offline deployment bundles.

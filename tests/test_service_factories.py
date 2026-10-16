@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import policynim.services.compiler as compiler_module
 import policynim.services.dump as dump_module
 import policynim.services.eval as eval_module
@@ -121,38 +123,33 @@ import policynim.storage
 
 def test_create_index_store_resolves_index_db_path(tmp_path: Path) -> None:
     """Build the canonical SQLite index store from the configured path."""
-    from policynim.storage import create_index_store
+    from policynim.services.index_store import create_index_store
 
-    store = create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3"))
+    store = create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3"), legacy=True)
 
     assert isinstance(store, SQLiteVecIndexStore)
     assert store.path == (tmp_path / "index.sqlite3").resolve(strict=False)
     assert store.table_name == "policy_chunks"
 
 
-def test_create_ingest_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
-    mock_embedder = object()
-    monkeypatch.setattr(ingest_module, "_create_default_embedder", lambda settings: mock_embedder)
-    monkeypatch.setattr(ingest_module, "create_index_store", mock_index_store_from_settings)
+def test_create_ingest_service_defers_provider_until_valid_sources(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Factory construction and rejected source inputs don't initialize a provider."""
+    from policynim.errors import InvalidPolicyDocumentError
 
+    created = []
+    monkeypatch.setattr(
+        ingest_module, "_create_default_embedder", lambda settings: created.append(1)
+    )
     settings = Settings(
-        corpus_dir=tmp_path / "policies",
-        index_db_path=tmp_path / "ingest-index.sqlite3",
-        runtime_rules_artifact_path=tmp_path / "runtime" / "rules.json",
-        nvidia_embed_model="test-embed-model",
+        corpus_dir=tmp_path / "missing-policies", generations_dir=tmp_path / "generations"
     )
-
     service = ingest_module.create_ingest_service(settings)
-
-    assert service._embedder is mock_embedder
-    assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "ingest-index.sqlite3").resolve(strict=False)
-    assert service._index_store.table_name == "policy_chunks"
-    assert service._corpus_root == (tmp_path / "policies").resolve(strict=False)
-    assert service._embedding_model == "test-embed-model"
-    assert service._runtime_rules_artifact_path == (tmp_path / "runtime" / "rules.json").resolve(
-        strict=False
-    )
+    assert not created
+    with pytest.raises(InvalidPolicyDocumentError):
+        service.run()
+    assert not created and not settings.generations_dir.exists()
 
 
 def test_create_search_service_builds_default_components(monkeypatch, tmp_path: Path) -> None:
@@ -284,29 +281,18 @@ finally:
     assert result.returncode == 0, result.stderr
 
 
-def test_create_runtime_decision_service_uses_runtime_paths(
-    monkeypatch,
-    tmp_path: Path,
+def test_default_runtime_decision_factory_rejects_unmanaged_store(
+    monkeypatch, tmp_path: Path
 ) -> None:
+    """The default runtime can't fall back to a standalone rules/index pairing."""
+    from policynim.errors import RuntimeRulesArtifactInvalidError
+
     monkeypatch.setattr(
-        runtime_decision_module,
-        "create_index_store",
-        mock_index_store_from_settings,
+        runtime_decision_module, "create_index_store", mock_index_store_from_settings
     )
-
-    settings = Settings(
-        index_db_path=tmp_path / "runtime-index.sqlite3",
-        runtime_rules_artifact_path=tmp_path / "runtime" / "runtime_rules.json",
-    )
-
-    service = runtime_decision_module.create_runtime_decision_service(settings)
-
-    assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "runtime-index.sqlite3").resolve(strict=False)
-    assert service._index_store.table_name == "policy_chunks"
-    assert service._runtime_rules_artifact_path == (
-        tmp_path / "runtime" / "runtime_rules.json"
-    ).resolve(strict=False)
+    settings = Settings(index_db_path=tmp_path / "runtime-index.sqlite3")
+    with pytest.raises(RuntimeRulesArtifactInvalidError, match="complete generation"):
+        runtime_decision_module.create_runtime_decision_service(settings)
 
 
 def test_create_eval_service_uses_runtime_workspace_path(tmp_path: Path) -> None:
@@ -344,8 +330,10 @@ def test_create_runtime_health_service_uses_sqlite_index_factory(
 
     service = health_module.create_runtime_health_service(settings)
 
-    assert isinstance(service._index_store, MockIndexStore)
-    assert service._index_store.uri == (tmp_path / "health-index.sqlite3").resolve(strict=False)
+    assert service._index_store is None
+    assert service._settings is not settings
+    assert service._settings is not None
+    assert service._settings.index_db_path == settings.index_db_path
     assert service._table_name == "policy_chunks"
 
 

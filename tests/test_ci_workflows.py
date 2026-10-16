@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
@@ -20,11 +22,29 @@ def test_ci_pytest_gate_excludes_all_live_markers() -> None:
     """Ensure normal CI cannot discover live or Docker-only tests by accident."""
     text = _read_text(CI_WORKFLOW)
 
-    pytest_commands = re.findall(r"run: (.*pytest.*)", text)
+    jobs = yaml.safe_load(text)["jobs"]
+    pytest_commands = [
+        step["run"]
+        for name, job in jobs.items()
+        if name != "docker-offline"
+        for step in job["steps"]
+        if "pytest" in step.get("run", "")
+    ]
     assert pytest_commands
     for command in pytest_commands:
         assert 'pytest -q -m "not live and not docker_live"' in command
         assert "--no-sync" in command
+
+
+def test_ci_container_job_only_selects_credential_free_offline_probes() -> None:
+    """Keep the explicit container job separate from paid provider test discovery."""
+    job = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]["docker-offline"]
+    assert job["env"]["NVIDIA_API_KEY"] == ""
+    assert job["env"]["POLICYNIM_RUN_DOCKER_TESTS"] == "1"
+    commands = [step["run"] for step in job["steps"] if "pytest" in step.get("run", "")]
+    assert len(commands) == 1
+    assert "--no-sync" in commands[0] and "-m docker_live" in commands[0]
+    assert re.findall(r"tests/\S+", commands[0]) == ["tests/test_docker_build_live.py"]
 
 
 def test_ci_checks_supported_python_versions_from_locked_dependencies() -> None:

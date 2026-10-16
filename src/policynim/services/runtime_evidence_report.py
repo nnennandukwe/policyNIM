@@ -99,6 +99,7 @@ def _summarize_session_events(
 def _summarize_execution_events(
     execution_events: list[RuntimeExecutionEvidenceRecord],
 ) -> RuntimeEvidenceExecutionSummary:
+    """Report the recorded generation and outcome for one execution."""
     first_event = execution_events[0]
     started_at = min(event.created_at for event in execution_events)
     terminal_event = _last_terminal_event(execution_events)
@@ -108,6 +109,7 @@ def _summarize_execution_events(
     matched_rules = result_event.matched_rules or first_event.matched_rules
     citations = result_event.citations or first_event.citations
     return RuntimeEvidenceExecutionSummary(
+        generation_id=result_event.generation_id or first_event.generation_id,
         execution_id=first_event.execution_id,
         action_kind=first_event.request.kind,
         task=first_event.request.task,

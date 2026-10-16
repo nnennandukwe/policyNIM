@@ -11,9 +11,9 @@ import pytest
 
 from policynim.ingest import chunk_policy_documents, load_policy_documents
 from policynim.services.catalog import build_policy_catalog
+from policynim.services.index_store import create_index_store
 from policynim.services.ingest import IngestService
 from policynim.settings import Settings
-from policynim.storage import create_index_store
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = json.loads((ROOT / "evals/security_mcp_scenarios.json").read_text())
@@ -123,7 +123,7 @@ class ContentFixtureEmbedder:
 
 def test_security_corpus_ingests_with_revisions_and_source_evidence(tmp_path: Path) -> None:
     """Round-trip the whole selected corpus through actual ingest and SQLite persistence."""
-    store = create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3"))
+    store = create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3"), legacy=True)
     with IngestService(
         embedder=ContentFixtureEmbedder(),
         index_store=store,

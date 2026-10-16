@@ -103,9 +103,9 @@ Unsupported Markdown frontmatter such as `enabled` doesn't disable a policy.
    require a new diff. Update changes source pins only; it doesn't activate or
    rebuild an index. Operator notes and decision formatting are preserved. Keep
    your decisions and comments in valid TOML; the updater edits parsed pin fields.
-5. Preview again, then build into new index/rules destinations through the normal
-   ingestion workflow. The existing ingestion destination guards still apply.
-   Atomic whole-generation publication and rollback are tracked in #93.
+5. Preview again, then run `policynim ingest` to build and atomically activate a
+   complete generation. Previous readers retain their selected snapshot. See
+   [generation operations](policy-generations.md) for rollback and retention.
 
 Pack paths can point outside the profile directory when explicitly selected, but
 manifest member paths must stay inside their pack. Symlink escape, remote schemes,

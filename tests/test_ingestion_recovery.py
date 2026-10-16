@@ -3,12 +3,11 @@
 from pathlib import Path
 
 import pytest
-from test_index_identity import chunk, make_ingest, settings_for
+from test_index_identity import chunk, create_legacy_health_service, make_ingest, settings_for
 
 from policynim.errors import MissingIndexError
 from policynim.services import ingest as ingest_module
-from policynim.services.health import create_runtime_health_service
-from policynim.storage import create_index_store
+from policynim.services.index_store import create_index_store
 from policynim.storage import sqlite_vec as storage_module
 from policynim.types import EmbeddingIdentity
 
@@ -68,8 +67,8 @@ def test_failed_migration_preserves_original_installation(tmp_path, monkeypatch,
             candidate.run()
     assert embedder.closed
     assert {path: path.read_bytes() for path in preserved} == before
-    assert create_runtime_health_service(original_settings).check().ready
-    assert not create_runtime_health_service(candidate_settings).check().ready
+    assert create_legacy_health_service(original_settings).check().ready
+    assert not create_legacy_health_service(candidate_settings).check().ready
     assert not list(tmp_path.rglob(".*.tmp"))
 
 
@@ -81,17 +80,20 @@ def test_complete_migration_retains_old_index_and_records_new_space(tmp_path):
     settings, candidate, _ = make_ingest(tmp_path, filename="new.sqlite3", model="test/model-b")
     result = candidate.run()
     assert result.document_count == 1
-    assert result.chunk_count == create_index_store(settings).count() > 0
-    assert create_index_store(settings).inspect_identity().embedding.model == "test/model-b"
-    assert create_runtime_health_service(settings).check().ready
+    assert result.chunk_count == create_index_store(settings, legacy=True).count() > 0
+    assert (
+        create_index_store(settings, legacy=True).inspect_identity().embedding.model
+        == "test/model-b"
+    )
+    assert create_legacy_health_service(settings).check().ready
     assert old_settings.index_db_path.read_bytes() == old_bytes
-    assert create_runtime_health_service(old_settings).check().ready
+    assert create_legacy_health_service(old_settings).check().ready
 
 
 def test_new_index_publication_does_not_clobber_concurrent_creator(tmp_path, monkeypatch):
     """Verify new index publication does not clobber concurrent creator."""
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(settings_for(path))
+    store = create_index_store(settings_for(path), legacy=True)
     real_link = storage_module.os.link
 
     def competing_link(source, destination):
@@ -110,7 +112,7 @@ def test_destination_replaced_during_embedding_is_not_overwritten(tmp_path):
     """Verify destination replaced during embedding is not overwritten."""
     settings, service, embedder = make_ingest(tmp_path)
     replacement = tmp_path / "other.sqlite3"
-    create_index_store(settings_for(replacement, "test/other")).replace([chunk()])
+    create_index_store(settings_for(replacement, "test/other"), legacy=True).replace([chunk()])
     expected = replacement.read_bytes()
     original_embed = embedder.embed_documents
 
@@ -128,7 +130,7 @@ def test_destination_replaced_during_embedding_is_not_overwritten(tmp_path):
 def test_destination_changes_during_database_write_are_preserved(tmp_path, monkeypatch):
     """Verify destination changes during database write are preserved."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([chunk()])
     insert = storage_module._insert_chunks
 
@@ -159,12 +161,12 @@ def test_concurrent_rules_destination_is_preserved_and_candidate_unready(tmp_pat
     with pytest.raises(MissingIndexError, match="changed"):
         service.run()
     assert rules.read_text() == "concurrent rules"
-    assert not create_runtime_health_service(settings).check().ready
+    assert not create_legacy_health_service(settings).check().ready
 
 
 def test_completion_receipt_cannot_mark_another_build_ready(tmp_path):
     """Verify completion receipt cannot mark another build ready."""
-    store = create_index_store(settings_for(tmp_path / "index.sqlite3"))
+    store = create_index_store(settings_for(tmp_path / "index.sqlite3"), legacy=True)
     store.replace([chunk()], complete=False)
     with pytest.raises(MissingIndexError, match="changed"):
         store.complete_ingest("another-build")
@@ -174,10 +176,10 @@ def test_completion_receipt_cannot_mark_another_build_ready(tmp_path):
 def test_destination_change_during_final_validation_is_preserved(tmp_path, monkeypatch):
     """Reject drift introduced by final compatibility inspection before publication."""
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(settings_for(path))
+    store = create_index_store(settings_for(path), legacy=True)
     store.replace([chunk()])
     replacement = tmp_path / "replacement.sqlite3"
-    create_index_store(settings_for(replacement)).replace([chunk()])
+    create_index_store(settings_for(replacement), legacy=True).replace([chunk()])
     replacement_bytes = replacement.read_bytes()
     validate = store.validate_replacement
     calls = 0
@@ -203,7 +205,7 @@ def test_corrupt_index_has_sanitized_migration_guidance(tmp_path):
     path = tmp_path / "index.sqlite3"
     path.write_bytes(b"private-corrupt-index-sentinel")
     with pytest.raises(IndexCompatibilityError, match="separate") as caught:
-        create_index_store(settings_for(path)).validate_replacement()
+        create_index_store(settings_for(path), legacy=True).validate_replacement()
     assert "sentinel" not in str(caught.value)
     assert path.read_bytes() == b"private-corrupt-index-sentinel"
 
@@ -228,8 +230,8 @@ def test_completion_rejects_substituted_matching_database(tmp_path, monkeypatch,
     monkeypatch.setattr(ingest_module, "_finalize_runtime_rules_artifact", substitute_after_rules)
     with pytest.raises(MissingIndexError, match="changed"):
         service.run()
-    assert not create_index_store(settings).inspect_identity().complete
-    assert not create_runtime_health_service(settings).check().ready
+    assert not create_index_store(settings, legacy=True).inspect_identity().complete
+    assert not create_legacy_health_service(settings).check().ready
 
 
 def test_completion_does_not_switch_published_database_journal_mode(tmp_path, monkeypatch):
@@ -237,7 +239,7 @@ def test_completion_does_not_switch_published_database_journal_mode(tmp_path, mo
     import sqlite3
 
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(settings_for(path))
+    store = create_index_store(settings_for(path), legacy=True)
     build_id = store.replace([chunk()], complete=False)
     reader = sqlite3.connect(path)
     reader.execute("BEGIN")
@@ -260,9 +262,9 @@ def test_completion_does_not_switch_published_database_journal_mode(tmp_path, mo
 def test_reopened_store_cannot_complete_another_producers_candidate(tmp_path):
     """Persisted build metadata alone does not grant publication ownership after restart."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    producer = create_index_store(settings)
+    producer = create_index_store(settings, legacy=True)
     build_id = producer.replace([chunk()], complete=False)
-    reopened = create_index_store(settings)
+    reopened = create_index_store(settings, legacy=True)
     with pytest.raises(MissingIndexError, match="changed"):
         reopened.complete_ingest(build_id)
     assert not reopened.inspect_identity().complete
@@ -273,7 +275,7 @@ def test_reopened_store_cannot_complete_another_producers_candidate(tmp_path):
 def test_completion_rechecks_file_after_connection_open(tmp_path, monkeypatch):
     """Reject a matching copy substituted between the first check and connection open."""
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(settings_for(path))
+    store = create_index_store(settings_for(path), legacy=True)
     build_id = store.replace([chunk()], complete=False)
     connect = storage_module._connect
 
@@ -330,7 +332,7 @@ def test_sidecar_created_during_preparation_prevents_fresh_publication(
 
     monkeypatch.setattr(storage_module, "_insert_chunks", create_competing_sidecar)
     with pytest.raises(MissingIndexError, match="separate"):
-        create_index_store(settings_for(path)).replace([chunk()])
+        create_index_store(settings_for(path), legacy=True).replace([chunk()])
     assert not path.exists()
     assert sidecar.read_bytes() == b"competing sidecar"
     assert not list(tmp_path.glob(".*.tmp"))
@@ -340,7 +342,7 @@ def test_sidecar_created_during_preparation_prevents_fresh_publication(
 def test_completion_preserves_unowned_destination_sidecars(tmp_path, suffix):
     """Do not complete or alter a candidate after an unowned journal appears."""
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(settings_for(path))
+    store = create_index_store(settings_for(path), legacy=True)
     build_id = store.replace([chunk()], complete=False)
     original = path.read_bytes()
     sidecar = Path(str(path) + suffix)
@@ -355,7 +357,7 @@ def test_completion_preserves_unowned_destination_sidecars(tmp_path, suffix):
 def test_cleanup_error_never_misreports_publication(tmp_path, monkeypatch, caplog, published):
     """Verify cleanup error never misreports publication."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
 
     def cleanup_failure(*args):
         """Inject an owned-file cleanup failure without removing published data."""
@@ -368,7 +370,7 @@ def test_cleanup_error_never_misreports_publication(tmp_path, monkeypatch, caplo
     monkeypatch.setattr(storage_module, "_cleanup_database_files", cleanup_failure)
     if published:
         assert store.replace([chunk()])
-        assert create_runtime_health_service(settings).check().ready
+        assert create_legacy_health_service(settings).check().ready
     else:
         monkeypatch.setattr(storage_module, "_insert_chunks", write_failure)
         with pytest.raises(ValueError, match="original write failure"):
@@ -386,7 +388,7 @@ def test_output_cannot_replace_preserved_policy_source(tmp_path):
     before = source.read_bytes()
     invalid = ingest_module.IngestService(
         embedder=embedder,
-        index_store=create_index_store(settings),
+        index_store=create_index_store(settings, legacy=True),
         corpus_root=source.parent,
         embedding_model=settings.nvidia_embed_model,
         runtime_rules_artifact_path=source,
@@ -424,7 +426,7 @@ def test_identity_normalizes_only_equivalent_endpoint_spelling():
 def test_database_lifecycle_failure_preserves_published_index(tmp_path, monkeypatch, fault):
     """Verify database lifecycle failure preserves published index."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([chunk()])
     before = settings.index_db_path.read_bytes()
     connect = storage_module._connect
@@ -521,7 +523,7 @@ def test_rules_cleanup_failure_after_publication_keeps_complete_result(
 
     monkeypatch.setattr(Path, "unlink", cleanup_failure)
     assert service.run().chunk_count > 0
-    assert create_runtime_health_service(settings).check().ready
+    assert create_legacy_health_service(settings).check().ready
     assert "owned runtime-rules staging file" in caplog.text
     assert "secret-unlink-sentinel" not in caplog.text
 
@@ -530,7 +532,7 @@ def test_ingestion_does_not_replace_same_model_destination_created_during_embedd
     """Verify ingestion does not replace same model destination created during embedding."""
     settings, service, embedder = make_ingest(tmp_path)
     replacement = tmp_path / "other.sqlite3"
-    create_index_store(settings_for(replacement)).replace([chunk()])
+    create_index_store(settings_for(replacement), legacy=True).replace([chunk()])
     expected = replacement.read_bytes()
     original_embed = embedder.embed_documents
 
@@ -574,18 +576,18 @@ def test_failed_same_model_refresh_preserves_ready_installation(
     with pytest.raises((OSError, KeyboardInterrupt, MissingIndexError)):
         service.run()
     assert {path: path.read_bytes() for path in paths} == before
-    assert create_runtime_health_service(settings).check().ready
-    assert create_index_store(settings).search([1.0, 0.0], top_k=1)
+    assert create_legacy_health_service(settings).check().ready
+    assert create_index_store(settings, legacy=True).search([1.0, 0.0], top_k=1)
     assert embedder.calls == calls
 
 
 def test_incomplete_store_replacement_cannot_displace_complete_index(tmp_path):
     """The persistence boundary also refuses incomplete in-place publication."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([chunk()])
     before = settings.index_db_path.read_bytes()
     with pytest.raises(MissingIndexError, match="separate"):
         store.replace([chunk()], complete=False)
     assert settings.index_db_path.read_bytes() == before
-    assert create_runtime_health_service(settings).check().ready
+    assert create_legacy_health_service(settings).check().ready

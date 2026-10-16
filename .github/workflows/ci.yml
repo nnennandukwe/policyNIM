@@ -75,4 +75,46 @@ jobs:
         run: uv sync --locked --group test --group dev
 
       - name: Verify Windows profile readers and writers offline
-        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py tests/test_policy_generations.py tests/test_generation_cli.py
+
+  docker-offline:
+    name: Offline Docker images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NVIDIA_API_KEY: ""
+      POLICYNIM_RUN_DOCKER_TESTS: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Set up Python 3.11.15
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11.15"
+
+      - name: Sync locked dependencies
+        run: uv sync --locked --group test --group dev
+
+      - name: Require the Docker daemon
+        run: docker info > /dev/null
+
+      - name: Build both images and probe their offline runtimes
+        run: uv run --no-sync pytest -q -m docker_live tests/test_docker_build_live.py --junitxml=docker-offline-results.xml
+
+      - name: Require both image checks to run
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse("docker-offline-results.xml").getroot().findall(".//testcase")
+          assert len(cases) == 2, "Both Dockerfiles must have test results."
+          assert all(
+              not any(case.find(tag) is not None for tag in ("skipped", "failure", "error"))
+              for case in cases
+          ), "Container checks can't be skipped or fail."
+          print("Verified both Dockerfiles and their offline runtime probes.")
+          PY

@@ -132,38 +132,32 @@ GitHub Actions smoke:
 - if `/healthz` includes `Local index readiness could not be inspected`, use the
   sanitized exception class in the payload, then check the Railway deploy logs
   for detailed index path, volume, or file-permission failures
-- if `/healthz` says the local index is missing or empty, confirm the latest
-  build received `NVIDIA_API_KEY`, rerun the deploy so `policynim ingest` bakes
-  the index, and confirm `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
+- if `/healthz` reports a missing or invalid generation, check
+  `POLICYNIM_GENERATIONS_DIR` and run `policynim generation inspect`. Import a
+  verified bundle or explicitly migrate a matching standalone pair before startup.
+  Startup never ingests or calls NVIDIA.
 - if the live smoke passes `/healthz` but fails `policy_search` or
   `policy_preflight`, inspect hosted MCP logs for `upstream_failure_class`
   before rotating auth tokens or rebuilding the image
 
 ## Container Build For Hosted HTTP
 
-Build the production image with a BuildKit secret for the bake-time NVIDIA key
-so the index is baked into the image:
+Build the production image from the checked-in verified public generation:
 
 ```bash
-DOCKER_BUILDKIT=1 docker build \
-  --secret id=nvidia_api_key,env=NVIDIA_API_KEY \
-  -t policynim-hosted .
+docker build -t policynim-hosted .
 ```
 
-Important container defaults:
+Both `Dockerfile` and `Dockerfile.railway` run `generation import` with the trusted
+bundle checksum and `--require-source-match`. Builds install locked dependencies,
+then validate and activate source text, catalog, SQLite vectors, runtime rules,
+model identity, and notices without model credentials. Changed policy sources
+require an explicitly refreshed bundle; a stale artifact fails the build.
 
-- the image bakes the SQLite index at `/app/data/index.sqlite3`
-- the image sets `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
-- the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the
-  container
-- the builder stage reads the bake-time key from the temporary BuildKit secret
-  mounted at `/run/secrets/nvidia_api_key`
-- if that secret is missing or empty, `docker build` fails while
-  `policynim ingest` tries to bake the index
-- the final image does not store the build-time `NVIDIA_API_KEY`
-- runtime `NVIDIA_API_KEY` is still required because live `search` and
-  `preflight` call NVIDIA-hosted APIs
-- this standard Docker path uses the repo root `Dockerfile`
+The runtime reads `/app/data/generations` through `POLICYNIM_GENERATIONS_DIR`.
+Health and MCP discovery work without an NVIDIA key. Live search and preflight
+still require runtime `NVIDIA_API_KEY`. Each request retains its selected generation
+until cleanup; a new activation affects subsequent requests.
 
 Example hosted run:
 
@@ -196,7 +190,7 @@ curl -i -X POST http://localhost:8000/mcp
 What to expect:
 
 - `GET /healthz` returns `200` with a JSON payload that includes `ready: true`
-  when the baked index is present and non-empty
+  when the complete active generation validates
 - a plain `GET /mcp` returns `406 Not Acceptable` because the client must accept
   `text/event-stream`
 - a plain `POST /mcp` returns `400 Invalid Content-Type header` because the
@@ -210,22 +204,13 @@ What to expect:
 The repo ships a root [`railway.toml`](../railway.toml) so Railway uses
 [`Dockerfile.railway`](../Dockerfile.railway) and probes `GET /healthz`.
 
-Railway-specific build note:
-
-- Railway only supports `--mount=type=cache`, so it rejects the secret-mount
-  form used in the standard [`Dockerfile`](../Dockerfile)
-- `Dockerfile.railway` is the platform-compatible exception and still declares
-  `ARG NVIDIA_API_KEY` for the bake-time ingest step
-- set `NVIDIA_API_KEY` as a Railway service variable before deploy so it is
-  available during the image build as well as at runtime for live retrieval
-- the ingestion model, base URL, batch size, timeout, and retry variables are
-  explicitly declared as build arguments in both Docker stages; changing a
-  runtime variable alone does not change an already baked index
-- update existing model overrides for all three operations using the
-  [provider recovery runbook](hosted-provider-recovery.md). An embedding identity
-  mismatch keeps startup unready; rebuild the complete preserved corpus
-- both the SQLite index and compiled runtime-rules artifact are copied into the
-  runtime image. The database is marked complete only after rules finalization
+Railway uses the same offline artifact-import contract as the standard
+[`Dockerfile`](../Dockerfile). Neither image path accepts an embedding key during
+build. Set `NVIDIA_API_KEY` as a runtime service variable for live retrieval.
+Embedding model and endpoint settings must match the imported generation, even
+when another model has the same vector dimension. See
+[policy generations](policy-generations.md) for migration, rollback, retention,
+and bundle refresh instructions.
 
 Recommended beta setup:
 

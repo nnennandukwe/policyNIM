@@ -119,6 +119,8 @@ Core retrieval and grounding:
 - `NVIDIA_API_KEY`
 - `POLICYNIM_CORPUS_DIR`
 - `POLICYNIM_PROFILE` (mutually exclusive with the replacement directory)
+- `POLICYNIM_GENERATIONS_DIR` (complete active/retained generations)
+- `POLICYNIM_GENERATION_ID` (optional retained ID for repeatable jobs)
 - `POLICYNIM_INDEX_DB_PATH`
 - `POLICYNIM_DEFAULT_TOP_K`
 - `POLICYNIM_NVIDIA_CHAT_MODEL`

@@ -11,9 +11,9 @@ from pydantic import Field
 
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.ingest.loader import load_policy_documents
-from policynim.runtime_paths import resolve_corpus_root
+from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.settings import Settings, get_settings
-from policynim.types import ParsedDocument, PolicyMetadata, StrictModel
+from policynim.types import GenerationID, ParsedDocument, PolicyMetadata, StrictModel
 
 
 class CatalogPolicy(StrictModel):
@@ -26,6 +26,13 @@ class CatalogPolicy(StrictModel):
     path: str
     policy: PolicyMetadata
     body: str
+
+
+class CatalogPolicyView(CatalogPolicy):
+    """A single-policy response with runtime scope kept outside the source digest model."""
+
+    scope: Literal["source", "generation"] = "source"
+    generation_id: GenerationID | None = None
 
 
 class CatalogPack(StrictModel):
@@ -41,7 +48,8 @@ class PolicyCatalog(StrictModel):
     """Describe authored/effective sources without claiming an indexed generation."""
 
     schema_version: Literal[1] = 1
-    scope: Literal["source"] = "source"
+    scope: Literal["source", "generation"] = "source"
+    generation_id: GenerationID | None = None
     digest: str
     profile_id: str | None = None
     profile_digest: str | None = None
@@ -63,11 +71,25 @@ class PolicyCatalog(StrictModel):
 
 
 def build_policy_catalog(
-    root: Path | None = None, *, settings: Settings | None = None
+    root: Path | None = None, *, settings: Settings | None = None, source_only: bool = False
 ) -> PolicyCatalog:
     """Compile a stable catalog from explicit source bytes and declared metadata."""
     if root is None:
-        active_settings = settings or get_settings()
+        active_settings = (settings or get_settings()).model_copy(deep=True)
+        if not source_only and (
+            active_settings.generation_id is not None
+            or (resolve_runtime_path(active_settings.generations_dir) / "active.json").exists()
+            or (resolve_runtime_path(active_settings.generations_dir) / "active.json").is_symlink()
+        ):
+            from policynim.services.index_store import create_index_store, pinned_generation
+
+            store = create_index_store(active_settings)
+            try:
+                snapshot = pinned_generation(store)
+                assert snapshot is not None
+                return snapshot.indexed_catalog
+            finally:
+                store.close()
         if active_settings.profile is not None:
             from policynim.services.profiles import resolve_profile
 
@@ -79,7 +101,12 @@ def build_policy_catalog(
     return compile_policy_catalog(documents, root=corpus)
 
 
-def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -> PolicyCatalog:
+def compile_policy_catalog(
+    documents: Sequence[ParsedDocument],
+    *,
+    root: Path,
+    unlisted_markdown: Sequence[str] | None = None,
+) -> PolicyCatalog:
     """Compile the exact loaded source snapshot before any model work starts."""
     policies = sorted(
         [
@@ -119,10 +146,14 @@ def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -
         authored_count=len(policies),
         effective_count=len(policies),
         policies=policies,
-        unlisted_markdown=sorted(
-            path.relative_to(root).as_posix()
-            for path in root.rglob("*.md")
-            if path.name != "TEMPLATE.md"
-            and path.relative_to(root).as_posix() not in selected_paths
+        unlisted_markdown=(
+            sorted(unlisted_markdown)
+            if unlisted_markdown is not None
+            else sorted(
+                path.relative_to(root).as_posix()
+                for path in root.rglob("*.md")
+                if path.name != "TEMPLATE.md"
+                and path.relative_to(root).as_posix() not in selected_paths
+            )
         ),
     )

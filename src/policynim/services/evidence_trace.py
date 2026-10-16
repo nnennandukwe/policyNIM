@@ -38,6 +38,7 @@ class PolicyEvidenceTraceService:
         compiled_packet = trace_result.compiled_packet
         constraints = _trace_constraints(compiled_packet)
         return PolicyEvidenceTrace(
+            generation_id=trace_result.result.generation_id,
             task=trace_result.result.task,
             domain=trace_result.result.domain,
             top_k=compiled_packet.top_k,
@@ -66,8 +67,11 @@ def create_policy_evidence_trace_service() -> PolicyEvidenceTraceService:
 
 def compiled_policy_packet_id(compiled_packet: CompiledPolicyPacket) -> str:
     """Return a deterministic identity for a compiled policy packet."""
+    packet_payload = compiled_packet.model_dump(mode="json")
+    if compiled_packet.generation_id is None:
+        packet_payload.pop("generation_id", None)
     payload = json.dumps(
-        compiled_packet.model_dump(mode="json"),
+        packet_payload,
         sort_keys=True,
         separators=(",", ":"),
     )

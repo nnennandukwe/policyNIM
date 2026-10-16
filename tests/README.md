@@ -57,7 +57,10 @@ Current automated coverage includes:
   quota-blocking behavior
 - Hosted MCP structured logs for auth rejects, tool name, latency, and upstream failure class
 - Hosted docs parity for the canonical Codex and Claude hosted MCP commands plus recovery guidance
-- Opt-in Docker hosted-image contract coverage for missing `NVIDIA_API_KEY` and a non-empty baked index
+- A separate offline Docker CI job builds both images from the verified generation
+  bundle and probes health/MCP discovery with container networking disabled.
+  Local Docker checks require `POLICYNIM_RUN_DOCKER_TESTS=1`; neither path ingests
+  policies or invokes model tools.
 - Opt-in live NVIDIA embedding smoke coverage behind `NVIDIA_API_KEY`
 - Opt-in live Railway hosted MCP smoke coverage behind:
   - `POLICYNIM_BETA_MCP_URL`
