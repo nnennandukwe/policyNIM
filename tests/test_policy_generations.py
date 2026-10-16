@@ -2053,3 +2053,255 @@ def test_publisher_inspection_never_holds_reader_admission_lock(
     monkeypatch.setattr(store, "_inspect", inspect)
     store.build(settings, MockEmbedder())
     assert admissions and all(admissions)
+
+
+@pytest.mark.parametrize("producer", ["build", "migrate", "import"])
+def test_producers_reject_sources_inside_an_owned_store(tmp_path: Path, producer: str) -> None:
+    """Nested inputs can't mix source files with managed object retention."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    original = settings.corpus_dir
+    assert original is not None
+    source = original.rename(tmp_path / "objects")
+    index, rules = tmp_path / "renamed.sqlite3", tmp_path / "renamed-rules.json"
+    settings = settings.model_copy(update={"corpus_dir": source})
+    with IngestService(
+        embedder=MockEmbedder(),
+        index_store=SQLiteVecIndexStore(path=index, embedding_identity=identity),
+        corpus_root=source,
+        embedding_model=identity.model,
+        runtime_rules_artifact_path=rules,
+    ) as service:
+        service.run()
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    bundle = tmp_path / "bundle.zip"
+    checksum = store.export_bundle(bundle)
+    nested = write_pack(store.root / "objects", "test.public", ["A", "B"])
+    selected = settings.model_copy(update={"corpus_dir": nested})
+    before = {
+        p.relative_to(store.root): p.read_bytes() for p in store.root.rglob("*") if p.is_file()
+    }
+    calls: list[str] = []
+
+    def factory():
+        calls.append("provider")
+        return MockEmbedder()
+
+    with pytest.raises(GenerationError, match="outside policy sources"):
+        if producer == "build":
+            store.build(selected, embedder_factory=factory)
+        elif producer == "migrate":
+            store.migrate(selected, index_path=index, rules_path=rules)
+        else:
+            store.import_bundle(bundle, expected_digest=checksum, source_settings=selected)
+    assert not calls
+    assert before == {
+        p.relative_to(store.root): p.read_bytes() for p in store.root.rglob("*") if p.is_file()
+    }
+
+
+def test_build_rejects_profile_inside_an_owned_store(tmp_path: Path) -> None:
+    """An editable profile can't become generation-root bookkeeping."""
+    from policynim.errors import GenerationError
+    from policynim.services.profiles import initialize_profile
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    profile = store.root / "profile.toml"
+    assert settings.corpus_dir is not None
+    initialize_profile(profile, [settings.corpus_dir], profile_id="nested")
+    selected = settings.model_copy(update={"profile": profile, "corpus_dir": None})
+    before = profile.read_bytes(), (store.root / "active.json").read_bytes()
+    calls: list[str] = []
+
+    def factory():
+        calls.append("provider")
+        return MockEmbedder()
+
+    with pytest.raises(GenerationError, match="outside policy sources"):
+        store.build(selected, embedder_factory=factory)
+    assert not calls
+    assert before == (profile.read_bytes(), (store.root / "active.json").read_bytes())
+
+
+def test_autocrlf_checkout_imports_public_bundle_with_source_matching(tmp_path: Path) -> None:
+    """Exercise Git's checkout conversion against the actual reviewed public bundle."""
+    import os
+    import shutil
+    import subprocess
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git isn't installed; it's only needed for this checkout regression.")
+    root = Path(__file__).resolve().parents[1]
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    shutil.copytree(root / "policies", repository / "policies")
+    shutil.copytree(root / "artifacts" / "public-generation", repository / "bundle")
+    attributes = root / ".gitattributes"
+    if attributes.exists():
+        shutil.copy2(attributes, repository / attributes.name)
+    environment = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    for arguments in (
+        ["init", "--quiet"],
+        ["-c", "core.autocrlf=true", "add", "."],
+        [
+            "-c",
+            "core.autocrlf=true",
+            "checkout-index",
+            "--all",
+            "--force",
+            f"--prefix={checkout.as_posix()}/",
+        ],
+    ):
+        subprocess.run(
+            [git, "-C", str(repository), *arguments],
+            env=environment,
+            check=True,
+            capture_output=True,
+        )
+    settings = Settings(**NO_ENV, corpus_dir=checkout / "policies")
+    store = GenerationStore(
+        root=tmp_path / "generations",
+        embedding=EmbeddingIdentity(
+            model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
+        ),
+    )
+    result = store.import_bundle(
+        checkout / "bundle" / "generation.zip",
+        expected_digest=(checkout / "bundle" / "generation.sha256").read_text().strip(),
+        source_settings=settings,
+    )
+    assert result.manifest.document_count == 15
+    for path in (checkout / "policies").rglob("*"):
+        if path.is_file() and path.suffix in {".md", ".toml", ".txt"}:
+            assert b"\r\n" not in path.read_bytes()
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt"])
+def test_failed_pin_leaves_no_new_lease_directory(tmp_path: Path, failure: str) -> None:
+    """Repeated rejected opens leave no markers or empty per-ID lease folders."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    selected = "0" * 64 if failure == "missing" else active
+    artifact = store.root / "objects" / active / "runtime_rules.json"
+    if failure == "corrupt":
+        artifact.write_bytes(artifact.read_bytes() + b"damaged")
+    before = artifact.read_bytes(), (store.root / "active.json").read_bytes()
+    for _ in range(2):
+        with pytest.raises(GenerationError):
+            store.pin(selected)
+        assert not (store.root / "leases" / selected).exists()
+    assert before == (artifact.read_bytes(), (store.root / "active.json").read_bytes())
+
+
+def test_failed_pin_preserves_unexpected_lease_directory_contents(tmp_path: Path) -> None:
+    """Failure cleanup removes only owned empty directories and owned marker files."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    note = store.root / "leases" / active / "operator-note"
+
+    def fault(step: str) -> None:
+        if step == "inspect":
+            note.write_bytes(b"preserve this recovery note")
+            raise GenerationError("inspect", "Injected rejection.")
+
+    rejected = GenerationStore(root=store.root, embedding=identity, fault=fault)
+    with pytest.raises(GenerationError, match="Injected rejection"):
+        rejected.pin()
+    assert list(note.parent.iterdir()) == [note]
+    assert note.read_bytes() == b"preserve this recovery note"
+
+
+def test_http_health_reuses_validation_outside_publication_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real public health probes admit pointer reads during cold validation and reuse warm data."""
+    from threading import Event, Thread
+
+    from starlette.testclient import TestClient
+
+    import policynim.services.generations as generation_module
+    from policynim.interfaces.mcp import _build_streamable_http_app
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    original_inspect, original_read = GenerationStore._inspect, generation_module._read_regular
+    reads: list[str] = []
+    admissions: list[bool] = []
+    workers: list[Thread] = []
+
+    def inspect(self, *args, **kwargs):
+        admitted = Event()
+
+        def read_pointer():
+            store.read_activation()
+            admitted.set()
+
+        worker = Thread(target=read_pointer, daemon=True)
+        workers.append(worker)
+        worker.start()
+        admissions.append(admitted.wait(3))
+        return original_inspect(self, *args, **kwargs)
+
+    def read(path: Path, **kwargs):
+        if path.parent.name == active:
+            reads.append(path.name)
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "_inspect", inspect)
+    monkeypatch.setattr(generation_module, "_read_regular", read)
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        first = client.get("/healthz")
+        count = len(reads)
+        second = client.get("/healthz")
+    for worker in workers:
+        worker.join(timeout=3)
+    assert first.status_code == second.status_code == 200
+    assert first.json()["generation_id"] == second.json()["generation_id"] == active
+    assert count > 0
+    assert len(reads) == count
+    assert admissions and all(admissions)
+
+
+@pytest.mark.parametrize("failure", ["deadline", "cancelled"])
+def test_failed_pin_cleans_created_directory_after_budget_rejection(
+    tmp_path: Path, failure: str
+) -> None:
+    """An expired request still closes its lease and removes its own empty directory."""
+    from policynim.errors import ProviderError
+    from policynim.operations import OperationBudget, check_budget, operation_scope
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    now = [0.0]
+    budget = OperationBudget(seconds=1, clock=lambda: now[0])
+
+    def fault(step: str) -> None:
+        if step == "inspect":
+            if failure == "deadline":
+                now[0] = 2.0
+            else:
+                budget.cancelled.set()
+            check_budget()
+
+    rejected = GenerationStore(root=store.root, embedding=identity, fault=fault)
+    with pytest.raises(ProviderError), operation_scope(budget):
+        rejected.pin()
+    assert not (store.root / "leases" / active).exists()
+    with store.pin() as recovered:
+        assert recovered.generation_id == active

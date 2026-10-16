@@ -119,3 +119,10 @@ The initial bundle copies the existing production vectors for the public pack;
 it doesn't claim a new model evaluation. License and upstream notice text is
 inside `snapshot.json`. Image builds and startup don't call NVIDIA. Query,
 reranking, and generation calls remain paid runtime operations where configured.
+
+Git attributes keep the public Markdown, pack TOML and notice text at LF in fresh
+checkouts, including Windows checkouts with `core.autocrlf=true`. Raw source bytes
+remain part of generation identity. Save local edits before refreshing an older
+checkout that already contains CRLF conversions; source-matched import rejects
+those changed bytes. Source directories and the profile file must stay outside
+the managed generation root, and that root must stay outside source directories.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import logging
@@ -677,6 +678,27 @@ class GenerationStore:
                         _VALIDATION_CACHE[key] = _CachedGeneration(token, snapshot, size)
             return deepcopy(snapshot)
 
+    def _remove_failed_lease_directory(self, directory: Path, identity: tuple[int, int]) -> None:
+        """Remove only this failed reader's empty directory, serialized with new readers."""
+        try:
+            # Cleanup still owns this obligation after the request budget expires.
+            with exclusive_file_lock(self.root / ".publish.lock"):
+                if _read_regular(self.root / "owner.json", max_bytes=len(_OWNER)) != _OWNER:
+                    return
+                observed = directory.lstat()
+                if (
+                    stat.S_ISDIR(observed.st_mode)
+                    and (observed.st_dev, observed.st_ino) == identity
+                ):
+                    directory.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            if exc.errno not in {errno.ENOTEMPTY, errno.EEXIST}:
+                LOGGER.warning("Failed reader's lease-directory cleanup needs inspection.")
+        except GenerationError:
+            LOGGER.warning("Failed reader's lease-directory ownership needs inspection.")
+
     def pin(
         self, generation_id: str | None = None, *, force_validation: bool = False
     ) -> GenerationSnapshot:
@@ -685,10 +707,29 @@ class GenerationStore:
             with self._locked():
                 pointer = self._pointer()
                 selected = self._selected_id(generation_id, pointer)
+                try:
+                    object_mode = (self.root / "objects" / selected).lstat().st_mode
+                except FileNotFoundError as exc:
+                    raise GenerationError("pin", "The selected generation doesn't exist.") from exc
+                if not stat.S_ISDIR(object_mode):
+                    raise GenerationError(
+                        "pin", "The selected generation isn't a regular directory."
+                    )
                 directory = self.root / "leases" / selected
                 if directory.is_symlink():
                     raise GenerationError("pin", "The reader lease directory can't be a symlink.")
-                directory.mkdir(exist_ok=True, mode=0o700)
+                try:
+                    directory.mkdir(mode=0o700)
+                except FileExistsError:
+                    if not directory.is_dir():
+                        raise GenerationError("pin", "The reader lease directory isn't valid.")
+                else:
+                    created = directory.lstat()
+                    cleanup.callback(
+                        self._remove_failed_lease_directory,
+                        directory,
+                        (created.st_dev, created.st_ino),
+                    )
                 lease_path = directory / (uuid4().hex + ".lock")
                 descriptor = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(descriptor, "wb") as handle:
@@ -747,8 +788,12 @@ class GenerationStore:
             raise GenerationError(
                 "prepare", "Configured embedding settings don't match store identity."
             )
-        if any(self.root.resolve().is_relative_to(root.resolve()) for root in roots) or (
-            settings.profile is not None and self.root.resolve() == settings.profile.resolve()
+        destination = self.root.resolve()
+        if any(
+            destination.is_relative_to(root.resolve()) or root.resolve().is_relative_to(destination)
+            for root in roots
+        ) or (
+            settings.profile is not None and settings.profile.resolve().is_relative_to(destination)
         ):
             raise GenerationError("prepare", "Generation outputs must stay outside policy sources.")
 

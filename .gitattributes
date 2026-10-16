@@ -1,0 +1,6 @@
+/.gitattributes text eol=lf
+/policies/**/*.md text eol=lf
+/policies/**/*.toml text eol=lf
+/policies/**/*.txt text eol=lf
+/artifacts/public-generation/generation.sha256 text eol=lf
+/artifacts/public-generation/generation.zip binary
