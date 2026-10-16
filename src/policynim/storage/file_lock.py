@@ -45,3 +45,32 @@ def _lock_windows_descriptor(descriptor: int) -> None:
             if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                 raise
             time.sleep(0.05)
+
+
+@contextmanager
+def try_exclusive_file_lock(path: Path) -> Iterator[bool]:
+    """Probe an existing reader lease without waiting or creating a replacement inode."""
+    descriptor = os.open(
+        path, os.O_RDWR | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("Reader lease must be a regular file.")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                getattr(msvcrt, "locking")(descriptor, getattr(msvcrt, "LK_NBLCK"), 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                raise
+            acquired = False
+        else:
+            acquired = True
+        yield acquired
+    finally:
+        os.close(descriptor)

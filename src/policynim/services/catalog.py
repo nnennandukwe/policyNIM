@@ -79,7 +79,12 @@ def build_policy_catalog(
     return compile_policy_catalog(documents, root=corpus)
 
 
-def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -> PolicyCatalog:
+def compile_policy_catalog(
+    documents: Sequence[ParsedDocument],
+    *,
+    root: Path,
+    unlisted_markdown: Sequence[str] | None = None,
+) -> PolicyCatalog:
     """Compile the exact loaded source snapshot before any model work starts."""
     policies = sorted(
         [
@@ -119,10 +124,14 @@ def compile_policy_catalog(documents: Sequence[ParsedDocument], *, root: Path) -
         authored_count=len(policies),
         effective_count=len(policies),
         policies=policies,
-        unlisted_markdown=sorted(
-            path.relative_to(root).as_posix()
-            for path in root.rglob("*.md")
-            if path.name != "TEMPLATE.md"
-            and path.relative_to(root).as_posix() not in selected_paths
+        unlisted_markdown=(
+            sorted(unlisted_markdown)
+            if unlisted_markdown is not None
+            else sorted(
+                path.relative_to(root).as_posix()
+                for path in root.rglob("*.md")
+                if path.name != "TEMPLATE.md"
+                and path.relative_to(root).as_posix() not in selected_paths
+            )
         ),
     )

@@ -315,3 +315,111 @@ def test_ingest_service_close_closes_embedder(tmp_path: Path) -> None:
     service.close()
 
     assert embedder.closed is True
+
+
+def test_generation_index_failure_preserves_prior_runtime_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The #87 failing-index regression keeps immutable prior rules without restoring files."""
+    from typing import Any
+
+    from policynim.settings import Settings
+    from policynim.storage import generations
+
+    source = tmp_path / "policies"
+    write_policy(
+        source / "publication.md",
+        """
+        ---
+        policy_id: PUBLICATION
+        title: Publication
+        domain: backend
+        runtime_rules:
+          - action: shell_command
+            effect: block
+            reason: Review publication.
+            command_regexes:
+              - "^publish$"
+        ---
+        # Publication
+
+        Review publication before changing active state.
+    """,
+    )
+    identity = EmbeddingIdentity(model="mock-embedder", endpoint="https://example.invalid/v1")
+    no_env: dict[str, Any] = {"_env_file": None}
+    settings = Settings(
+        **no_env,
+        corpus_dir=source,
+        nvidia_embed_model=identity.model,
+        nvidia_base_url=identity.endpoint,
+    )
+    store = generations.GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.build(settings, MockEmbedder())
+    snapshot = store.inspect()
+    old_index, old_rules = snapshot.index_path.read_bytes(), snapshot.rules_path.read_bytes()
+    pointer = (store.root / "active.json").read_bytes()
+    policy = source / "publication.md"
+    policy.write_text(policy.read_text().replace("Review publication.", "Review new publication."))
+
+    class FailingIndexStore(SQLiteVecIndexStore):
+        """Fail the new index write after the new rules have already been staged."""
+
+        attempts = 0
+
+        def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
+            """Preserve the old complete generation when the staged index write fails."""
+            type(self).attempts += 1
+            raise OSError("Injected index replacement failure.")
+
+    monkeypatch.setattr(generations, "SQLiteVecIndexStore", FailingIndexStore)
+    with pytest.raises(generations.GenerationError):
+        store.build(settings, MockEmbedder())
+    assert FailingIndexStore.attempts == 1
+    assert (store.root / "active.json").read_bytes() == pointer
+    assert snapshot.index_path.read_bytes() == old_index
+    assert snapshot.rules_path.read_bytes() == old_rules
+    assert store.inspect().generation_id == first.generation_id
+    assert not list((store.root / "staging").iterdir())
+
+
+def test_failed_generation_activation_never_rewrites_prior_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed commit leaves prior rules intact, so no fallible restoration phase exists."""
+    from typing import Any
+
+    from policynim.settings import Settings
+    from policynim.storage import generations
+
+    source = tmp_path / "policies"
+    write_policy(source / "policy.md", "# Release policy\n\nReview changes before release.\n")
+    identity = EmbeddingIdentity(model="mock-embedder", endpoint="https://example.invalid/v1")
+    no_env: dict[str, Any] = {"_env_file": None}
+    settings = Settings(
+        **no_env,
+        corpus_dir=source,
+        nvidia_embed_model=identity.model,
+        nvidia_base_url=identity.endpoint,
+    )
+    store = generations.GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.build(settings, MockEmbedder())
+    snapshot = store.inspect()
+    old_index, old_rules = snapshot.index_path.read_bytes(), snapshot.rules_path.read_bytes()
+    real_replace = generations.os.replace
+    destinations: list[Path] = []
+
+    def fail_activation(source, destination, *args, **kwargs):
+        """Fail the actual pointer replacement while allowing the new staged SQLite write."""
+        destinations.append(Path(destination))
+        if Path(destination) == store.root / "active.json":
+            raise OSError("Injected activation replacement failure.")
+        return real_replace(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(generations.os, "replace", fail_activation)
+    with pytest.raises(generations.GenerationError):
+        store.build(settings, MockEmbedder())
+    assert snapshot.index_path not in destinations and snapshot.rules_path not in destinations
+    assert snapshot.index_path.read_bytes() == old_index
+    assert snapshot.rules_path.read_bytes() == old_rules
+    assert store.inspect().generation_id == first.generation_id

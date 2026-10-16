@@ -319,18 +319,26 @@ def resolve_profile(path: Path) -> ResolvedProfile:
     """Resolve a pinned profile before chunking, compilation, or embedding."""
     profile, _ = read_profile(path)
     current, documents, entries, roots = _current_inputs(profile, path, enforce_pins=True)
-    documents, entries = _apply_decisions(current, documents, entries)
-    identity = _digest(current.model_dump_json())
+    documents, catalog = compile_profile_catalog(current, documents, entries)
+    return ResolvedProfile(catalog=catalog, documents=documents, roots=roots)
+
+
+def compile_profile_catalog(
+    profile: PolicyProfile, documents: list[ParsedDocument], entries: list[CatalogPolicy]
+) -> tuple[list[ParsedDocument], PolicyCatalog]:
+    """Apply decisions to a captured source snapshot without reopening mutable pack paths."""
+    documents, entries = _apply_decisions(profile, documents, entries)
+    identity = _digest(profile.model_dump_json())
     catalog = PolicyCatalog(
         digest=_digest(identity + "\n" + "\n".join(entry.model_dump_json() for entry in entries)),
-        profile_id=current.profile_id,
+        profile_id=profile.profile_id,
         profile_digest=identity,
-        pack_pins=[CatalogPack(**pin.model_dump(exclude={"policies"})) for pin in current.packs],
+        pack_pins=[CatalogPack(**pin.model_dump(exclude={"policies"})) for pin in profile.packs],
         authored_count=len(entries),
         effective_count=len(documents),
         policies=entries,
     )
-    return ResolvedProfile(catalog=catalog, documents=documents, roots=roots)
+    return documents, catalog
 
 
 def initialize_profile(path: Path, roots: Sequence[Path], *, profile_id: str) -> PolicyProfile:
