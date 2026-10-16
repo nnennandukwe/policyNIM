@@ -13,13 +13,12 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import sqlite_vec
 from pydantic import ValidationError
 
-from policynim.contracts import IndexStore
+from policynim.contracts import GenerationLease, IndexStore
 from policynim.errors import IndexCompatibilityError, MissingIndexError
 from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
 from policynim.types import (
@@ -31,9 +30,6 @@ from policynim.types import (
     PolicyProvenance,
     ScoredChunk,
 )
-
-if TYPE_CHECKING:
-    from policynim.storage.generations import GenerationSnapshot
 
 _SCHEMA_VERSION = "2"
 LOGGER = logging.getLogger(__name__)
@@ -53,7 +49,7 @@ class SQLiteVecIndexStore(IndexStore):
         *,
         path: Path,
         embedding_identity: EmbeddingIdentity | None = None,
-        generation_snapshot: GenerationSnapshot | None = None,
+        generation_snapshot: GenerationLease | None = None,
     ) -> None:
         """Configure the SQLite index database path."""
         self._path = path
@@ -78,7 +74,7 @@ class SQLiteVecIndexStore(IndexStore):
         return _CHUNKS_TABLE
 
     @property
-    def generation_snapshot(self) -> GenerationSnapshot | None:
+    def generation_snapshot(self) -> GenerationLease | None:
         """Return the retained complete object backing this managed reader, when present."""
         return self._generation_snapshot
 

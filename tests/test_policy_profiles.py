@@ -1163,7 +1163,7 @@ def test_profile_factory_doesnt_require_bundled_sources(
         """Inject the deterministic embedding boundary without credentials or network access."""
         return embedder
 
-    monkeypatch.setattr("policynim.storage.generation_sources.resolve_corpus_root", missing_bundle)
+    monkeypatch.setattr("policynim.services.generation_sources.resolve_corpus_root", missing_bundle)
     monkeypatch.setattr(ingest, "_create_default_embedder", fixture_embedder)
     settings = Settings(
         **NO_ENV,

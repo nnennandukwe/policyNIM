@@ -30,15 +30,15 @@ from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError
 from policynim.ingest.chunking import chunk_policy_documents
 from policynim.operations import ResourceStack, check_budget, close_components
 from policynim.services.catalog import CatalogPack, PolicyCatalog
-from policynim.services.ingest import _attach_embeddings, _compile_runtime_rules_artifact
-from policynim.settings import Settings
-from policynim.storage.file_lock import exclusive_file_lock, try_exclusive_file_lock
-from policynim.storage.generation_sources import (
+from policynim.services.generation_sources import (
     SchemaOne,
     SourceSnapshot,
     capture_sources,
     digest_bytes,
 )
+from policynim.services.ingest import _attach_embeddings, _compile_runtime_rules_artifact
+from policynim.settings import Settings
+from policynim.storage.file_lock import exclusive_file_lock, try_exclusive_file_lock
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import (
     EmbeddingIdentity,

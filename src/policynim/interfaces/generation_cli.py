@@ -11,8 +11,8 @@ import typer
 
 from policynim.errors import GenerationError, PolicyNIMError
 from policynim.runtime_paths import resolve_runtime_path
+from policynim.services.generations import GenerationStore
 from policynim.settings import Settings, get_settings
-from policynim.storage.generations import GenerationStore
 from policynim.types import EmbeddingIdentity, StrictModel
 
 app = typer.Typer(

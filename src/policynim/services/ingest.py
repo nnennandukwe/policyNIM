@@ -189,7 +189,7 @@ class GenerationIngestService:
 
     def run(self) -> IngestResult:
         """Activate a complete generation and report its already-validated publication receipt."""
-        from policynim.storage.generations import GenerationStore
+        from policynim.services.generations import GenerationStore
         from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
         from policynim.types import EmbeddingIdentity
 

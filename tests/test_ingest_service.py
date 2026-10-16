@@ -323,8 +323,8 @@ def test_generation_index_failure_preserves_prior_runtime_rules(
     """The #87 failing-index regression keeps immutable prior rules without restoring files."""
     from typing import Any
 
+    from policynim.services import generations
     from policynim.settings import Settings
-    from policynim.storage import generations
 
     source = tmp_path / "policies"
     write_policy(
@@ -389,8 +389,8 @@ def test_failed_generation_activation_never_rewrites_prior_rules(
     """A failed commit leaves prior rules intact, so no fallible restoration phase exists."""
     from typing import Any
 
+    from policynim.services import generations
     from policynim.settings import Settings
-    from policynim.storage import generations
 
     source = tmp_path / "policies"
     write_policy(source / "policy.md", "# Release policy\n\nReview changes before release.\n")

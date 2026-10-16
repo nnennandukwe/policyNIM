@@ -10,9 +10,9 @@ import pytest
 from test_ingest_service import MockEmbedder
 from test_policy_profiles import write_pack
 
+from policynim.services.generations import GenerationStore
 from policynim.services.ingest import IngestService
 from policynim.settings import Settings, get_settings
-from policynim.storage.generations import GenerationStore
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import EmbeddingIdentity
 
@@ -135,8 +135,8 @@ def test_tampered_rules_with_updated_hash_still_fail_source_validation(tmp_path:
     """Rehashing a mismatched rules file can't make it agree with the source snapshot."""
     import hashlib
 
-    from policynim.storage.generation_sources import digest_bytes
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generation_sources import digest_bytes
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     generations = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -160,7 +160,7 @@ def test_tampered_rules_with_updated_hash_still_fail_source_validation(tmp_path:
 
 def test_same_dimension_other_model_is_rejected(tmp_path: Path) -> None:
     """Configured model identity remains mandatory even when vector dimensions match."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     generations = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -180,7 +180,7 @@ def test_failed_migration_preserves_active_and_originals(
     tmp_path: Path, invalid_rules: str
 ) -> None:
     """An unrelated standalone rules artifact can't partially activate a new generation."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     generations = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -199,7 +199,7 @@ def test_failed_migration_preserves_active_and_originals(
 
 def test_precommit_fault_preserves_active_generation(tmp_path: Path) -> None:
     """A failed pointer switch leaves the entire earlier generation active."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     generations = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -273,7 +273,7 @@ def test_leased_reader_survives_publication_prune_and_rollback(tmp_path: Path) -
 
 def test_stale_rollback_token_preserves_newer_publication(tmp_path: Path) -> None:
     """Rollback can't overwrite an activation that appeared after the operator inspected it."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     generations = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -357,7 +357,7 @@ def test_unexpected_retention_entry_is_preserved(tmp_path: Path) -> None:
 
 def test_bundle_round_trip_is_offline_and_preserves_generation_id(tmp_path: Path) -> None:
     """A portable prebuilt bundle imports byte-for-byte without embedding credentials."""
-    from policynim.storage.generation_sources import digest_bytes
+    from policynim.services.generation_sources import digest_bytes
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     original = GenerationStore(root=tmp_path / "first-generations", embedding=identity)
@@ -398,7 +398,7 @@ _PRECOMMIT_POINTS = [
 @pytest.mark.parametrize("point", _PRECOMMIT_POINTS)
 def test_each_precommit_failure_can_retry_without_mixed_state(tmp_path: Path, point: str) -> None:
     """Each effect boundary preserves a complete prior pointer and permits a fresh retry."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     root = tmp_path / "generations"
@@ -438,7 +438,7 @@ def test_initialization_failure_is_retryable_without_partial_activation(
     tmp_path: Path, point: str
 ) -> None:
     """An interrupted owner-marker creation doesn't make a fresh store unrecoverable."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     root = tmp_path / "generations"
@@ -483,7 +483,7 @@ from pathlib import Path
 sys.path.insert(0,"tests")
 from test_ingest_service import MockEmbedder
 from policynim.settings import Settings
-from policynim.storage.generations import GenerationStore
+from policynim.services.generations import GenerationStore
 from policynim.types import EmbeddingIdentity
 payload=json.loads(sys.argv[1])
 settings=Settings(_env_file=None,corpus_dir=Path(payload["source"]),
@@ -530,8 +530,8 @@ def test_bundle_rejection_preserves_active_state(tmp_path: Path, fault: str) -> 
     import warnings
     import zipfile
 
-    from policynim.storage.generation_sources import digest_bytes
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generation_sources import digest_bytes
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     store = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -583,7 +583,7 @@ def test_bundle_rejection_preserves_active_state(tmp_path: Path, fault: str) -> 
 
 def test_bundle_source_match_guard_runs_before_store_mutation(tmp_path: Path) -> None:
     """Application builds reject stale bundles before changing managed state."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     original = GenerationStore(root=tmp_path / "original", embedding=identity)
@@ -605,7 +605,7 @@ def test_bundle_export_refuses_overwrite_and_checks_readback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Export preserves manual files and rejects a destination replaced before verification."""
-    from policynim.storage import generations
+    from policynim.services import generations
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     store = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -633,7 +633,7 @@ def test_bundle_export_refuses_overwrite_and_checks_readback(
 
 def test_staging_tamper_before_commit_preserves_prior_active(tmp_path: Path) -> None:
     """A source/rules change between initial validation and activation never becomes canonical."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     store = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -663,7 +663,7 @@ def test_staging_tamper_before_commit_preserves_prior_active(tmp_path: Path) -> 
 
 def test_changed_active_pointer_is_preserved_at_commit_boundary(tmp_path: Path) -> None:
     """A manual activation change during preparation isn't overwritten by a stale commit."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     store = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -691,7 +691,7 @@ def test_explicit_invalid_generation_ids_never_fall_back_to_active(
     tmp_path: Path, generation_id: str
 ) -> None:
     """An invalid explicit selection can't silently open a different generation."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     store = GenerationStore(root=tmp_path / "generations", embedding=identity)
@@ -702,7 +702,7 @@ def test_explicit_invalid_generation_ids_never_fall_back_to_active(
 
 def test_invalid_runtime_regex_fails_before_embedding(tmp_path: Path) -> None:
     """A complete generation can't publish rules that the real runtime consumer rejects."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     source = write_pack(tmp_path / "policies", "test.public", ["A"])
     policy = source / "A.md"
@@ -1270,7 +1270,7 @@ def test_warm_readers_reuse_validation_but_operator_and_changed_files_reinspect(
     tmp_path: Path,
 ) -> None:
     """Count actual artifact reads while exercising the default factory across store instances."""
-    import policynim.storage.generations as generation_module
+    import policynim.services.generations as generation_module
     from policynim.errors import GenerationError
     from policynim.storage import create_index_store
 
@@ -1346,7 +1346,7 @@ def test_missing_change_stamp_forces_full_reader_validation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Filesystems lacking a trustworthy change stamp can't authorize cached acceptance."""
-    import policynim.storage.generations as generation_module
+    import policynim.services.generations as generation_module
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     store = GenerationStore(root=tmp_path / "generations", embedding=identity)

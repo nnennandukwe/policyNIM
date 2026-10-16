@@ -26,7 +26,7 @@ def runtime_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Setting
     """Prepare a real compatible index and empty runtime rules without a provider."""
     from test_policy_generations import seed_legacy
 
-    from policynim.storage.generations import GenerationStore
+    from policynim.services.generations import GenerationStore
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(

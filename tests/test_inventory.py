@@ -319,8 +319,8 @@ def test_installed_runtime_keeps_recovery_diagnosis_and_blocks_effects(
     """A valid execution control proves unusable-index refusal reaches the intended guard."""
     from test_policy_generations import seed_legacy
 
+    from policynim.services.generations import GenerationStore
     from policynim.storage import sqlite_vec as adapter
-    from policynim.storage.generations import GenerationStore
 
     settings, identity, path, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})

@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
+from policynim.services.generations import GenerationStore
 from policynim.settings import Settings
-from policynim.storage.generations import GenerationStore
 from policynim.types import EmbeddingIdentity
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

@@ -10,8 +10,8 @@ from typer.testing import CliRunner
 
 from policynim.interfaces import generation_cli
 from policynim.interfaces.cli import app
+from policynim.services.generations import GenerationStore
 from policynim.settings import Settings
-from policynim.storage.generations import GenerationStore
 
 
 def test_cli_migrate_inspect_export_import_and_rollback(monkeypatch, tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ def test_operator_inspection_revalidates_bytes_after_a_warm_runtime_reader(
     monkeypatch, tmp_path: Path
 ) -> None:
     """The operator command must check artifact bytes even when runtime validation is cached."""
-    import policynim.storage.generations as generation_module
+    import policynim.services.generations as generation_module
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})

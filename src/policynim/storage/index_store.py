@@ -14,12 +14,12 @@ from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import EmbeddingIdentity
 
 if TYPE_CHECKING:
-    from policynim.storage.generations import GenerationSnapshot
+    from policynim.services.generations import GenerationSnapshot
 
 
 def pinned_generation(index_store: object) -> GenerationSnapshot | None:
     """Recognize validated ownership while preserving legacy store protocols."""
-    from policynim.storage.generations import GenerationSnapshot
+    from policynim.services.generations import GenerationSnapshot
 
     snapshot = getattr(index_store, "generation_snapshot", None)
     return snapshot if isinstance(snapshot, GenerationSnapshot) else None
@@ -41,7 +41,7 @@ def create_index_store(settings: Settings, *, legacy: bool = False) -> SQLiteVec
         return SQLiteVecIndexStore(
             path=resolve_runtime_path(settings.index_db_path), embedding_identity=identity
         )
-    from policynim.storage.generations import GenerationStore
+    from policynim.services.generations import GenerationStore
 
     snapshot = GenerationStore(
         root=resolve_runtime_path(settings.generations_dir), embedding=identity

@@ -290,7 +290,7 @@ def test_live_eval_pins_one_generation_across_modes_and_publication(
     from test_policy_generations import seed_legacy
 
     import policynim.services.ingest as ingest_module
-    from policynim.storage.generations import GenerationStore
+    from policynim.services.generations import GenerationStore
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(
@@ -348,7 +348,7 @@ def test_live_eval_requires_generation_before_provider_construction(
     monkeypatch, tmp_path: Path, existing_rules: bool
 ) -> None:
     """Standalone artifacts aren't silently rebuilt or accepted as a live job snapshot."""
-    from policynim.storage.generations import GenerationError
+    from policynim.services.generations import GenerationError
 
     index, rules = tmp_path / "legacy.sqlite3", tmp_path / "rules.json"
     index.write_bytes(b"preserved index")
