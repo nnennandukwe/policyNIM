@@ -7,9 +7,12 @@ from types import TracebackType
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
-from policynim.services.index_store import create_index_store, pinned_generation
+from policynim.services.index_store import (
+    create_index_store,
+    pinned_generation,
+    require_index_ready,
+)
 from policynim.settings import Settings, get_settings
-from policynim.storage.index_readiness import require_index_ready
 from policynim.types import SearchRequest, SearchResult
 
 _DEFAULT_RERANK_CANDIDATE_POOL = 15

@@ -19,9 +19,12 @@ from policynim.errors import (
     RuntimeRulesArtifactMissingError,
 )
 from policynim.operations import close_components
-from policynim.services.index_store import create_index_store, pinned_generation
+from policynim.services.index_store import (
+    create_index_store,
+    pinned_generation,
+    require_index_ready,
+)
 from policynim.settings import Settings, get_settings
-from policynim.storage.index_readiness import require_index_ready
 from policynim.types import (
     Citation,
     CompiledRuntimeRule,

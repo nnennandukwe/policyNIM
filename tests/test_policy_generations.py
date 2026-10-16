@@ -2638,3 +2638,60 @@ def test_foreign_legacy_member_names_import_as_evidence_without_source_files(
             "runtime_rules.json",
         }
     assert not source.exists()
+
+
+@pytest.mark.parametrize("failure", ["deadline", "cancelled"])
+@pytest.mark.parametrize("phase", ["objects", "trash", "staging"])
+def test_prune_stops_on_budget_rejection_without_misclassifying_objects(
+    tmp_path: Path, failure: str, phase: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Retention stops at an expired inspection and preserves valid data for a later retry."""
+    from shutil import copytree
+
+    from policynim.errors import ProviderError
+    from policynim.operations import OperationBudget, check_budget, operation_scope
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    if phase == "trash":
+        copytree(store.root / "objects" / active, store.root / "trash" / (active + "-" + "a" * 32))
+    elif phase == "staging":
+        copytree(store.root / "objects" / active, store.root / "staging" / "build-abcdefgh")
+    before = {
+        p.relative_to(store.root): p.read_bytes() for p in store.root.rglob("*") if p.is_file()
+    }
+    now = [0.0]
+    budget = OperationBudget(seconds=1, clock=lambda: now[0])
+    inspections = 0
+    returned = False
+
+    def fault(step: str) -> None:
+        """Expire the caller's budget inside the selected real inspection boundary."""
+        nonlocal inspections
+        if step == "inspect":
+            inspections += 1
+            if inspections == (1 if phase == "objects" else 2):
+                if failure == "deadline":
+                    now[0] = 2.0
+                else:
+                    budget.cancelled.set()
+                check_budget()
+
+    rejected = GenerationStore(root=store.root, embedding=identity, fault=fault)
+    with pytest.raises(ProviderError) as error, operation_scope(budget):
+        rejected.prune(keep_recent=0)
+        returned = True
+    assert not returned
+    assert error.value.failure_class == (
+        "deadline_exhausted" if failure == "deadline" else "cancelled"
+    )
+    assert inspections == (1 if phase == "objects" else 2)
+    assert "needs inspection" not in caplog.text
+    assert {
+        p.relative_to(store.root): p.read_bytes() for p in store.root.rglob("*") if p.is_file()
+    } == before
+    store.prune(keep_recent=0)
+    assert store.inspect().generation_id == active
+    assert not list((store.root / "trash").iterdir())
+    assert not list((store.root / "staging").iterdir())

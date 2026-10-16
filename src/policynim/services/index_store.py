@@ -1,4 +1,4 @@
-"""Application composition for index readers pinned to a generation."""
+"""Application composition and readiness guidance for index readers."""
 
 from __future__ import annotations
 
@@ -6,10 +6,17 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from policynim.errors import ConfigurationError
+from policynim.contracts import IndexStore
+from policynim.errors import (
+    ConfigurationError,
+    GenerationError,
+    IndexCompatibilityError,
+    MissingIndexError,
+)
 from policynim.operations import close_components
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings
+from policynim.storage.index_readiness import inspect_index_readiness
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import EmbeddingIdentity
 
@@ -53,3 +60,32 @@ def create_index_store(settings: Settings, *, legacy: bool = False) -> SQLiteVec
     except BaseException as error:
         close_components(snapshot, primary_error=error)
         raise
+
+
+def require_index_ready(index_store: IndexStore, *, missing_message: str) -> None:
+    """Refuse unusable indexes before a service starts provider work."""
+    report = inspect_index_readiness(index_store)
+    if report.state == "ready":
+        return
+    if isinstance(getattr(index_store, "generation_id", None), str):
+        detail = report.reason
+        if report.state == "unreadable":
+            detail += " Correct access or contention; don't rebuild to diagnose permissions."
+        raise GenerationError("read", detail)
+    if report.state in {"incompatible", "incomplete"}:
+        raise IndexCompatibilityError(report.reason)
+    if report.state == "missing":
+        raise MissingIndexError(missing_message)
+    if report.state == "unreadable":
+        raise MissingIndexError(
+            f"{report.reason} Preserve existing data. Run `policynim doctor` for recovery; "
+            "correct access or contention and don't rebuild to diagnose permissions.",
+            failure_class="index_unreadable",
+        )
+    raise MissingIndexError(
+        f"{report.reason} Preserve existing sources, index, and runtime rules. "
+        "Run `policynim doctor` for recovery. Run `policynim ingest` only from verified sources "
+        "into separate POLICYNIM_INDEX_DB_PATH and POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH "
+        "destinations; validate before activation.",
+        failure_class=f"index_{report.state}",
+    )

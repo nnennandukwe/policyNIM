@@ -1229,11 +1229,14 @@ class GenerationStore:
         protected = {pointer.active, pointer.previous} if pointer else set()
         candidates: list[tuple[int, GenerationSnapshot]] = []
         for directory in (self.root / "objects").iterdir():
+            check_budget()
             try:
                 if not re.fullmatch(r"[0-9a-f]{64}", directory.name):
                     raise ValueError("Unknown object name.")
                 snapshot = self._inspect(directory, expected_id=directory.name)
                 candidates.append((directory.stat().st_mtime_ns, snapshot))
+            except ProviderError:
+                raise
             except Exception:
                 result.warnings.append("An invalid or unowned object was preserved for inspection.")
         remaining = keep_recent
@@ -1244,6 +1247,7 @@ class GenerationStore:
                 protected.add(snapshot.generation_id)
                 remaining -= 1
         for _, snapshot in candidates:
+            check_budget()
             generation_id = snapshot.generation_id
             if generation_id in protected:
                 result.kept.append(generation_id)
@@ -1269,13 +1273,19 @@ class GenerationStore:
                 _sync_directory(trash.parent)
                 result.removed.append(generation_id)
         for trash in (self.root / "trash").iterdir():
+            check_budget()
             try:
                 self._clean_trash(trash)
+            except ProviderError:
+                raise
             except Exception as error:
                 result.warnings.append(self._retention_warning(trash, error))
         for stage in (self.root / "staging").iterdir():
+            check_budget()
             try:
                 self._remove_stage(stage)
+            except ProviderError:
+                raise
             except Exception as error:
                 result.warnings.append(self._retention_warning(stage, error))
         result.kept.sort()
