@@ -674,6 +674,12 @@ def _read_identity(conn: sqlite3.Connection, *, allow_empty: bool = False) -> In
         count = conn.execute(f"SELECT COUNT(*) FROM {_VECTORS_TABLE}").fetchone()[0]
         if count != _count_chunks(conn) or (count == 0 and not allow_empty):
             raise ValueError("Vector and policy inventory disagree")
+        paired = conn.execute(
+            f"SELECT COUNT(*) FROM {_CHUNKS_TABLE} AS c "
+            f"JOIN {_VECTORS_TABLE} AS v ON v.rowid = c.rowid"
+        ).fetchone()[0]
+        if paired != count:
+            raise ValueError("Vector rows don't match policy chunk row IDs")
         for row in conn.execute(
             f"SELECT value FROM {_METADATA_TABLE} WHERE key LIKE 'provenance:%'"
         ):

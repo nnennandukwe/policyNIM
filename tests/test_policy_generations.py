@@ -175,6 +175,71 @@ def test_same_dimension_other_model_is_rejected(tmp_path: Path) -> None:
         wrong.pin()
 
 
+@pytest.mark.parametrize("mutation", ["missing", "equal_count_orphan"])
+@pytest.mark.parametrize("producer", ["migrate", "import"])
+def test_publication_rejects_unpaired_vector_rows_without_changing_prior_state(
+    tmp_path: Path, mutation: str, producer: str
+) -> None:
+    """Vector counts and row ownership must agree before an imported index becomes active."""
+    from contextlib import closing
+    from hashlib import sha256
+    from zipfile import ZipFile
+
+    from policynim.errors import GenerationError
+    from policynim.storage.sqlite_vec import _connect
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    pointer = (store.root / "active.json").read_bytes()
+    original = {p.name: p.read_bytes() for p in (store.root / "objects" / first).iterdir()}
+    if producer == "import":
+        index = tmp_path / "bundle-index.sqlite3"
+        index.write_bytes(original["index.sqlite3"])
+    with closing(_connect(index, configure_wal=False)) as conn:
+        row = conn.execute("SELECT rowid, embedding FROM policy_vectors LIMIT 1").fetchone()
+        conn.execute("DELETE FROM policy_vectors WHERE rowid=?", (row["rowid"],))
+        if mutation == "equal_count_orphan":
+            conn.execute(
+                "INSERT INTO policy_vectors (rowid, embedding) VALUES (?, ?)",
+                (row["rowid"] + 1000000, row["embedding"]),
+            )
+        chunk_count = conn.execute("SELECT COUNT(*) FROM policy_chunks").fetchone()[0]
+        vector_count = conn.execute("SELECT COUNT(*) FROM policy_vectors").fetchone()[0]
+        assert (chunk_count == vector_count) == (mutation == "equal_count_orphan")
+    damaged = index.read_bytes()
+    bundle = tmp_path / "unpaired.zip"
+    if producer == "import":
+        manifest = json.loads(original["manifest.json"])
+        original["index.sqlite3"] = damaged
+        manifest["artifacts"]["index.sqlite3"] = "sha256:" + sha256(damaged).hexdigest()
+        original["manifest.json"] = json.dumps(manifest).encode()
+        with ZipFile(bundle, "w") as archive:
+            for name, contents in original.items():
+                archive.writestr(name, contents)
+    with pytest.raises(GenerationError):
+        if producer == "import":
+            store.import_bundle(
+                bundle, expected_digest="sha256:" + sha256(bundle.read_bytes()).hexdigest()
+            )
+        else:
+            store.migrate(settings, index_path=index, rules_path=rules)
+    assert (store.root / "active.json").read_bytes() == pointer
+    assert store.inspect().generation_id == first
+    assert index.read_bytes() == damaged
+    if producer == "import":
+        retry_bundle = tmp_path / "valid-retry.zip"
+        digest = store.export_bundle(retry_bundle)
+        retried = store.import_bundle(retry_bundle, expected_digest=digest)
+        assert retried.generation_id == first
+    else:
+        retry_index = tmp_path / "valid-retry.sqlite3"
+        retry_index.write_bytes((store.root / "objects" / first / "index.sqlite3").read_bytes())
+        retried = store.migrate(settings, index_path=retry_index, rules_path=rules)
+    assert store.inspect().generation_id == retried.generation_id
+    assert index.read_bytes() == damaged
+
+
 @pytest.mark.parametrize("invalid_rules", ["", "not JSON", '{"schema_version":1,"rules":[]}'])
 def test_failed_migration_preserves_active_and_originals(
     tmp_path: Path, invalid_rules: str
