@@ -71,7 +71,7 @@ def write_index(path: Path) -> None:
         )
         for policy_id, section in [("LOG", "Rules"), ("LOG", "Examples"), ("AUTH", "Rules")]
     ]
-    create_index_store(Settings(index_db_path=path)).replace(chunks)
+    create_index_store(Settings(index_db_path=path), legacy=True).replace(chunks)
 
 
 @pytest.mark.parametrize(
@@ -182,7 +182,7 @@ def test_legacy_alias_file_and_canonical_precedence(
     get_settings.cache_clear()
     result = CliRunner().invoke(app, ["inventory", "--format", "json"])
     assert json.loads(result.stdout)["index"]["state"] == "ready"
-    direct = create_index_store(Settings(index_db_path=path)).inspect_readiness()
+    direct = create_index_store(Settings(index_db_path=path), legacy=True).inspect_readiness()
     assert direct.state == "ready"
 
 
@@ -222,7 +222,9 @@ def test_real_search_guard_rejects_unusable_index_before_embedding(
             with sqlite3.connect(path) as conn:
                 conn.execute("UPDATE index_metadata SET value=? WHERE key=?", (value, key))
     embedder = SpyEmbedder()
-    service = SearchService(embedder=embedder, index_store=create_index_store(Settings()))
+    service = SearchService(
+        embedder=embedder, index_store=create_index_store(Settings(), legacy=True)
+    )
     if state == "ready":
         result = service.search(SearchRequest(query="request identifiers", top_k=2))
         assert not result.insufficient_context
@@ -259,7 +261,7 @@ def test_empty_index_requires_valid_shape_before_empty_diagnosis(tmp_path: Path)
         conn.enable_load_extension(False)
         conn.execute("DELETE FROM policy_chunks")
         conn.execute("DELETE FROM policy_vectors")
-    store = create_index_store(Settings())
+    store = create_index_store(Settings(), legacy=True)
     assert store.inspect_readiness().state == "empty"
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE index_metadata SET value='999' WHERE key='embedding_dimension'")
@@ -315,13 +317,21 @@ def test_installed_runtime_keeps_recovery_diagnosis_and_blocks_effects(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
 ) -> None:
     """A valid execution control proves unusable-index refusal reaches the intended guard."""
-    from policynim.storage import sqlite_vec as adapter
-    from policynim.types import RuntimeRulesArtifact
+    from test_policy_generations import seed_legacy
 
-    path = tmp_path / "index.sqlite3"
-    write_index(path)
-    rules = tmp_path / "rules.json"
-    rules.write_text(RuntimeRulesArtifact().model_dump_json())
+    from policynim.storage import sqlite_vec as adapter
+    from policynim.storage.generations import GenerationStore
+
+    settings, identity, path, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    published = store.migrate(settings, index_path=path, rules_path=rules)
+    managed_index = store.root / "objects" / published.generation_id / "index.sqlite3"
+    monkeypatch.setenv("POLICYNIM_GENERATIONS_DIR", str(settings.generations_dir))
+    monkeypatch.setenv("POLICYNIM_NVIDIA_EMBED_MODEL", identity.model)
+    monkeypatch.setenv("POLICYNIM_NVIDIA_BASE_URL", identity.endpoint)
+    monkeypatch.setenv("POLICYNIM_CORPUS_DIR", str(settings.corpus_dir))
+    monkeypatch.setenv("POLICYNIM_INDEX_DB_PATH", str(path))
     monkeypatch.setenv("NVIDIA_API_KEY", "offline-runtime-fixture")
     monkeypatch.setenv("POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH", str(rules))
     monkeypatch.setenv("POLICYNIM_RUNTIME_EVIDENCE_DB_PATH", str(tmp_path / "evidence.sqlite3"))
@@ -340,6 +350,8 @@ def test_installed_runtime_keeps_recovery_diagnosis_and_blocks_effects(
     assert json.loads(control.stdout)["execution_outcome"] == "allowed"
     assert (tmp_path / "control.txt").read_text() == "allowed"
     if failure == "directory":
+        managed_index.rename(managed_index.with_suffix(".preserved"))
+        managed_index.mkdir()
         legacy = tmp_path / "legacy"
         legacy.mkdir()
         path = legacy / "original.lance"
@@ -348,6 +360,7 @@ def test_installed_runtime_keeps_recovery_diagnosis_and_blocks_effects(
         get_settings.cache_clear()
     elif failure == "invalid":
         path.write_bytes(b"preserved invalid index")
+        managed_index.write_bytes(b"invalid managed artifact")
     else:
 
         def deny_read(*args, **kwargs):
@@ -363,10 +376,9 @@ def test_installed_runtime_keeps_recovery_diagnosis_and_blocks_effects(
     assert result.exit_code == 1
     assert not (tmp_path / "forbidden.txt").exists()
     assert path.read_bytes() == before
-    assert "policynim doctor" in result.stderr
+    assert "generation inspect" in result.stderr
     assert "private access detail" not in result.stderr
-    if failure == "unreadable":
-        assert "don't rebuild" in result.stderr
+    assert "Preserve existing data" in result.stderr
 
 
 def test_doctor_empty_recovery_names_the_observed_cause(monkeypatch, tmp_path: Path) -> None:

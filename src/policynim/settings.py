@@ -32,7 +32,7 @@ from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
-from policynim.types import DEFAULT_TOP_K, TopK, normalize_provider_endpoint
+from policynim.types import DEFAULT_TOP_K, GenerationID, TopK, normalize_provider_endpoint
 
 
 class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
@@ -48,6 +48,7 @@ class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
 
         standalone = config_discovery.standalone_paths()
         return {
+            "generations_dir": standalone.generations_dir,
             "index_db_path": standalone.index_db_path,
             "runtime_rules_artifact_path": standalone.runtime_rules_artifact_path,
             "runtime_evidence_db_path": standalone.runtime_evidence_db_path,
@@ -72,6 +73,8 @@ class Settings(BaseSettings):
     policynim_env: str = Field(default="development", validation_alias="POLICYNIM_ENV")
     corpus_dir: Path | None = None
     profile: Path | None = None
+    generations_dir: Path = Path("data/generations")
+    generation_id: GenerationID | None = Field(default=None, exclude=True)
     index_db_path: Path = Field(
         default=Path("data/index.sqlite3"),
         validation_alias=AliasChoices("POLICYNIM_INDEX_DB_PATH", "POLICYNIM_LANCEDB_URI"),
@@ -209,6 +212,21 @@ class Settings(BaseSettings):
         """Keep an explicit empty profile from silently falling back to public sources."""
         if isinstance(value, str) and not value.strip():
             raise ValueError("POLICYNIM_PROFILE must name a profile file or be unset.")
+        return value
+
+    @field_validator("generations_dir", mode="before")
+    @classmethod
+    def validate_generations_directory(cls, value: Any) -> Any:
+        """Require an explicit local directory before Path coercion can hide URI syntax."""
+        text = value.as_posix() if isinstance(value, Path) else str(value)
+        drive = os.name == "nt" and re.match(r"^[A-Za-z]:[/\\]", text)
+        if (
+            not text.strip()
+            or text.startswith(("//", "\\\\"))
+            or any(ord(character) < 32 for character in text)
+            or (re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) and not drive)
+        ):
+            raise ValueError("POLICYNIM_GENERATIONS_DIR must name a nonempty local directory.")
         return value
 
     @model_validator(mode="after")

@@ -112,7 +112,7 @@ def test_provenance_round_trips_through_real_sqlite(tmp_path: Path) -> None:
     write_pack(root)
     chunks = chunk_policy_documents(load_policy_documents(root))
     settings = Settings(index_db_path=tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([EmbeddedChunk(**chunk.model_dump(), vector=[1.0, 0.0]) for chunk in chunks])
     dumped = store.list_chunks()
     found = store.search([1.0, 0.0], top_k=1)
@@ -155,7 +155,7 @@ def test_invalid_manifest_fails_before_real_ingest_provider_work(tmp_path: Path)
     rules = tmp_path / "rules.json"
     service = IngestService(
         embedder=embedder,
-        index_store=create_index_store(Settings(index_db_path=output)),
+        index_store=create_index_store(Settings(index_db_path=output), legacy=True),
         corpus_root=root,
         embedding_model="fixture/model",
         runtime_rules_artifact_path=rules,
@@ -254,7 +254,7 @@ def test_json_catalog_and_show_match_declared_models(monkeypatch, tmp_path: Path
     """Machine consumers can validate both command responses using their public schemas."""
     from jsonschema import validate
 
-    from policynim.services.catalog import CatalogPolicy, PolicyCatalog
+    from policynim.services.catalog import CatalogPolicyView, PolicyCatalog
 
     root = tmp_path / "pack"
     write_pack(root)
@@ -263,7 +263,7 @@ def test_json_catalog_and_show_match_declared_models(monkeypatch, tmp_path: Path
     shown = CliRunner().invoke(app, ["policies", "show", "LOG-001", "--format", "json"])
     assert listed.exit_code == shown.exit_code == 0
     validate(json.loads(listed.stdout), PolicyCatalog.model_json_schema())
-    validate(json.loads(shown.stdout), CatalogPolicy.model_json_schema())
+    validate(json.loads(shown.stdout), CatalogPolicyView.model_json_schema())
     missing = CliRunner().invoke(app, ["policies", "show", "ABSENT", "--format", "json"])
     assert missing.exit_code == 1
     assert "policies list" in json.loads(missing.stdout)["message"]
@@ -288,7 +288,7 @@ def test_index_provenance_compatibility_and_failure_gate(tmp_path: Path, mutatio
     write_pack(root)
     chunks = chunk_policy_documents(load_policy_documents(root))
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(Settings(index_db_path=path))
+    store = create_index_store(Settings(index_db_path=path), legacy=True)
     store.replace([EmbeddedChunk(**chunk.model_dump(), vector=[1.0, 0.0]) for chunk in chunks])
     assert store.inspect_readiness().state == "ready"
     with sqlite3.connect(path) as conn:
@@ -327,7 +327,9 @@ def test_ingestion_returns_the_catalog_compiled_before_embedding(tmp_path: Path)
     write_pack(root)
     service = IngestService(
         embedder=SpyEmbedder(),
-        index_store=create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3")),
+        index_store=create_index_store(
+            Settings(index_db_path=tmp_path / "index.sqlite3"), legacy=True
+        ),
         corpus_root=root,
         embedding_model="fixture/model",
         runtime_rules_artifact_path=tmp_path / "rules.json",
@@ -357,7 +359,7 @@ def test_catalog_rejection_blocks_embedding_and_publication(monkeypatch, tmp_pat
     monkeypatch.setattr(ingest_module, "compile_policy_catalog", reject_catalog)
     service = ingest_module.IngestService(
         embedder=embedder,
-        index_store=create_index_store(Settings(index_db_path=output)),
+        index_store=create_index_store(Settings(index_db_path=output), legacy=True),
         corpus_root=root,
         embedding_model="fixture/model",
         runtime_rules_artifact_path=rules,

@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import sqlite_vec
@@ -31,10 +32,14 @@ from policynim.types import (
     ScoredChunk,
 )
 
+if TYPE_CHECKING:
+    from policynim.storage.generations import GenerationSnapshot
+
 _SCHEMA_VERSION = "2"
 LOGGER = logging.getLogger(__name__)
 _METADATA_TABLE = "index_metadata"
 _CHUNKS_TABLE = "policy_chunks"
+POLICY_CHUNKS_TABLE = _CHUNKS_TABLE
 _VECTORS_TABLE = "policy_vectors"
 _DOMAIN_CANDIDATE_MULTIPLIER = 5
 _MIN_DOMAIN_CANDIDATES = 20
@@ -43,10 +48,18 @@ _MIN_DOMAIN_CANDIDATES = 20
 class SQLiteVecIndexStore(IndexStore):
     """Stores embedded policy chunks in a local sqlite-vec database."""
 
-    def __init__(self, *, path: Path, embedding_identity: EmbeddingIdentity | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        embedding_identity: EmbeddingIdentity | None = None,
+        generation_snapshot: GenerationSnapshot | None = None,
+    ) -> None:
         """Configure the SQLite index database path."""
         self._path = path
         self._embedding_identity = embedding_identity
+        self._generation_snapshot = generation_snapshot
+        self._closed = False
         self._pending_ingest: tuple[str, tuple[int, int, int, int]] | None = None
 
     @property
@@ -64,8 +77,45 @@ class SQLiteVecIndexStore(IndexStore):
         """Return the fixed logical table name for ingest result compatibility."""
         return _CHUNKS_TABLE
 
+    @property
+    def generation_snapshot(self) -> GenerationSnapshot | None:
+        """Return the retained complete object backing this managed reader, when present."""
+        return self._generation_snapshot
+
+    @property
+    def generation_id(self) -> str | None:
+        """Identify the exact retained generation without inferring identity for legacy stores."""
+        return self._generation_snapshot.generation_id if self._generation_snapshot else None
+
+    def _require_open(self) -> None:
+        """Prevent reuse after a managed reader released its generation lease."""
+        if self._closed:
+            raise MissingIndexError("The pinned generation reader is closed; create a new service.")
+
+    def _require_mutable(self) -> None:
+        """Reject managed generation writes even through a raw SQLite adapter."""
+        managed = self._generation_snapshot is not None
+        try:
+            canonical = self._path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise IndexCompatibilityError("Index destination couldn't be resolved safely.") from exc
+        if (
+            canonical.name == "index.sqlite3"
+            and canonical.parent.parent.name == "objects"
+            and re.fullmatch(r"[0-9a-f]{64}", canonical.parent.name)
+        ):
+            owner = canonical.parent.parent.parent / "owner.json"
+            manifest = canonical.parent / "manifest.json"
+            managed = managed or owner.exists() or owner.is_symlink() or manifest.exists()
+        if managed:
+            raise IndexCompatibilityError(
+                "Managed generation artifacts are immutable. "
+                "Publish or migrate a new complete generation."
+            )
+
     def validate_replacement(self) -> None:
         """Reject unknown or incompatible existing data before incurring embedding usage."""
+        self._require_mutable()
         if self._embedding_identity is None or self._path.is_symlink():
             raise IndexCompatibilityError()
         _require_no_destination_sidecars(self._path)
@@ -89,6 +139,7 @@ class SQLiteVecIndexStore(IndexStore):
 
     def inspect_readiness(self) -> IndexReadinessReport:
         """Read counts and identity from one snapshot without changing existing data."""
+        self._require_open()
         try:
             mode = self._path.stat().st_mode
             if stat.S_ISDIR(mode):
@@ -219,6 +270,7 @@ class SQLiteVecIndexStore(IndexStore):
 
     def complete_ingest(self, build_id: str) -> None:
         """Mark only this ingestion's database complete after runtime rules are finalized."""
+        self._require_mutable()
         self._validate_pending_ingest(build_id)
         with closing(_connect(self._path, must_exist=True, configure_wal=False)) as conn:
             self._validate_pending_ingest(build_id)
@@ -250,6 +302,7 @@ class SQLiteVecIndexStore(IndexStore):
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
+        self._require_open()
         if not self._path.exists() or self._path.is_dir():
             return False
         try:
@@ -260,6 +313,7 @@ class SQLiteVecIndexStore(IndexStore):
 
     def count(self) -> int:
         """Return the number of rows in the local index."""
+        self._require_open()
         if not self._path.exists() or self._path.is_dir():
             return 0
         try:
@@ -353,19 +407,19 @@ class SQLiteVecIndexStore(IndexStore):
                 candidate_limit = min(row_count, max(candidate_limit * 2, candidate_limit + top_k))
 
     def close(self) -> None:
-        """Release owned resources.
-
-        The store opens one SQLite connection per operation, so there is no
-        shared handle to close. The hook keeps service lifecycle behavior
-        symmetrical with other stores.
-        """
+        """Release a managed lease once; raw stores keep their per-operation connection behavior."""
+        if self._generation_snapshot is not None and not self._closed:
+            self._closed = True
+            self._generation_snapshot.close()
 
     def reset_for_tests(self) -> None:
         """Reset the backing SQLite file and WAL sidecars for deterministic tests."""
+        self._require_mutable()
         _cleanup_database_files(self._path)
 
     def _require_connection(self) -> sqlite3.Connection:
         """Open a validated SQLite connection or fail with missing-index guidance."""
+        self._require_open()
         if not self._path.exists():
             raise MissingIndexError(f"Local SQLite index does not exist at {self._path}.")
         if self._path.is_dir():

@@ -1,104 +1,74 @@
-"""Non-live contract checks for Docker secret handling."""
+"""Credential-free container deployment contracts and actual public bundle validation."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from policynim.settings import Settings
+from policynim.storage.generations import GenerationStore
+from policynim.types import EmbeddingIdentity
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DOCKERFILE = REPO_ROOT / "Dockerfile"
-RAILWAY_DOCKERFILE = REPO_ROOT / "Dockerfile.railway"
-RAILWAY_CONFIG = REPO_ROOT / "railway.toml"
-HOSTED_OPERATIONS = REPO_ROOT / "docs" / "hosted-beta-operations.md"
+NO_ENV: dict[str, Any] = {"_env_file": None}
 
 
-def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+@pytest.mark.parametrize("filename", ["Dockerfile", "Dockerfile.railway"])
+def test_container_imports_verified_bundle_without_provider_credentials(filename: str) -> None:
+    """Both image paths import the same complete artifact with source freshness checking."""
+    text = (REPO_ROOT / filename).read_text()
+    assert "NVIDIA_API_KEY" not in text
+    assert "policynim ingest" not in text
+    assert "type=secret" not in text
+    assert "policynim generation import" in text
+    assert '--expect-digest "$(cat artifacts/public-generation/generation.sha256)"' in text
+    assert "--require-source-match" in text
+    assert "COPY --from=builder /app/data/generations /app/data/generations" in text
+    assert "POLICYNIM_GENERATIONS_DIR=/app/data/generations" in text
+    assert "COPY pyproject.toml uv.lock README.md LICENSE ./" in text
+    assert "uv sync --frozen" in text
 
 
-def test_dockerfile_uses_buildkit_secret_for_nvidia_api_key() -> None:
-    text = _read_text(DOCKERFILE)
+def test_checked_in_public_bundle_matches_current_sources_and_default_identity(
+    tmp_path: Path,
+) -> None:
+    """Inspect real SQLite, hashes, source text, runtime rules, notices, and model offline."""
+    settings = Settings(
+        **NO_ENV, corpus_dir=REPO_ROOT / "policies", generations_dir=tmp_path / "generations"
+    )
+    identity = EmbeddingIdentity(
+        model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
+    )
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    bundle_dir = REPO_ROOT / "artifacts/public-generation"
+    receipt = store.import_bundle(
+        bundle_dir / "generation.zip",
+        expected_digest=(bundle_dir / "generation.sha256").read_text().strip(),
+        source_settings=settings,
+    )
+    with store.pin() as snapshot:
+        assert snapshot.generation_id == receipt.generation_id
+        assert snapshot.manifest.document_count > 0 and snapshot.manifest.chunk_count > 0
+        assert snapshot.indexed_catalog.generation_id == receipt.generation_id
+    import json
 
+    captured = json.loads(
+        (store.root / "objects" / receipt.generation_id / "snapshot.json").read_text()
+    )
+    notices = captured["packs"][0]["notices"]
+    assert "licenses/CC-BY-SA-4.0.txt" in notices
+    assert "licenses/OWASP-CHEATSHEETS-UPSTREAM.txt" in notices
+    assert "licenses/MCP-UPSTREAM.txt" in notices
+
+
+def test_hosted_deployment_docs_describe_offline_import() -> None:
+    """Deployment docs agree with both image entry points and startup recovery."""
+    text = (REPO_ROOT / "docs/hosted-beta-operations.md").read_text()
+    assert "docker build -t policynim-hosted ." in text
+    assert "generation import" in text
+    assert "POLICYNIM_GENERATIONS_DIR" in text
+    assert "--secret id=nvidia_api_key" not in text
     assert "ARG NVIDIA_API_KEY" not in text
-    assert "ENV NVIDIA_API_KEY" not in text
-    assert "--mount=type=secret,id=nvidia_api_key" in text
-    assert "/run/secrets/nvidia_api_key" in text
-
-
-def test_hosted_operations_doc_uses_secret_build_invocation() -> None:
-    text = " ".join(_read_text(HOSTED_OPERATIONS).split())
-
-    assert "DOCKER_BUILDKIT=1 docker build" in text
-    assert "--secret id=nvidia_api_key,env=NVIDIA_API_KEY" in text
-    assert "-t policynim-hosted ." in text
-    assert "--build-arg NVIDIA_API_KEY" not in text
-
-
-def test_railway_uses_a_dedicated_compatible_dockerfile() -> None:
-    railway_text = _read_text(RAILWAY_CONFIG)
-    dockerfile_text = _read_text(RAILWAY_DOCKERFILE)
-
-    assert 'dockerfilePath = "Dockerfile.railway"' in railway_text
-    assert "ARG NVIDIA_API_KEY" in dockerfile_text
-    assert "--mount=type=secret" not in dockerfile_text
-
-
-def test_container_builds_include_project_metadata_files() -> None:
-    """Keep minimal Docker build contexts compatible with package metadata."""
-    for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
-        text = _read_text(path)
-
-        assert "COPY pyproject.toml uv.lock README.md LICENSE ./" in text
-
-
-def test_hosted_container_builds_sync_without_legacy_index_extra() -> None:
-    """Keep hosted deploys on the default SQLite-backed package install."""
-    for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
-        text = _read_text(path)
-
-        assert "uv sync --frozen --extra hosted-legacy-index" not in text
-        assert "uv sync --frozen" in text
-        assert "POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3" in text
-
-
-def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
-    text = " ".join(_read_text(HOSTED_OPERATIONS).split())
-
-    assert "Railway only supports `--mount=type=cache`" in text
-    assert "`Dockerfile.railway`" in text
-    assert "`Dockerfile`" in text
-
-
-def test_ingestion_build_arguments_match_runtime_defaults_and_publish_rules() -> None:
-    """Verify ingestion build arguments match runtime defaults and publish rules."""
-    expected = {
-        "POLICYNIM_NVIDIA_EMBED_MODEL": Settings.model_fields["nvidia_embed_model"].default,
-        "POLICYNIM_NVIDIA_BASE_URL": Settings.model_fields["nvidia_base_url"].default,
-        "POLICYNIM_EMBED_BATCH_SIZE": str(Settings.model_fields["embed_batch_size"].default),
-        "POLICYNIM_NVIDIA_TIMEOUT_SECONDS": str(
-            Settings.model_fields["nvidia_timeout_seconds"].default
-        ),
-        "POLICYNIM_NVIDIA_MAX_RETRIES": str(Settings.model_fields["nvidia_max_retries"].default),
-    }
-    for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
-        text = _read_text(path)
-        global_args, builder, runtime = text.split("FROM ${PYTHON_BASE_IMAGE}")
-        for name, value in expected.items():
-            assert f"ARG {name}={value}\n" in global_args
-            for stage in (builder, runtime):
-                assert f"ARG {name}\n" in stage
-                assert f"{name}=${{{name}}}" in stage
-        assert "uv run --no-sync policynim ingest" in builder
-        assert "COPY --from=builder /app/data/runtime/runtime_rules.json " in runtime
-        assert (
-            "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json" in runtime
-        )
-
-
-def test_railway_ingestion_command_does_not_expand_key_into_build_log() -> None:
-    """Keep the supported build ARG out of the displayed ingestion command."""
-    text = _read_text(RAILWAY_DOCKERFILE)
-    run_commands = [line for line in text.splitlines() if line.startswith("RUN ")]
-    assert all("NVIDIA_API_KEY" not in command for command in run_commands)
-    assert "RUN uv run --no-sync policynim ingest" in run_commands
+    assert 'dockerfilePath = "Dockerfile.railway"' in (REPO_ROOT / "railway.toml").read_text()

@@ -23,9 +23,9 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from policynim.contracts import Embedder
-from policynim.errors import PolicyNIMError
+from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError, ProviderError
 from policynim.ingest.chunking import chunk_policy_documents
-from policynim.operations import close_components
+from policynim.operations import ResourceStack, check_budget, close_components
 from policynim.services.catalog import CatalogPack, PolicyCatalog
 from policynim.services.ingest import _attach_embeddings, _compile_runtime_rules_artifact
 from policynim.settings import Settings
@@ -37,28 +37,20 @@ from policynim.storage.generation_sources import (
     digest_bytes,
 )
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
-from policynim.types import EmbeddingIdentity, ParsedDocument, RuntimeRulesArtifact, StrictModel
+from policynim.types import (
+    EmbeddingIdentity,
+    GenerationID,
+    ParsedDocument,
+    RuntimeRulesArtifact,
+    StrictModel,
+)
 
-GenerationID = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Digest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 _ARTIFACTS = {"snapshot.json", "catalog.json", "index.sqlite3", "runtime_rules.json"}
 _FILES = _ARTIFACTS | {"manifest.json"}
 _OWNER = b'{"owner":"policynim-generations","schema_version":1}\n'
 _STAGE_OWNER = b"policynim-generation-stage-v1\n"
 LOGGER = logging.getLogger(__name__)
-
-
-class GenerationError(PolicyNIMError):
-    """A bounded generation failure with a phase and source-preserving recovery action."""
-
-    def __init__(self, phase: str, detail: str) -> None:
-        """Preserve a safe phase and recovery action without echoing artifact contents."""
-        self.phase = phase
-        super().__init__(
-            f"Generation {phase} failed: {detail} Preserve existing data and run "
-            "`policynim generation inspect` before retrying.",
-            failure_class=f"generation_{phase}",
-        )
 
 
 class GenerationManifest(StrictModel):
@@ -130,8 +122,25 @@ class GenerationSnapshot:
     manifest: GenerationManifest
     catalog: PolicyCatalog
     documents: list[ParsedDocument]
+    rules: RuntimeRulesArtifact
+    activation: GenerationPointer | None = None
     _lease: AbstractContextManager[None] | None = field(default=None, repr=False)
     _lease_path: Path | None = field(default=None, repr=False)
+
+    @property
+    def indexed_catalog(self) -> PolicyCatalog:
+        """Return generation metadata without changing the sealed source catalog digest."""
+        return self.catalog.model_copy(
+            update={
+                "scope": "generation",
+                "generation_id": self.generation_id,
+                "pack_pins": self.manifest.pack_pins,
+                "indexed_count": len(
+                    {chunk.policy.policy_id for chunk in chunk_policy_documents(self.documents)}
+                ),
+            },
+            deep=True,
+        )
 
     @property
     def index_path(self) -> Path:
@@ -243,7 +252,8 @@ class GenerationStore:
         self._fault = fault
 
     def _step(self, name: str) -> None:
-        """Expose named transaction boundaries to fault and process-termination tests."""
+        """Honor cooperative cancellation and expose named transaction fault boundaries."""
+        check_budget()
         if self._fault is not None:
             self._fault(name)
 
@@ -276,7 +286,7 @@ class GenerationStore:
             not initialize or any(path.name != ".publish.lock" for path in self.root.iterdir())
         ):
             raise GenerationError("open", "The directory isn't an owned generation store.")
-        with exclusive_file_lock(self.root / ".publish.lock"):
+        with exclusive_file_lock(self.root / ".publish.lock", on_wait=check_budget):
             if not owner.exists():
                 temporary = self.root / (".owner-" + uuid4().hex + ".tmp")
                 try:
@@ -401,7 +411,7 @@ class GenerationStore:
                 expected_chunks, key=lambda chunk: chunk.chunk_id
             ):
                 raise ValueError("Index chunks don't match the effective source snapshot.")
-            return GenerationSnapshot(generation_id, directory, manifest, catalog, documents)
+            return GenerationSnapshot(generation_id, directory, manifest, catalog, documents, rules)
         except GenerationError:
             raise
         except Exception as exc:
@@ -446,6 +456,8 @@ class GenerationStore:
         try:
             with self._locked():
                 snapshot = self._inspect_id(generation_id)
+                snapshot.activation = self._pointer()
+                check_budget()
                 directory = self.root / "leases" / snapshot.generation_id
                 if directory.is_symlink():
                     raise GenerationError("pin", "The reader lease directory can't be a symlink.")
@@ -481,7 +493,7 @@ class GenerationStore:
             if result is not None:
                 result.warnings.append("Generation activated; publisher cleanup needs inspection.")
                 return result
-            if isinstance(exc, GenerationError):
+            if isinstance(exc, (GenerationError, ProviderError, ConfigurationError)):
                 raise
             raise GenerationError(
                 "publish",
@@ -636,6 +648,16 @@ class GenerationStore:
             return result
         except GenerationError:
             raise
+        except ProviderError as exc:
+            raise ProviderError(
+                "Generation preparation failed; prior active state is unchanged. " + str(exc),
+                failure_class=exc.failure_class,
+            ) from exc
+        except ConfigurationError as exc:
+            raise ConfigurationError(
+                "Generation preparation failed; prior active state is unchanged. " + str(exc),
+                failure_class=exc.failure_class,
+            ) from exc
         except Exception as exc:
             raise GenerationError(
                 "publish", "Preparation didn't complete; the prior active pointer is unchanged."
@@ -708,8 +730,18 @@ class GenerationStore:
         result.profile_path = settings.profile.as_posix() if settings.profile else None
         return result
 
-    def build(self, settings: Settings, embedder: Embedder) -> PublicationResult:
-        """Embed a captured effective snapshot and activate only its complete validated object."""
+    def build(
+        self,
+        settings: Settings,
+        embedder: Embedder | None = None,
+        *,
+        embedder_factory: Callable[[], Embedder] | None = None,
+    ) -> PublicationResult:
+        """Validate sources before using a borrowed embedder or command-owned lazy factory."""
+        if (embedder is None) == (embedder_factory is None):
+            raise GenerationError(
+                "prepare", "Provide exactly one embedder or owned embedder factory."
+            )
         snapshot, roots = capture_sources(settings)
         self._guard_outputs(roots, settings)
         documents, _ = snapshot.resolve()
@@ -718,7 +750,13 @@ class GenerationStore:
 
         def prepare_index(destination: Path) -> None:
             """Embed only captured effective chunks and write the staged SQLite artifact."""
-            vectors = embedder.embed_documents([chunk.text for chunk in chunks])
+            with ResourceStack() as cleanup:
+                component = embedder
+                if component is None:
+                    assert embedder_factory is not None
+                    component = embedder_factory()
+                    cleanup.callback(close_components, component)
+                vectors = component.embed_documents([chunk.text for chunk in chunks])
             SQLiteVecIndexStore(path=destination, embedding_identity=self.embedding).replace(
                 _attach_embeddings(chunks, vectors)
             )

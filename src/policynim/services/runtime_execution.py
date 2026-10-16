@@ -462,7 +462,9 @@ def _build_execution_result(
     failure_class: str | None,
     residual_uncertainty: str | None,
 ) -> RuntimeExecutionResult:
+    """Retain the decision generation in the final execution response."""
     return RuntimeExecutionResult(
+        generation_id=decision_result.generation_id,
         execution_id=execution_id,
         session_id=session_id,
         request=request,
@@ -491,7 +493,9 @@ def _build_evidence_record(
     failure_class: str | None,
     residual_uncertainty: str | None,
 ) -> RuntimeExecutionEvidenceRecord:
+    """Bind each persisted execution event to its decision generation."""
     return RuntimeExecutionEvidenceRecord(
+        generation_id=decision_result.generation_id,
         event_id=str(uuid4()),
         execution_id=execution_id,
         session_id=session_id,

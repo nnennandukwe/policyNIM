@@ -32,6 +32,7 @@ from policynim.errors import (
     MissingIndexError,
     PolicyNIMError,
 )
+from policynim.interfaces.generation_cli import app as generation_app
 from policynim.interfaces.mcp import run_server
 from policynim.interfaces.profile_cli import app as profile_app
 from policynim.runtime_paths import resolve_runtime_path
@@ -50,7 +51,7 @@ from policynim.services import (
     create_runtime_execution_service,
     create_search_service,
 )
-from policynim.services.catalog import build_policy_catalog
+from policynim.services.catalog import CatalogPolicyView, build_policy_catalog
 from policynim.services.inventory import inspect_policy_inventory
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -110,6 +111,7 @@ app.add_typer(policies_app, name="policies")
 
 
 app.add_typer(profile_app, name="profile")
+app.add_typer(generation_app, name="generation")
 
 
 @policies_app.command("list")
@@ -117,17 +119,22 @@ def policies_list(
     output_format: Annotated[
         Literal["text", "json"], typer.Option("--format", help="Catalog output: text or json.")
     ] = "text",
+    source: Annotated[
+        bool, typer.Option("--source", help="Inspect configured mutable sources.")
+    ] = False,
 ) -> None:
     """List source policy IDs and pack versions; use show for individual content revisions."""
     try:
-        catalog = build_policy_catalog()
+        catalog = build_policy_catalog(source_only=source)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
     if output_format == "json":
         typer.echo(catalog.model_dump_json(indent=2))
         return
-    typer.echo(f"Source catalog: {catalog.effective_count} policies; {catalog.digest}")
-    typer.echo("Indexed generation: unknown (source inspection only)")
+    typer.echo(
+        f"{catalog.scope.title()} catalog: {catalog.effective_count} policies; {catalog.digest}"
+    )
+    typer.echo(f"Generation: {catalog.generation_id or 'unknown (source inspection only)'}")
     for entry in catalog.policies:
         provenance = entry.policy.provenance
         pack = (
@@ -152,14 +159,22 @@ def policies_show(
     output_format: Annotated[
         Literal["text", "json"], typer.Option("--format", help="Policy output: text or json.")
     ] = "text",
+    source: Annotated[
+        bool, typer.Option("--source", help="Inspect configured mutable sources.")
+    ] = False,
 ) -> None:
     """Show one policy's source text, content digest, and declared provenance."""
     try:
-        entry = build_policy_catalog().show(policy_id)
+        catalog = build_policy_catalog(source_only=source)
+        entry = catalog.show(policy_id)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
     if output_format == "json":
-        typer.echo(entry.model_dump_json(indent=2))
+        typer.echo(
+            CatalogPolicyView(
+                **entry.model_dump(), scope=catalog.scope, generation_id=catalog.generation_id
+            ).model_dump_json(indent=2)
+        )
         return
     typer.echo(f"{entry.policy.policy_id}: {entry.policy.title}")
     typer.echo(f"Source: {entry.path}; state: {entry.state}")
@@ -176,19 +191,23 @@ def policies_validate(
     output_format: Annotated[
         Literal["text", "json"], typer.Option("--format", help="Validation output: text or json.")
     ] = "text",
+    source: Annotated[
+        bool, typer.Option("--source", help="Inspect configured mutable sources.")
+    ] = False,
 ) -> None:
     """Validate manifest, membership, source metadata, and policy IDs without embedding."""
     try:
-        catalog = build_policy_catalog()
+        catalog = build_policy_catalog(source_only=source)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
     result = {
         "status": "ok",
-        "scope": "source",
+        "scope": catalog.scope,
+        "generation_id": catalog.generation_id,
         "catalog_digest": catalog.digest,
         "authored_count": catalog.authored_count,
         "effective_count": catalog.effective_count,
-        "indexed_count": None,
+        "indexed_count": catalog.indexed_count,
         "unlisted_markdown": catalog.unlisted_markdown,
     }
     if output_format == "json":
@@ -384,6 +403,10 @@ def inventory(
         typer.echo(report.model_dump_json(indent=2))
         return
     typer.echo("PolicyNIM inventory (local process; remote deployment isn't inspected)")
+    typer.echo(
+        f"Generation state: {report.generation_state}; ID: {report.generation_id or 'unknown'}"
+    )
+    typer.echo(f"Index scope: {report.index_scope}")
     source = report.source
     if source.profile_path is not None:
         typer.echo(f"Source profile: {source.profile_path}")
@@ -412,7 +435,7 @@ def _inventory_count(count: int | None) -> str:
 
 @app.command()
 def ingest() -> None:
-    """Build a policy index and runtime rules at unused output paths."""
+    """Build and activate a complete policy generation with explicit embedding requests."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
@@ -430,6 +453,10 @@ def ingest() -> None:
     typer.echo(f"Index: {result.index_uri} (table: {result.table_name})")
     if result.catalog_digest is not None:
         typer.echo(f"Source catalog: {result.catalog_digest}")
+    if result.generation_id is not None:
+        typer.echo(f"Activated generation: {result.generation_id}")
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}")
 
 
 @app.command(
@@ -2919,6 +2946,7 @@ def _build_doctor_report() -> dict[str, object]:
     index_path = resolve_runtime_path(settings.index_db_path)
     runtime_rules_path = resolve_runtime_path(settings.runtime_rules_artifact_path)
     report["paths"] = {
+        "generations_dir": resolve_runtime_path(settings.generations_dir).as_posix(),
         "index_db_path": index_path.as_posix(),
         "runtime_rules_artifact_path": runtime_rules_path.as_posix(),
         "runtime_evidence_db_path": resolve_runtime_path(
@@ -2931,6 +2959,24 @@ def _build_doctor_report() -> dict[str, object]:
     report["inventory"] = inventory.model_dump(mode="json")
     report["index"] = inventory.index.model_dump(mode="json")
     readiness = inventory.index
+    checks.append(
+        {
+            "name": "policy_generation",
+            "status": "ok" if inventory.generation_state == "ready" else "action_required",
+            "message": inventory.generation_id
+            or inventory.generation_reason
+            or "No active generation.",
+        }
+    )
+    if inventory.generation_state != "ready":
+        next_steps.append(
+            "Import a trusted bundle with `policynim generation import BUNDLE "
+            "--expect-digest DIGEST`, "
+            "or validate a standalone pair with `policynim generation migrate`. "
+            "For changed sources, `policynim ingest` builds a new generation "
+            "with explicit embedding usage. "
+            "Preserve existing SQLite and LanceDB data."
+        )
     legacy_lancedb_alias_configured = _doctor_legacy_lancedb_alias_configured(discovery)
     index_recovery_step_added = readiness.state not in {"ready", "missing"}
     if readiness.state == "directory":
@@ -2976,11 +3022,11 @@ def _build_doctor_report() -> dict[str, object]:
             }
         )
         next_steps.append(
-            "Run `policynim policies validate --format json` for the exact source error. "
+            "Run `policynim policies validate --source --format json` for the exact source error. "
             "Recover authoritative Markdown sources and set POLICYNIM_CORPUS_DIR before rebuilding."
         )
 
-    if runtime_rules_path.exists():
+    if inventory.generation_state == "ready" or runtime_rules_path.exists():
         checks.append(
             {
                 "name": "runtime_rules_artifact",
@@ -3055,9 +3101,8 @@ def _doctor_cli_command(command: str) -> str:
 def _doctor_ingest_next_step() -> str:
     """Return the standard ingest recovery step for doctor output."""
     return (
-        f"Run `{_doctor_cli_command('ingest')}` to build the local policy index "
-        "and runtime rules artifact. If either output exists, choose separate "
-        "POLICYNIM_INDEX_DB_PATH and POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
+        f"Run `{_doctor_cli_command('ingest')}` to build and activate a complete generation "
+        "under POLICYNIM_GENERATIONS_DIR. Existing standalone index and rules stay preserved."
     )
 
 

@@ -77,7 +77,7 @@ from policynim.services.authorization import (
 )
 from policynim.services.health import log_health_failure
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
+from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
 from policynim.types import (
     MAX_TOP_K,
     MIN_TOP_K,
@@ -912,7 +912,7 @@ def _register_beta_routes(
 
 def _register_health_route(server: MCPServer, settings: Settings) -> None:
     """Register a public readiness endpoint for hosted HTTP runtimes."""
-    table_name = create_index_store(settings).table_name
+    table_name = POLICY_CHUNKS_TABLE
     try:
         health_service = create_runtime_health_service(settings)
         fallback_reason = "Local index readiness could not be inspected."
@@ -1634,7 +1634,7 @@ def run_server(transport: str = "stdio") -> None:
     if transport == "streamable-http":
         _configure_hosted_logger()
         _ensure_streamable_http_port_available(settings.mcp_host, settings.mcp_port)
-        ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
+        ensure_hosted_runtime_ready(settings)
         app = _build_streamable_http_app(settings)
         try:
             _run_streamable_http_app(app, host=settings.mcp_host, port=settings.mcp_port)

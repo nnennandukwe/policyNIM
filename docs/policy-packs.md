@@ -99,12 +99,11 @@ that metadata remain readable when their embedding identity is compatible;
 missing provenance stays `null`. Malformed stored provenance fails identity
 validation before retrieval can contact the embedding provider.
 
-The catalog is source inspection. Its `indexed_count` stays `null` because reading
-source files doesn't prove which generation a service serves. Current source
-entries are active; reviewed additions, exclusions, and replacements belong to
-profile composition work. Complete generation activation, reader pinning, and
-rollback belong to publication work. This manifest format doesn't implement those
-operations or fetch remote packs.
+Catalog commands inspect the active complete generation by default. Add `--source`
+to inspect editable source files; source scope reports `indexed_count: null`.
+Generation scope binds catalog text, effective membership, provenance, index, and
+runtime rules to one `generation_id`. See [generation operations](policy-generations.md)
+for explicit standalone migration, reader pinning, offline bundles, and rollback.
 
 For baseline plus local additions, use a [pinned profile](policy-profiles.md).
 `POLICYNIM_CORPUS_DIR` keeps its replacement-directory behavior.

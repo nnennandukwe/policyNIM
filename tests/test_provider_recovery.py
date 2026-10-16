@@ -435,7 +435,9 @@ def test_negative_nvidia_logits_reach_policy_compilation_routing(tmp_path):
         def close(self):
             """Release the resource-free test embedder."""
 
-    store = create_index_store(Settings(**NO_ENV, index_db_path=tmp_path / "index.sqlite3"))
+    store = create_index_store(
+        Settings(**NO_ENV, index_db_path=tmp_path / "index.sqlite3"), legacy=True
+    )
     store.replace([EmbeddedChunk(**candidate().model_dump(exclude={"score"}), vector=[1.0, 0.0])])
 
     def handler(request):

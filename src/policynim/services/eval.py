@@ -13,7 +13,6 @@ import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import TracebackType
 from typing import Any, cast
 
@@ -24,12 +23,12 @@ from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_pat
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
-from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import PreflightService
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_store import pinned_generation
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -49,6 +48,7 @@ from policynim.types import (
     GeneratedPolicyConstraint,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
+    GenerationID,
     PolicyChunk,
     PolicyConformanceRequest,
     PolicyConformanceResult,
@@ -76,7 +76,8 @@ class EvalService:
     """Run PolicyNIM eval suites and persist comparable reports."""
 
     def __init__(self, *, settings: Settings) -> None:
-        self._settings = settings
+        """Retain the selected dependencies and immutable operation settings."""
+        self._settings = settings.model_copy(deep=True)
         self._workspace_path = resolve_runtime_path(settings.eval_workspace_dir)
         self._ui_port: int | None = None
 
@@ -110,6 +111,43 @@ class EvalService:
             raise ValueError("eval --regenerate requires backend nemo, nemo_evaluator, or nat.")
         if max_regenerations < 1 or max_regenerations > 3:
             raise ValueError("max_regenerations must be between 1 and 3.")
+        if mode == "live":
+            with ResourceStack() as cleanup:
+                store = create_index_store(self._settings)
+                cleanup.callback(close_components, store)
+                snapshot = pinned_generation(store)
+                if snapshot is None:
+                    raise PolicyNIMError("Live evaluation requires a verified policy generation.")
+                worker = EvalService(
+                    settings=self._settings.model_copy(
+                        update={"generation_id": snapshot.generation_id}, deep=True
+                    )
+                )
+                return worker._run_pinned(
+                    mode=mode,
+                    backend=backend,
+                    compare_rerank=compare_rerank,
+                    regenerate=regenerate,
+                    max_regenerations=max_regenerations,
+                )
+        return self._run_pinned(
+            mode=mode,
+            backend=backend,
+            compare_rerank=compare_rerank,
+            regenerate=regenerate,
+            max_regenerations=max_regenerations,
+        )
+
+    def _run_pinned(
+        self,
+        *,
+        mode: EvalExecutionMode,
+        backend: EvalBackend,
+        compare_rerank: bool,
+        regenerate: bool,
+        max_regenerations: int,
+    ) -> EvalRunResult:
+        """Keep the job's selected generation across every mode, case, and report."""
         suite_path = resolve_eval_suite_path()
         suite = _load_eval_suite(suite_path)
         rerank_modes = [True, False] if compare_rerank else [True]
@@ -124,6 +162,10 @@ class EvalService:
                 regenerate=regenerate,
                 max_regenerations=max_regenerations,
             )
+            if mode == "live" and any(
+                case.generation_id != self._settings.generation_id for case in case_results
+            ):
+                raise PolicyNIMError("Live eval results don't match the job's pinned generation.")
             mode_results.append(
                 self._persist_mode_run(
                     suite=suite,
@@ -141,6 +183,7 @@ class EvalService:
             else None
         )
         return EvalRunResult(
+            generation_id=self._settings.generation_id if mode == "live" else None,
             mode=mode,
             backend=backend,
             suite_name=suite.name,
@@ -311,58 +354,45 @@ class EvalService:
         regenerate: bool,
         max_regenerations: int,
     ) -> list[EvalCaseResult]:
-        """Run live eval cases against an isolated temporary index."""
-        with TemporaryDirectory(prefix="policynim-eval-") as temp_dir:
-            temp_settings = self._settings.model_copy(
-                update={
-                    "index_db_path": Path(temp_dir) / "index.sqlite3",
-                    "runtime_rules_artifact_path": Path(temp_dir) / "runtime_rules.json",
-                }
+        """Run live cases against the generation held by the outer job lease."""
+        with ResourceStack() as cleanup:
+            search_service = _create_live_search_service(
+                self._settings,
+                rerank_enabled=rerank_enabled,
             )
-            ingest_service = create_ingest_service(temp_settings)
-            try:
-                ingest_service.run()
-            finally:
-                _close_component(ingest_service)
-
-            with ResourceStack() as cleanup:
-                search_service = _create_live_search_service(
-                    temp_settings,
-                    rerank_enabled=rerank_enabled,
-                )
-                cleanup.callback(close_components, search_service)
-                preflight_service = _create_live_preflight_service(
-                    temp_settings,
-                    rerank_enabled=rerank_enabled,
-                )
-                cleanup.callback(close_components, preflight_service)
-                conformance_service = (
-                    _create_live_conformance_service(temp_settings, backend=backend)
-                    if backend != "default" and not regenerate
-                    else None
-                )
-                cleanup.callback(close_components, conformance_service)
-                regeneration_service = (
-                    _create_live_regeneration_service(
-                        temp_settings,
-                        backend=backend,
-                        rerank_enabled=rerank_enabled,
-                    )
-                    if regenerate
-                    else None
-                )
-                cleanup.callback(close_components, regeneration_service)
-                return _score_suite_cases(
-                    suite.cases,
-                    search_service=search_service,
-                    preflight_service=preflight_service,
-                    conformance_service=conformance_service,
-                    regeneration_service=regeneration_service,
+            cleanup.callback(close_components, search_service)
+            preflight_service = _create_live_preflight_service(
+                self._settings,
+                rerank_enabled=rerank_enabled,
+            )
+            cleanup.callback(close_components, preflight_service)
+            conformance_service = (
+                _create_live_conformance_service(self._settings, backend=backend)
+                if backend != "default" and not regenerate
+                else None
+            )
+            cleanup.callback(close_components, conformance_service)
+            regeneration_service = (
+                _create_live_regeneration_service(
+                    self._settings,
                     backend=backend,
                     rerank_enabled=rerank_enabled,
-                    max_regenerations=max_regenerations,
-                    operation_timeout_seconds=self._settings.operation_timeout_seconds,
                 )
+                if regenerate
+                else None
+            )
+            cleanup.callback(close_components, regeneration_service)
+            return _score_suite_cases(
+                suite.cases,
+                search_service=search_service,
+                preflight_service=preflight_service,
+                conformance_service=conformance_service,
+                regeneration_service=regeneration_service,
+                backend=backend,
+                rerank_enabled=rerank_enabled,
+                max_regenerations=max_regenerations,
+                operation_timeout_seconds=self._settings.operation_timeout_seconds,
+            )
 
     def _persist_mode_run(
         self,
@@ -374,6 +404,7 @@ class EvalService:
         rerank_enabled: bool,
         case_results: list[EvalCaseResult],
     ) -> EvalModeRunResult:
+        """Persist one mode with the job generation and actual case results."""
         metrics = _aggregate_metrics(case_results)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         mode_slug = "rerank-on" if rerank_enabled else "rerank-off"
@@ -385,6 +416,7 @@ class EvalService:
         reports_dir.mkdir(parents=True, exist_ok=True)
 
         result_payload = EvalModeRunResult(
+            generation_id=self._settings.generation_id if mode == "live" else None,
             backend=backend,
             rerank_enabled=rerank_enabled,
             metrics=metrics,
@@ -423,9 +455,11 @@ class EvalService:
             rerank_enabled=rerank_enabled,
             metrics=metrics,
             rows=report_rows,
+            generation_id=result_payload.generation_id,
         )
 
         return EvalModeRunResult(
+            generation_id=result_payload.generation_id,
             backend=backend,
             rerank_enabled=rerank_enabled,
             metrics=metrics,
@@ -527,6 +561,7 @@ def _score_search_case(
     result: SearchResult,
     rerank_enabled: bool,
 ) -> EvalCaseResult:
+    """Score retrieved evidence while retaining its generation identity."""
     actual_chunk_ids = [hit.chunk_id for hit in result.hits]
     matched_chunk_ids = [
         chunk_id for chunk_id in case.expected_chunk_ids if chunk_id in set(actual_chunk_ids)
@@ -540,6 +575,7 @@ def _score_search_case(
         label="chunk_id",
     )
     return EvalCaseResult(
+        generation_id=result.generation_id,
         case_id=case.case_id,
         kind=case.kind,
         input=case.input,
@@ -581,6 +617,7 @@ def _score_preflight_case(
     regeneration_result: PreflightRegenerationResult | None = None,
     rerank_enabled: bool,
 ) -> EvalCaseResult:
+    """Score grounded output and preserve its actual generation evidence."""
     actual_policy_ids = [policy.policy_id for policy in result.applicable_policies]
     matched_policy_ids = [
         policy_id for policy_id in case.expected_policy_ids if policy_id in set(actual_policy_ids)
@@ -606,6 +643,7 @@ def _score_preflight_case(
             )
         )
     return EvalCaseResult(
+        generation_id=result.generation_id,
         case_id=case.case_id,
         kind=case.kind,
         input=case.input,
@@ -833,6 +871,7 @@ def _build_eval_report_rows(
     case_results: Sequence[EvalCaseResult],
     metrics: EvalAggregateMetrics,
 ) -> list[dict[str, object]]:
+    """Assemble export rows with case evidence and aggregate metrics."""
     return [
         {
             "suite_name": suite.name,
@@ -841,6 +880,7 @@ def _build_eval_report_rows(
             "backend": backend,
             "rerank_enabled": rerank_enabled,
             "case_id": result.case_id,
+            "generation_id": result.generation_id,
             "kind": result.kind,
             "input": result.input,
             "domain": result.domain or "",
@@ -927,11 +967,14 @@ def _write_eval_html_report(
     rerank_enabled: bool,
     metrics: EvalAggregateMetrics,
     rows: Sequence[dict[str, object]],
+    generation_id: GenerationID | None = None,
 ) -> None:
+    """Write an inspectable report with the selected generation in its summary."""
     summary_rows: list[tuple[str, object]] = [
         ("Suite", suite.name),
         ("Suite path", suite_path.as_posix()),
         ("Mode", mode),
+        ("Policy generation", generation_id or "none (offline fixtures)"),
         ("Backend", backend),
         ("Rerank mode", "rerank-on" if rerank_enabled else "rerank-off"),
         ("Case count", metrics.case_count),
@@ -952,6 +995,7 @@ def _write_eval_html_report(
     ]
     case_columns = [
         "case_id",
+        "generation_id",
         "kind",
         "domain",
         "top_k",
@@ -1173,6 +1217,7 @@ def _phoenix_span_attributes(
     run: EvalModeRunResult,
     case: EvalCaseResult,
 ) -> dict[str, object]:
+    """Expose case provenance and measured eval results as trace attributes."""
     conformance_result = case.conformance_result
     regeneration_result = case.regeneration_result
     evidence_trace = case.evidence_trace
@@ -1186,6 +1231,7 @@ def _phoenix_span_attributes(
         "policynim.eval.rerank_mode": "rerank-on" if run.rerank_enabled else "rerank-off",
         "policynim.eval.result_json_path": run.result_json_path,
         "policynim.eval.report_html_path": run.report_html_path,
+        "policynim.generation_id": case.generation_id,
         "policynim.eval.case_id": case.case_id,
         "policynim.eval.case_kind": case.kind,
         "policynim.eval.domain": case.domain or "",
@@ -1271,6 +1317,8 @@ def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> 
     from policynim.providers import NVIDIAEmbedder, NVIDIAReranker
 
     with ResourceStack() as cleanup:
+        store = create_index_store(settings)
+        cleanup.callback(close_components, store)
         embedder = NVIDIAEmbedder.from_settings(settings)
         cleanup.callback(close_components, embedder)
         reranker = NVIDIAReranker.from_settings(settings) if rerank_enabled else None
@@ -1278,7 +1326,7 @@ def _create_live_search_service(settings: Settings, *, rerank_enabled: bool) -> 
         service = SearchService(
             operation_timeout_seconds=settings.operation_timeout_seconds,
             embedder=embedder,
-            index_store=create_index_store(settings),
+            index_store=store,
             reranker=reranker,
         )
         cleanup.pop_all()
@@ -1299,6 +1347,8 @@ def _create_live_preflight_service(
     )
 
     with ResourceStack() as cleanup:
+        store = create_index_store(settings)
+        cleanup.callback(close_components, store)
         embedder = NVIDIAEmbedder.from_settings(settings)
         cleanup.callback(close_components, embedder)
         reranker = (
@@ -1312,7 +1362,7 @@ def _create_live_preflight_service(
         service = PreflightService(
             operation_timeout_seconds=settings.operation_timeout_seconds,
             embedder=embedder,
-            index_store=create_index_store(settings),
+            index_store=store,
             reranker=reranker,
             generator=generator,
             compiler=compiler,
@@ -1360,6 +1410,8 @@ def _create_live_regeneration_service(
     )
 
     with ResourceStack() as cleanup:
+        store = create_index_store(settings)
+        cleanup.callback(close_components, store)
         embedder = NVIDIAEmbedder.from_settings(settings)
         cleanup.callback(close_components, embedder)
         reranker = (
@@ -1370,7 +1422,7 @@ def _create_live_regeneration_service(
         cleanup.callback(close_components, compiler)
         compiler_service = PolicyCompilerService(
             embedder=embedder,
-            index_store=create_index_store(settings),
+            index_store=store,
             reranker=reranker,
             compiler=compiler,
         )

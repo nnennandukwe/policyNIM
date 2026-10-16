@@ -93,7 +93,7 @@ def write_ready_sqlite_index(path: Path) -> None:
     """Write a minimal populated PolicyNIM sqlite-vec index for doctor tests."""
     from policynim.storage import create_index_store
 
-    create_index_store(Settings(index_db_path=path)).replace(
+    create_index_store(Settings(index_db_path=path), legacy=True).replace(
         [
             EmbeddedChunk(
                 chunk_id="DOCTOR-READY-1",
@@ -122,6 +122,8 @@ def clear_installer_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "POLICYNIM_CONFIG_FILE",
         "POLICYNIM_CORPUS_DIR",
         "POLICYNIM_INDEX_DB_PATH",
+        "POLICYNIM_GENERATIONS_DIR",
+        "POLICYNIM_GENERATION_ID",
         "POLICYNIM_LANCEDB_URI",
         "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
@@ -1643,7 +1645,8 @@ def test_doctor_reports_ready_checkout_and_mcp_hints(
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["status"] == "ok"
+    assert payload["status"] == "action_required"
+    assert payload["inventory"]["generation_state"] == "migration_required"
     assert payload["runtime_mode"] == "source_checkout"
     assert payload["config"]["active_config_file"] == str(checkout_root / ".env")
     assert payload["paths"]["index_db_path"] == str(index_path)
@@ -1797,9 +1800,8 @@ def test_doctor_source_checkout_recovery_uses_uv_run_commands(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert (
-        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact. "
-        "If either output exists, choose separate POLICYNIM_INDEX_DB_PATH and "
-        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
+        "Run `uv run policynim ingest` to build and activate a complete generation "
+        "under POLICYNIM_GENERATIONS_DIR. Existing standalone index and rules stay preserved."
     ) in payload["next_steps"]
     assert (
         "Run `policynim ingest` to build the local policy index and runtime rules artifact."
@@ -2074,12 +2076,12 @@ def test_support_bundle_reports_redacted_first_run_state(
     assert payload["python"]["executable"] == "<python-executable>"
     assert payload["doctor"]["config"]["expected_init_config_file"] == ("<config-dir>/config.env")
     assert payload["redaction"]["local_paths"] == "redacted"
-    assert payload["redaction"]["path_markers"] == [
+    assert set(payload["redaction"]["path_markers"]) - {"<local-path>"} == {
         "<config-dir>",
         "<data-dir>",
         "<home>",
         "<python-executable>",
-    ]
+    }
     assert payload["mcp_smoke"] == {
         "status": "skipped",
         "reason": "Pass --include-mcp-smoke to verify stdio tool registration.",
@@ -2221,6 +2223,7 @@ def test_init_command_writes_config_and_prints_next_step(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Verify init command writes config and prints next step."""
     _, config_root, data_root = configure_standalone_cli_environment(monkeypatch, tmp_path)
     custom_corpus = tmp_path / "custom-corpus"
     custom_corpus.mkdir()
@@ -2239,6 +2242,7 @@ def test_init_command_writes_config_and_prints_next_step(
     assert config_path.read_text(encoding="utf-8") == (
         "NVIDIA_API_KEY='nvapi-test-key'\n"
         f"POLICYNIM_CORPUS_DIR='{custom_corpus}'\n"
+        f"POLICYNIM_GENERATIONS_DIR='{data_root / 'generations'}'\n"
         f"POLICYNIM_INDEX_DB_PATH='{data_root / 'index.sqlite3'}'\n"
         f"POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH='{data_root / 'runtime' / 'runtime_rules.json'}'\n"
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH="
@@ -4502,8 +4506,8 @@ def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_p
     assert path.read_bytes() == before
 
 
-def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tmp_path):
-    """Use the real ingest command to reject corrupt data with operator guidance."""
+def test_ingest_preserves_unrelated_corrupt_standalone_index(monkeypatch, tmp_path):
+    """Default ingestion creates a generation without touching standalone migration inputs."""
     from test_index_identity import SpyEmbedder
 
     checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
@@ -4516,11 +4520,10 @@ def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tm
 
     result = runner.invoke(app, ["ingest"])
 
-    assert result.exit_code == 1
-    assert "separate" in result.stderr
+    assert result.exit_code == 0, result.output
+    assert "Activated generation:" in result.stdout
     assert "sentinel" not in result.output
-    assert isinstance(result.exception, SystemExit)
-    assert embedder.calls == 0 and embedder.closed
+    assert embedder.calls == 1 and embedder.closed
     assert path.read_bytes() == b"private-corrupt-index-sentinel"
 
 

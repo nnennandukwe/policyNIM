@@ -174,8 +174,10 @@ Use [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md) for:
 
 Existing installations changing embedding models must follow the
 [source-preserving provider recovery runbook](docs/hosted-provider-recovery.md).
-Every ingestion build, including a same-model refresh, requires separate, absent
-index and runtime-rules output paths; existing installations are preserved.
+`policynim ingest` builds a complete immutable generation and atomically activates
+it. Existing standalone installations require explicit migration. See
+[policy generations](docs/policy-generations.md) for inspection, rollback,
+retention, and offline deployment bundles.
 
 ## Local Contributor Setup
 

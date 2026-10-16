@@ -14,10 +14,9 @@ from typing import Protocol
 from policynim.contracts import Embedder
 from policynim.errors import IndexCompatibilityError
 from policynim.ingest import chunk_policy_documents, load_policy_documents
-from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
+from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.catalog import compile_policy_catalog
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import (
     CompiledRuntimeRule,
     EmbeddedChunk,
@@ -165,25 +164,64 @@ class IngestService:
         )
 
 
-def create_ingest_service(settings: Settings | None = None) -> IngestService:
-    """Build the default ingest service from application settings."""
-    active_settings = settings or get_settings()
-    index_store = create_index_store(active_settings)
-    corpus_root = (
-        active_settings.profile.parent
-        if active_settings.profile is not None
-        else resolve_corpus_root(active_settings.corpus_dir)
-    )
-    return IngestService(
-        profile_path=active_settings.profile,
-        embedder=_create_default_embedder(active_settings),
-        index_store=index_store,
-        corpus_root=corpus_root,
-        embedding_model=active_settings.nvidia_embed_model,
-        runtime_rules_artifact_path=resolve_runtime_path(
-            active_settings.runtime_rules_artifact_path
-        ),
-    )
+class GenerationIngestService:
+    """Publish one complete generation while keeping provider ownership inside the command."""
+
+    def __init__(self, *, settings: Settings) -> None:
+        """Defer provider construction until source and destination validation succeeds."""
+        self._settings = settings.model_copy(deep=True)
+
+    def __enter__(self) -> GenerationIngestService:
+        """Return the command-scoped generation publisher."""
+        return self
+
+    def __exit__(
+        self,
+        kind: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Providers close inside run() before the service context exits."""
+        self.close()
+
+    def close(self) -> None:
+        """The publisher keeps no provider or reader handles between runs."""
+
+    def run(self) -> IngestResult:
+        """Activate a complete generation and report its already-validated publication receipt."""
+        from policynim.storage.generations import GenerationStore
+        from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
+        from policynim.types import EmbeddingIdentity
+
+        settings = self._settings
+        store = GenerationStore(
+            root=resolve_runtime_path(settings.generations_dir),
+            embedding=EmbeddingIdentity(
+                model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
+            ),
+        )
+        result = store.build(settings, embedder_factory=lambda: _create_default_embedder(settings))
+        manifest = result.manifest
+        return IngestResult(
+            generation_id=result.generation_id,
+            previous_generation_id=result.previous_generation_id,
+            warnings=result.warnings,
+            corpus_path=result.profile_path or result.source_roots[0],
+            profile_path=result.profile_path,
+            source_roots=result.source_roots,
+            index_uri=(store.root / "objects" / result.generation_id / "index.sqlite3").as_posix(),
+            table_name=POLICY_CHUNKS_TABLE,
+            embedding_model=manifest.embedding.model,
+            document_count=manifest.document_count,
+            chunk_count=manifest.chunk_count,
+            embedding_dimension=manifest.dimension,
+            catalog_digest=manifest.catalog_digest,
+        )
+
+
+def create_ingest_service(settings: Settings | None = None) -> GenerationIngestService:
+    """Create the explicit generation build command without initializing model clients."""
+    return GenerationIngestService(settings=settings or get_settings())
 
 
 def _create_default_embedder(settings: Settings) -> Embedder:

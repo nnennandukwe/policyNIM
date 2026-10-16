@@ -209,6 +209,7 @@ def test_precommit_fault_preserves_active_generation(tmp_path: Path) -> None:
     )
 
     def fail(name: str) -> None:
+        """Interrupt the selected filesystem boundary to verify preservation and recovery."""
         if name == "before_activate":
             raise OSError("Injected activation failure.")
 
@@ -224,6 +225,7 @@ def test_postcommit_fault_reports_active_with_warning(tmp_path: Path) -> None:
     settings, identity, index, rules = seed_legacy(tmp_path)
 
     def fail(name: str) -> None:
+        """Interrupt the selected filesystem boundary to verify preservation and recovery."""
         if name == "active_directory_fsync":
             raise OSError("Injected postcommit sync failure.")
 
@@ -297,15 +299,18 @@ def test_concurrent_publishers_serialize_activation_state(tmp_path: Path) -> Non
     errors: list[BaseException] = []
 
     def first_step(name: str) -> None:
+        """Hold the first publisher inside its serialized preparation boundary."""
         if name == "before_activate":
             first_entered.set()
             assert release_first.wait(5)
 
     def second_step(name: str) -> None:
+        """Record when the second publisher enters the serialized boundary."""
         if name == "stage_mkdir":
             second_entered.set()
 
     def publish(label: str, store: GenerationStore) -> None:
+        """Build one complete generation and capture any competing-writer failure."""
         try:
             if label == "second":
                 second_attempted.set()
@@ -404,6 +409,7 @@ def test_each_precommit_failure_can_retry_without_mixed_state(tmp_path: Path, po
     hit = False
 
     def fail(name: str) -> None:
+        """Interrupt the selected filesystem boundary to verify preservation and recovery."""
         nonlocal hit
         if name == point:
             hit = True
@@ -437,6 +443,7 @@ def test_initialization_failure_is_retryable_without_partial_activation(
     hit = False
 
     def fail(name: str) -> None:
+        """Interrupt the selected filesystem boundary to verify preservation and recovery."""
         nonlocal hit
         if name == point:
             hit = True
@@ -723,3 +730,308 @@ def test_invalid_runtime_regex_fails_before_embedding(tmp_path: Path) -> None:
         store.build(settings, embedder)
     assert embedder.calls == 0
     assert not (store.root / "active.json").exists()
+
+
+def test_default_index_factory_pins_the_active_complete_generation(tmp_path: Path) -> None:
+    """Runtime store selection uses active generation state rather than standalone paths."""
+    from policynim.errors import MissingIndexError
+    from policynim.storage import create_index_store
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    generations = GenerationStore(root=settings.generations_dir, embedding=identity)
+    published = generations.migrate(settings, index_path=index, rules_path=rules)
+    store = create_index_store(settings)
+    assert store.generation_id == published.generation_id
+    assert store.path == generations.root / "objects" / published.generation_id / "index.sqlite3"
+    assert list((generations.root / "leases" / published.generation_id).glob("*.lock"))
+    store.close()
+    store.close()
+    with pytest.raises(MissingIndexError, match="closed"):
+        store.list_chunks()
+
+
+def test_default_runtime_uses_its_generation_rules_and_source_evidence(tmp_path: Path) -> None:
+    """Unrelated legacy rules can't turn a sealed block rule into an unmatched allow."""
+    from policynim.services.runtime_decision import create_runtime_decision_service
+    from policynim.types import ShellCommandActionRequest
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    generations = GenerationStore(root=settings.generations_dir, embedding=identity)
+    published = generations.migrate(settings, index_path=index, rules_path=rules)
+    rules.write_text('{"schema_version":1,"rules":[]}')
+    with create_runtime_decision_service(settings) as service:
+        result = service.decide(
+            ShellCommandActionRequest(
+                kind="shell_command", command=["A"], task="Check sealed policy A.", cwd=tmp_path
+            )
+        )
+    assert result.decision == "block"
+    assert result.generation_id == published.generation_id
+    assert result.citations and all(
+        citation.chunk_id.startswith("source:") for citation in result.citations
+    )
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_managed_artifacts_reject_raw_adapter_mutation(tmp_path: Path, alias: bool) -> None:
+    """Raw adapters can't overwrite managed objects through directory aliases."""
+    from policynim.errors import IndexCompatibilityError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    snapshot = store.inspect()
+    path = snapshot.index_path
+    if alias:
+        linked = tmp_path / "alias"
+        linked.symlink_to(snapshot.directory, target_is_directory=True)
+        path = linked / "index.sqlite3"
+    raw = SQLiteVecIndexStore(path=path, embedding_identity=identity)
+    before = snapshot.index_path.read_bytes()
+    with pytest.raises(IndexCompatibilityError, match="immutable"):
+        raw.validate_replacement()
+    assert snapshot.index_path.read_bytes() == before
+
+
+def test_generation_pin_obeys_deadline_while_publisher_lock_is_held(tmp_path: Path) -> None:
+    """A waiting reader can stop before provider construction without leaving a held lease."""
+    from threading import Event, Thread
+
+    from policynim.errors import ProviderError
+    from policynim.operations import operation_scope
+    from policynim.storage.file_lock import exclusive_file_lock
+    from policynim.storage.index_store import create_index_store
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    held, release = Event(), Event()
+
+    def hold_publisher() -> None:
+        """Keep the real stable lock held until the waiting caller exits."""
+        with exclusive_file_lock(store.root / ".publish.lock"):
+            held.set()
+            assert release.wait(5)
+
+    thread = Thread(target=hold_publisher)
+    thread.start()
+    try:
+        assert held.wait(2)
+        with pytest.raises(ProviderError) as error, operation_scope(seconds=0.1):
+            create_index_store(settings)
+        assert error.value.failure_class == "deadline_exhausted"
+    finally:
+        release.set()
+        thread.join(2)
+    assert not thread.is_alive()
+    assert not list((store.root / "leases").rglob("*.lock"))
+    with store.pin():
+        pass
+
+
+def test_health_and_catalog_follow_activation_and_release_their_readers(tmp_path: Path) -> None:
+    """Long-lived health checks reacquire active state while source catalogs stay explicit."""
+    from policynim.services.catalog import build_policy_catalog
+    from policynim.services.health import create_runtime_health_service
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    health = create_runtime_health_service(settings)
+    assert health.check().generation_id == first
+    source = settings.corpus_dir
+    assert source is not None
+    member = next(source.rglob("*.md"))
+    member.write_text(member.read_text() + "\nReview deployment failures.\n")
+    assert build_policy_catalog(settings=settings).generation_id == first
+    assert build_policy_catalog(settings=settings, source_only=True).generation_id is None
+    second = store.build(settings, embedder=MockEmbedder()).generation_id
+    assert health.check().generation_id == second
+    catalog = build_policy_catalog(settings=settings)
+    assert catalog.generation_id == second and catalog.scope == "generation"
+    assert catalog.indexed_count == 2
+    assert not list((store.root / "leases").rglob("*.lock"))
+
+
+def test_default_search_preflight_and_execution_keep_generation_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Use the real default service graph, SQLite search, and evidence store with offline models."""
+    from test_index_identity import SpyEmbedder
+    from test_preflight_service import MockReranker
+
+    import policynim.services.compiler as compiler_module
+    import policynim.services.preflight as preflight_module
+    import policynim.services.router as router_module
+    import policynim.services.search as search_module
+    from policynim.services.evidence_trace import create_policy_evidence_trace_service
+    from policynim.services.runtime_evidence_report import create_runtime_evidence_report_service
+    from policynim.services.runtime_execution import create_runtime_execution_service
+    from policynim.types import (
+        FileWriteActionRequest,
+        GeneratedCompiledPolicyDraft,
+        GeneratedPolicyConstraint,
+        GeneratedPolicyGuidance,
+        GeneratedPreflightDraft,
+        PreflightRequest,
+        SearchRequest,
+    )
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "runtime_evidence_db_path": tmp_path / "evidence.sqlite3",
+        }
+    )
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    original = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+
+    class PositiveReranker(MockReranker):
+        def rerank(self, query, candidates, *, top_k):
+            """Supply positive deterministic ranking signals for the real SQLite candidates."""
+            return [chunk.model_copy(update={"score": 1.0}) for chunk in candidates[:top_k]]
+
+    class Compiler:
+        def compile_policy_packet(self, request, selection_packet, context):
+            """Compile a cited constraint from the actual retrieved generation context."""
+            return GeneratedCompiledPolicyDraft(
+                required_steps=[
+                    GeneratedPolicyConstraint(
+                        statement="Review deployment evidence.", citation_ids=[context[0].chunk_id]
+                    )
+                ]
+            )
+
+        def close(self):
+            """Record or release the offline resource at its ownership boundary."""
+            pass
+
+    class Generator:
+        def generate_preflight(
+            self, request, context, *, compiled_packet=None, regeneration_context=None
+        ):
+            """Return a grounded draft using the actual retained chunk and policy IDs."""
+            return GeneratedPreflightDraft(
+                summary="Review deployment evidence.",
+                applicable_policies=[
+                    GeneratedPolicyGuidance(
+                        policy_id=context[0].policy.policy_id,
+                        title=context[0].policy.title,
+                        rationale="Selected policy evidence.",
+                        citation_ids=[context[0].chunk_id],
+                    )
+                ],
+                plan_steps=["Review deployment evidence."],
+                citation_ids=[context[0].chunk_id],
+            )
+
+        def close(self):
+            """Record or release the offline resource at its ownership boundary."""
+            pass
+
+    monkeypatch.setattr(
+        search_module,
+        "_create_default_search_components",
+        lambda _: (SpyEmbedder(), PositiveReranker()),
+    )
+    monkeypatch.setattr(
+        router_module,
+        "_create_default_router_components",
+        lambda _: (SpyEmbedder(), PositiveReranker()),
+    )
+    monkeypatch.setattr(compiler_module, "_create_default_policy_compiler", lambda _: Compiler())
+    monkeypatch.setattr(preflight_module, "_create_default_generator", lambda _: Generator())
+    with (
+        search_module.create_search_service(settings) as search,
+        preflight_module.create_preflight_service(settings) as preflight,
+    ):
+        source = settings.corpus_dir
+        assert source is not None
+        member = next(source.rglob("*.md"))
+        for number in range(4):
+            member.write_text(member.read_text() + f"\nReviewed release {number}.\n")
+            store.build(settings, embedder=MockEmbedder())
+        store.prune(keep_recent=0)
+        found = search.search(SearchRequest(query="deployment"))
+        trace_result = preflight.preflight_with_trace(PreflightRequest(task="deployment"))
+        trace = create_policy_evidence_trace_service().build(trace_result)
+        assert found.hits and not trace_result.result.insufficient_context
+        assert found.generation_id == trace_result.result.generation_id == original
+        assert trace_result.compiled_packet.generation_id == trace.generation_id == original
+        assert all("Reviewed release" not in hit.text for hit in found.hits)
+    store.prune(keep_recent=0)
+    assert not (store.root / "objects" / original).exists()
+    active = store.inspect().generation_id
+    with create_runtime_execution_service(settings) as execution:
+        executed = execution.execute(
+            FileWriteActionRequest(
+                kind="file_write",
+                task="write output",
+                session_id="generation-proof",
+                cwd=tmp_path,
+                path=tmp_path / "output",
+                content="ok",
+            )
+        )
+    assert executed.generation_id == active
+    with create_runtime_evidence_report_service(settings) as reports:
+        report = reports.report_session("generation-proof")
+    assert report.executions[0].generation_id == active
+
+
+@pytest.mark.parametrize("failure", [None, "embedding", "close"])
+def test_owned_ingestion_provider_closes_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure: str | None,
+) -> None:
+    """The default command owns its lazy provider and preserves active state on provider failure."""
+    from policynim.errors import GenerationError
+    from policynim.services.ingest import create_ingest_service
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    before = (store.root / "active.json").read_bytes()
+    calls: list[str] = []
+
+    class OwnedEmbedder(MockEmbedder):
+        def embed_documents(self, texts):
+            """Record embedding work and inject the requested provider failure."""
+            calls.append("embed")
+            if failure == "embedding":
+                raise RuntimeError("PRIVATE-CANARY embedding failure")
+            return super().embed_documents(texts)
+
+        def close(self):
+            """Record or release the offline resource at its ownership boundary."""
+            calls.append("close")
+            if failure == "close":
+                raise RuntimeError("PRIVATE-CANARY close failure")
+            super().close()
+
+    def factory(active_settings):
+        """Construct the command-owned offline embedding provider lazily."""
+        calls.append("create")
+        return OwnedEmbedder()
+
+    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", factory)
+    service = create_ingest_service(settings)
+    assert calls == []
+    with service:
+        if failure:
+            with pytest.raises(GenerationError) as error:
+                service.run()
+            assert "PRIVATE-CANARY" not in str(error.value)
+            assert (store.root / "active.json").read_bytes() == before
+        else:
+            result = service.run()
+            assert result.generation_id == store.inspect().generation_id
+    assert calls == ["create", "embed", "close"]

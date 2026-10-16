@@ -23,36 +23,17 @@ from policynim.types import (
 )
 
 
-class MockIngestService:
-    """Capture the isolated live eval index path."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        seen_paths: list[Path],
-        *,
-        closed: list[bool] | None = None,
-    ) -> None:
-        """Store live-eval ingest settings and close tracking hooks."""
-        self._settings = settings
-        self._seen_paths = seen_paths
-        self._closed = closed
-
-    def run(self):
-        self._seen_paths.append(self._settings.index_db_path)
-        return None
-
-    def close(self) -> None:
-        """Record that live-eval cleanup closed the ingest service."""
-        if self._closed is not None:
-            self._closed.append(True)
-
-
 class MockSearchService:
     """Static search service used for live-eval isolation tests."""
 
+    def __init__(self, generation_id: str | None = None) -> None:
+        """Retain the generation ID for deterministic result evidence."""
+        self.generation_id = generation_id
+
     def search(self, request) -> SearchResult:
+        """Return offline search evidence bound to the selected generation."""
         return SearchResult(
+            generation_id=self.generation_id,
             query=request.query,
             domain=request.domain,
             top_k=request.top_k,
@@ -82,8 +63,14 @@ class MockSearchService:
 class MockPreflightService:
     """Static preflight service used for live-eval isolation tests."""
 
+    def __init__(self, generation_id: str | None = None) -> None:
+        """Retain the generation ID for deterministic result evidence."""
+        self.generation_id = generation_id
+
     def preflight(self, request) -> PreflightResult:
+        """Return an offline preflight result for the selected generation."""
         return PreflightResult(
+            generation_id=self.generation_id,
             task=request.task,
             domain=request.domain,
             summary="Use explicit request ids in backend logs.",
@@ -96,10 +83,12 @@ class MockPreflightService:
         )
 
     def preflight_with_trace(self, request) -> PreflightTraceResult:
+        """Retain matching compiled-packet and result evidence for offline tests."""
         result = self.preflight(request)
         return PreflightTraceResult(
             result=result,
             compiled_packet=CompiledPolicyPacket(
+                generation_id=self.generation_id,
                 task=request.task,
                 domain=request.domain,
                 top_k=request.top_k,
@@ -293,131 +282,109 @@ def test_eval_service_regeneration_runs_for_preflight_cases_only(tmp_path: Path)
     )
 
 
-def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
-    """Close live ingest while keeping caller index settings unchanged."""
-    settings = Settings(
-        index_db_path=tmp_path / "caller-index.sqlite3",
-        eval_workspace_dir=tmp_path / "workspace",
-    )
-    seen_paths: list[Path] = []
-    closed: list[bool] = []
+def test_live_eval_pins_one_generation_across_modes_and_publication(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Use the real lease/retention boundary with offline query/generation doubles."""
+    from test_ingest_service import MockEmbedder
+    from test_policy_generations import seed_legacy
 
-    monkeypatch.setattr(
-        "policynim.services.eval.create_ingest_service",
-        lambda active_settings: MockIngestService(active_settings, seen_paths, closed=closed),
+    import policynim.services.ingest as ingest_module
+    from policynim.storage.generations import GenerationStore
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "eval_workspace_dir": tmp_path / "workspace",
+        }
     )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: MockSearchService(),
-    )
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    original = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    before = index.read_bytes(), rules.read_bytes()
+    seen: list[str | None] = []
+
+    def forbid_embedder(settings):
+        """Evaluation must never construct an ingestion provider."""
+        raise AssertionError("Implicit embedding ingestion")
+
+    monkeypatch.setattr(ingest_module, "_create_default_embedder", forbid_embedder)
+
+    def search_factory(active_settings, *, rerank_enabled):
+        """Publish enough new states to put the original beyond normal retention."""
+        seen.append(active_settings.generation_id)
+        if len(seen) == 1:
+            source = settings.corpus_dir
+            assert source is not None
+            member = next(source.rglob("*.md"))
+            for number in range(4):
+                member.write_text(member.read_text() + f"\nPublished revision {number}.\n")
+                store.build(settings, embedder=MockEmbedder())
+            store.prune(keep_recent=0)
+            assert (store.root / "objects" / original).is_dir()
+        return MockSearchService(active_settings.generation_id)
+
+    monkeypatch.setattr("policynim.services.eval._create_live_search_service", search_factory)
     monkeypatch.setattr(
         "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: MockPreflightService(),
+        lambda active_settings, rerank_enabled: MockPreflightService(active_settings.generation_id),
     )
-
-    result = EvalService(settings=settings).run(
-        mode="live",
-        compare_rerank=False,
-    )
-
-    assert result.mode == "live"
-    assert seen_paths
-    assert seen_paths[0] != settings.index_db_path
-    assert settings.index_db_path == tmp_path / "caller-index.sqlite3"
-    assert closed == [True]
+    result = EvalService(settings=settings).run(mode="live", compare_rerank=True)
+    assert seen == [original, original]
+    assert settings.generation_id is None
+    assert result.generation_id == original
+    assert all(run.generation_id == original for run in result.runs)
+    assert all(case.generation_id == original for run in result.runs for case in run.case_results)
+    for run in result.runs:
+        assert json.loads(Path(run.result_json_path).read_text())["generation_id"] == original
+        assert original in Path(run.report_html_path).read_text()
+    assert (index.read_bytes(), rules.read_bytes()) == before
+    store.prune(keep_recent=0)
+    assert not (store.root / "objects" / original).exists()
 
 
 @pytest.mark.parametrize("existing_rules", [False, True])
-def test_live_eval_real_ingestion_keeps_both_outputs_isolated(
+def test_live_eval_requires_generation_before_provider_construction(
     monkeypatch, tmp_path: Path, existing_rules: bool
 ) -> None:
-    """Exercise live-mode orchestration offline without touching installation artifacts."""
-    from test_index_identity import SpyEmbedder, settings_for
+    """Standalone artifacts aren't silently rebuilt or accepted as a live job snapshot."""
+    from policynim.storage.generations import GenerationError
 
-    from policynim.services.ingest import create_ingest_service
-
-    index = tmp_path / "installed.sqlite3"
-    rules = tmp_path / "installed-rules.json"
-    index.write_bytes(b"preserved installation index")
+    index, rules = tmp_path / "legacy.sqlite3", tmp_path / "rules.json"
+    index.write_bytes(b"preserved index")
     if existing_rules:
-        rules.write_bytes(b"preserved installation rules")
-    settings = settings_for(
-        index, runtime_rules_artifact_path=rules, eval_workspace_dir=tmp_path / "workspace"
-    )
-    captured: list[Settings] = []
-    embedder = SpyEmbedder()
-
-    def capture_ingest(active_settings: Settings):
-        """Capture the actual temporary settings while retaining real SQLite ingestion."""
-        captured.append(active_settings)
-        return create_ingest_service(active_settings)
-
-    monkeypatch.setattr("policynim.services.eval.create_ingest_service", capture_ingest)
-    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", lambda _: embedder)
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: MockSearchService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: MockPreflightService(),
-    )
-
-    result = EvalService(settings=settings).run(mode="live", compare_rerank=False)
-
-    assert result.runs and captured and embedder.calls == 1 and embedder.closed
-    candidate = captured[0]
-    assert candidate.runtime_rules_artifact_path.parent == candidate.index_db_path.parent
-    assert candidate.runtime_rules_artifact_path != rules
-    assert not candidate.index_db_path.parent.exists()
-    assert index.read_bytes() == b"preserved installation index"
-    if existing_rules:
-        assert rules.read_bytes() == b"preserved installation rules"
-    else:
-        assert not rules.exists()
-
-
-def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
-    monkeypatch, tmp_path: Path
-) -> None:
+        rules.write_bytes(b"preserved rules")
     settings = Settings(
-        index_db_path=tmp_path / "caller-index.sqlite3",
+        index_db_path=index,
+        runtime_rules_artifact_path=rules,
+        generations_dir=tmp_path / "generations",
         eval_workspace_dir=tmp_path / "workspace",
     )
-    seen_paths: list[Path] = []
-    closed: list[bool] = []
 
-    class MockConformanceService:
-        def close(self) -> None:
-            closed.append(True)
+    def forbid_provider(*args, **kwargs):
+        """Missing generation rejection must happen before graph construction."""
+        raise AssertionError("Provider constructed before generation validation")
 
-    monkeypatch.setattr(
-        "policynim.services.eval.create_ingest_service",
-        lambda active_settings: MockIngestService(active_settings, seen_paths),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: MockSearchService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: MockPreflightService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_conformance_service",
-        lambda active_settings, *, backend: MockConformanceService(),
-    )
+    monkeypatch.setattr("policynim.services.eval._create_live_search_service", forbid_provider)
+    with pytest.raises(GenerationError):
+        EvalService(settings=settings).run(mode="live")
+    assert index.read_bytes() == b"preserved index"
+    assert rules.read_bytes() == b"preserved rules" if existing_rules else not rules.exists()
+    assert not settings.eval_workspace_dir.exists()
 
-    result = EvalService(settings=settings).run(
-        mode="live",
-        backend="nemo",
-        compare_rerank=False,
-    )
 
-    assert result.backend == "nemo"
-    assert seen_paths
-    assert seen_paths[0] != settings.index_db_path
-    assert closed == [True]
+def test_offline_eval_doesnt_claim_configured_live_generation(tmp_path: Path) -> None:
+    """Synthetic fixtures stay unassociated with an explicit live ID."""
+    result = EvalService(
+        settings=Settings(
+            generation_id="a" * 64,
+            generations_dir=tmp_path / "missing",
+            eval_workspace_dir=tmp_path / "workspace",
+        )
+    ).run()
+    assert result.generation_id is None
+    assert all(run.generation_id is None for run in result.runs)
+    assert all(case.generation_id is None for run in result.runs for case in run.case_results)
 
 
 def test_eval_service_start_ui_fails_when_process_exits_early(monkeypatch, tmp_path: Path) -> None:

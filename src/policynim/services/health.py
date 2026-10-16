@@ -7,11 +7,14 @@ import traceback
 from pathlib import Path
 
 from policynim.contracts import IndexStore
-from policynim.errors import ConfigurationError, IndexCompatibilityError
-from policynim.services.ingest import create_ingest_service
+from policynim.errors import ConfigurationError, GenerationError, IndexCompatibilityError
+from policynim.operations import ResourceStack, close_components
+from policynim.runtime_paths import resolve_runtime_path
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
 from policynim.storage.index_readiness import inspect_index_readiness
+from policynim.storage.index_store import pinned_generation
+from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
 from policynim.types import HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
@@ -23,10 +26,15 @@ class RuntimeHealthService:
     def __init__(
         self,
         *,
-        index_store: IndexStore,
+        index_store: IndexStore | None = None,
+        settings: Settings | None = None,
         table_name: str,
         mcp_url: str | None,
     ) -> None:
+        """Borrow an injected store or open a fresh owned generation for each default check."""
+        if (index_store is None) == (settings is None):
+            raise ValueError("Provide one injected store or settings for generation health.")
+        self._settings = settings.model_copy(deep=True) if settings is not None else None
         self._index_store = index_store
         self._table_name = table_name
         self._mcp_url = mcp_url
@@ -34,23 +42,33 @@ class RuntimeHealthService:
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
         try:
-            readiness = inspect_index_readiness(self._index_store)
-            if readiness.state == "missing":
-                return self._not_ready(f"Local index table {self._table_name!r} does not exist.")
-            if readiness.state == "empty":
-                return self._not_ready(
-                    f"Local index table {self._table_name!r} exists but contains no rows."
+            with ResourceStack() as cleanup:
+                store = self._index_store
+                if self._settings is not None:
+                    store = create_index_store(self._settings)
+                    cleanup.callback(close_components, store)
+                assert store is not None
+                readiness = inspect_index_readiness(store)
+                if readiness.state == "missing":
+                    return self._not_ready(f"Local index table {self._table_name!r} doesn't exist.")
+                if readiness.state == "empty":
+                    return self._not_ready(
+                        f"Local index table {self._table_name!r} contains no rows."
+                    )
+                if readiness.state != "ready":
+                    return self._not_ready(readiness.reason)
+                snapshot = pinned_generation(store)
+                return HealthCheckResult(
+                    status="ok",
+                    ready=True,
+                    table_name=self._table_name,
+                    row_count=readiness.chunk_count or 0,
+                    mcp_url=self._mcp_url,
+                    reason=None,
+                    generation_id=snapshot.generation_id if snapshot else None,
                 )
-            if readiness.state != "ready":
-                return self._not_ready(readiness.reason)
-            return HealthCheckResult(
-                status="ok",
-                ready=True,
-                table_name=self._table_name,
-                row_count=readiness.chunk_count or 0,
-                mcp_url=self._mcp_url,
-                reason=None,
-            )
+        except GenerationError as exc:
+            return self._not_ready(str(exc))
         except IndexCompatibilityError:
             return self._not_ready(
                 "Local index embedding identity is incompatible or ingestion is incomplete."
@@ -71,12 +89,11 @@ class RuntimeHealthService:
 
 
 def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHealthService:
-    """Build the default runtime health service from application settings."""
-    active_settings = settings or get_settings()
-    index_store = create_index_store(active_settings)
+    """Defer reader pinning until each health check so servers don't retain startup generations."""
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     return RuntimeHealthService(
-        index_store=index_store,
-        table_name=index_store.table_name,
+        settings=active_settings,
+        table_name=POLICY_CHUNKS_TABLE,
         mcp_url=_derive_mcp_url(active_settings),
     )
 
@@ -86,55 +103,20 @@ def ensure_hosted_runtime_ready(
     *,
     rebuild_if_missing: bool = False,
 ) -> None:
-    """Fail fast when hosted HTTP startup points at a missing or empty local index."""
-    active_settings = settings or get_settings()
-    index_store = create_index_store(active_settings)
-
+    """Require a complete generation; the legacy rebuild argument never ingests."""
+    active_settings = (settings or get_settings()).model_copy(deep=True)
+    root = resolve_runtime_path(active_settings.generations_dir)
     result = _check_hosted_runtime_health(
-        active_settings,
-        index_path=index_store.path,
-        table_name=index_store.table_name,
+        active_settings, index_path=root, table_name=POLICY_CHUNKS_TABLE
     )
-    if result.ready:
-        return
-
-    index_exists = index_store.path.exists()
-    if rebuild_if_missing and index_exists:
-        # Existing unknown/mismatched data must never trigger a paid implicit migration.
-        index_store.validate_identity()
-
-    if rebuild_if_missing and not index_exists:
-        _rebuild_hosted_runtime_index(
-            active_settings,
-            index_path=index_store.path,
-            table_name=index_store.table_name,
-            reason=result.reason,
-        )
-        result = _check_hosted_runtime_health(
-            active_settings,
-            index_path=index_store.path,
-            table_name=index_store.table_name,
-        )
-        if result.ready:
-            return
-
-        reason = result.reason or "Local index readiness could not be inspected after rebuild."
+    if not result.ready:
         raise ConfigurationError(
             _format_hosted_runtime_error(
-                index_path=index_store.path,
-                table_name=index_store.table_name,
-                reason=reason,
+                index_path=root,
+                table_name=POLICY_CHUNKS_TABLE,
+                reason=result.reason or "Generation readiness couldn't be inspected.",
             )
         )
-
-    reason = result.reason or "Local index readiness could not be inspected."
-    raise ConfigurationError(
-        _format_hosted_runtime_error(
-            index_path=index_store.path,
-            table_name=index_store.table_name,
-            reason=reason,
-        )
-    )
 
 
 def _check_hosted_runtime_health(
@@ -155,41 +137,6 @@ def _check_hosted_runtime_health(
                 reason=reason,
             )
         ) from exc
-
-
-def _rebuild_hosted_runtime_index(
-    settings: Settings,
-    *,
-    index_path: Path,
-    table_name: str,
-    reason: str | None,
-) -> None:
-    """Rebuild the local hosted-runtime index and report controlled failures."""
-    summary = reason or "Local index readiness could not be inspected."
-    LOGGER.warning(
-        "Hosted runtime index at %s is not ready. Rebuilding before serving traffic. Reason: %s",
-        index_path,
-        summary,
-    )
-    try:
-        with create_ingest_service(settings) as service:
-            result = service.run()
-    except Exception as exc:
-        rebuild_reason = f"Automatic hosted-index rebuild failed: {type(exc).__name__}: {exc}."
-        raise ConfigurationError(
-            _format_hosted_runtime_error(
-                index_path=index_path,
-                table_name=table_name,
-                reason=rebuild_reason,
-            )
-        ) from exc
-
-    LOGGER.info(
-        "Hosted runtime index rebuilt at %s with %s chunks across %s documents.",
-        result.index_uri,
-        result.chunk_count,
-        result.document_count,
-    )
 
 
 def _derive_mcp_url(settings: Settings) -> str | None:
@@ -224,9 +171,8 @@ def _format_hosted_runtime_error(*, index_path: Path | str, table_name: str, rea
     """Format hosted startup recovery guidance for operators."""
     index_path_text = str(index_path)
     return (
-        "Hosted streamable-http startup requires a populated local SQLite index at "
-        f"{index_path_text} (table: {table_name}). "
-        f"{reason} Run `policynim ingest` before serving traffic, or bake that command "
-        "during Docker build. Configure the path with `POLICYNIM_INDEX_DB_PATH`; "
-        "`POLICYNIM_LANCEDB_URI` is only a deprecated alias for that path."
+        "Hosted streamable-http startup needs a verified complete policy generation at "
+        f"{index_path_text} (table: {table_name}). {reason} "
+        "Import a verified bundle or run `policynim generation migrate` before serving traffic. "
+        "Configure the store with POLICYNIM_GENERATIONS_DIR. Startup doesn't call NVIDIA."
     )
