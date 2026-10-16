@@ -121,6 +121,7 @@ def test_normalized_pack_members_survive_generation_and_bundle_transport(
     manifest = source / "pack.toml"
     raw_manifest = manifest.read_text().replace('path = "A.md"', f'path = "{spelling}"')
     manifest.write_text(raw_manifest)
+    raw_manifest = manifest.read_bytes().decode("utf-8")
     profile = tmp_path / "profile.toml" if profiled else None
     if profile is not None:
         initialize_profile(profile, [source], profile_id="paths")
@@ -163,6 +164,7 @@ def test_normalized_pack_members_survive_generation_and_bundle_transport(
             (snapshot.directory / "snapshot.json").read_bytes()
         )
         assert captured.packs[0].manifest_text == raw_manifest
+        assert manifest.read_bytes() == raw_manifest.encode("utf-8")
         assert captured.packs[0].members[0].path == relative
     bundle = tmp_path / "paths.zip"
     digest = store.export_bundle(bundle)
