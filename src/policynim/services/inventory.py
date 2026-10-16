@@ -91,7 +91,8 @@ def inspect_source_inventory(settings: Settings) -> SourceInventory:
                 "Policy sources couldn't be loaded or validated. "
                 "Check POLICYNIM_PROFILE or POLICYNIM_CORPUS_DIR, "
                 "file permissions, UTF-8 Markdown, and unique policy IDs before rebuilding. "
-                "Run `policynim policies validate --format json` for exact source locations."
+                "Run `policynim policies validate --source --format json` "
+                "for exact source locations."
             ),
         )
 

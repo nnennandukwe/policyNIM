@@ -192,3 +192,42 @@ def test_explicit_blank_id_never_falls_back_to_active(
     assert result.exit_code == 1, result.output
     assert json.loads(result.stdout)["status"] == "error"
     assert not destination.exists()
+
+
+def test_source_recovery_hint_checks_edited_markdown_after_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Following the actual recovery command must inspect broken edits despite a valid active ID."""
+    import re
+    import shlex
+
+    from policynim.interfaces import cli
+    from policynim.services.catalog import build_policy_catalog
+    from policynim.services.inventory import inspect_source_inventory
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    assert settings.corpus_dir is not None
+    broken = settings.corpus_dir / "A.md"
+    broken.write_bytes(b"---\npolicy_id: [\n---\nbroken source edit\n")
+    before = broken.read_bytes(), (store.root / "active.json").read_bytes()
+    monkeypatch.setattr(
+        cli,
+        "build_policy_catalog",
+        lambda source_only=False: build_policy_catalog(settings=settings, source_only=source_only),
+    )
+    runner = CliRunner()
+    existing = runner.invoke(app, ["policies", "validate", "--format", "json"])
+    assert existing.exit_code == 0
+    assert json.loads(existing.stdout)["generation_id"] == active
+    inventory = inspect_source_inventory(settings)
+    assert inventory.status == "unavailable" and inventory.reason is not None
+    match = re.search(r"Run `([^`]+)`", inventory.reason)
+    assert match is not None
+    advised = runner.invoke(app, shlex.split(match[1])[1:])
+    assert advised.exit_code == 1, advised.output
+    assert json.loads(advised.stdout)["status"] == "error"
+    assert "A.md" in advised.output
+    assert before == (broken.read_bytes(), (store.root / "active.json").read_bytes())

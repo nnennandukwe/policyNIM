@@ -1169,8 +1169,19 @@ class GenerationStore:
             if (
                 record.generation_id != path.name.split("-", 1)[0]
                 or set(record.artifacts) != _FILES
+                or record.artifacts["manifest.json"] != "sha256:" + record.generation_id
             ):
                 raise GenerationError("cleanup", "Trash ownership doesn't match.")
+            if names != {".owner"}:
+                manifest_bytes = _read_regular(path / "manifest.json")
+                if digest_bytes(manifest_bytes) != "sha256:" + record.generation_id:
+                    raise GenerationError("cleanup", "Changed trash manifest was preserved.")
+                manifest = GenerationManifest.model_validate_json(manifest_bytes)
+                if record.artifacts != {
+                    **manifest.artifacts,
+                    "manifest.json": "sha256:" + record.generation_id,
+                }:
+                    raise GenerationError("cleanup", "Trash hashes don't match its manifest.")
         else:
             expected_id = path.name.split("-", 1)[0]
             snapshot = self._inspect(path, expected_id=expected_id)
@@ -1191,7 +1202,11 @@ class GenerationStore:
                 and digest_bytes(_read_regular(path / name)) != record.artifacts[name]
             ):
                 raise GenerationError("cleanup", "Changed trash data was preserved for inspection.")
-        for name in sorted(names - {".owner"}):
+        # Keep the authenticated manifest through every other artifact's removal.
+        removal_order = sorted(names - {".owner", "manifest.json"})
+        if "manifest.json" in names:
+            removal_order.append("manifest.json")
+        for name in removal_order:
             self._step("trash_remove_" + name)
             (path / name).unlink()
         marker.unlink()

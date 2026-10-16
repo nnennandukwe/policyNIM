@@ -73,11 +73,14 @@ These new commands are available from this source checkout or a wheel built from
 it. The existing `v0.1.0` release predates them.
 
 ```bash
-uv run policynim policies list
-uv run policynim policies show SEC-AUTH-001
-uv run policynim policies validate --format json
+uv run policynim policies list --source
+uv run policynim policies show SEC-AUTH-001 --source
+uv run policynim policies validate --source --format json
 uv run policynim inventory --format json
 ```
+
+These examples inspect mutable sources with `--source`. Without that flag, catalog
+commands inspect the active generation when one exists.
 
 The catalog commands list policy IDs, source text, pack versions, and content
 revisions. Inventory inspects the selected Markdown sources and local SQLite index

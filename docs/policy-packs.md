@@ -3,10 +3,13 @@
 Inspect available policies before making a model request:
 
 ```bash
-policynim policies list
-policynim policies show SEC-AUTH-001
-policynim policies validate --format json
+policynim policies list --source
+policynim policies show SEC-AUTH-001 --source
+policynim policies validate --source --format json
 ```
+
+These examples inspect mutable sources with `--source`. Without that flag, catalog
+commands inspect the active generation when one exists.
 
 Each command supports `--format text|json`. In a source checkout, prefix commands
 with `uv run`. These commands read source files without requiring `init`, model

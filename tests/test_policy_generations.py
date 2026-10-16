@@ -2305,3 +2305,86 @@ def test_failed_pin_cleans_created_directory_after_budget_rejection(
     assert not (store.root / "leases" / active).exists()
     with store.pin() as recovered:
         assert recovered.generation_id == active
+
+
+@pytest.mark.parametrize("tamper", ["data_and_owner", "manifest_and_owner", "missing_manifest"])
+def test_resumed_trash_cleanup_rejects_self_consistent_owner_tampering(
+    tmp_path: Path, tamper: str
+) -> None:
+    """A mutable owner record can't authenticate replacement recovery bytes by itself."""
+    from policynim.services.generation_sources import digest_bytes
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    assert settings.corpus_dir is not None
+    policy = settings.corpus_dir / "A.md"
+    for suffix in ("second", "third"):
+        policy.write_text(policy.read_text() + f"\n{suffix}\n")
+        store.build(settings, MockEmbedder())
+
+    def fault(step: str) -> None:
+        if step == "trash_remove_catalog.json":
+            raise OSError("Injected first-unlink interruption.")
+
+    interrupted = GenerationStore(root=store.root, embedding=identity, fault=fault)
+    assert interrupted.prune(keep_recent=0).warnings
+    trash = next((store.root / "trash").iterdir())
+    assert trash.name.startswith(first)
+    artifact = trash / ("catalog.json" if tamper == "data_and_owner" else "manifest.json")
+    artifact.write_bytes(artifact.read_bytes() + b" ")
+    marker = trash / ".owner"
+    record = json.loads(marker.read_bytes())
+    record["artifacts"][artifact.name] = digest_bytes(artifact.read_bytes())
+    marker.write_text(json.dumps(record))
+    if tamper == "missing_manifest":
+        artifact.unlink()
+    before = {p.name: p.read_bytes() for p in trash.iterdir()}
+    assert store.prune(keep_recent=0).warnings
+    assert before == {p.name: p.read_bytes() for p in trash.iterdir()}
+
+
+@pytest.mark.parametrize(
+    "boundary", ["trash_remove_runtime_rules.json", "trash_remove_manifest.json", "owner_unlink"]
+)
+def test_interrupted_trash_retains_manifest_until_last_data_removal(
+    tmp_path: Path, boundary: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every partial deletion keeps an authenticated manifest and retries to completion."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    assert settings.corpus_dir is not None
+    policy = settings.corpus_dir / "A.md"
+    for suffix in ("second", "third"):
+        policy.write_text(policy.read_text() + f"\n{suffix}\n")
+        store.build(settings, MockEmbedder())
+
+    def fault(step: str) -> None:
+        if step == boundary:
+            raise OSError("Injected partial-unlink interruption.")
+
+    original_unlink = Path.unlink
+    interrupted_owner = [False]
+
+    def unlink(path: Path, *args, **kwargs):
+        if (
+            boundary == "owner_unlink"
+            and path.name == ".owner"
+            and path.parent.parent == store.root / "trash"
+            and not interrupted_owner[0]
+        ):
+            interrupted_owner[0] = True
+            raise OSError("Injected final-owner interruption.")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    interrupted = GenerationStore(root=store.root, embedding=identity, fault=fault)
+    assert interrupted.prune(keep_recent=0).warnings
+    trash = next((store.root / "trash").iterdir())
+    if boundary == "owner_unlink":
+        assert {p.name for p in trash.iterdir()} == {".owner"}
+    else:
+        assert (trash / "manifest.json").is_file()
+    assert not store.prune(keep_recent=0).warnings
+    assert not list((store.root / "trash").iterdir())

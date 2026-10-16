@@ -84,7 +84,7 @@ Run the deterministic content checks without model credentials:
 
 ```bash
 uv sync --locked --group test --group dev
-uv run --no-sync policynim policies validate --format json
+uv run --no-sync policynim policies validate --source --format json
 uv run --no-sync pytest -q tests/test_security_content.py
 ```
 

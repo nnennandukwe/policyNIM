@@ -105,7 +105,7 @@ app.add_typer(evidence_app, name="evidence")
 policies_app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Inspect and validate policy sources without model credentials or network calls.",
+    help="Inspect policy generations or configured sources without model credentials.",
 )
 app.add_typer(policies_app, name="policies")
 
@@ -149,7 +149,7 @@ def policies_list(
     if catalog.unlisted_markdown:
         typer.echo(
             f"Unlisted Markdown: {len(catalog.unlisted_markdown)} file(s) aren't selected. "
-            "Run `policynim policies validate --format json` for their paths."
+            "Run `policynim policies validate --source --format json` for their paths."
         )
 
 
