@@ -83,9 +83,9 @@ holds at most eight snapshots and 32 MiB of serialized source models; larger
 snapshots receive full validation. Filesystems without reliable change stamps also
 receive full validation. Operator inspection and export always validate all bytes.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
-preserved with warnings. All processes must use the same store and filesystem
-Cleanup diagnostics identify the managed relative path and a safe cause.
-locking semantics. This isn't a sandbox against arbitrary writes by the same OS
+preserved with warnings. Cleanup diagnostics identify the managed relative path
+and a safe cause. All processes must use the same store and filesystem locking
+semantics. This isn't a sandbox against arbitrary writes by the same OS
 user; external edits can invalidate an object and will fail later inspection.
 
 ## Export, import, and refresh the public deployment bundle
@@ -99,7 +99,8 @@ Transport uses a deterministic ZIP with exactly the five required flat files.
 Import requires a trusted checksum, rejects unsafe/extra/duplicate entries and
 oversized content, then runs the same full inspector before activation. Export
 checks the packaged bytes against the validated manifest before creating the
-destination and refuses to overwrite an existing file. Bundles contain selected source text,
+destination and refuses to overwrite an existing file. Bundles contain selected
+source text,
 including retained excluded/replaced policies and notices; review their content
 before sharing a private profile.
 
