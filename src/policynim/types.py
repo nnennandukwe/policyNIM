@@ -290,7 +290,12 @@ class ShellCommandActionRequest(RuntimeActionRequestBase):
     @classmethod
     def validate_command(cls, value: list[str]) -> list[str]:
         """Validate executable and argument boundaries without changing their contents."""
-        return _validate_shell_command(value)
+        if not value[0]:
+            raise ValueError("command executable must not be empty.")
+        for index, item in enumerate(value):
+            if "\x00" in item:
+                raise ValueError(f"command item {index} must not contain NUL bytes.")
+        return value
 
 
 class FileWriteActionRequest(RuntimeActionRequestBase):
@@ -346,13 +351,8 @@ class ShellCommandExecutionRequest(RuntimeExecutionRequestBase):
     """Sanitized execution request for one shell command."""
 
     kind: Literal["shell_command"]
+    # Evidence readers must preserve historical argv, even if new actions would reject it.
     command: list[str] = Field(min_length=1)
-
-    @field_validator("command")
-    @classmethod
-    def validate_command(cls, value: list[str]) -> list[str]:
-        """Keep persisted argv subject to the same contract as action inputs."""
-        return _validate_shell_command(value)
 
 
 class FileWriteExecutionRequest(RuntimeExecutionRequestBase):
@@ -812,16 +812,6 @@ class BetaAuthDecision(StrictModel):
     source: Literal["api_key", "break_glass"] | None = None
     account: BetaAccount | None = None
     usage: BetaUsageSnapshot | None = None
-
-
-def _validate_shell_command(value: list[str]) -> list[str]:
-    """Preserve argv while rejecting empty executable names and embedded NUL bytes."""
-    if not value or not value[0]:
-        raise ValueError("command executable must not be empty.")
-    for index, item in enumerate(value):
-        if "\x00" in item:
-            raise ValueError(f"command item {index} must not contain NUL bytes.")
-    return value
 
 
 def _validate_non_empty_string(value: object, *, field_name: str) -> str:

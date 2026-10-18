@@ -513,7 +513,8 @@ arguments after the executable. The array must contain a nonempty executable
 name, and no element may contain a NUL byte. Invalid commands are rejected
 before runtime decisions, process creation, or evidence writes. Command regex
 rules match the `shlex.join` rendering of the unchanged array; results and
-stored evidence retain that array. Existing evidence isn't rewritten.
+stored evidence retain that array. Existing evidence isn't rewritten; evidence
+reports can still read legacy NUL-containing decisions as incomplete executions.
 
 The runtime CLI flow is JSON-first and file- or stdin-driven:
 

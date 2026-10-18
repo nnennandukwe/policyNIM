@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -170,14 +171,39 @@ def test_runtime_rejects_invalid_command_before_side_effects(
 
 
 @pytest.mark.parametrize("model", [ShellCommandActionRequest, ShellCommandExecutionRequest])
-def test_shell_models_share_argument_contract(
+def test_shell_models_preserve_argument_contents(
     model: type[ShellCommandActionRequest] | type[ShellCommandExecutionRequest],
 ) -> None:
-    """Action inputs and evidence readers must validate without changing argv."""
+    """Action inputs and evidence readers must retain argument contents unchanged."""
     command = [" padded executable ", "", " \t ", "\nvalue\n"]
     request = model.model_validate_json(_payload(Path.cwd(), command))
     assert request.command == command
     assert model.model_validate_json(request.model_dump_json()).command == command
-    for invalid in ([], [""], ["bad\x00exe"], ["echo", "bad\x00argument"]):
-        with pytest.raises(ValidationError):
-            model.model_validate_json(_payload(Path.cwd(), invalid))
+    with pytest.raises(ValidationError):
+        model.model_validate_json(_payload(Path.cwd(), []))
+
+
+def test_evidence_report_reads_legacy_nul_decision(
+    runtime_settings: Settings, tmp_path: Path
+) -> None:
+    """Historical NUL decisions must remain readable as incomplete executions."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app, ["runtime", "execute", "--input", "-"], input=_payload(tmp_path, _command("old"))
+    )
+    assert result.exit_code == 0, result.output
+    # Recreate the decision-only row shape written by the old NUL acceptance bug.
+    with sqlite3.connect(runtime_settings.runtime_evidence_db_path) as connection:
+        connection.execute("DELETE FROM runtime_execution_events WHERE event_kind != 'decision'")
+        connection.execute(
+            "UPDATE runtime_execution_events SET request_json = ?",
+            (_payload(tmp_path, [sys.executable, "\x00"]),),
+        )
+    report = runner.invoke(cli.app, ["evidence", "report", "--session-id", "argv-check"])
+    assert report.exit_code == 0, report.output
+    assert json.loads(report.stdout)["incomplete_count"] == 1
+    events = RuntimeEvidenceStore(
+        path=runtime_settings.runtime_evidence_db_path
+    ).list_session_events("argv-check")
+    assert isinstance(events[0].request, ShellCommandExecutionRequest)
+    assert events[0].request.command == [sys.executable, "\x00"]
