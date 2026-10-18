@@ -63,6 +63,7 @@ def _command(*arguments: str) -> list[str]:
     ]
 
 
+# Unicode test-data exception: café verifies that argv retains non-ASCII characters.
 @pytest.mark.parametrize("argument", ["  padded  ", "", " \t ", "\nline\n", "café"])
 def test_runtime_execute_preserves_arguments_and_evidence(
     runtime_settings: Settings, tmp_path: Path, argument: str
