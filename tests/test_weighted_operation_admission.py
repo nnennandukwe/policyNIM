@@ -581,3 +581,42 @@ def test_concurrent_historical_schema_migration_preserves_one_unit_default(tmp_p
         assert connection.execute(
             "SELECT COUNT(*),SUM(work_units) FROM operation_usage"
         ).fetchone() == (1, 1)
+
+
+def test_submission_deadline_rechecked_after_real_writer_wait_before_charge(tmp_path: Path) -> None:
+    """Cancellation while waiting on SQLite can't commit a prepaid acceptance afterward."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from policynim.errors import ProviderError
+
+    admission = service(tmp_path)
+    checked, cancelled = Event(), Event()
+
+    def check_ready() -> None:
+        """Represent the public caller budget changing while another transaction owns the writer."""
+        checked.set()
+        if cancelled.is_set():
+            raise ProviderError("Operation cancelled before admission.", failure_class="cancelled")
+
+    with (
+        sqlite3.connect(admission.store.path) as writer,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        writer.execute("BEGIN IMMEDIATE")
+        pending = executor.submit(
+            admission.accept_work,
+            principal=principal(),
+            operation_name="policy_search",
+            reservation_key="a" * 64,
+            request_digest="b" * 64,
+            work_units=3,
+            check_ready=check_ready,
+        )
+        assert checked.wait(2)
+        cancelled.set()
+        writer.commit()
+        with pytest.raises(ProviderError, match="cancelled"):
+            pending.result(timeout=3)
+    assert admission.store.usage(principal_identity(principal().issuer, "alice")).accepted == 0
+    admission.store.close()
