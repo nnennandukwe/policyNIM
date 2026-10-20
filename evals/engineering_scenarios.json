@@ -3,7 +3,7 @@
   "name": "engineering-source-coverage",
   "scope": "authored_source_scenarios",
   "evaluation_status": "not_model_evaluated",
-  "review_status": "author_revised_pending_independent_source_review_not_model_evaluated",
+  "review_status": "independent_source_reviewed_not_model_evaluated",
   "changed_policy_revisions": {
     "TEST-FAIL-001": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
     "TEST-CONTRACT-001": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
@@ -1797,8 +1797,8 @@
       "rationale": "Selected artifact checks don't establish a complete framework level or certification; their narrower verified result can still be reported."
     }
   ],
-  "generation_id": "a9d51e8459369bcb96f467557408f53c4e8ecc77e20c52b1c14cad467b549908",
-  "catalog_digest": "sha256:5b871269603d20a80b1f4bcb5a146e60f4224503a9e87c707df5e29b7bf83c27",
+  "generation_id": "3c4e948289c6cd843b8002c83e094f1fb3eb9ce9f44d7bc88d26a07862cacb63",
+  "catalog_digest": "sha256:04a26d71f3b54eb63e41e779585177ce397767cdf89da9368de3e92d61667a26",
   "profile_id": null,
   "profile_digest": null,
   "full_engineering_profile": {

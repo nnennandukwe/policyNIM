@@ -1,12 +1,15 @@
 {
-  "kind": "pending_independent_source_review_binding",
-  "scenario_sha256": "sha256:2161e9b0d0200ae48e68ee55d03f6a0159a79e4983a81bec5065698233118cfe",
-  "semantic_payload_sha256": "sha256:ab0980bee32e2d116fe9c540f263559e67e60955553318a501bb313649f766a5",
+  "kind": "derived_current_fixture_binding",
+  "reviewed_fixture_revision": "61708adbe25f565127695dddd35593bebc8b19e5",
+  "scenario_sha256": "sha256:b1dd4dd1497ad98a9a08ce6b69183f2df3121f866c26fe82a1da9e5d50979c26",
+  "reviewed_semantic_payload_sha256": "sha256:1ae67a52dab92752aaabb6d7d6e1d7ea246d2e4b72865516a2f4f1a142dfb364",
+  "full_review_receipt": "refreshed.json",
+  "full_review_receipt_sha256": "sha256:231d4a0fd1330b761ac225c1b67a6820a36f907e78c0ec67473fcfa3b1a8a804",
+  "delta_review_receipt": "rationale-delta.json",
+  "delta_review_receipt_sha256": "sha256:3e9aadc80fff49d533819fd99f14fe79760c65affcdef911e81b9efb5ac7e906",
   "model_evaluated": false,
-  "previous_reviewed_fixture_revision": "ecf3f1bebaf38529150ca1bef94d345280759b96",
-  "previous_reviewed_semantic_payload_sha256": "sha256:361c8ae44b0ebfa1c7b16a8be9a72d76a2b7fba8086cd4a1b63e937ce8510e9e",
-  "previous_review_receipt_sha256": "sha256:341dc260cc0e31d891605122f2be9f4e6992cf29ee2382242a86c1f6f43e9e0a",
-  "changes_since_review": "Two boundary inputs now exercise applicable runtime/public serialization changes; per-policy sections and OWASP adaptation notices were corrected, with affected revision/profile pins refreshed. Historical receipts remain unchanged and don't review these revised inputs.",
   "source_catalog_digest": "sha256:04a26d71f3b54eb63e41e779585177ce397767cdf89da9368de3e92d61667a26",
-  "bundle_status": "historical_bundle_pending_rebuild_after_independent_source_review"
+  "generation_id": "3c4e948289c6cd843b8002c83e094f1fb3eb9ce9f44d7bc88d26a07862cacb63",
+  "bundle_digest": "sha256:376ba2727eb73e56696bce91eaf68ac2b6eae20b315a99b87e405cc56a380dce",
+  "metadata_changes_after_review": "Only review status and generated bundle/catalog identities changed; the reviewed semantic payload remains identical. Historical full/final receipts remain unchanged."
 }
