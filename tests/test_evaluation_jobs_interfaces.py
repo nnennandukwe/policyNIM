@@ -518,3 +518,64 @@ def test_schema4_fragment_drift_cant_replace_the_canonical_report(job_context) -
         connection.execute("PRAGMA user_version=4")
     service.store = EvaluationJobStore(service.store.path)
     assert service.report_part(accepted.job_id, 0, principal=principal()) == original
+
+
+@pytest.mark.parametrize("version", [3, 4, 5])
+def test_retained_report_hash_uses_original_case_json_before_new_defaults(
+    job_context, version: int
+) -> None:
+    """Typed reader defaults mustn't replace the retained bytes or their independent digest."""
+    import sqlite3
+
+    from policynim.storage.evaluation_jobs import EvaluationJobStore, canonical_json
+
+    service, suite, _ = job_context
+    accepted = service.submit(
+        suite, idempotency_key=f"legacy-shape-{version}", principal=principal()
+    )
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    try:
+        finished = worker.run_once()
+        assert finished is not None and finished.state == "completed"
+    finally:
+        worker.close()
+    with sqlite3.connect(service.store.path) as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT report_json FROM evaluation_jobs WHERE job_id=?", (accepted.job_id,)
+            ).fetchone()[0]
+        )
+        for result in payload["completed_cases"]:
+            for added in (
+                "preflight_result",
+                "actual_citations",
+                "search_result",
+                "forbidden_policy_ids",
+            ):
+                assert added in result
+                del result[added]
+        original = canonical_json(payload)
+        digest = "sha256:" + hashlib.sha256(original.encode()).hexdigest()
+        connection.execute(
+            "UPDATE evaluation_jobs SET report_json=?,report_sha256=?,report_part_count=NULL "
+            "WHERE job_id=?",
+            (original, digest, accepted.job_id),
+        )
+        if version == 3:
+            connection.execute("ALTER TABLE evaluation_jobs DROP COLUMN report_part_count")
+        connection.execute(f"PRAGMA user_version={version}")
+    service.store = EvaluationJobStore(service.store.path)
+    stored = service.result(accepted.job_id, principal=principal())
+    assert stored.sha256 == digest
+    assert stored.report.completed_cases[0].actual_citations == []
+    part = service.report_part(accepted.job_id, 0, principal=principal())
+    assert part.content == original
+    assert part.report_sha256 == digest
+    assert part.part_sha256 == digest
+    with sqlite3.connect(service.store.path) as connection:
+        assert (
+            connection.execute(
+                "SELECT report_json FROM evaluation_jobs WHERE job_id=?", (accepted.job_id,)
+            ).fetchone()[0]
+            == original
+        )

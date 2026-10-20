@@ -140,7 +140,7 @@ class EvaluationJobReport(StrictModel):
 
 
 class StoredEvaluationJobReport(StrictModel):
-    """Pair immutable report content with its canonical JSON digest."""
+    """Pair a typed report view with the digest of its original retained JSON bytes."""
 
     report: EvaluationJobReport
     sha256: str

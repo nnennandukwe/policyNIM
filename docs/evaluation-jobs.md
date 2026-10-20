@@ -68,3 +68,11 @@ The project's pinned MCP Python SDK 2.2.0 doesn't implement the optional Tasks e
 Offline tests cover real SQLite transactions, generation archive restoration after pruning, process-kill recovery, cancellation drain, retry budgets through the NVIDIA SDK HTTP boundary, owner isolation, CLI commands and an authenticated MCP disconnect/reconnect flow. These checks don't establish live model quality, hosted volume configuration or production capacity; release evidence must verify those separately.
 
 Operator reports retain `active_generation` for the observed activation pointer and add `served_generation` for the compatible generation selected by configured retrieval. `generation_selection` is `active` or `pinned`; index/generation readiness describes that serving selection. A retained pin can be ready without an active pointer. The served identifier is null if its selection can't be validated. A readable activation pointer can still be reported, and its identifier doesn't prove that object's readiness. An absent selected object reports missing; a missing artifact inside an existing sealed object reports invalid. Late cancellation observed by terminal quota accounting also marks the job cancelled after cleanup, while retaining completed case evidence.
+
+Historical report identity uses the original retained canonical JSON bytes before
+current typed-reader defaults are applied. The result command returns a typed
+view, which may add optional defaults for an older payload; its `sha256` identifies
+the retained report bytes returned by the bounded report resources. A one-time
+transport migration builds part hashes from those same original bytes without
+rewriting the report. Clients verify the concatenated parts against that digest,
+rather than hashing a newly serialized typed view.

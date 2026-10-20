@@ -1001,6 +1001,7 @@ def _build_failure_reasons(
 
 
 def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateMetrics:
+    """Aggregate executed case outcomes while keeping missing expectations separately counted."""
     search_results = [result for result in case_results if result.kind == "search"]
     preflight_results = [result for result in case_results if result.kind == "preflight"]
     conformance_results = [

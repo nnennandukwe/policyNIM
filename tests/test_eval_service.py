@@ -470,6 +470,7 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Check deterministic Phoenix publication creates a project only after confirmed absence."""
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
     result = service.run(mode="offline", compare_rerank=False)
 

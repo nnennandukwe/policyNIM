@@ -448,9 +448,14 @@ class EvaluationJobStore:
                     "report_unavailable: Job artifacts failed validation. "
                     "Preserve job storage for operator inspection."
                 )
-            report = EvaluationJobReport.model_validate_json(row["report_json"])
-            if payload_digest(report.model_dump(mode="json")) != row["report_sha256"]:
+            serialized = row["report_json"]
+            if (
+                not isinstance(serialized, str)
+                or "sha256:" + hashlib.sha256(serialized.encode()).hexdigest()
+                != row["report_sha256"]
+            ):
                 raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
+            report = EvaluationJobReport.model_validate_json(serialized)
             return StoredEvaluationJobReport(report=report, sha256=row["report_sha256"])
 
     def _write_report_parts(
@@ -540,13 +545,19 @@ class EvaluationJobStore:
                     content=text,
                 )
         # Only historical schema1-4 reports need a one-time verified transport migration.
-        stored = self.result(job_id, owner_id)
-        serialized = canonical_json(stored.report.model_dump(mode="json"))
+        self.result(job_id, owner_id)
         with self._transaction() as connection:
             current = self._owned(connection, job_id, owner_id)
             if current["result_expired"] or self.clock() >= current["expires_at"]:
                 raise EvaluationJobError("result_expired: The retained report has expired.")
             if current["report_part_count"] is None:
+                serialized = current["report_json"]
+                if (
+                    not isinstance(serialized, str)
+                    or "sha256:" + hashlib.sha256(serialized.encode()).hexdigest()
+                    != current["report_sha256"]
+                ):
+                    raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
                 self._write_report_parts(connection, job_id, serialized)
         return self.report_part(job_id, owner_id, index)
 
