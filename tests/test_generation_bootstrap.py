@@ -205,3 +205,35 @@ def test_failed_fresh_claim_requires_explicit_recovery(tmp_path: Path, boundary:
     assert not (target.root / "active.json").exists()
     with pytest.raises(GenerationError):
         target.bootstrap_bundle(first[0], expected_digest=first[1])
+
+
+@pytest.mark.parametrize("matches", [False, True])
+def test_fresh_configured_seed_identity_is_checked_before_root_creation(
+    tmp_path: Path, matches: bool
+) -> None:
+    """A fresh configured selection can't activate a different seed before startup refuses."""
+    settings, store, first, second = bundles(tmp_path)
+    expected = first[2].generation_id if matches else second[2].generation_id
+    if not matches:
+        with pytest.raises(GenerationError, match="Seed generation doesn't match"):
+            store.bootstrap_bundle(
+                first[0],
+                expected_digest=first[1],
+                source_settings=settings,
+                expected_seed_id=expected,
+            )
+        assert not store.root.exists()
+    else:
+        result = store.bootstrap_bundle(
+            first[0],
+            expected_digest=first[1],
+            source_settings=settings,
+            expected_seed_id=expected,
+        )
+        assert result.generation_id == expected
+        pointer = (store.root / "active.json").read_bytes()
+        preserved = store.bootstrap_bundle(
+            second[0], expected_digest=second[1], expected_seed_id=second[2].generation_id
+        )
+        assert preserved.generation_id == first[2].generation_id
+        assert (store.root / "active.json").read_bytes() == pointer

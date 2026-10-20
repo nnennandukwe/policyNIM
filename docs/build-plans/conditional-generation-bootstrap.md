@@ -1,13 +1,13 @@
 # Bootstrap store seam
 
-The public seam is `bootstrap_bundle(bundle, expected_digest, source_settings=None)`. It shares archive parsing, source agreement, staged preparation, inspection, and pointer commit with explicit import. Explicit import keeps its existing activation behavior.
+The public seam is `bootstrap_bundle(bundle, expected_digest, source_settings=None, expected_seed_id=None)`. It shares archive parsing, source agreement, staged preparation, inspection, and pointer commit with explicit import. Explicit import keeps its existing activation behavior.
 
-A valid existing root takes the coordinated validation path without reading or matching the new image seed, changing its pointer, or pruning retained objects. An absent root validates the trusted seed and its optional packaged source agreement before creating state, then claims root creation with exclusive mkdir and retains its directory identity. Writer admission rechecks that identity before initializing ownership and again before the conditional operation. If another supported publisher has committed an active generation, validate and preserve its selection. If no pointer exists, only this invocation's fresh root claim permits publication. Existing unowned, incomplete, damaged, or incompatible roots fail with preserved recovery data.
+A valid existing root takes the coordinated validation path without reading or matching the new image seed, changing its pointer, or pruning retained objects. An absent root validates the trusted seed, optional packaged source agreement, and optional configured seed ID before creating state, then claims root creation with exclusive mkdir and retains its directory identity. Writer admission rechecks that identity before initializing ownership and again before the conditional operation. If another supported publisher has committed an active generation, validate and preserve its selection. If no pointer exists, only this invocation's fresh root claim permits publication. Existing unowned, incomplete, damaged, or incompatible roots fail with preserved recovery data.
 
 | Witness | Boundary and required result |
 | --- | --- |
 | Fresh seed | Actual public bootstrap imports a checked ZIP without providers; pin reads sealed chunks/rules. |
-| Invalid seed/source | Wrong checksum, malformed archive, or source mismatch fails before creating the root. |
+| Invalid seed/source/selection | Wrong checksum, malformed archive, valid changed-source mismatch, or configured seed-ID mismatch fails before creating the root. |
 | Restart | A different seed or moved image sources can't replace an existing valid selection. Pointer and retained object bytes stay unchanged; no prune. |
 | Explicit alternate activation | Build another valid generation, activate the older retained ID, bootstrap, and retain that chosen pointer and both IDs. |
 | Unowned/incomplete | Existing empty, unowned, owned/no-pointer, partial owner, symlink, or damaged roots reject rather than adopt, resume, or clean up. |
