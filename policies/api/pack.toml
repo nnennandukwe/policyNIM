@@ -1,0 +1,64 @@
+schema_version = 1
+pack_id = "policynim.api"
+version = "0.3.0"
+
+[[policies]]
+policy_id = "ARCH-API-001"
+path = "api-versioning-guidance.md"
+requirement_level = "required"
+applicability = ["api-producer", "api-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Semantic Versioning 2.0.0"
+url = "https://semver.org/spec/v2.0.0.html"
+revision = "2.0.0"
+sections = ["1", "7", "8"]
+retrieved_on = 2026-10-20
+license = "CC-BY-3.0"
+attribution = "Tom Preston-Werner and SemVer contributors"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "API-ERROR-001"
+path = "http-errors.md"
+requirement_level = "required"
+applicability = ["api-producer", "api-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "RFC 9110: HTTP Semantics"
+url = "https://www.rfc-editor.org/rfc/rfc9110.html"
+revision = "RFC 9110, June 2022"
+sections = ["15"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Roy Fielding, Mark Nottingham, Julian Reschke; IETF Trust, 2022"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "RFC 9457: Problem Details for HTTP APIs"
+url = "https://www.rfc-editor.org/rfc/rfc9457.html"
+revision = "RFC 9457, July 2023"
+sections = ["3", "5"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Mark Nottingham, Erik Wilde, Sanjay Dalal; IETF Trust, 2023"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "API-PAGE-001"
+path = "pagination-contracts.md"
+requirement_level = "required"
+applicability = ["api-producer", "api-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "RFC 8288: Web Linking"
+url = "https://datatracker.ietf.org/doc/html/rfc8288"
+revision = "RFC 8288, October 2017"
+sections = ["2.1", "3"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Mark Nottingham; IETF Trust, 2017"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

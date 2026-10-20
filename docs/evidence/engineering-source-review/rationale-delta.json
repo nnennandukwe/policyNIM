@@ -1,0 +1,40 @@
+{
+  "kind": "independent_source_review_rationale_delta",
+  "source_sha": "61708adbe25f565127695dddd35593bebc8b19e5",
+  "base_sha": "abfcd18c871425c48136a86bfa9f6de3a9eb7388",
+  "raw_scenario_sha256": "f8e2a66a54eaa5a3039e80660287ffbc78cd70693728c6afc51345bdecbe23bc",
+  "semantic_payload_sha256": "1ae67a52dab92752aaabb6d7d6e1d7ea246d2e4b72865516a2f4f1a142dfb364",
+  "prior_review": {
+    "path": "/tmp/policynim-129-refreshed-independent-review.json",
+    "sha256": "231d4a0fd1330b761ac225c1b67a6820a36f907e78c0ec67473fcfa3b1a8a804",
+    "reviewed_policies": 16,
+    "reviewed_cases": 64
+  },
+  "changes": [
+    {
+      "case_id": "data-migrate-001-violating",
+      "field": "rationale",
+      "before": "Dropping the old column strands old instances, and an untested backup doesn't prove recovery. MIGRATE-1 and MIGRATE-3 require a compatible rollout and exercised recovery.",
+      "after": "Dropping the old column strands old instances, and an untested backup doesn't prove recovery. MIGRATE-1 and MIGRATE-2 require a compatible rollout and exercised recovery."
+    },
+    {
+      "case_id": "rel-overload-001-violating",
+      "field": "rationale",
+      "before": "The unbounded queue can't reject overload safely, and immediate retries amplify it. OVERLOAD-1 and OVERLOAD-3 require bounded admission and caller behavior.",
+      "after": "The unbounded queue can't reject overload safely, and immediate retries amplify it. OVERLOAD-1 and OVERLOAD-2 require bounded admission and caller behavior."
+    }
+  ],
+  "assessment": "Both corrections now name the requirements that support their rationale. MIGRATE-1 covers compatibility and MIGRATE-2 requires real-reader recovery verification; OVERLOAD-1 bounds admission and OVERLOAD-2 addresses caller fairness and amplification. Both low-severity findings are resolved in source.",
+  "unchanged_checks": [
+    "All 64 inputs and expected outcomes remain unchanged.",
+    "All quoted evidence, support tokens, scope and boundary evidence remain unchanged.",
+    "All 16 policy revision hashes and source aliases remain unchanged.",
+    "All complete policy bodies, manifest records and notices retain the prior review coverage."
+  ],
+  "findings": [],
+  "limits": [
+    "This delta review carries forward the stated full source review; it doesn't claim another model or runtime execution.",
+    "Source expectations aren't evidence of model quality, production behavior or legal/framework certification.",
+    "Root still owns receipt binding and generation/bundle refresh."
+  ]
+}

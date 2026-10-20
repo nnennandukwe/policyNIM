@@ -36,9 +36,9 @@ def test_catalog_commands_work_without_provider_credentials(monkeypatch, tmp_pat
     assert result.exit_code == 0, result.output
     catalog = json.loads(result.stdout)
     assert catalog["scope"] == "source"
-    assert catalog["authored_count"] == catalog["effective_count"] == 15
+    assert catalog["authored_count"] == catalog["effective_count"] == 26
     assert catalog["indexed_count"] is None
-    assert len(catalog["policies"]) == 15
+    assert len(catalog["policies"]) == 26
     shown = runner.invoke(app, ["policies", "show", "SEC-AUTH-001", "--format", "json"])
     assert shown.exit_code == 0, shown.output
     policy = json.loads(shown.stdout)
