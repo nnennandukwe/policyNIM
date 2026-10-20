@@ -18,7 +18,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from pathlib import Path
-from tempfile import TemporaryDirectory, mkdtemp
+from tempfile import mkdtemp
 from threading import Lock
 from types import TracebackType
 from typing import Annotated, Literal
@@ -1759,13 +1759,7 @@ class GenerationStore:
                 contents, incoming = self._read_bundle_inputs(
                     bundle, expected_digest=expected_digest, source_settings=source_settings
                 )
-                # Validate every artifact before claiming durable recovery state. The
-                # ordinary staged transaction validates these same immutable bytes again.
-                with TemporaryDirectory(prefix="policynim-seed-validation-") as scratch:
-                    directory = Path(scratch)
-                    for name, data in contents.items():
-                        (directory / name).write_bytes(data)
-                    self._inspect(directory, expected_embedding=self.embedding)
+                self._inspect_bootstrap_seed(contents)
                 if expected_seed_id is not None:
                     expected = self._selected_id(expected_seed_id, None)
                     if sha256(contents["manifest.json"]).hexdigest() != expected:
@@ -1827,3 +1821,29 @@ class GenerationStore:
                 "Generation bootstrap didn't complete; preserve existing state "
                 "and inspect it before explicit recovery.",
             ) from exc
+
+    def _inspect_bootstrap_seed(self, contents: dict[str, bytes]) -> None:
+        """Reclaim one owned seed stage under its stable per-target inspection lock."""
+        self.root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for directory in [self.root.parent, *self.root.parent.parents]:
+            _sync_directory(directory)
+        key = sha256(os.path.abspath(self.root).encode()).hexdigest()
+        stage = self.root.parent / (".policynim-seed-" + key)
+        lock = stage.with_suffix(".lock")
+        self._step("bootstrap_seed_lock")
+        with exclusive_file_lock(lock, on_wait=check_budget):
+            self._remove_stage(stage)
+            stage.mkdir(mode=0o700)
+            observed = stage.lstat()
+            identity = observed.st_dev, observed.st_ino
+            try:
+                self._step("bootstrap_seed_created")
+                self._write(stage / ".owner", _STAGE_OWNER, "bootstrap_seed_owner")
+                _sync_directory(stage)
+                for name, data in contents.items():
+                    self._write(stage / name, data, "bootstrap_seed_" + name)
+                self._step("bootstrap_seed_inspect")
+                self._inspect(stage, expected_embedding=self.embedding, staging=True)
+            finally:
+                self._remove_stage(stage, identity)
+                _sync_directory(stage.parent)

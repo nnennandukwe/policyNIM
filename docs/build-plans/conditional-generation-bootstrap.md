@@ -2,7 +2,7 @@
 
 The public seam is `bootstrap_bundle(bundle, expected_digest, source_settings=None, expected_seed_id=None)`. It shares archive parsing, source agreement, staged preparation, inspection, and pointer commit with explicit import. Explicit import keeps its existing activation behavior.
 
-A valid existing root takes the coordinated validation path without reading or matching the new image seed, changing its pointer, or pruning retained objects. An absent root validates the trusted seed, every manifest/artifact/schema/index invariant in private temporary storage, optional packaged source agreement, and optional configured seed ID before creating state, then claims root creation with exclusive mkdir and retains its directory identity. Writer admission rechecks that identity before initializing ownership and again before the conditional operation. If another supported publisher has committed an active generation, validate and preserve its selection. If no pointer exists, only this invocation's fresh root claim permits publication. Existing unowned, incomplete, damaged, or incompatible roots fail with preserved recovery data.
+A valid existing root takes the coordinated validation path without reading or matching the new image seed, changing its pointer, or pruning retained objects. An absent root validates the trusted seed, every manifest/artifact/schema/index invariant in private temporary storage, optional packaged source agreement, and optional configured seed ID before claiming the generation root, then claims root creation with exclusive mkdir and retains its directory identity. Writer admission rechecks that identity before initializing ownership and again before the conditional operation. If another supported publisher has committed an active generation, validate and preserve its selection. If no pointer exists, only this invocation's fresh root claim permits publication. Existing unowned, incomplete, damaged, or incompatible roots fail with preserved recovery data.
 
 | Witness | Boundary and required result |
 | --- | --- |
@@ -33,3 +33,7 @@ but an orphan object reaches that other store. It doesn't establish a cross-UID
 exploit. Supported publisher interleaving remains serialized and preserves the
 winner; independent pathname mutation falls outside that protocol. Hosted volume
 ownership and parent permissions need separate deployment readback.
+
+Seed inspection uses one deterministic sibling directory and stable per-target lock on the target filesystem. Missing service-controlled parents may be created and synced before inspection; invalid seeds still leave the generation root absent. The directory uses the ordinary stage owner marker and identity-checked removal. A later inspector reclaims an abandoned owned stage under the same lock; it can't remove a live inspector's files. Unowned residue, including interruption between directory creation and its owner marker, is preserved for explicit operator recovery. At most one scratch directory exists per target. The stable lock file remains for future coordination.
+
+The target filesystem needs room for the expanded seed (at most 512 MiB); startup doesn't depend on system temporary storage. Normal cleanup removes the owned stage before root claim. Process-kill/restart and concurrent-process tests verify these boundaries.
