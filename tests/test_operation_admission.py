@@ -54,31 +54,61 @@ def _settings(tmp_path: Path, **changes: object) -> Settings:
 
 
 def test_concurrent_daily_boundary_is_atomic_across_connections(tmp_path: Path) -> None:
-    """Exactly seven out of 40 concurrent calls can commit accepted work."""
-    path = tmp_path / "operations.sqlite3"
-    stores = [OperationStore(path) for _ in range(4)]
+    """Exactly seven out of 40 concurrent service calls can commit accepted work."""
+    import time
+
+    settings = _settings(
+        tmp_path,
+        mcp_principal_daily_operation_quota=7,
+        mcp_max_concurrent_operations_per_principal=40,
+        mcp_max_concurrent_operations=40,
+    )
+    services = [OperationAdmissionService(settings) for _ in range(4)]
+    entered = Event()
 
     def attempt(index: int) -> bool:
-        """Use independent connections and finish admitted work without refunding."""
-        store = stores[index % len(stores)]
-        result = admit_operation(
-            store,
-            principal_id="alice",
-            operation="policy_search",
-            daily_limit=7,
-            principal_limit=40,
-            global_limit=40,
-        )
-        if result.operation_id is not None:
-            store.finish(result.operation_id, "completed")
-            return True
-        assert result.rejection == "quota_exceeded"
-        return False
+        """Use real admission retries and retry only temporary overload within a fixed deadline."""
+        service = services[index % len(services)]
+        deadline = time.monotonic() + 10
+        entered.set()
+        while True:
+            try:
+                return service.run(
+                    lambda: True,
+                    principal=_principal(),
+                    operation_name="policy_search",
+                    cancelled=lambda: False,
+                )
+            except OperationAdmissionError as exc:
+                if str(exc).startswith("admission_busy:") and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                    continue
+                assert str(exc).startswith("quota_exceeded:")
+                return False
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        assert sum(executor.map(attempt, range(40))) == 7
-    usage = OperationStore(path).usage("alice")
-    assert (usage.accepted, usage.active, usage.completed, usage.provider_usage) == (7, 0, 7, None)
+    try:
+        with (
+            sqlite3.connect(settings.beta_auth_db_path) as writer,
+            ThreadPoolExecutor(max_workers=8) as executor,
+        ):
+            writer.execute("BEGIN IMMEDIATE")
+            pending = [executor.submit(attempt, index) for index in range(40)]
+            try:
+                assert entered.wait(2)
+                time.sleep(0.2)  # A bounded writer hold longer than one storage attempt.
+            finally:
+                writer.commit()
+            assert sum(result.result(timeout=15) for result in pending) == 7
+        usage = services[0].store.usage(principal_identity(_principal().issuer, "alice"))
+        assert (usage.accepted, usage.active, usage.completed, usage.provider_usage) == (
+            7,
+            0,
+            7,
+            None,
+        )
+    finally:
+        for service in services:
+            service.store.close()
 
 
 def test_principal_and_global_active_limits_are_independent(tmp_path: Path) -> None:
