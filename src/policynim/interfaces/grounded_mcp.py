@@ -116,6 +116,8 @@ def register_grounded_capabilities(
             result = await run_tool("policy_resource", operation, ctx)
         except ToolError as exc:
             raise ResourceError(str(exc)) from exc
+        except Exception:
+            raise ResourceError("internal_error: The policy resource couldn't be read.") from None
         return json.dumps(result, ensure_ascii=True)
 
     @server.resource("policynim://catalog", mime_type="application/json")
@@ -162,7 +164,12 @@ def register_grounded_capabilities(
     @server.prompt(name="policy_guided_review")
     def review_prompt(task: str) -> str:
         """Prepare an engineering review with explicit policy evidence and caller authority."""
-        get_principal("policy_review_prompt")
+        try:
+            get_principal("policy_review_prompt")
+        except ToolError:
+            raise
+        except Exception:
+            raise ToolError("internal_error: The review prompt couldn't be prepared.") from None
         return (
             "Review the following engineering task under the caller's existing authority. "
             "Read policynim://catalog to inspect the maintained corpus. Call policy_compile "
