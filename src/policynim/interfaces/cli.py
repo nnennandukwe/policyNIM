@@ -14,9 +14,9 @@ from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from ipaddress import ip_address
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import NamedTemporaryFile, TemporaryFile
-from typing import Annotated, Literal, NoReturn, cast
+from typing import Annotated, Literal, NoReturn, TextIO, cast
 from urllib.parse import urlparse
 
 import typer
@@ -84,6 +84,9 @@ _EXPECTED_MCP_TOOLS = (
     "policy_preflight_evidence",
 )
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
+_WINDOWS_PATH_TOKEN_RE = re.compile(
+    r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -542,7 +545,7 @@ def preflight(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Retrieval depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     trace: Annotated[
@@ -671,7 +674,7 @@ def route(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -726,7 +729,7 @@ def compile(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -866,6 +869,12 @@ def evidence_report(
 
 @app.command()
 def eval(
+    suite: Annotated[
+        Path | None,
+        typer.Option(
+            "--suite", exists=True, dir_okay=False, help="Reviewed live evaluation suite JSON."
+        ),
+    ] = None,
     mode: Annotated[
         EvalExecutionMode,
         typer.Option("--mode", help="Eval execution mode. Supported values: offline, live."),
@@ -911,19 +920,25 @@ def eval(
     """Run the PolicyNIM eval suite and persist local reports."""
     service = None
     try:
-        settings = _load_setup_dependent_settings()
+        settings = get_settings() if mode == "offline" else _load_setup_dependent_settings()
         service = create_eval_service(settings)
+        suite_options = {"suite_path": suite} if suite is not None else {}
         result = service.run(
             mode=mode,
             backend=backend,
             compare_rerank=not no_compare_rerank,
             regenerate=regenerate,
             max_regenerations=max_regenerations,
+            **suite_options,
         )
         if not headless:
             service.start_ui()
             service.publish_to_ui(result)
-        typer.echo(result.model_dump_json(indent=2))
+        typer.echo(
+            result.model_dump_json(
+                indent=2, exclude={"runs": {"__all__": {"case_results", "suite_definition"}}}
+            )
+        )
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
@@ -2594,6 +2609,8 @@ def _support_bundle_path_replacements(
         replacements[sys.executable] = "<python-executable>"
     for path, marker in candidates:
         for candidate in (
+            str(path.expanduser()),
+            str(path.expanduser().resolve(strict=False)),
             path.expanduser().as_posix(),
             path.expanduser().resolve(strict=False).as_posix(),
         ):
@@ -2644,6 +2661,7 @@ def _support_bundle_absolute_path_tokens(value: str) -> list[str]:
     except ValueError:
         tokens.extend(value.split())
     tokens.extend(match.group(2) for match in _POSIX_PATH_TOKEN_RE.finditer(value))
+    tokens.extend(match.group(0) for match in _WINDOWS_PATH_TOKEN_RE.finditer(value))
 
     paths: set[str] = set()
     for token in tokens:
@@ -2659,11 +2677,23 @@ def _support_bundle_token_is_absolute_path(value: str) -> bool:
         return False
     if value.startswith("/") and not value.startswith("//"):
         return len(Path(value).parts) >= 3
-    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"\\", "/"}
+    return (
+        len(value) >= 3
+        and value[0].isalpha()
+        and value[1] == ":"
+        and value[2] in {"\\", "/"}
+        and ":" not in value[3:]
+    )
 
 
 def _support_bundle_redaction_prefix(path_text: str) -> str | None:
     """Return the parent prefix to redact for an absolute path string."""
+    windows_path = PureWindowsPath(path_text)
+    if windows_path.is_absolute():
+        parent = windows_path.parent
+        if parent == windows_path or parent == PureWindowsPath(windows_path.anchor):
+            return None
+        return str(parent) if "\\" in path_text else parent.as_posix()
     if path_text.startswith("/"):
         path = Path(path_text).expanduser()
         parent = path.parent
@@ -2678,9 +2708,12 @@ def _support_bundle_path_is_known(
     replacements: dict[str, str],
 ) -> bool:
     """Return whether a path already falls under an existing redaction prefix."""
-    normalized = path_text.rstrip("/")
-    for existing in replacements:
-        prefix = existing.rstrip("/")
+    normalized = path_text.replace("\\", "/").rstrip("/")
+    for existing, marker in replacements.items():
+        prefix = existing.replace("\\", "/").rstrip("/")
+        if marker == "<home>" and normalized != prefix:
+            # Unknown directories beneath a home path still need their own redaction.
+            continue
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
             return True
     return False
@@ -2691,7 +2724,11 @@ def _replace_local_path_prefixes(value: object, replacements: Sequence[tuple[str
     if isinstance(value, str):
         redacted = value
         for path_prefix, marker in replacements:
-            redacted = redacted.replace(path_prefix, marker)
+            if PureWindowsPath(path_prefix).is_absolute():
+                pattern = r"[\\/]".join(re.escape(part) for part in re.split(r"[\\/]", path_prefix))
+                redacted = re.sub(pattern, lambda match: marker, redacted, flags=re.IGNORECASE)
+            else:
+                redacted = redacted.replace(path_prefix, marker)
         return redacted
     if isinstance(value, list):
         return [_replace_local_path_prefixes(item, replacements) for item in value]
@@ -2746,7 +2783,10 @@ async def _run_mcp_stdio_smoke(
                 env=_mcp_stdio_smoke_env(),
                 cwd=cwd or Path.cwd(),
             )
-            async with stdio_client(parameters, errlog=errlog) as (read_stream, write_stream):
+            async with stdio_client(parameters, errlog=cast(TextIO, errlog)) as (
+                read_stream,
+                write_stream,
+            ):
                 async with ClientSession(
                     read_stream,
                     write_stream,

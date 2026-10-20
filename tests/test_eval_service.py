@@ -301,6 +301,17 @@ def test_live_eval_pins_one_generation_across_modes_and_publication(
     )
     store = GenerationStore(root=settings.generations_dir, embedding=identity)
     original = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    with store.pin() as snapshot:
+        suite_path = tmp_path / "reviewed-suite.json"
+        suite_path.write_text(
+            json.dumps(
+                {
+                    "name": "reader-pinning",
+                    "expected_catalog_digest": snapshot.catalog.digest,
+                    "cases": [{"case_id": "read", "kind": "search", "input": "backend logs"}],
+                }
+            )
+        )
     before = index.read_bytes(), rules.read_bytes()
     seen: list[str | None] = []
 
@@ -329,7 +340,9 @@ def test_live_eval_pins_one_generation_across_modes_and_publication(
         "policynim.services.eval._create_live_preflight_service",
         lambda active_settings, rerank_enabled: MockPreflightService(active_settings.generation_id),
     )
-    result = EvalService(settings=settings).run(mode="live", compare_rerank=True)
+    result = EvalService(settings=settings).run(
+        mode="live", compare_rerank=True, suite_path=suite_path
+    )
     assert seen == [original, original]
     assert settings.generation_id is None
     assert result.generation_id == original

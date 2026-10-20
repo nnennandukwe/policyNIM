@@ -38,11 +38,12 @@ NO_ENV: dict[str, Any] = {"_env_file": None}
 
 
 @pytest.fixture(autouse=True)
-def clean_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Prevent credentials, personal profiles, and cached settings from entering tests."""
     for key in list(os.environ):
         if key.startswith("POLICYNIM_") or key == "NVIDIA_API_KEY":
             monkeypatch.delenv(key)
+    monkeypatch.setenv("POLICYNIM_GENERATIONS_DIR", str(tmp_path / "isolated-generations"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

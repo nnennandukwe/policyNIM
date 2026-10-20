@@ -11,6 +11,7 @@ from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.types import (
     CompiledPolicyConstraint,
+    ConformanceThresholds,
     EvalBackend,
     GeneratedPolicyConformanceDraft,
     PolicyConformanceMetric,
@@ -18,8 +19,10 @@ from policynim.types import (
     PolicyConformanceResult,
 )
 
-_FINAL_ADHERENCE_THRESHOLD = 0.75
-_TRAJECTORY_ADHERENCE_THRESHOLD = 0.75
+
+def conformance_thresholds() -> ConformanceThresholds:
+    """Return the fixed acceptance boundaries shared by scoring and report metadata."""
+    return ConformanceThresholds(final_adherence=0.75, trajectory_adherence=0.75)
 
 
 class PolicyConformanceService:
@@ -262,8 +265,9 @@ def _citation_support_metric(
 def _judge_metrics(
     draft: GeneratedPolicyConformanceDraft,
 ) -> list[PolicyConformanceMetric]:
+    thresholds = conformance_thresholds()
     final_failure_reasons = list(draft.failure_reasons)
-    final_passed = draft.final_adherence_score >= _FINAL_ADHERENCE_THRESHOLD
+    final_passed = draft.final_adherence_score >= thresholds.final_adherence
     if not final_passed and not final_failure_reasons:
         final_failure_reasons.append(
             f"final adherence score below threshold: {draft.final_adherence_score:.2f}"
@@ -278,7 +282,7 @@ def _judge_metrics(
         )
     ]
     if draft.trajectory_adherence_score is not None:
-        trajectory_passed = draft.trajectory_adherence_score >= _TRAJECTORY_ADHERENCE_THRESHOLD
+        trajectory_passed = draft.trajectory_adherence_score >= thresholds.trajectory_adherence
         trajectory_failure_reasons = []
         if not trajectory_passed:
             trajectory_failure_reasons.append(

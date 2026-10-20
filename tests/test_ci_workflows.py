@@ -242,6 +242,20 @@ def test_release_workflow_rejects_mismatched_manual_versions() -> None:
     assert "Release version mismatch:" in text
 
 
+def test_fresh_wheel_install_uses_locked_hashed_dependencies() -> None:
+    """Fresh package evidence mustn't resolve new transitive versions at test time."""
+    workflow = yaml.safe_load(_read_text(CI_WORKFLOW))
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["package-offline"]["steps"]
+        if "verify_installed_package.py" in step.get("run", "")
+    )
+    assert '"export", "--locked"' in command
+    assert '"--require-hashes", "--no-deps"' in command
+    assert '"--lockfile"' in command and '"--lock-digest"' in command
+    assert '"--requirements"' in command
+
+
 def _release_uv_commands(script: str) -> list[list[str]]:
     """Inspect each shell command; reject wrapped uv invocations rather than guess."""
     commands = []

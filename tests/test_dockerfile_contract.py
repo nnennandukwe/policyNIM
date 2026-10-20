@@ -60,7 +60,9 @@ def test_checked_in_public_bundle_matches_current_sources_and_default_identity(
     import json
 
     captured = json.loads(
-        (store.root / "objects" / receipt.generation_id / "snapshot.json").read_text()
+        (store.root / "objects" / receipt.generation_id / "snapshot.json").read_text(
+            encoding="utf-8"
+        )
     )
     notices = captured["packs"][0]["notices"]
     assert "licenses/CC-BY-SA-4.0.txt" in notices
