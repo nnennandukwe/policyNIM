@@ -435,9 +435,10 @@ Terminal writes retry SQLite lock contention for a bounded 1.5 seconds before
 reporting incomplete accounting. Active capacity stays reserved during that retry.
 
 MCP errors `server_busy` and `principal_busy` tell callers to retry after active work
-finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Database lock/open
-failures return `admission_unavailable` before providers start: check the volume and
-writer locks before retrying. If recording a terminal outcome fails after accepted
+finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Brief database
+contention returns `admission_busy`; other storage failures return
+`admission_unavailable` before providers start. Check the volume and writer locks
+before retrying. If recording a terminal outcome fails after accepted
 work, `accounting_incomplete` warns that work may have completed and advises against
 blind retries. The accepted row and charge stay intact; inspect and recover state.
 Keep the hosted SQLite file on the persistent volume, include it in backups, and
@@ -467,3 +468,26 @@ A `cancelled` ledger outcome records caller cancellation before worker drain
 finished. Provider work may already have completed and incurred usage. The public
 async adapter drains cleanup and propagates cancellation instead of returning that
 result; provider success and caller completion aren't interchangeable outcomes.
+
+Routine SQLite writer contention retries reservation at most three times, with
+100 ms SQLite waits and 50 ms between retries. The worker rechecks authority and
+its cancellation/deadline before each attempt. Exhaustion returns `admission_busy`
+with short retry guidance and no accepted charge; other storage errors remain
+`admission_unavailable`. Terminal writes retain their separate bounded retry policy.
+`operation.storage_failure` events include phase, exception class, SQLite/OS error
+codes and an opaque operation ID for uncertain terminal writes. They omit error
+messages, paths, credentials, principal labels and raw inputs.
+
+After committed recovery and admission, lease cleanup inspects at most 100 files.
+It removes an unlocked retired owner only when no accepted database row references
+it. Live owners, unresolved accepted work and unknown ownership stay preserved.
+Cleanup failures defer housekeeping with a fixed error class; they don't refund
+accepted usage or hide an accounting failure. The portal and admission service use
+the same canonical legacy identity fields and hash implementation.
+
+Owner leases are locked before their final names are published atomically. A process
+that dies before publication can leave a temporary alias; bounded housekeeping removes
+only matching aliases older than one hour. This prevents pruning from racing worker
+startup. Quiesce admissions and drain or stop workers before taking a matching database
+and owner-directory backup. A database-only emergency restore can leave unknown owners;
+keep those reservations until an operator reconciles them.

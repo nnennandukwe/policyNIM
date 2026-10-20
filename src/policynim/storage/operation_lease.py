@@ -22,25 +22,37 @@ class OperationOwner:
         self.identity = uuid.uuid4().hex
         path = self.directory / (self.identity + ".lock")
         self._path = path
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        pending = self.directory / ("." + self.identity + ".pending")
+        descriptor = os.open(pending, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        published = False
         try:
             os.write(descriptor, b"0")
             _lock(descriptor)
-        except BaseException:
+            os.link(pending, path)  # Publish only an already-held inode, without replacing a lease.
+            published = True
             try:
-                path.unlink()
+                pending.unlink()
             except OSError:
                 logging.getLogger(__name__).warning(
-                    "Operation owner cleanup failed: storage_unavailable."
+                    "Operation owner temporary alias cleanup deferred: storage_unavailable."
                 )
-            finally:
-                os.close(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            for unfinished in (pending, path) if published else (pending,):
+                try:
+                    unfinished.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logging.getLogger(__name__).warning(
+                        "Operation owner cleanup failed: storage_unavailable."
+                    )
             raise
         self._descriptor = descriptor
         self._release = weakref.finalize(self, os.close, descriptor)
 
-    def abandoned(self, identity: str) -> bool:
-        """Prove an old owner's kernel lease is unlocked without relying on its PID."""
+    def abandoned(self, identity: str, *, remove: bool = False) -> bool:
+        """Prove a lease is unlocked and optionally remove its retired inode after verification."""
         if not re.fullmatch(r"[0-9a-f]{32}", identity):
             return False
         path = self.directory / (identity + ".lock")
@@ -49,7 +61,8 @@ class OperationOwner:
         except FileNotFoundError:
             return False
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            observed = os.fstat(descriptor)
+            if not stat.S_ISREG(observed.st_mode):
                 return False
             try:
                 _lock(descriptor)
@@ -57,9 +70,16 @@ class OperationOwner:
                 if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                     return False
                 raise
-            return True
         finally:
             os.close(descriptor)
+        if remove:
+            try:
+                current = path.stat(follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == (observed.st_dev, observed.st_ino):
+                    path.unlink()
+            except FileNotFoundError:
+                pass  # Another local cleanup already removed this retired owner.
+        return True
 
     def close(self) -> None:
         """Release this service's lease after its workers have drained."""

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import sqlite3
+import stat
 import time
 import uuid
 from collections.abc import Callable
@@ -200,6 +203,38 @@ class OperationStore:
         if active:
             return  # Preserve ownership until process exit or successful terminal recovery.
         self._owner.close()
+
+    def prune_owner_leases(self) -> int:
+        """Inspect at most 100 lease files, removing only unlocked owners with no accepted rows."""
+        removed = 0
+        try:
+            with closing(self._connect()) as connection:
+                for index, path in enumerate(self._owner.directory.iterdir()):
+                    if index >= 100:
+                        break
+                    if re.fullmatch(r"\.[0-9a-f]{32}\.pending", path.name):
+                        observed = path.stat(follow_symlinks=False)
+                        if (
+                            stat.S_ISREG(observed.st_mode)
+                            and observed.st_mtime < time.time() - 3600
+                        ):
+                            path.unlink()
+                            removed += 1
+                        continue
+                    if path.suffix != ".lock":
+                        continue
+                    active = connection.execute(
+                        "SELECT 1 FROM operation_usage WHERE owner_id = ? "
+                        "AND outcome = 'accepted' LIMIT 1",
+                        (path.stem,),
+                    ).fetchone()
+                    if active is None and self._owner.abandoned(path.stem, remove=True):
+                        removed += 1
+        except (sqlite3.Error, OSError) as exc:
+            logging.getLogger(__name__).warning(
+                "Operation owner cleanup deferred: %s.", type(exc).__name__
+            )
+        return removed
 
     def usage(self, principal_id: str, *, now: float | None = None) -> OperationUsage:
         """Read the current UTC day's accepted work and separate outcome counts."""
