@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from threading import Event
 from typing import TypeVar
 
 from policynim.errors import PolicyNIMError, ProviderError
@@ -93,6 +94,7 @@ class OperationAdmissionService:
     def __init__(self, settings: Settings, *, store: OperationStore | None = None) -> None:
         """Open hosted operation state and recover only provably dead local processes."""
         self.settings = settings
+        self._accounting_incomplete = Event()
         self.store: OperationStore
         created_store: OperationStore | None = None
         try:
@@ -124,6 +126,11 @@ class OperationAdmissionService:
         def require_ready() -> None:
             """Reject authority withdrawn or cancellation/deadline reached before reservation."""
             authorize_operation(principal, operation_name)
+            if self._accounting_incomplete.is_set():
+                raise OperationAdmissionError(
+                    "accounting_incomplete: New work is paused after uncertain accounting. "
+                    "Ask the operator to inspect operation state and restart the hosted process."
+                )
             if cancelled():
                 raise ProviderError(
                     "Operation cancelled before admission.", failure_class="cancelled"
@@ -185,6 +192,7 @@ class OperationAdmissionService:
             try:
                 self.store.finish(decision.operation_id, outcome)
             except (sqlite3.Error, OSError) as exc:
+                self._accounting_incomplete.set()
                 raise OperationAdmissionError(
                     "accounting_incomplete: Work was accepted and may have completed. "
                     "Don't retry blindly; ask the operator to inspect operation state."
