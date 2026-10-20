@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,13 +14,14 @@ from openai import OpenAI
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.providers.nvidia import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
 from policynim.settings import Settings
-from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
+from policynim.types import GeneratedPreflightDraft, PolicyMetadata, PreflightRequest, ScoredChunk
 
 NO_ENV: dict[str, Any] = {"_env_file": None}
 
 EMBED_MODEL = "nvidia/nemotron-3-embed-1b"
 RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2"
-CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+CHAT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+PREVIOUS_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 
 def candidate() -> ScoredChunk:
@@ -96,6 +98,7 @@ def invoke(
     ("status", "failure_class", "attempts"),
     [
         (410, "endpoint_unavailable", 1),
+        (404, "endpoint_not_found", 1),
         (400, "bad_request", 1),
         (401, "auth", 1),
         (403, "auth", 1),
@@ -119,11 +122,14 @@ def test_provider_failure_contract(operation: str, status: int, failure_class: s
     expected_class = "http_status" if operation == "reranking" and status == 400 else failure_class
     assert caught.value.failure_class == expected_class
     assert "sentinel" not in str(caught.value)
-    if status == 410:
+    if status in {404, 410}:
         assert operation in str(caught.value)
         setting = {"embeddings": "EMBED", "reranking": "RERANK", "generation": "CHAT"}[operation]
         assert f"POLICYNIM_NVIDIA_{setting}_MODEL" in str(caught.value)
         assert "retry" in str(caught.value).lower()
+    if status == 404:
+        assert "account" in str(caught.value)
+        assert "HTTP 404" in str(caught.value)
 
 
 @pytest.mark.parametrize("operation", ["embeddings", "query"])
@@ -254,7 +260,7 @@ def test_sdk_response_validation_failure_is_sanitized_and_not_retried():
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("model", [CHAT_MODEL, "custom/chat-model"])
+@pytest.mark.parametrize("model", [CHAT_MODEL, PREVIOUS_CHAT_MODEL, "custom/chat-model"])
 def test_chat_options_are_specific_to_replacement_model(model):
     """Verify chat options are specific to replacement model."""
     calls = []
@@ -295,14 +301,25 @@ def test_chat_options_are_specific_to_replacement_model(model):
         0
     ]
     assert json.loads(allowed_ids) == [candidate().chunk_id]
-    if model == CHAT_MODEL:
+    if model == PREVIOUS_CHAT_MODEL:
         assert calls[0]["temperature"] == 1
         assert calls[0]["top_p"] == 0.95
-        assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
     else:
         assert calls[0]["temperature"] == 0
         assert calls[0]["top_p"] == 1
+    if model in {CHAT_MODEL, PREVIOUS_CHAT_MODEL}:
+        assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    else:
         assert "chat_template_kwargs" not in calls[0]
+    if model == CHAT_MODEL:
+        response_format = calls[0]["response_format"]
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["strict"] is True
+        assert (
+            response_format["json_schema"]["schema"] == GeneratedPreflightDraft.model_json_schema()
+        )
+    else:
+        assert "response_format" not in calls[0]
 
 
 def test_default_models_and_environment_overrides(monkeypatch):
@@ -325,6 +342,26 @@ def test_default_models_and_environment_overrides(monkeypatch):
         Settings(**NO_ENV, nvidia_embed_model="explicit/model").nvidia_embed_model
         == "explicit/model"
     )
+    monkeypatch.setenv("POLICYNIM_NVIDIA_CHAT_MODEL", PREVIOUS_CHAT_MODEL)
+    assert Settings(**NO_ENV).nvidia_chat_model == PREVIOUS_CHAT_MODEL
+    assert Settings(**NO_ENV, nvidia_chat_model=CHAT_MODEL).nvidia_chat_model == CHAT_MODEL
+
+
+@pytest.mark.parametrize(
+    "example", [".env.example", ".env.development.example", ".env.production.example"]
+)
+def test_chat_model_environment_examples_match_runtime_default(monkeypatch, example):
+    """Load the shipped chat assignment through settings without unrelated example secrets."""
+    monkeypatch.delenv("POLICYNIM_NVIDIA_CHAT_MODEL", raising=False)
+    source = Path(__file__).parents[1] / example
+    assignment = next(
+        line
+        for line in source.read_text().splitlines()
+        if line.startswith("POLICYNIM_NVIDIA_CHAT_MODEL=")
+    )
+    assert assignment.split("=", 1)[1] == Settings(**NO_ENV).nvidia_chat_model
+    monkeypatch.setenv(*assignment.split("=", 1))
+    assert Settings(**NO_ENV).nvidia_chat_model == CHAT_MODEL
 
 
 @pytest.mark.parametrize(

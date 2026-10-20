@@ -24,10 +24,11 @@ from openai import (
     OpenAI,
 )
 from openai.types.chat import ChatCompletionMessageParam
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
 from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
 from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
@@ -413,6 +414,7 @@ class NVIDIAGenerator(Generator):
             messages=messages,
             max_retries=self._max_retries,
             operation="grounded generation",
+            response_model=GeneratedPreflightDraft,
             parse=_parse_generation_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -505,6 +507,7 @@ class NVIDIAPolicyCompiler:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy compilation",
+            response_model=GeneratedCompiledPolicyDraft,
             parse=_parse_compiled_policy_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -597,6 +600,7 @@ class NVIDIAPolicyConformanceEvaluator:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy conformance evaluation",
+            response_model=GeneratedPolicyConformanceDraft,
             parse=lambda content: _parse_policy_conformance_draft(content, request),
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -616,6 +620,7 @@ def _request_chat_completion(
     messages: list[ChatCompletionMessageParam],
     max_retries: int,
     operation: str,
+    response_model: type[BaseModel],
     parse: Callable[[str], Any],
     timeout_seconds: float = 30.0,
     retry_initial_seconds: float = 0.5,
@@ -623,11 +628,25 @@ def _request_chat_completion(
 ) -> Any:
     """Request structured chat output and sanitize provider failures."""
     options: dict[str, Any] = {"temperature": 0, "top_p": 1}
-    if model == "nvidia/nemotron-3-super-120b-a12b":
+    if model in {
+        "nvidia/nemotron-3-super-120b-a12b",
+        NVIDIA_LIGHTNING_CHAT_MODEL,
+    }:
         options = {
             "temperature": 1,
             "top_p": 0.95,
             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
+    if model == NVIDIA_LIGHTNING_CHAT_MODEL:
+        options["temperature"] = 0
+        options["top_p"] = 1
+        options["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "strict": True,
+                "schema": response_model.model_json_schema(),
+            },
         }
 
     def send(timeout: float) -> Any:
@@ -716,6 +735,16 @@ def _request_with_retry(
                 exc.status_code if isinstance(exc, APIStatusError) else exc.response.status_code
             )
             failure = "rate_limit" if status == 429 else "http_status"
+            if status == 404:
+                failure = "endpoint_not_found"
+                raise ProviderError(
+                    f"NVIDIA {operation} endpoint or model isn't available (HTTP 404); "
+                    "don't retry unchanged requests. "
+                    f"Verify POLICYNIM_NVIDIA_{model_setting}_MODEL and "
+                    f"POLICYNIM_NVIDIA_{endpoint_setting}, and confirm this account has "
+                    "access with a minimal request. Catalog listing alone doesn't prove access.",
+                    failure_class=failure,
+                ) from exc
             if status == 410:
                 failure = "endpoint_unavailable"
                 raise _endpoint_unavailable(operation, model_setting, endpoint_setting) from exc
@@ -1019,6 +1048,22 @@ def _build_generation_messages(
         "- Cite only by chunk_id values that appear in the provided context.\n"
         "- Do not invent new chunk IDs. A policy_id is not a citation. Copy the entire "
         "chunk_id, including any colon and section suffix, from Allowed citation_ids.\n"
+        "- For each applicable_policies item, copy policy_id and title exactly from "
+        "the retrieved context metadata. Every citation in that item must belong to "
+        "that same policy. Don't use a chunk_id as a policy_id.\n"
+        "- Include implementation details only when the task or retrieved source explicitly "
+        "supports them. Don't invent numeric limits, batch sizes, retry counts, languages, "
+        "framework APIs, endpoint names, or other technology choices. If a choice is "
+        "unspecified, leave it open for configuration or measurement; don't supply "
+        "example numbers or APIs as if they're policy requirements.\n"
+        "- Build plan_steps and implementation_guidance by concise paraphrase of the "
+        "compiled policy statements and cited source requirements. Don't expand a "
+        "requirement into an algorithm, schema, identifier, API, or platform choice "
+        "that the supplied evidence doesn't specify.\n"
+        "- Preserve each source rule's triggers, conditions, exceptions, and scope. "
+        "Don't turn a conditional requirement into an unconditional plan step or move "
+        "it to a different lifecycle event. If the task doesn't establish the trigger, "
+        "keep the requirement conditional or omit it from the plan.\n"
         "- If the evidence is insufficient, set insufficient_context to true and "
         "keep the lists empty.\n"
         "- When compiled policy constraints are provided, use them as the main "
@@ -1105,9 +1150,14 @@ def _build_policy_compiler_messages(
         "- A policy_id is not a citation. Copy the entire chunk_id, including any "
         "colon and section suffix, from Allowed citation_ids.\n"
         "- Include a constraint only when the retained evidence directly supports it.\n"
+        "- Preserve source conditions, triggers, exceptions, and scope. Don't promote "
+        "a requirement for one lifecycle event into a requirement for another event.\n"
+        "- Don't invent numeric limits, retry counts, technology choices, APIs, or "
+        "endpoints absent the explicit task or retained source. Leave unspecified "
+        "choices open instead of supplying example values.\n"
         "- If evidence is weak or unsupported, set insufficient_context to true and "
         "leave every constraint list empty.\n"
-        "- Keep constraint statements concrete and task-specific."
+        "- Keep constraint statements specific to the task."
     )
     user_prompt = (
         f"Task: {request.task}\n"

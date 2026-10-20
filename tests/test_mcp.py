@@ -2047,14 +2047,16 @@ def test_slow_github_callback_does_not_block_portal_requests(monkeypatch) -> Non
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("failure", ["endpoint_unavailable", "index_incompatible"])
+@pytest.mark.parametrize(
+    "failure", ["endpoint_unavailable", "endpoint_not_found", "index_incompatible"]
+)
 def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, failure):
     """Verify mcp recovery guidance does not retry permanent failures."""
     from policynim.errors import IndexCompatibilityError
 
     error = (
         ProviderError("private-response-sentinel", failure_class=failure)
-        if failure == "endpoint_unavailable"
+        if failure in {"endpoint_unavailable", "endpoint_not_found"}
         else IndexCompatibilityError("private-index-path-sentinel")
     )
     closed = []
@@ -2075,7 +2077,15 @@ def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, fa
         _call_tool("policy_search", {"query": "request logging", "top_k": 1})
     text = str(caught.value)
     assert "sentinel" not in text
-    assert ("Do not retry" if failure == "endpoint_unavailable" else "separate") in text
+    if failure == "endpoint_not_found":
+        assert "HTTP 404" in text
+        assert "HTTP 410" not in text
+        assert "account" in text
+        assert "POLICYNIM_NVIDIA_CHAT_MODEL" in text
+        assert "POLICYNIM_NVIDIA_BASE_URL" in text
+        assert "don't retry" in text
+    else:
+        assert ("Do not retry" if failure == "endpoint_unavailable" else "separate") in text
     assert "Retry or" not in text
     assert closed == [True]
     assert events[0]["upstream_failure_class"] == failure

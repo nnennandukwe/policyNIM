@@ -273,7 +273,7 @@ def _validate_and_materialize_result(
 
     citation_ids = _ordered_unique(
         draft.citation_ids
-        or [
+        + [
             citation_id
             for policy in draft.applicable_policies
             for citation_id in policy.citation_ids
@@ -290,6 +290,12 @@ def _validate_and_materialize_result(
         if not policy_citation_ids:
             continue
         if any(citation_id not in context_by_id for citation_id in policy_citation_ids):
+            return None
+        if any(
+            context_by_id[citation_id].policy.policy_id != policy.policy_id
+            or context_by_id[citation_id].policy.title != policy.title
+            for citation_id in policy_citation_ids
+        ):
             return None
         applicable_policies.append(
             PolicyGuidance(
