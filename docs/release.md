@@ -77,9 +77,18 @@ Standalone builds must also import the public generation and negotiate both MCP
 protocols over stdio and authenticated HTTP. Run `scripts/verify_standalone.py`
 with `--command` pointing to the built executable, `--bundle` and `--bundle-digest`
 identifying the reviewed public archive, `--lockfile` and `--lock-digest`
-identifying the build lock, and `--revision` and `--output` identifying the source
+identifying the selected build lock, `--expected-version X.Y.Z` matching the
+release package version, and `--revision` and `--output` identifying the source
 commit and receipt. This check runs without provider credentials and records a
 digest of the complete standalone directory, including native-library bytes.
+The offline fixture must contain exactly six cases. Failed receipts retain the
+requested source, platform, version and digest context, clearly marked as an
+incomplete execution.
+
+The lock digest identifies the selected build checkout. The workflow performs a
+locked dependency sync before building from that checkout; the standalone receipt
+alone doesn't independently inspect every dependency version inside the frozen
+executable.
 It doesn't establish live retrieval quality or coding-client acceptance.
 
 The release workflow retains a separate `standalone-evidence-<platform>.json`

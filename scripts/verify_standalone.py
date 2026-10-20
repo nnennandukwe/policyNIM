@@ -147,6 +147,9 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
             command=command_text,
         )
         metrics = evaluation["runs"][0]["metrics"]
+        checks.require(
+            metrics["case_count"] == 6, "Standalone offline fixture requires exactly 6 cases."
+        )
         checks.require(metrics["overall_pass_rate"] == 1.0, "Standalone offline fixture failed.")
         report["synthetic_offline_cases"] = metrics
         report["stdio"] = asyncio.run(checks.check_stdio(env, cwd, command=command_text))
@@ -218,7 +221,18 @@ def main() -> None:
     try:
         report = verify(args)
     except Exception as error:
-        report = {"status": "failed", "error_type": type(error).__name__, "message": str(error)}
+        report = {
+            "status": "failed",
+            "source_revision": args.revision,
+            "platform": platform.system(),
+            "runner_machine": platform.machine(),
+            "expected_version": args.expected_version,
+            "public_bundle_digest": args.bundle_digest,
+            "expected_dependency_lock": args.lock_digest,
+            "context_scope": "requested verification identity; execution didn't complete",
+            "error_type": type(error).__name__,
+            "message": str(error),
+        }
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
     if report["status"] != "passed":

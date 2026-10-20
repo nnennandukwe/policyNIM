@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import hashlib
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -134,3 +136,101 @@ def test_wrong_release_version_fails_before_generation_work(
     with pytest.raises(RuntimeError, match="Standalone version differs"):
         verifier.verify(args)
     assert calls == [["--help"], ["--version"]]
+
+
+@pytest.mark.parametrize("case_count", [0, 5, 7])
+def test_partial_offline_fixture_cant_pass_before_transports(
+    tmp_path: Path, monkeypatch, case_count
+):
+    """A reduced or unexpected synthetic suite can't inherit the six-case release claim."""
+    command = tmp_path / "policynim"
+    command.write_bytes(b"launcher")
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_bytes(b"locked")
+    digest = "sha256:" + "b" * 64
+
+    def run_command(arguments, **kwargs):
+        """Provide only the checked command's help and version boundary."""
+        return "Usage: policynim" if arguments == ["--help"] else "0.1.0"
+
+    def run_cli(arguments, **kwargs):
+        """Expose an otherwise successful run whose fixture count differs."""
+        if arguments[:2] == ["policies", "validate"]:
+            return {"catalog_digest": digest, "effective_count": 15}
+        if arguments[:2] == ["generation", "import"]:
+            return {"generation_id": "a" * 64}
+        if arguments[:2] == ["generation", "inspect"]:
+            return {
+                "generation_id": "a" * 64,
+                "catalog": {"digest": digest},
+                "manifest": {"chunk_count": 111},
+            }
+        return {"runs": [{"metrics": {"overall_pass_rate": 1.0, "case_count": case_count}}]}
+
+    def forbid_transport(*args, **kwargs):
+        """Keep incomplete offline evidence from advancing to transport acceptance."""
+        pytest.fail("Incomplete fixture advanced to transport verification.")
+
+    monkeypatch.setattr(verifier.checks, "run_command", run_command)
+    monkeypatch.setattr(verifier.checks, "run_cli", run_cli)
+    monkeypatch.setattr(verifier.checks, "check_stdio", forbid_transport)
+    args = argparse.Namespace(
+        command=command,
+        lockfile=lockfile,
+        lock_digest="sha256:" + hashlib.sha256(b"locked").hexdigest(),
+        revision="a" * 40,
+        bundle=tmp_path / "unused.zip",
+        bundle_digest=digest,
+        expected_version="0.1.0",
+    )
+    with pytest.raises(RuntimeError, match="requires exactly 6 cases"):
+        verifier.verify(args)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The failing child uses a POSIX executable script.")
+def test_failed_command_receipt_keeps_requested_identity(tmp_path: Path) -> None:
+    """Actual failed command verification retains requested context without a passed claim."""
+    command = tmp_path / "policynim"
+    command.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('Usage: policynim' if '--help' in sys.argv else '0.0.1')\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_bytes(b"locked")
+    output = tmp_path / "failure.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "verify_standalone.py"),
+            "--command",
+            str(command),
+            "--bundle",
+            str(tmp_path / "unused.zip"),
+            "--bundle-digest",
+            "sha256:" + "b" * 64,
+            "--lockfile",
+            str(lockfile),
+            "--lock-digest",
+            "sha256:" + hashlib.sha256(b"locked").hexdigest(),
+            "--revision",
+            "a" * 40,
+            "--expected-version",
+            "0.1.0",
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    receipt = json.loads(output.read_text())
+    assert receipt["status"] == "failed"
+    assert receipt["source_revision"] == "a" * 40
+    assert receipt["expected_version"] == "0.1.0"
+    assert receipt["public_bundle_digest"] == "sha256:" + "b" * 64
+    assert receipt["expected_dependency_lock"] == "sha256:" + hashlib.sha256(b"locked").hexdigest()
+    assert receipt["platform"] == verifier.platform.system()
+    assert "execution didn't complete" in receipt["context_scope"]
+    assert "Standalone version differs" in receipt["message"]
