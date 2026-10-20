@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from policynim.storage.operation_lease import OperationOwner
 
+# Caller lifecycle outcome after worker drain; provider attempt results stay separate.
 OperationOutcome = Literal["completed", "failed", "cancelled", "interrupted"]
 AdmissionRejection = Literal["principal_busy", "server_busy", "quota_exceeded", "invalid_token"]
 
@@ -51,7 +52,7 @@ class OperationAdmission(BaseModel):
 
 
 class OperationUsage(BaseModel):
-    """Separate accepted work and terminal outcomes from unknown provider usage."""
+    """Separate accepted work and caller outcomes from unknown provider usage."""
 
     model_config = ConfigDict(frozen=True)
     accepted: int = 0

@@ -1383,8 +1383,9 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "and the writable auth volume."
             ) from exc
         LOGGER.error(
-            "Hosted beta auth initialization failed: storage_unavailable. "
-            "Continuing with env-issued break-glass tokens only."
+            "Hosted beta authentication is unavailable: storage_unavailable. "
+            "Env-issued break-glass authentication "
+            "remains available, but protected operations still require healthy operation storage."
         )
         return None
 
