@@ -1268,6 +1268,18 @@ def beta_admin_audit_log(
     typer.echo(json.dumps([event.model_dump(mode="json") for event in events], indent=2))
 
 
+@beta_admin_app.command("operations")
+def beta_admin_operations() -> None:
+    """Print aggregate local admission/outcome evidence without credentials or request content."""
+    from policynim.services.operational_report import inspect_operational_report
+
+    try:
+        report = inspect_operational_report(get_settings())
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    typer.echo(json.dumps(report, indent=2, sort_keys=True))
+
+
 def main() -> None:
     """Run the PolicyNIM CLI."""
     app()

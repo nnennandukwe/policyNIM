@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
@@ -19,6 +20,25 @@ from policynim.errors import ProviderError
 _LOG = logging.getLogger("policynim.operations")
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+
+_CORRELATION: ContextVar[str | None] = ContextVar("policynim_correlation", default=None)
+
+
+def current_correlation_id() -> str | None:
+    """Read an internally generated operation ID rather than a client-supplied label."""
+    return _CORRELATION.get()
+
+
+@contextmanager
+def operation_correlation() -> Iterator[str]:
+    """Correlate HTTP/worker/provider events without retaining request content."""
+    identity = uuid.uuid4().hex
+    token = _CORRELATION.set(identity)
+    try:
+        yield identity
+    finally:
+        _CORRELATION.reset(token)
 
 
 class OperationBudget:
@@ -141,7 +161,12 @@ def check_budget() -> None:
 
 def emit_operation_event(**fields: Any) -> None:
     """Emit only internally selected metadata, never requests or upstream bodies."""
-    _LOG.info(json.dumps({"event": "provider.operation", **fields}, sort_keys=True))
+    _LOG.info(
+        json.dumps(
+            {"event": "provider.operation", "correlation_id": current_correlation_id(), **fields},
+            sort_keys=True,
+        )
+    )
 
 
 def bounded_stage(stage: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:

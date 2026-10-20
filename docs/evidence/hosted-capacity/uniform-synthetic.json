@@ -1,0 +1,485 @@
+{
+  "configuration": {
+    "chunks": 10000,
+    "distribution": "uniform",
+    "embedding_dimensions": 4,
+    "embedding_model": "synthetic-orthogonal-4",
+    "global_active_limit": 10,
+    "principal_active_limit": 2,
+    "reranker": null,
+    "tool": "policy_search",
+    "users": 25
+  },
+  "evidence_kind": "synthetic_provider_real_http_and_sqlite_vec",
+  "hardware": {
+    "logical_cpus": 12,
+    "machine": "arm64",
+    "platform": "macOS-26.6-arm64-arm-64bit",
+    "python": "3.11.13"
+  },
+  "harness_sha256": "dafe8d2c6948988636dd4297f9c08be04b53251f4af182a2f6440ee6a22a1c2e",
+  "limits": [
+    "Only search is measured; other tools require separate workload evidence.",
+    "Synthetic vectors don't measure model quality or NVIDIA latency.",
+    "Short local runs don't establish a production capacity envelope.",
+    "Disconnect/server-shutdown outcomes depend on observed worker drain.",
+    "Generation publication and durable job backlog aren't exercised."
+  ],
+  "live_nvidia_calls": 0,
+  "production_capacity_verified": false,
+  "scenarios": [
+    {
+      "accepted_operation_latency_ms": {
+        "p50": 150.479,
+        "p95": 210.707,
+        "p99": 240.2
+      },
+      "attempted_requests": 50,
+      "cheap_probe_outcomes": {
+        "health_200": 20,
+        "ok": 20
+      },
+      "client_concurrency": 10,
+      "completed_client_responses": 50,
+      "discovery_latency_ms": {
+        "p50": 1.989,
+        "p95": 2.705,
+        "p99": 3.904
+      },
+      "duration_seconds": 0.873,
+      "health_latency_ms": {
+        "p50": 14.435,
+        "p95": 33.961,
+        "p99": 66.778
+      },
+      "intervention": null,
+      "live_provider_usage": null,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 10,
+      "operator_report": {
+        "active_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 145.143,
+        "latency_p95_ms": 206.344,
+        "latency_p99_ms": 229.121,
+        "latency_sample_count": 51,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_terminal_operations",
+        "outcomes": {
+          "completed": 51
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "retained_rows": 51,
+        "scope": "local_single_instance"
+      },
+      "outcomes": {
+        "ok": 50
+      },
+      "peak_server_rss_bytes": null,
+      "provider_delay_seconds": 0.1,
+      "provider_stage_counts": {
+        "embed_query": 51,
+        "search": 51
+      },
+      "provider_stage_event_count": 102,
+      "rejected_response_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "response_latency_ms": {
+        "p50": 150.479,
+        "p95": 210.707,
+        "p99": 240.2
+      },
+      "responses_per_second": 57.275,
+      "sampled_peak_server_rss_bytes": 165838848,
+      "scenario": "baseline",
+      "server_exit_code": -15,
+      "successful_operations_per_second": 57.275,
+      "successful_search_hit_counts": {
+        "5": 50
+      },
+      "warmup_operations": 1
+    },
+    {
+      "accepted_operation_latency_ms": {
+        "p50": 169.949,
+        "p95": 205.158,
+        "p99": 205.158
+      },
+      "attempted_requests": 50,
+      "cheap_probe_outcomes": {
+        "health_200": 5,
+        "ok": 5
+      },
+      "client_concurrency": 25,
+      "completed_client_responses": 50,
+      "discovery_latency_ms": {
+        "p50": 2.37,
+        "p95": 8.46,
+        "p99": 8.46
+      },
+      "duration_seconds": 0.219,
+      "health_latency_ms": {
+        "p50": 14.555,
+        "p95": 44.459,
+        "p99": 44.459
+      },
+      "intervention": null,
+      "live_provider_usage": null,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 10,
+      "operator_report": {
+        "active_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 149.894,
+        "latency_p95_ms": 187.647,
+        "latency_p99_ms": 187.647,
+        "latency_sample_count": 11,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_terminal_operations",
+        "outcomes": {
+          "completed": 11
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "retained_rows": 11,
+        "scope": "local_single_instance"
+      },
+      "outcomes": {
+        "ok": 10,
+        "server_busy": 40
+      },
+      "peak_server_rss_bytes": null,
+      "provider_delay_seconds": 0.1,
+      "provider_stage_counts": {
+        "embed_query": 11,
+        "search": 11
+      },
+      "provider_stage_event_count": 22,
+      "rejected_response_latency_ms": {
+        "p50": 16.844,
+        "p95": 31.542,
+        "p99": 33.42
+      },
+      "response_latency_ms": {
+        "p50": 17.518,
+        "p95": 182.076,
+        "p99": 205.158
+      },
+      "responses_per_second": 228.175,
+      "sampled_peak_server_rss_bytes": 155058176,
+      "scenario": "saturation",
+      "server_exit_code": -15,
+      "successful_operations_per_second": 45.635,
+      "successful_search_hit_counts": {
+        "5": 10
+      },
+      "warmup_operations": 1
+    },
+    {
+      "accepted_operation_latency_ms": {
+        "p50": 542.925,
+        "p95": 586.423,
+        "p99": 601.75
+      },
+      "attempted_requests": 50,
+      "cheap_probe_outcomes": {
+        "health_200": 75,
+        "ok": 75
+      },
+      "client_concurrency": 10,
+      "completed_client_responses": 50,
+      "discovery_latency_ms": {
+        "p50": 2.028,
+        "p95": 2.789,
+        "p99": 10.016
+      },
+      "duration_seconds": 2.821,
+      "health_latency_ms": {
+        "p50": 13.379,
+        "p95": 24.401,
+        "p99": 53.74
+      },
+      "intervention": null,
+      "live_provider_usage": null,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 10,
+      "operator_report": {
+        "active_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 537.678,
+        "latency_p95_ms": 576.509,
+        "latency_p99_ms": 587.068,
+        "latency_sample_count": 51,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_terminal_operations",
+        "outcomes": {
+          "completed": 51
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "retained_rows": 51,
+        "scope": "local_single_instance"
+      },
+      "outcomes": {
+        "ok": 50
+      },
+      "peak_server_rss_bytes": null,
+      "provider_delay_seconds": 0.5,
+      "provider_stage_counts": {
+        "embed_query": 51,
+        "search": 51
+      },
+      "provider_stage_event_count": 102,
+      "rejected_response_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "response_latency_ms": {
+        "p50": 542.925,
+        "p95": 586.423,
+        "p99": 601.75
+      },
+      "responses_per_second": 17.726,
+      "sampled_peak_server_rss_bytes": 161873920,
+      "scenario": "slow-provider",
+      "server_exit_code": -15,
+      "successful_operations_per_second": 17.726,
+      "successful_search_hit_counts": {
+        "5": 50
+      },
+      "warmup_operations": 1
+    },
+    {
+      "accepted_operation_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "attempted_requests": 50,
+      "cheap_probe_outcomes": {
+        "health_200": 18,
+        "ok": 18
+      },
+      "client_concurrency": 10,
+      "completed_client_responses": 50,
+      "discovery_latency_ms": {
+        "p50": 2.087,
+        "p95": 3.949,
+        "p99": 3.949
+      },
+      "duration_seconds": 0.657,
+      "health_latency_ms": {
+        "p50": 13.695,
+        "p95": 20.697,
+        "p99": 20.697
+      },
+      "intervention": null,
+      "live_provider_usage": null,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 0,
+      "operator_report": {
+        "active_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 124.087,
+        "latency_p95_ms": 124.087,
+        "latency_p99_ms": 124.087,
+        "latency_sample_count": 1,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_terminal_operations",
+        "outcomes": {
+          "completed": 1
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "retained_rows": 1,
+        "scope": "local_single_instance"
+      },
+      "outcomes": {
+        "admission_unavailable": 50
+      },
+      "peak_server_rss_bytes": null,
+      "provider_delay_seconds": 0.1,
+      "provider_stage_counts": {
+        "embed_query": 1,
+        "search": 1
+      },
+      "provider_stage_event_count": 2,
+      "rejected_response_latency_ms": {
+        "p50": 120.535,
+        "p95": 131.924,
+        "p99": 132.871
+      },
+      "response_latency_ms": {
+        "p50": 120.535,
+        "p95": 131.924,
+        "p99": 132.871
+      },
+      "responses_per_second": 76.054,
+      "sampled_peak_server_rss_bytes": 146030592,
+      "scenario": "locked-database",
+      "server_exit_code": -15,
+      "successful_operations_per_second": 0.0,
+      "successful_search_hit_counts": {},
+      "warmup_operations": 1
+    },
+    {
+      "accepted_operation_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "attempted_requests": 1,
+      "cheap_probe_outcomes": {
+        "health_200": 22,
+        "ok": 22
+      },
+      "client_concurrency": 10,
+      "completed_client_responses": 0,
+      "discovery_latency_ms": {
+        "p50": 1.977,
+        "p95": 2.523,
+        "p99": 3.846
+      },
+      "duration_seconds": 0.802,
+      "health_latency_ms": {
+        "p50": 13.441,
+        "p95": 14.935,
+        "p99": 15.133
+      },
+      "intervention": "client_task_cancelled",
+      "live_provider_usage": null,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 1,
+      "operator_report": {
+        "active_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 526.133,
+        "latency_p95_ms": 528.805,
+        "latency_p99_ms": 528.805,
+        "latency_sample_count": 2,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_terminal_operations",
+        "outcomes": {
+          "completed": 2
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "retained_rows": 2,
+        "scope": "local_single_instance"
+      },
+      "outcomes": {},
+      "peak_server_rss_bytes": null,
+      "provider_delay_seconds": 0.5,
+      "provider_stage_counts": {
+        "embed_query": 2,
+        "search": 2
+      },
+      "provider_stage_event_count": 4,
+      "rejected_response_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "response_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "responses_per_second": 0.0,
+      "sampled_peak_server_rss_bytes": 145817600,
+      "scenario": "disconnect",
+      "server_exit_code": -15,
+      "successful_operations_per_second": 0.0,
+      "successful_search_hit_counts": {},
+      "warmup_operations": 1
+    },
+    {
+      "accepted_operation_latency_ms": {
+        "p50": 530.639,
+        "p95": 530.639,
+        "p99": 530.639
+      },
+      "attempted_requests": 1,
+      "cheap_probe_outcomes": {
+        "health_200": 4,
+        "ok": 5
+      },
+      "client_concurrency": 10,
+      "completed_client_responses": 1,
+      "discovery_latency_ms": {
+        "p50": 2.07,
+        "p95": 4.124,
+        "p99": 4.124
+      },
+      "duration_seconds": 0.531,
+      "health_latency_ms": {
+        "p50": 13.523,
+        "p95": 31.995,
+        "p99": 31.995
+      },
+      "intervention": "SIGTERM_during_active_work",
+      "live_provider_usage": null,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 1,
+      "operator_report": {
+        "active_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 525.111,
+        "latency_p95_ms": 525.143,
+        "latency_p99_ms": 525.143,
+        "latency_sample_count": 2,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_terminal_operations",
+        "outcomes": {
+          "completed": 2
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "retained_rows": 2,
+        "scope": "local_single_instance"
+      },
+      "outcomes": {
+        "ok": 1
+      },
+      "peak_server_rss_bytes": null,
+      "provider_delay_seconds": 0.5,
+      "provider_stage_counts": {
+        "embed_query": 2,
+        "search": 2
+      },
+      "provider_stage_event_count": 4,
+      "rejected_response_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "response_latency_ms": {
+        "p50": 530.639,
+        "p95": 530.639,
+        "p99": 530.639
+      },
+      "responses_per_second": 1.883,
+      "sampled_peak_server_rss_bytes": 145309696,
+      "scenario": "shutdown",
+      "server_exit_code": -15,
+      "successful_operations_per_second": 1.883,
+      "successful_search_hit_counts": {
+        "5": 1
+      },
+      "warmup_operations": 1
+    }
+  ],
+  "source_revision": "aba5d40452cf68f7f467d56faec8980867ef66b0",
+  "working_tree_dirty": false
+}

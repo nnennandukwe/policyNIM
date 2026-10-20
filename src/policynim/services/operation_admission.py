@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from policynim.errors import PolicyNIMError, ProviderError
+from policynim.operations import current_correlation_id
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import (
     AuthenticatedPrincipal,
@@ -44,6 +45,8 @@ def admit_operation(
     credential_id: str | None = None,
     now: float | None = None,
     before_accept: Callable[[], None] | None = None,
+    correlation_id: str | None = None,
+    retention_days: int = 30,
 ) -> OperationAdmission:
     """Apply service-owned admission policy to a snapshot protected by the store's transaction."""
     if min(daily_limit, principal_limit, global_limit) < 1:
@@ -75,6 +78,8 @@ def admit_operation(
         decide=decide,
         credential_id=credential_id,
         now=now,
+        correlation_id=correlation_id,
+        retention_days=retention_days,
     )
 
 
@@ -141,6 +146,8 @@ class OperationAdmissionService:
                 global_limit=self.settings.mcp_max_concurrent_operations,
                 beta_account_id=int(principal.subject) if principal.source == "beta_key" else None,
                 credential_id=principal.credential_id,
+                correlation_id=current_correlation_id(),
+                retention_days=self.settings.mcp_operation_retention_days,
                 before_accept=require_ready,
             )
         except (sqlite3.Error, OSError, ValueError) as exc:

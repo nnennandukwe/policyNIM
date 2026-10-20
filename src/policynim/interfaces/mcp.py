@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import json
 import logging
 import secrets
@@ -55,7 +56,12 @@ from policynim.interfaces.mcp_authorization import (
     OperationAuthorizationApp,
     record_authorization_failure,
 )
-from policynim.operations import OperationBudget, operation_scope
+from policynim.operations import (
+    OperationBudget,
+    current_correlation_id,
+    operation_correlation,
+    operation_scope,
+)
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -87,6 +93,7 @@ from policynim.types import (
     MIN_TOP_K,
     BetaAccount,
     BetaUsageSnapshot,
+    CompileRequest,
     HealthCheckResult,
     PreflightRequest,
     PreflightResult,
@@ -350,8 +357,10 @@ def _emit_hosted_event(
     upstream_failure_class: str | None,
     request_id: str | None,
 ) -> None:
+    """Emit fixed event fields with opaque correlation and no request or exception payload."""
     payload = {
         "event": event,
+        "correlation_id": current_correlation_id(),
         "auth_result": auth_result,
         "tool_name": tool_name,
         "latency_ms": latency_ms,
@@ -366,18 +375,31 @@ def _elapsed_ms(start_time: float) -> float:
 
 
 def _failure_class_from_error(exc: BaseException) -> str | None:
+    """Retain stable failure categories without copying exception messages into telemetry."""
     current: BaseException | None = exc
     while current is not None:
+        if isinstance(current, (OperationAdmissionError, ToolError)):
+            code = str(current).split(":", 1)[0]
+            if code in {
+                "server_busy",
+                "principal_busy",
+                "quota_exceeded",
+                "admission_unavailable",
+                "accounting_incomplete",
+                "server_shutting_down",
+            }:
+                return code
         failure_class = getattr(current, "failure_class", None)
         if isinstance(failure_class, str) and failure_class:
             return failure_class
         current = current.__cause__ or current.__context__
-    return None
+    return type(exc).__name__
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
+    """Hash caller-controlled identifiers so they can't smuggle private text into logs."""
     try:
-        return ctx.request_id
+        return hashlib.sha256(str(ctx.request_id).encode()).hexdigest()[:24]
     except ValueError:
         return None
 
@@ -509,6 +531,21 @@ async def _run_logged_tool(
     executor: _ToolExecutor,
     principal: AuthenticatedPrincipal | None = None,
 ) -> dict[str, object]:
+    """Mint a content-free correlation ID shared by HTTP, admission and provider events."""
+    with operation_correlation():
+        return await _run_correlated_tool(
+            tool_name, operation, ctx=ctx, executor=executor, principal=principal
+        )
+
+
+async def _run_correlated_tool(
+    tool_name: str,
+    operation: Callable[[], dict[str, object]],
+    *,
+    ctx: Context,
+    executor: _ToolExecutor,
+    principal: AuthenticatedPrincipal | None = None,
+) -> dict[str, object]:
     """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
     auth_result = "authorized" if get_access_token() is not None else _HOSTED_AUTH_RESULT.get()
@@ -541,7 +578,14 @@ async def _run_logged_tool(
             raise ToolError(_safe_tool_error(exc)) from exc
         if isinstance(exc, _InvalidToolRequest):
             raise ToolError(str(exc)) from exc
-        raise
+        if isinstance(exc, ToolError):
+            raise
+        raise ToolError(
+            "internal_error: PolicyNIM couldn't complete this operation. "
+            "Ask the operator to inspect structured logs for correlation "
+            + str(current_correlation_id())
+            + "."
+        ) from None
 
     _emit_hosted_event(
         "mcp.tool",
@@ -671,6 +715,10 @@ def _register_tools(
     ) -> PreflightResult:
         """Get citation-backed policy guidance, review flags and tests for a coding task."""
         principal = get_principal("policy_preflight")
+        try:
+            CompileRequest(task=task, domain=domain, top_k=_resolve_top_k(top_k))
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error("Preflight request", exc)) from exc
         result = await _run_logged_tool(
             "policy_preflight",
             lambda: _run_policy_preflight(
@@ -695,6 +743,10 @@ def _register_tools(
     ) -> SearchResult:
         """Search the policy corpus for relevant source chunks and their citations."""
         principal = get_principal("policy_search")
+        try:
+            SearchRequest(query=query, domain=domain, top_k=_resolve_top_k(top_k))
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error("Search request", exc)) from exc
         result = await _run_logged_tool(
             "policy_search",
             lambda: _run_policy_search(
@@ -944,7 +996,7 @@ def _register_beta_routes(
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
         except Exception:
-            LOGGER.exception("Unexpected hosted beta OAuth callback failure.")
+            LOGGER.error("Hosted beta callback failed: unexpected_upstream_error.")
             return _render_beta_landing(
                 settings,
                 message=(
@@ -1396,8 +1448,8 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
-        LOGGER.exception(
-            "Hosted beta auth initialization failed. "
+        LOGGER.error(
+            "Hosted beta auth initialization failed: storage_unavailable. "
             "Continuing with env-issued break-glass tokens only."
         )
         return None
@@ -1725,7 +1777,7 @@ def _run_streamable_http_app(
     """Serve the hosted HTTP app through uvicorn."""
     import uvicorn
 
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level, access_log=False)
     server = uvicorn.Server(config)
     server.run()
 

@@ -30,7 +30,7 @@ from policynim.job_types import (
     EvaluationJobUsage,
     StoredEvaluationJobReport,
 )
-from policynim.operations import OperationBudget, operation_scope
+from policynim.operations import OperationBudget, operation_correlation, operation_scope
 from policynim.providers.lifecycle import NVIDIAClients, borrow_clients
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
@@ -402,13 +402,14 @@ class EvaluationJobWorker:
 
             admission = OperationAdmissionService(self.service.settings)
             try:
-                admission.run(
-                    run_owned,
-                    principal=_principal(snapshot.authorization),
-                    operation_name="eval_submit",
-                    cancelled=signal.is_set,
-                    check_ready=budget.remaining,
-                )
+                with operation_correlation():
+                    admission.run(
+                        run_owned,
+                        principal=_principal(snapshot.authorization),
+                        operation_name="eval_submit",
+                        cancelled=signal.is_set,
+                        check_ready=budget.remaining,
+                    )
             finally:
                 admission.store.close()
             return self.store.finish(job.job_id, self.worker_token, "completed")

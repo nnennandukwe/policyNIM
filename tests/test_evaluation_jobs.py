@@ -716,3 +716,30 @@ def test_concurrent_schema_upgrade_keeps_accepted_jobs(generation, tmp_path: Pat
         assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         names = [row[1] for row in db.execute("PRAGMA table_info(evaluation_jobs)")]
     assert names.count("active_case_start_attempts") == 1
+
+
+def test_concurrent_submissions_deduplicate_and_keep_owner_queue_bound(
+    generation, tmp_path: Path
+) -> None:
+    """Parallel callers share one accepted key and can't race past the durable owner limit."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    service, suite, _ = job_setup(generation, tmp_path)
+
+    def submit(key: str):
+        """Capture only a typed accepted handle or its expected saturation code."""
+        try:
+            return service.submit(suite, idempotency_key=key, principal=principal())
+        except EvaluationJobError as error:
+            assert error.code == "queue_full"
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        repeated = list(pool.map(submit, ["same-key"] * 6))
+    assert all(item is not None for item in repeated)
+    assert len({item.job_id for item in repeated if item is not None}) == 1
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        bounded = list(pool.map(submit, [f"unique-{index}" for index in range(6)]))
+    assert len([item for item in bounded if item is not None]) == 1
+    assert service.store.aggregate_counts() == {"queued": 2}
+    assert not service.settings.beta_auth_db_path.exists()
