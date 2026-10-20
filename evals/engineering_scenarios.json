@@ -13,7 +13,7 @@
     "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
     "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
     "ARCH-JOB-001": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
-    "BE-CONFIG-001": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
+    "BE-CONFIG-001": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
     "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
     "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
     "BE-LOG-001": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
@@ -121,8 +121,8 @@
     {
       "case_id": "test-fail-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "A service operator corrects a static help heading; execution, rejection, effects, and recovery behavior stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "TEST-FAIL-001"
@@ -131,7 +131,8 @@
       "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no failure and recovery verification behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Changes that can reject work or interrupt an effect need evidence that recovery preserves the intended state."
     },
     {
       "case_id": "test-contract-001-applicable",
@@ -212,8 +213,8 @@
     {
       "case_id": "test-contract-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "A library maintainer renames a private local variable; public inputs, outputs, errors, and caller behavior stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "TEST-CONTRACT-001"
@@ -222,7 +223,8 @@
       "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no public boundary contract tests behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "A producer change can pass its own tests while breaking a strict consumer."
     },
     {
       "case_id": "arch-api-001-applicable",
@@ -305,8 +307,8 @@
     {
       "case_id": "arch-api-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "api-producer",
+      "input": "An API producer refactors a private sorting helper with identical responses, errors, and compatibility behavior.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "ARCH-API-001"
@@ -315,7 +317,8 @@
       "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no api compatibility and version boundaries behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Clients need predictable field meaning, error behavior, and migration paths as an API evolves."
     },
     {
       "case_id": "api-error-001-applicable",
@@ -396,8 +399,8 @@
     {
       "case_id": "api-error-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "api-producer",
+      "input": "An API consumer changes the spacing of successful scalar results in its local display; HTTP status and error handling stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "API-ERROR-001"
@@ -406,7 +409,8 @@
       "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no http error contracts behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "API callers need stable, safe error information they can handle without parsing internal exception text."
     },
     {
       "case_id": "api-page-001-applicable",
@@ -489,8 +493,8 @@
     {
       "case_id": "api-page-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "api-producer",
+      "input": "An API producer adjusts an endpoint returning one scalar readiness value; it exposes no collection or traversal contract.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "API-PAGE-001"
@@ -499,7 +503,8 @@
       "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no pagination and collection stability behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "A changing collection needs an explicit traversal contract so callers can detect completion and avoid unexpected duplicates or omissions."
     },
     {
       "case_id": "data-migrate-001-applicable",
@@ -578,8 +583,8 @@
     {
       "case_id": "data-migrate-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "A database operator tunes a read-only dashboard query without schema, data, migration, or application-version changes.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "DATA-MIGRATE-001"
@@ -588,7 +593,8 @@
       "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no data migration and recovery behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Schema and data changes need a safe path through partial execution and mixed application versions."
     },
     {
       "case_id": "data-transaction-001-applicable",
@@ -667,8 +673,8 @@
     {
       "case_id": "data-transaction-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "An application developer reformats the display of a read-only query result; no durable writes or external effects occur.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "DATA-TRANSACTION-001"
@@ -677,7 +683,8 @@
       "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no transaction boundaries and external effects behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Coupled durable changes need a named commit point and an explicit treatment of effects outside the database."
     },
     {
       "case_id": "arch-job-001-applicable",
@@ -758,8 +765,8 @@
     {
       "case_id": "arch-job-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "An application developer optimizes a synchronous pure calculation with no queue delivery, acknowledgement, retry, or side effect.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "ARCH-JOB-001"
@@ -768,7 +775,8 @@
       "policy_revision": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no background jobs and duplicate effects behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Workers need bounded retries and a recovery contract when delivery or acknowledgement repeats."
     },
     {
       "case_id": "be-config-001-applicable",
@@ -780,7 +788,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
+      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -792,7 +800,7 @@
         },
         {
           "requirement_id": "CONFIG-2",
-          "quote": "Document precedence, safe defaults, model identity, and the restart or reload behavior for changed settings.",
+          "quote": "Document precedence, safe defaults, model identity when models are used, and the restart or reload behavior for changed settings.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -818,7 +826,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
+      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -830,7 +838,7 @@
         },
         {
           "requirement_id": "CONFIG-2",
-          "quote": "Document precedence, safe defaults, model identity, and the restart or reload behavior for changed settings.",
+          "quote": "Document precedence, safe defaults, model identity when models are used, and the restart or reload behavior for changed settings.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -849,17 +857,18 @@
     {
       "case_id": "be-config-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "A service operator updates an incident contact name in a static guide; runtime settings, validation, and enabled integrations stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "BE-CONFIG-001"
       ],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
+      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no configuration validation and safe startup behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Invalid configuration must stop affected operations before they can corrupt state or weaken authorization."
     },
     {
       "case_id": "rel-timeout-001-applicable",
@@ -944,8 +953,8 @@
     {
       "case_id": "rel-timeout-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "An application developer rearranges a pure local arithmetic calculation with no dependency call, wait, or retry.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "REL-TIMEOUT-001"
@@ -954,7 +963,8 @@
       "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no deadlines and bounded retries behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Dependency slowness and retries consume the caller's finite time and resources."
     },
     {
       "case_id": "rel-overload-001-applicable",
@@ -1037,8 +1047,8 @@
     {
       "case_id": "rel-overload-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "A service operator changes an incident dashboard title; request admission, resource use, quotas, and degradation stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "REL-OVERLOAD-001"
@@ -1047,7 +1057,8 @@
       "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no admission control and backpressure behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "One slow or expensive workload mustn't consume unbounded resources or prevent unrelated callers from progressing."
     },
     {
       "case_id": "be-log-001-applicable",
@@ -1132,8 +1143,8 @@
     {
       "case_id": "be-log-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "An application developer changes a static page layout without adding service events or changing logged values, collection, or retention.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "BE-LOG-001"
@@ -1142,7 +1153,8 @@
       "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no safe structured logging behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Operators need failure context without turning logs into a copy of private requests."
     },
     {
       "case_id": "be-trace-001-applicable",
@@ -1229,8 +1241,8 @@
     {
       "case_id": "be-trace-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "An application developer renames a local pure helper with no worker, dependency, request context, spans, or telemetry changes.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "BE-TRACE-001"
@@ -1239,7 +1251,8 @@
       "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no request correlation and trace context behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "A request that crosses a worker or dependency boundary needs context operators can follow through failures."
     },
     {
       "case_id": "obs-readiness-001-applicable",
@@ -1322,8 +1335,8 @@
     {
       "case_id": "obs-readiness-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "application-developer",
+      "input": "A service operator corrects spelling in an incident guide; readiness responses, metrics, probes, and alert rules stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "OBS-READINESS-001"
@@ -1332,7 +1345,8 @@
       "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no operational signals and readiness behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Traffic admission and incident response need signals tied to usable service behavior."
     },
     {
       "case_id": "supply-build-001-applicable",
@@ -1419,8 +1433,8 @@
     {
       "case_id": "supply-build-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "build-maintainer",
+      "input": "A release operator edits an unshipped meeting agenda; dependency inputs, toolchains, builds, and distributed artifacts stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "SUPPLY-BUILD-001"
@@ -1429,7 +1443,8 @@
       "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no dependencies and reproducible build inputs behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Release inputs need a reviewed identity and a build path that can be repeated and inspected."
     },
     {
       "case_id": "supply-provenance-001-applicable",
@@ -1512,8 +1527,8 @@
     {
       "case_id": "supply-provenance-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "documentation-editor",
-      "input": "A documentation editor fixes a spelling error in an unrelated article; no executable, API, state, telemetry, or release behavior changes.",
+      "role": "build-maintainer",
+      "input": "An artifact consumer reorders local bookmark labels without downloading, trusting, verifying, or executing any artifact.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
         "SUPPLY-PROVENANCE-001"
@@ -1522,7 +1537,8 @@
       "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The unrelated editorial correction changes no release provenance and consumer verification behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Producing provenance describes a build; a consumer still needs to verify the artifact against trusted expectations."
     },
     {
       "case_id": "test-fail-001-boundary",
@@ -1662,7 +1678,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
+      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup.",
@@ -1781,12 +1797,12 @@
       "rationale": "Selected artifact checks don't establish a complete framework level or certification; their narrower verified result can still be reported."
     }
   ],
-  "generation_id": "3872748209444592f271c84a870714bf759f5d00622f105782878a16dbd05a52",
-  "catalog_digest": "sha256:a95f9b3e777716553982115425a681adc7038e417e55430eea7878f869222661",
+  "generation_id": "a9d51e8459369bcb96f467557408f53c4e8ecc77e20c52b1c14cad467b549908",
+  "catalog_digest": "sha256:5b871269603d20a80b1f4bcb5a146e60f4224503a9e87c707df5e29b7bf83c27",
   "profile_id": null,
   "profile_digest": null,
   "full_engineering_profile": {
     "profile_id": "policynim.full-engineering",
-    "profile_digest": "sha256:5bf36bf04c583003a160fdafaa6d08d05f6a325b14b2bb71e9e45d4094df0493"
+    "profile_digest": "sha256:36dadb90216688cdc303eb1c8f47051cdeaade79d3655e5d681b5b19bb629433"
   }
 }

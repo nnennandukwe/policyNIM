@@ -5,8 +5,9 @@ standards and references. Maintained security adaptations carry pinned sources
 and licenses; the engineering baseline carries reviewed source references and explicit project
 decisions. SEC-PUBLIC-ENDPOINT-002 retains its legacy unknown provenance. No proprietary handbook is included.
 
-Each policy below maps the shipped document to its public grounding and explains
-how the repo uses that source material.
+The coverage matrices linked below map every maintained policy to its source
+sections and explain how the repo uses that material. Manifests retain each
+policy's attribution, revision, and reuse terms.
 
 ## Engineering Topics
 
@@ -15,6 +16,12 @@ The [engineering coverage matrix](engineering-policy-coverage.md) maps testing, 
 The original architecture/backend IDs remain while their files move into topic directories. API compatibility uses SemVer 2.0.0 within its stated package scope and explicit PolicyNIM API decisions. Background-job and deadline guidance refers to the reviewed AWS retry article. Configuration and logging retain pinned OWASP references. Correlation uses the W3C Trace Context Recommendation and the stable OpenTelemetry Logs Data Model at an exact source commit.
 
 All new engineering requirements label project choices. Source availability doesn't imply a reuse grant; no Google SRE or AWS prose is redistributed. Source attribution, reuse terms, and change notices stay in the manifests and each selected root's license notices.
+
+The revised logging and configuration policies retain their OWASP adaptation
+labels. Configuration no longer cites Twelve-Factor; logging and correlation no
+longer cite Google SRE. Their current pinned OWASP, OpenTelemetry, and W3C
+references are listed in the matrix and manifests; the earlier references aren't
+claimed as reviewed support for the revised requirements.
 
 ## Security Policies
 

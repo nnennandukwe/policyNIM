@@ -16,7 +16,9 @@
 .voice/
 __pycache__/
 build/
-/data/
+data/
+!policies/data/
+!policies/data/**
 dist/
 *.pyc
 .threadloop/state/

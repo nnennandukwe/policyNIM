@@ -41,7 +41,7 @@ policy_id = "BE-LOG-001"
 path = "observability/backend-logging-standard.md"
 requirement_level = "required"
 applicability = ["application-developer", "service-operator"]
-grounding_kind = "project_recommendation"
+grounding_kind = "adaptation"
 
 [[policies.sources]]
 title = "OWASP Logging Cheat Sheet"
@@ -68,7 +68,7 @@ policy_id = "BE-CONFIG-001"
 path = "reliability/config-validation-and-fail-closed.md"
 requirement_level = "required"
 applicability = ["application-developer", "service-operator"]
-grounding_kind = "project_recommendation"
+grounding_kind = "adaptation"
 
 [[policies.sources]]
 title = "OWASP Secrets Management Cheat Sheet"

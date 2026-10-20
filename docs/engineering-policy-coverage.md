@@ -2,7 +2,7 @@
 
 The `policynim.baseline@0.3.0` aggregate selects 26 policies. Six independently selectable engineering packs and the maintained security/MCP pack use the same source files. The full profile is `policies/profiles/full-engineering.toml`; it selects the seven topic roots and pins their actual source digests.
 
-This library supplies review guidance and authored expectations. It doesn't implement an application's transactions, quotas, tracing, or release infrastructure, and it doesn't establish SSDF, SLSA, or OSPS compliance. The 64 engineering scenarios check authored verdict categories, source identity, scope, requirement evidence and documented boundaries through real parsing/chunking. They aren't independent model judgments or live retrieval measurements.
+This library supplies review guidance and authored expectations. It doesn't implement an application's transactions, quotas, tracing, or release infrastructure, and it doesn't establish SSDF, SLSA, or OSPS compliance. The 64 engineering scenarios check authored verdict categories, source identity, role-specific scope exclusions, requirement evidence and documented boundaries through real parsing/chunking. They aren't independent model judgments or live retrieval measurements.
 
 ## Coverage matrix
 

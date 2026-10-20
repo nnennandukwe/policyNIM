@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -121,7 +122,9 @@ def test_changed_policy_has_pinned_sources_and_paired_scope_cases(policy_id: str
     provenance = entry.policy.provenance
     assert provenance is not None
     assert provenance.content_digest == SUITE["changed_policy_revisions"][policy_id]
-    assert provenance.grounding_kind == "project_recommendation"
+    assert provenance.grounding_kind == (
+        "adaptation" if policy_id in {"BE-LOG-001", "BE-CONFIG-001"} else "project_recommendation"
+    )
     assert provenance.sources and provenance.applicability
     assert entry.policy.grounded_in == [str(source.url) for source in provenance.sources]
     assert all(
@@ -177,7 +180,9 @@ def test_authored_scenario_evidence_matches_actual_chunks(case: dict) -> None:
         assert case["boundary_evidence"] == boundary
         return
     if case["kind"] == "out_of_scope":
-        assert case["role"] not in provenance.applicability
+        assert case["role"] in provenance.applicability
+        intent = entry.body.split("## Intent\n\n", 1)[1].split("\n\n##", 1)[0]
+        assert case["scope_evidence"] == intent
         assert case["expected_policy_ids"] == case["expected_evidence"] == []
         assert case["out_of_scope_policy_ids"] == [case["policy_id"]]
         return
@@ -231,3 +236,47 @@ def test_full_profile_publishes_and_reads_a_complete_offline_generation(tmp_path
     with generations.pin() as snapshot:
         assert snapshot.indexed_catalog.effective_count == 26
         assert snapshot.manifest.pack_pins == snapshot.indexed_catalog.pack_pins
+
+
+def test_scope_cases_have_policy_specific_inputs() -> None:
+    """Authored exclusions vary the affected behavior instead of excluding every role."""
+    cases = [case for case in SUITE["cases"] if case["kind"] == "out_of_scope"]
+    assert len({case["input"] for case in cases}) == len(set().union(*TOPICS.values()))
+    assert all(case.get("scope_evidence") for case in cases)
+
+
+def test_security_topic_retains_aggregate_provenance_and_notice_bytes() -> None:
+    """Selecting security alone can't silently change the aggregate's source attribution."""
+    security = build_policy_catalog(POLICIES / "security")
+    for entry in security.policies:
+        actual = entry.policy.provenance
+        expected = CATALOG.show(entry.policy.policy_id).policy.provenance
+        assert actual is not None and expected is not None
+        assert actual.model_dump(exclude={"pack_id", "pack_version"}) == expected.model_dump(
+            exclude={"pack_id", "pack_version"}
+        )
+        assert entry.body == CATALOG.show(entry.policy.policy_id).body
+    for notice in POLICIES.glob("*/licenses/*"):
+        assert notice.read_bytes() == (POLICIES / "licenses" / notice.name).read_bytes()
+
+
+def test_nested_runtime_data_is_ignored_without_hiding_policy_sources() -> None:
+    """A command launched below the checkout can't leave its runtime database unignored."""
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin"],
+        cwd=ROOT,
+        input="data/auth.sqlite3\nscratch/data/auth.sqlite3\npolicies/data/pack.toml\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["data/auth.sqlite3", "scratch/data/auth.sqlite3"]
+
+
+def test_service_configuration_only_requires_model_identity_when_applicable() -> None:
+    """The general service rule doesn't require a model for an ordinary backend."""
+    rule = next(
+        line for line in CATALOG.show("BE-CONFIG-001").body.splitlines() if "**CONFIG-2**" in line
+    )
+    assert "model identity when models are used" in rule
