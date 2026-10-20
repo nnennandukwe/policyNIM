@@ -79,11 +79,17 @@ out-of-scope cases. Their source policies and other affected policies now list
 only the sections cited for their requirements; broader retryability and severity
 choices remain labeled as project guidance rather than borrowed source mandates.
 
+The [refreshed full review](evidence/engineering-source-review/refreshed.json)
+independently read all 16 changed policy bodies and all 64 scenarios at revision
+`abfcd18`, including both revised boundary inputs. It found two rationale rule
+references to correct. The [rationale delta review](evidence/engineering-source-review/rationale-delta.json)
+then verified exactly those two corrections at `61708ad`; its unchanged-input
+statement compares that revision with `abfcd18`, as its `base_sha` records.
+
 The [current fixture binding](evidence/engineering-source-review/current-fixture-binding.json)
-marks these author revisions as pending independent source review. The original
-receipts haven't been rewritten to review the new inputs or source revisions.
-The checked-in generation and grounded-suite binding are also historical until
-the reviewed source receives a new bundle. The final independent-review and
-bundle-equality checks must pass before this revision can ship. These receipts
-don't measure model or retrieval quality, runtime compliance, external framework
-compliance, or release readiness.
+retains both receipts' hashes and binds the reviewed semantic payload to the
+current fixture. The earlier full/role-only receipts remain historical. The
+public generation was rebuilt from the reviewed source and its source-match
+import and grounded-suite revision checks pass. These receipts don't measure
+model or retrieval quality, runtime compliance, external framework compliance,
+or release readiness.

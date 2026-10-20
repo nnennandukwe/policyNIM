@@ -323,6 +323,11 @@ def test_authored_expectations_match_the_independent_source_review() -> None:
     }
     assert full["counts"]["outcomes_supported"] == len(SUITE["cases"]) == 64
     current = {case["case_id"]: case for case in SUITE["cases"]}
+    for assessment in full["per_case_assessments"]:
+        case = current[assessment["case_id"]]
+        assert hashlib.sha256(case["input"].encode()).hexdigest() == assessment["input_sha256"]
+        assert case["expected_outcome"] == assessment["expected_outcome"]
+        assert case["expected_policy_ids"] == assessment["expected_policy_ids"]
     assert {change["case_id"] for change in delta["changes"]} == {
         finding["case_id"] for finding in full["findings"]
     }
