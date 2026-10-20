@@ -94,6 +94,7 @@ def test_wrong_release_version_fails_before_generation_work(
         lockfile=lockfile,
         lock_digest="sha256:" + hashlib.sha256(b"locked").hexdigest(),
         revision="a" * 40,
+        bundle_digest="sha256:" + "b" * 64,
         expected_version="0.1.0",
     )
     with pytest.raises(RuntimeError, match="Standalone version differs"):

@@ -58,6 +58,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
     checks.require(lock_digest == args.lock_digest, "Dependency lock digest differs.")
     report: dict[str, object] = {
         "source_revision": args.revision,
+        "public_bundle_digest": args.bundle_digest,
         "client_python": platform.python_version(),
         "client_sdk_version": importlib.metadata.version("mcp"),
         "platform": platform.system(),
