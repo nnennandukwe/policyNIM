@@ -46,7 +46,10 @@ def artifact_identity(command: Path) -> dict[str, object]:
         elif path.is_dir():
             record = ["directory", relative, stat.S_IMODE(path.stat().st_mode)]
         else:
-            continue
+            raise RuntimeError(
+                "Standalone artifact contains a special file. Rebuild with regular files, "
+                "directories and contained symlinks."
+            )
         digest.update(
             json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
         )

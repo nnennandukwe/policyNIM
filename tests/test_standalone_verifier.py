@@ -322,3 +322,15 @@ def test_verification_children_use_owned_home_without_changing_parent(
         (verifier.verify if artifact_kind == "standalone" else verifier.checks.verify)(args)
     assert os.environ.get("HOME") == parent_home
     assert os.environ.get("USERPROFILE") == parent_profile
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not hasattr(os, "mkfifo"), reason="POSIX special-file contract."
+)
+def test_artifact_identity_rejects_real_fifo_without_reading_it(tmp_path: Path):
+    """A real FIFO can't disappear from the claimed complete artifact identity."""
+    command = tmp_path / "policynim"
+    command.write_bytes(b"launcher")
+    os.mkfifo(tmp_path / "special-entry")
+    with pytest.raises(RuntimeError, match="special file"):
+        verifier.artifact_identity(command)

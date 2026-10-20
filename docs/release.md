@@ -83,7 +83,9 @@ commit and receipt. Both verifiers give child processes an owned temporary home 
 user profiles outside the packaged-source check while preserving the parent environment.
 This check runs without provider credentials and records a
 digest of the complete standalone directory, including native-library bytes and
-file/directory permissions. Credential redaction covers the bounded log-tail
+file/directory permissions. Special entries such as FIFOs are rejected before
+execution; supported entries are regular files, directories and contained symlinks.
+Credential redaction covers the bounded log-tail
 boundary; diagnostics are omitted if a known credential exceeds its capture bound.
 The offline fixture must contain exactly six cases. Failed receipts retain the
 requested source, platform, version and digest context, clearly marked as an
