@@ -81,9 +81,9 @@ def read_policy_catalog(
         settings = _generation_settings(settings, generation_id)
     generations = _generation_store(settings)
     selected = (
-        generations.pin_retained(settings.generation_id)
-        if settings.generation_id is not None
-        else generations.pin()
+        generations.pin_retained(generation_id)
+        if generation_id is not None
+        else generations.pin(settings.generation_id)
     )
     with selected as snapshot:
         snapshot.validate_read()

@@ -739,3 +739,25 @@ def test_grounded_service_checks_its_named_operation_before_provider_allocation(
             service_module.preflight_evidence(
                 settings, PreflightRequest(task="review"), principal=caller
             )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"nvidia_embed_model": "changed-model"},
+        {"nvidia_base_url": "https://changed-endpoint.example/v1"},
+    ],
+)
+def test_current_catalog_requires_retrieval_compatible_configured_generation(generation, updates):
+    """The current catalog can't advertise readiness that configured retrieval rejects."""
+    from policynim.errors import GenerationError
+    from policynim.services.index_store import create_index_store
+
+    settings, _, generation_id = generation
+    pinned = settings.model_copy(update={"generation_id": generation_id, **updates})
+    with pytest.raises(GenerationError):
+        read_policy_catalog(pinned)
+    with pytest.raises(GenerationError):
+        create_index_store(pinned)
+    archived = read_policy_catalog(pinned, generation_id=generation_id)
+    assert archived["generation_id"] == generation_id
