@@ -30,6 +30,8 @@ class OperationBudget:
         *,
         clock: Callable[[], float] = time.monotonic,
         cancelled: Event | None = None,
+        max_provider_calls: int | None = None,
+        usage_callback: Callable[[dict[str, int]], None] | None = None,
     ) -> None:
         """Create a finite budget without starting any worker or network request."""
         if not math.isfinite(seconds) or seconds <= 0:
@@ -37,6 +39,45 @@ class OperationBudget:
         self.clock = clock
         self.deadline = clock() + seconds
         self.cancelled = cancelled if cancelled is not None else Event()
+        if max_provider_calls is not None and max_provider_calls < 1:
+            raise ValueError("Provider-call budgets must be positive.")
+        self.max_provider_calls = max_provider_calls
+        self.provider_attempts = 0
+        self.measured_tokens = 0
+        self.unavailable_usage_attempts = 0
+        self._usage_callback = usage_callback
+
+    def reserve_provider_call(self) -> None:
+        """Persist an attempt reservation before dispatch; never exceed the accepted limit."""
+        self.remaining()
+        if (
+            self.max_provider_calls is not None
+            and self.provider_attempts >= self.max_provider_calls
+        ):
+            raise ProviderError(
+                "The accepted provider-call budget is exhausted.", failure_class="budget_exhausted"
+            )
+        self.provider_attempts += 1
+        self.unavailable_usage_attempts += 1
+        self._record_usage()
+
+    def record_provider_usage(self, total_tokens: int | None) -> None:
+        """Keep returned measured usage separate from attempts with unknown upstream cost."""
+        if total_tokens is not None:
+            self.measured_tokens += total_tokens
+            self.unavailable_usage_attempts -= 1
+            self._record_usage()
+
+    def _record_usage(self) -> None:
+        """Make durable job evidence available before another provider attempt starts."""
+        if self._usage_callback is not None:
+            self._usage_callback(
+                {
+                    "provider_attempts": self.provider_attempts,
+                    "measured_tokens": self.measured_tokens,
+                    "unavailable_usage_attempts": self.unavailable_usage_attempts,
+                }
+            )
 
     def remaining(self) -> float:
         """Reject cancelled or expired work before it can enter another stage."""
