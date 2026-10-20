@@ -517,6 +517,11 @@ Use these commands when you want the no-network first-run plan, a local setup
 health check, copyable MCP client config, a stdio tool-registration smoke test,
 or a redacted support bundle for an issue report.
 
+Unquoted Windows directory names can resemble surrounding prose. Public bundle
+redaction favors hiding the full parent path and can mask neighboring words in
+ambiguous messages. For private diagnostics, `support-bundle --include-local-paths`
+retains the original path text; keep that output out of public issue reports.
+
 ## Runtime Decisions And Evidence
 
 PolicyNIM compiles `runtime_rules` frontmatter from the policy corpus into a
