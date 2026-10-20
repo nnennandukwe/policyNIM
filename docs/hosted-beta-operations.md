@@ -53,7 +53,7 @@ Hosted beta notes:
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret
-- `POLICYNIM_TOKEN` is a client-side shell variable only. It'sn't a
+- `POLICYNIM_TOKEN` is a client-side shell variable only. It isn't a
   PolicyNIM app setting
 - `POLICYNIM_MCP_BEARER_TOKENS` is optional and reserved for operator
   break-glass access on `/mcp`
@@ -458,3 +458,12 @@ daily allowances don't apply. Production must set `POLICYNIM_MCP_REQUIRE_AUTH=tr
 and configure credentials. A non-loopback HTTP bind with authentication disabled
 emits a startup warning with this recovery action. It doesn't create a synthetic
 identity or change the existing open development protocol.
+
+Break-glass credentials recover an identity-service outage; they don't bypass
+operation admission. If the shared state volume or quota database is unavailable,
+discovery can authenticate while protected work returns `admission_unavailable`
+without starting providers. Repair operation storage before retrying work.
+A `cancelled` ledger outcome records caller cancellation before worker drain
+finished. Provider work may already have completed and incurred usage. The public
+async adapter drains cleanup and propagates cancellation instead of returning that
+result; provider success and caller completion aren't interchangeable outcomes.

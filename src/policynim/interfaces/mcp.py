@@ -1371,9 +1371,9 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
-        LOGGER.exception(
-            "Hosted beta auth initialization failed. "
-            "Continuing with env-issued break-glass tokens only."
+        LOGGER.error(
+            "Hosted beta authentication is unavailable. Env-issued break-glass authentication "
+            "remains available, but protected operations still require healthy operation storage."
         )
         return None
 

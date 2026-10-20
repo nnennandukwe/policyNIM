@@ -1269,3 +1269,38 @@ def test_unprotected_public_bind_warns_without_inventing_principal(
         assert "POLICYNIM_MCP_REQUIRE_AUTH=true" in warning.call_args.args[0]
         assert "principal and daily quotas" in warning.call_args.args[0]
     assert not settings.beta_auth_db_path.exists()
+
+
+def test_break_glass_identity_fallback_doesnt_bypass_unavailable_accounting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identity recovery still fails closed for work when durable quota state is unavailable."""
+    blocked = tmp_path / "unavailable-state"
+    blocked.write_text("fixture file blocks database creation")
+    settings = Settings().model_copy(
+        update={
+            "mcp_require_auth": True,
+            "mcp_bearer_tokens": ["operator-fixture"],
+            "mcp_public_base_url": "https://policy.example",
+            "beta_auth_db_path": blocked / "auth.sqlite3",
+        }
+    )
+    provider = Mock(side_effect=AssertionError("Storage outage started provider work"))
+    monkeypatch.setattr(mcp_module, "_run_policy_search", provider)
+    diagnostic = Mock()
+    monkeypatch.setattr(mcp_module.LOGGER, "error", diagnostic)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        assert rpc(client, "tools/list", token="operator-fixture").status_code == 200
+        response = rpc(
+            client,
+            "tools/call",
+            {"name": "policy_search", "arguments": {"query": "fixture"}},
+            token="operator-fixture",
+        )
+        assert response.status_code == 200 and response.json()["result"]["isError"]
+        assert "admission_unavailable" in str(response.json())
+    provider.assert_not_called()
+    assert "healthy operation storage" in diagnostic.call_args.args[0]
+    assert str(blocked) not in diagnostic.call_args.args[0]
