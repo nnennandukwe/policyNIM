@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from pathlib import Path
@@ -484,3 +485,38 @@ def test_release_python_guard_detects_removed_override() -> None:
     step["run"] = step["run"].replace(" --python ${{ matrix.python-version }}", "")
     with pytest.raises(AssertionError):
         _assert_release_source_python_selection(job)
+
+
+def test_wheel_export_uses_the_running_matrix_interpreter() -> None:
+    """Fresh wheel dependencies must use the interpreter that created their environment."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["wheel-smoke"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify fresh wheel from locked dependencies"
+    )
+    script = command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exports = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.List)
+        and len(node.elts) >= 2
+        and isinstance(node.elts[0], ast.Constant)
+        and node.elts[0].value == "uv"
+        and isinstance(node.elts[1], ast.Constant)
+        and node.elts[1].value == "export"
+    ]
+    assert len(exports) == 1
+    arguments = exports[0].elts
+    selection = next(
+        (
+            index
+            for index, node in enumerate(arguments)
+            if isinstance(node, ast.Constant) and node.value == "--python"
+        ),
+        None,
+    )
+    assert selection is not None, "uv export must override the repository's Python pin"
+    assert ast.dump(arguments[selection + 1]) == ast.dump(
+        ast.parse("sys.executable", mode="eval").body
+    )

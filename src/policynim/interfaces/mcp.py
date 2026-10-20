@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import json
 import logging
 import secrets
@@ -56,7 +57,14 @@ from policynim.interfaces.mcp_authorization import (
     OperationAuthorizationApp,
     record_authorization_failure,
 )
-from policynim.operations import OperationBudget, operation_scope
+from policynim.operations import (
+    OperationBudget,
+    current_correlation_id,
+    emit_operation_event,
+    operation_correlation,
+    operation_scope,
+    safe_exception_diagnostics,
+)
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -77,6 +85,11 @@ from policynim.services.authorization import (
     principal_from_access_token,
 )
 from policynim.services.health import log_health_failure
+from policynim.services.operation_admission import (
+    OperationAdmissionError,
+    OperationAdmissionService,
+    record_operation_storage_failure,
+)
 from policynim.settings import Settings, get_settings
 from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
 from policynim.types import (
@@ -84,6 +97,7 @@ from policynim.types import (
     MIN_TOP_K,
     BetaAccount,
     BetaUsageSnapshot,
+    CompileRequest,
     HealthCheckResult,
     PreflightRequest,
     PreflightResult,
@@ -179,10 +193,18 @@ class _ToolExecutor:
         self._lock = Lock()
         self._budgets: set[OperationBudget] = set()
         self._closed = False
+        self._operation_usage: OperationAdmissionService | None = None
+        self._usage_lock = Lock()
         self._drained = Event()
         self._drained.set()
 
-    async def run(self, operation: Callable[[], _OperationResult]) -> _OperationResult:
+    async def run(
+        self,
+        operation: Callable[[], _OperationResult],
+        *,
+        principal: AuthenticatedPrincipal | None = None,
+        operation_name: str | None = None,
+    ) -> _OperationResult:
         """Admit one budget, borrow shared clients, and cooperatively cancel later stages."""
         from policynim.providers.lifecycle import borrow_clients
 
@@ -201,10 +223,29 @@ class _ToolExecutor:
             self._budgets.add(budget)
             self._drained.clear()
 
-        def run_owned() -> _OperationResult:
-            """Scope clients and the deadline to this worker's service graph."""
+        def run_scoped() -> _OperationResult:
+            """Keep cleanup and final deadline checks inside the recorded outcome."""
             with borrow_clients(self._clients), operation_scope(budget):
                 return operation()
+
+        def run_owned() -> _OperationResult:
+            """Apply hosted accounting around the complete worker/service lifecycle."""
+            budget.remaining()
+            if principal is not None:
+                if operation_name is None:
+                    raise ValueError("Hosted work requires an operation name.")
+                with self._usage_lock:
+                    if self._operation_usage is None:
+                        self._operation_usage = OperationAdmissionService(settings)
+                    usage = self._operation_usage
+                return usage.run(
+                    run_scoped,
+                    principal=principal,
+                    operation_name=operation_name,
+                    cancelled=budget.cancelled.is_set,
+                    check_ready=budget.remaining,
+                )
+            return run_scoped()
 
         try:
             return await _run_sync_until_complete(
@@ -228,6 +269,8 @@ class _ToolExecutor:
             """Keep the entire shutdown sequence owned even if its awaiting task is cancelled."""
             self._drained.wait()
             self._clients.close()
+            if self._operation_usage is not None:
+                self._operation_usage.store.close()
 
         with anyio.CancelScope(shield=True):
             await _run_sync_until_complete(drain_and_close)
@@ -314,8 +357,10 @@ def _emit_hosted_event(
     upstream_failure_class: str | None,
     request_id: str | None,
 ) -> None:
+    """Emit fixed event fields with opaque correlation and no request or exception payload."""
     payload = {
         "event": event,
+        "correlation_id": current_correlation_id(),
         "auth_result": auth_result,
         "tool_name": tool_name,
         "latency_ms": latency_ms,
@@ -330,18 +375,35 @@ def _elapsed_ms(start_time: float) -> float:
 
 
 def _failure_class_from_error(exc: BaseException) -> str | None:
+    """Retain stable failure categories without copying exception messages into telemetry."""
     current: BaseException | None = exc
     while current is not None:
+        if isinstance(current, (OperationAdmissionError, ToolError)):
+            code = str(current).split(":", 1)[0]
+            if code in {
+                "server_busy",
+                "principal_busy",
+                "quota_exceeded",
+                "admission_unavailable",
+                "admission_busy",
+                "accounting_incomplete",
+                "acceptance_conflict",
+                "acceptance_finalized",
+                "acceptance_not_found",
+                "server_shutting_down",
+            }:
+                return code
         failure_class = getattr(current, "failure_class", None)
         if isinstance(failure_class, str) and failure_class:
             return failure_class
         current = current.__cause__ or current.__context__
-    return None
+    return type(exc).__name__
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
+    """Hash caller-controlled identifiers so they can't smuggle private text into logs."""
     try:
-        return ctx.request_id
+        return hashlib.sha256(str(ctx.request_id).encode()).hexdigest()[:24]
     except ValueError:
         return None
 
@@ -471,13 +533,29 @@ async def _run_logged_tool(
     *,
     ctx: Context,
     executor: _ToolExecutor,
+    principal: AuthenticatedPrincipal | None = None,
+) -> dict[str, object]:
+    """Mint a content-free correlation ID shared by HTTP, admission and provider events."""
+    with operation_correlation():
+        return await _run_correlated_tool(
+            tool_name, operation, ctx=ctx, executor=executor, principal=principal
+        )
+
+
+async def _run_correlated_tool(
+    tool_name: str,
+    operation: Callable[[], dict[str, object]],
+    *,
+    ctx: Context,
+    executor: _ToolExecutor,
+    principal: AuthenticatedPrincipal | None = None,
 ) -> dict[str, object]:
     """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
     auth_result = "authorized" if get_access_token() is not None else _HOSTED_AUTH_RESULT.get()
     request_id = _request_id_from_context(ctx)
     try:
-        result = await executor.run(operation)
+        result = await executor.run(operation, principal=principal, operation_name=tool_name)
     except asyncio.CancelledError:
         _emit_hosted_event(
             "mcp.tool",
@@ -504,7 +582,20 @@ async def _run_logged_tool(
             raise ToolError(_safe_tool_error(exc)) from exc
         if isinstance(exc, _InvalidToolRequest):
             raise ToolError(str(exc)) from exc
-        raise
+        if isinstance(exc, ToolError):
+            raise
+        emit_operation_event(
+            level=logging.ERROR,
+            event="operation.unexpected_failure",
+            tool_name=tool_name,
+            **safe_exception_diagnostics(exc),
+        )
+        raise ToolError(
+            "internal_error: PolicyNIM couldn't complete this operation. "
+            "Ask the operator to inspect structured logs for correlation "
+            + str(current_correlation_id())
+            + "."
+        ) from None
 
     _emit_hosted_event(
         "mcp.tool",
@@ -519,6 +610,8 @@ async def _run_logged_tool(
 
 def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
+    if isinstance(exc, OperationAdmissionError):
+        return str(exc)
     if isinstance(exc, GenerationError):
         return (
             "The selected policy generation is unavailable or couldn't be validated. "
@@ -626,6 +719,10 @@ def _register_tools(
     ) -> PreflightResult:
         """Get citation-backed policy guidance, review flags and tests for a coding task."""
         principal = get_principal("policy_preflight")
+        try:
+            CompileRequest(task=task, domain=domain, top_k=_resolve_top_k(top_k))
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error("Preflight request", exc)) from exc
         result = await _run_logged_tool(
             "policy_preflight",
             lambda: _run_policy_preflight(
@@ -633,6 +730,7 @@ def _register_tools(
             ),
             ctx=ctx,
             executor=executor,
+            principal=principal,
         )
         return PreflightResult.model_validate(result)
 
@@ -649,6 +747,10 @@ def _register_tools(
     ) -> SearchResult:
         """Search the policy corpus for relevant source chunks and their citations."""
         principal = get_principal("policy_search")
+        try:
+            SearchRequest(query=query, domain=domain, top_k=_resolve_top_k(top_k))
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error("Search request", exc)) from exc
         result = await _run_logged_tool(
             "policy_search",
             lambda: _run_policy_search(
@@ -656,6 +758,7 @@ def _register_tools(
             ),
             ctx=ctx,
             executor=executor,
+            principal=principal,
         )
         return SearchResult.model_validate(result)
 
@@ -848,13 +951,21 @@ def _register_beta_routes(
             )
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
-        except Exception:
-            LOGGER.exception("Unexpected hosted beta OAuth callback failure.")
+        except Exception as exc:
+            emit_operation_event(
+                level=logging.ERROR,
+                event="auth.callback_failure",
+                **safe_exception_diagnostics(exc),
+            )
+            LOGGER.error(
+                "Hosted beta callback failed: unexpected_error, stage=unknown, class=%s. "
+                "Check identity-provider reachability and auth storage health.",
+                type(exc).__name__,
+            )
             return _render_beta_landing(
                 settings,
                 message=(
-                    "GitHub sign-in failed due to an unexpected upstream error. "
-                    "Retry the sign-in flow."
+                    "GitHub sign-in failed due to an unexpected error. Retry the sign-in flow."
                 ),
                 status_code=502,
             )
@@ -1134,7 +1245,9 @@ def _render_beta_dashboard(
     current_key_created = (
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
     )
-    usage_text = f"{usage.request_count} / {usage.quota} requests, {usage.remaining} remaining."
+    usage_text = (
+        f"{usage.request_count} / {usage.quota} reserved work units, {usage.remaining} remaining."
+    )
     usage_percent = _beta_usage_percent(usage)
     status_class = f"beta-status-pill beta-status-pill--{account.status}"
     codex_command = (
@@ -1299,9 +1412,11 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
-        LOGGER.exception(
-            "Hosted beta auth initialization failed. "
-            "Continuing with env-issued break-glass tokens only."
+        record_operation_storage_failure(exc, phase="beta_auth_initialization")
+        LOGGER.error(
+            "Hosted beta authentication is unavailable: storage_unavailable. "
+            "Env-issued break-glass authentication "
+            "remains available, but protected operations still require healthy operation storage."
         )
         return None
 
@@ -1555,6 +1670,18 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
 
 def _build_streamable_http_app(settings: Settings) -> ASGIApp:
     """Create the streamable-http ASGI app, wrapping auth only when required."""
+    if not settings.mcp_require_auth:
+        try:
+            loopback = ip_address(settings.mcp_host).is_loopback
+        except ValueError:
+            loopback = settings.mcp_host.lower() == "localhost"
+        if not loopback:
+            LOGGER.warning(
+                "Authentication is disabled on a non-loopback HTTP bind. "
+                "This mode supports trusted local development only; principal and daily quotas "
+                "don't apply. Set POLICYNIM_MCP_REQUIRE_AUTH=true and configure credentials "
+                "before production use."
+            )
     beta_auth_service = _build_beta_auth_service(settings)
     server = _create_mcp_server(settings, beta_auth_service=beta_auth_service)
     security = _transport_security(settings)
@@ -1628,7 +1755,7 @@ def _run_streamable_http_app(
     """Serve the hosted HTTP app through uvicorn."""
     import uvicorn
 
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level, access_log=False)
     server = uvicorn.Server(config)
     server.run()
 

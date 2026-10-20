@@ -11,9 +11,9 @@ import os
 import platform
 import secrets
 import socket
+import stat
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 import httpx2
@@ -35,7 +35,7 @@ def artifact_identity(command: Path) -> dict[str, object]:
         elif path.is_file():
             with path.open("rb") as content:
                 file_digest = hashlib.file_digest(content, "sha256").hexdigest()
-            record = ["file", relative, file_digest]
+            record = ["file", relative, file_digest, stat.S_IMODE(path.stat().st_mode)]
             count += 1
         else:
             continue
@@ -46,7 +46,7 @@ def artifact_identity(command: Path) -> dict[str, object]:
     return {
         "tree_sha256": digest.hexdigest(),
         "file_count": count,
-        "digest_format": "json-records-v1",
+        "digest_format": "json-records-v2-file-modes",
     }
 
 
@@ -174,18 +174,8 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                 stderr=log,
             )
             try:
-                deadline = time.monotonic() + 45
                 with httpx2.Client(timeout=2, trust_env=False) as client:
-                    while True:
-                        checks.require(process.poll() is None, "Standalone HTTP server exited.")
-                        try:
-                            health = client.get(origin + "/healthz")
-                        except httpx2.TransportError:
-                            health = None
-                        if health is not None and health.status_code == 200:
-                            break
-                        checks.require(time.monotonic() < deadline, "Standalone startup timed out.")
-                        time.sleep(0.1)
+                    health = checks.wait_for_health(client, process, origin, env)
                     checks.require(
                         health.json()["generation_id"] == report["generation_id"],
                         "Standalone HTTP generation drift.",
@@ -197,9 +187,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                 report["http"] = asyncio.run(checks.check_http(origin, token))
             except Exception as error:
                 log.flush()
-                diagnostic = checks.safe_diagnostic(
-                    (cwd / "server.log").read_text(encoding="utf-8", errors="replace"), env
-                )
+                diagnostic = checks.read_diagnostic(cwd / "server.log", env)
                 raise RuntimeError(
                     f"{error}\nStandalone server diagnostics:\n{diagnostic}"
                 ) from error
