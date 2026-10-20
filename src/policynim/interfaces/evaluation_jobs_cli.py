@@ -151,6 +151,7 @@ def run_worker(
             "Evaluation worker running. Ctrl-C stops new cases and drains active work.", err=True
         )
         while True:
+            worker.require_admission_ready()
             time.sleep(1)
     except KeyboardInterrupt:
         return

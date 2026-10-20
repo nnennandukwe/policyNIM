@@ -37,7 +37,10 @@ actual token usage when supplied, with an explicit unknown marker otherwise.
 The report validates the active managed generation without provider calls and
 reports its ID only when it's ready. An absent generation is `missing`; damaged
 generation metadata is `invalid`. The owned generation reader closes after
-inspection. `job_backlog` reads aggregate durable job state counts from the private
+inspection. Generation inspection registers a temporary reader lease to protect
+retention. The operator needs write access to generation lock/lease metadata;
+a read-only mount yields `unreadable` readiness. Canonical generation contents
+and operation/job records aren't changed by the report. `job_backlog` reads aggregate durable job state counts from the private
 evaluation workspace. If job storage hasn't been created, its value remains `null`
 with `job_telemetry_status=unavailable_no_job_store`; the report doesn't create it.
 Job worker executions mint a fresh correlation ID for provider work and admission,

@@ -270,3 +270,48 @@ def test_cli_sqlite_lock_is_a_controlled_recoverable_failure(
     assert "job_storage_unavailable" in result.output and "Preserve storage" in result.output
     assert "Traceback" not in result.output and str(service.store.path) not in result.output
     assert service.inspect(accepted.job_id, principal=principal()).state == "queued"
+
+
+def test_foreground_cli_reports_accounting_pause_and_exits(job_context, monkeypatch) -> None:
+    """A paused background worker can't leave the foreground CLI claiming it's running."""
+    import sqlite3
+    import time
+    from types import SimpleNamespace
+
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_context
+    accepted = service.submit(suite, idempotency_key="paused-cli", principal=principal())
+    queued = service.submit(suite, idempotency_key="paused-next", principal=principal())
+    calls: list[str] = []
+    monkeypatch.setattr(cli_module, "_service", lambda: service)
+    monkeypatch.setattr(
+        cli_module,
+        "EvaluationJobWorker",
+        lambda value: EvaluationJobWorker(value, evaluator_factory=evaluator_factory(calls)),
+    )
+
+    def fail_accounting(*args, **kwargs):
+        """Inject the actual quota terminal-write failure after provider completion."""
+        raise sqlite3.OperationalError("fixture accounting write failure")
+
+    sleeps: list[int] = []
+
+    def wait_for_pause(_seconds):
+        """Give real background recovery time; bound the old endless-loop behavior."""
+        sleeps.append(1)
+        if len(sleeps) > 1:
+            raise KeyboardInterrupt
+        deadline = time.monotonic() + 5
+        while service.inspect(accepted.job_id, principal=principal()).failure_code is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+    monkeypatch.setattr(OperationStore, "finish", fail_accounting)
+    monkeypatch.setattr(cli_module, "time", SimpleNamespace(sleep=wait_for_pause))
+    result = CliRunner().invoke(app, ["eval-jobs", "worker"])
+    assert result.exit_code == 1
+    assert "accounting_incomplete" in result.output and "restart" in result.output
+    assert "Traceback" not in result.output
+    assert service.inspect(queued.job_id, principal=principal()).state == "queued"
+    assert calls == ["case-0", "closed"]

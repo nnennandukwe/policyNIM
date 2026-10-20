@@ -321,7 +321,7 @@ class EvaluationJobWorker:
     def start(self) -> None:
         """Start an owned background worker that doesn't depend on an MCP request connection."""
         with self._lock:
-            self._require_admission_ready()
+            self.require_admission_ready()
             if self._thread is not None and self._thread.is_alive():
                 return
             if self._stop.is_set():
@@ -353,7 +353,7 @@ class EvaluationJobWorker:
                 _LOG.error("Evaluation worker needs attention: %s", type(exc).__name__)
                 self._stop.wait(1)
 
-    def _require_admission_ready(self) -> None:
+    def require_admission_ready(self) -> None:
         """Keep queued jobs untouched after this worker loses a confirmed accounting outcome."""
         if self._admission_paused.is_set():
             raise EvaluationJobError(
@@ -364,7 +364,7 @@ class EvaluationJobWorker:
     @_job_storage_boundary
     def run_once(self) -> EvaluationJobInfo | None:
         """Execute at most one accepted job while holding the stable worker kernel lock."""
-        self._require_admission_ready()
+        self.require_admission_ready()
         with try_exclusive_file_lock(self.lock_path) as acquired:
             if not acquired:
                 raise EvaluationJobError("worker_busy: Another worker owns this job database.")

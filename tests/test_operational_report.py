@@ -530,3 +530,33 @@ def test_retention_backlog_is_batched_during_concurrent_admission(tmp_path: Path
         list(executor.map(reserve, range(2)))
     report = store.report(store.path)
     assert report.retained_rows == 3002 and report.active_operations == 2
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_report_marks_inaccessible_lease_metadata_unreadable(
+    generation, tmp_path: Path, monkeypatch, wrapped: bool
+) -> None:
+    """Permission failure at the public generation boundary can't masquerade as missing data."""
+    import errno
+
+    from policynim.errors import GenerationError
+    from policynim.services import operational_report as module
+
+    settings, _, _ = generation
+    store = OperationStore(tmp_path / "operator.sqlite3")
+    settings = settings.model_copy(update={"beta_auth_db_path": store.path})
+
+    def reject_lease(*args, **kwargs):
+        """Represent a read-only mount's actual OS failure at reader admission."""
+        error = PermissionError(errno.EROFS, "private-generation-path")
+        if wrapped:
+            raise GenerationError("pin", "Reader metadata isn't writable.") from error
+        raise error
+
+    monkeypatch.setattr(module.GenerationStore, "read_activation", reject_lease)
+    try:
+        report = inspect_operational_report(settings)
+        assert report["index_state"] == "unreadable" and report["active_generation"] is None
+        assert "private-generation-path" not in json.dumps(report)
+    finally:
+        store.close()

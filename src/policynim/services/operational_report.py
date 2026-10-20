@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import sqlite3
 
 from policynim.errors import GenerationError, PolicyNIMError
@@ -52,9 +53,9 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
 def _generation_readiness(settings: Settings) -> tuple[IndexReadinessReport, str | None]:
     """Report the actual active generation while keeping damaged storage unavailable."""
     root = resolve_runtime_path(settings.generations_dir)
-    if not root.exists() and not root.is_symlink():
-        return IndexReadinessReport(state="missing"), None
     try:
+        if not root.exists() and not root.is_symlink():
+            return IndexReadinessReport(state="missing"), None
         generations = GenerationStore(
             root=root,
             embedding=EmbeddingIdentity(
@@ -70,7 +71,13 @@ def _generation_readiness(settings: Settings) -> tuple[IndexReadinessReport, str
             return readiness, index_store.generation_id if readiness.state == "ready" else None
         finally:
             close_components(index_store)
-    except GenerationError:
-        return IndexReadinessReport(state="invalid"), None
+    except GenerationError as exc:
+        cause = exc.__cause__
+        unavailable = isinstance(cause, OSError) and cause.errno in {
+            errno.EACCES,
+            errno.EPERM,
+            errno.EROFS,
+        }
+        return IndexReadinessReport(state="unreadable" if unavailable else "invalid"), None
     except OSError:
         return IndexReadinessReport(state="unreadable"), None
