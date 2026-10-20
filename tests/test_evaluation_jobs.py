@@ -1776,3 +1776,74 @@ def test_cancel_during_attempt_reservation_reports_known_unsent_work(
         assert calls == ["closed"]
     finally:
         worker.close()
+
+
+def test_late_cancellation_keeps_job_and_quota_terminal_outcomes_aligned(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """Cancellation after the last budget check wins after cleanup in both durable stores."""
+    from policynim.providers.lifecycle import NVIDIAClients
+    from policynim.services import evaluation_jobs as module
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="late-cancel", principal=principal())
+    calls: list[str] = []
+
+    class Clients(NVIDIAClients):
+        """Request cancellation only after the operation scope's final budget check."""
+
+        def close(self):
+            """Use public job control after the actual provider pool drains."""
+            super().close()
+            service.cancel(accepted.job_id, principal=principal())
+
+    monkeypatch.setattr(module, "NVIDIAClients", Clients)
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "cancelled"
+        retained = service.result(accepted.job_id, principal=principal()).report
+        assert retained.state == "cancelled"
+        assert len(retained.completed_cases) == 1
+        assert calls == ["case-0", "closed"]
+        accounting = OperationStore.report(service.settings.beta_auth_db_path)
+        assert accounting.outcomes == {"cancelled": 1}
+        assert accounting.active_operations == 0
+    finally:
+        worker.close()
+
+
+def test_cancellation_after_accounting_completion_doesnt_rewrite_terminal_history(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A later cancellation request can't replace an already persisted completed outcome."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionService
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="after-accounting", principal=principal())
+    execute = OperationAdmissionService.run_accepted
+
+    def cancel_after_accounting(self, operation, **kwargs):
+        """Keep the real admission lifecycle, then cancel through public job control."""
+        result = execute(self, operation, **kwargs)
+        service.cancel(accepted.job_id, principal=principal())
+        return result
+
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", cancel_after_accounting)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "completed" and result.cancel_requested
+        retained = service.result(accepted.job_id, principal=principal()).report
+        assert retained.state == "completed" and len(retained.completed_cases) == 1
+        assert OperationStore.report(service.settings.beta_auth_db_path).outcomes == {
+            "completed": 1
+        }
+        assert calls == ["case-0", "closed"]
+    finally:
+        worker.close()

@@ -562,6 +562,7 @@ class EvaluationJobWorker:
                     clients.close()
 
             admission = OperationAdmissionService(self.service.settings)
+            accounted_outcome = "completed"
             try:
                 with operation_correlation():
                     emit_operation_event(
@@ -584,8 +585,26 @@ class EvaluationJobWorker:
                             cancelled=signal.is_set,
                             check_ready=budget.remaining,
                         )
+                        accounted_outcome = admission.finish_accepted(
+                            operation_id=job.admission_id,
+                            principal_id=job.owner_id,
+                            operation_name="eval_submit",
+                            outcome="completed",
+                        )
             finally:
                 admission.store.close()
+            if accounted_outcome == "cancelled":
+                return self.store.finish(
+                    job.job_id,
+                    self.worker_token,
+                    "interrupted" if self._stop.is_set() else "cancelled",
+                    failure_code="worker_stopped" if self._stop.is_set() else "cancelled",
+                )
+            if accounted_outcome != "completed":
+                raise OperationAdmissionError(
+                    "accounting_incomplete: The terminal job accounting outcome needs inspection. "
+                    "Preserve both databases and restart after recovery."
+                )
             return self.store.finish(job.job_id, self.worker_token, "completed")
         except Exception as exc:
             if self._stop.is_set():
