@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
 from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
@@ -1333,18 +1334,7 @@ def _allowed_policy_conformance_chunk_ids(
     trace_chunk_ids = [
         citation_id for step in request.trace_steps for citation_id in step.citation_ids
     ]
-    return _ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+    return ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
 
 
 def _parse_json_object_response(content: str, *, operation: str) -> dict[str, Any]:

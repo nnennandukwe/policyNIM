@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Any
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
+from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
 from policynim.services.compiler import PolicyCompilerService, create_policy_compiler_service
@@ -271,7 +272,7 @@ def _validate_and_materialize_result(
     if not context_by_id:
         return None
 
-    citation_ids = _ordered_unique(
+    citation_ids = ordered_unique(
         draft.citation_ids
         or [
             citation_id
@@ -286,7 +287,7 @@ def _validate_and_materialize_result(
 
     applicable_policies: list[PolicyGuidance] = []
     for policy in draft.applicable_policies:
-        policy_citation_ids = _ordered_unique(policy.citation_ids)
+        policy_citation_ids = ordered_unique(policy.citation_ids)
         if not policy_citation_ids:
             continue
         if any(citation_id not in context_by_id for citation_id in policy_citation_ids):
@@ -346,17 +347,6 @@ def _insufficient_context_result(request: PreflightRequest) -> PreflightResult:
     )
 
 
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
-
-
 def _apply_compiled_packet_to_draft(
     draft: GeneratedPreflightDraft,
     compiled_packet: CompiledPolicyPacket,
@@ -383,13 +373,13 @@ def _apply_compiled_packet_to_draft(
 
     return draft.model_copy(
         update={
-            "plan_steps": _ordered_unique([*compiled_plan_steps, *draft.plan_steps]),
-            "implementation_guidance": _ordered_unique(
+            "plan_steps": ordered_unique([*compiled_plan_steps, *draft.plan_steps]),
+            "implementation_guidance": ordered_unique(
                 [*compiled_guidance, *draft.implementation_guidance]
             ),
-            "review_flags": _ordered_unique([*compiled_review_flags, *draft.review_flags]),
-            "tests_required": _ordered_unique([*compiled_tests, *draft.tests_required]),
-            "citation_ids": _ordered_unique([*draft_citation_ids, *compiled_citation_ids]),
+            "review_flags": ordered_unique([*compiled_review_flags, *draft.review_flags]),
+            "tests_required": ordered_unique([*compiled_tests, *draft.tests_required]),
+            "citation_ids": ordered_unique([*draft_citation_ids, *compiled_citation_ids]),
         }
     )
 
@@ -411,7 +401,7 @@ def _trace_step(
         step_id=step_id,
         kind=kind,
         summary=summary.strip() or kind,
-        citation_ids=_ordered_unique(list(citation_ids)),
+        citation_ids=ordered_unique(list(citation_ids)),
     )
 
 
