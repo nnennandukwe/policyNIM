@@ -609,7 +609,8 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
     if isinstance(exc, GenerationError):
         return (
             "generation_unavailable: The selected policy generation is unavailable or invalid. "
-            "Historical references never use a newer generation. Ask the operator to inspect "
+            "Historical references never use a newer generation. Preserve existing data. "
+            "Ask the operator to inspect "
             "the retained generations with `policynim generation inspect`. Import a verified "
             "bundle or explicitly migrate standalone index and rules if no generation exists."
         )
