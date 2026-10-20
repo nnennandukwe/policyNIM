@@ -1449,7 +1449,7 @@
     {
       "case_id": "supply-provenance-001-applicable",
       "kind": "applicable",
-      "role": "build-maintainer",
+      "role": "artifact-consumer",
       "input": "A consumer validates the envelope and trusted builder, matches the subject digest, and rejects a modified artifact.",
       "expected_policy_ids": [
         "SUPPLY-PROVENANCE-001"
@@ -1559,7 +1559,7 @@
     {
       "case_id": "test-contract-001-boundary",
       "kind": "boundary",
-      "role": "application-developer",
+      "role": "library-maintainer",
       "input": "A library maintainer renames a private helper; wire output and exported APIs stay unchanged, and the existing installed-consumer contract tests pass.",
       "expected_policy_ids": [
         "TEST-CONTRACT-001"
@@ -1623,7 +1623,7 @@
     {
       "case_id": "data-migrate-001-boundary",
       "kind": "boundary",
-      "role": "application-developer",
+      "role": "database-operator",
       "input": "A database operator tests a migration and recovery on the selected engine and reports its measured recovery behavior without claiming the same DDL or numeric target for other engines.",
       "expected_policy_ids": [
         "DATA-MIGRATE-001"
@@ -1703,7 +1703,7 @@
     {
       "case_id": "rel-overload-001-boundary",
       "kind": "boundary",
-      "role": "application-developer",
+      "role": "service-operator",
       "input": "An operator reports separate expensive and cheap operation measurements and avoids certifying capacity from an aggregate request count.",
       "expected_policy_ids": [
         "REL-OVERLOAD-001"
@@ -1783,7 +1783,7 @@
     {
       "case_id": "supply-provenance-001-boundary",
       "kind": "boundary",
-      "role": "build-maintainer",
+      "role": "artifact-consumer",
       "input": "A consumer verifies an artifact digest and trusted provenance identity but doesn't label the builder SLSA-certified or assess an entire SSDF program.",
       "expected_policy_ids": [
         "SUPPLY-PROVENANCE-001"
