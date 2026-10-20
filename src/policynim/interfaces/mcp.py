@@ -391,7 +391,8 @@ def _ensure_streamable_http_port_available(host: str, port: int) -> None:
         if exc.errno == errno.EADDRINUSE:
             raise ConfigurationError(_streamable_http_port_in_use_message(host, port)) from exc
         raise ConfigurationError(
-            f"Could not reserve streamable-http MCP server port {host}:{port}: {exc}."
+            f"Could not reserve streamable-http MCP server port {host}:{port}: {exc}. "
+            "Check permissions or choose another POLICYNIM_MCP_PORT."
         ) from exc
 
 

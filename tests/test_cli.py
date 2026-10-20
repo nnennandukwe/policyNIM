@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import sys
 from collections.abc import Generator
 from contextlib import asynccontextmanager
@@ -1182,6 +1183,8 @@ def test_eval_command_prints_json(monkeypatch) -> None:
     payload = EvalRunResult.model_validate(json.loads(result.stdout))
     assert payload.mode == "offline"
     assert payload.runs[0].metrics.case_count == 2
+    assert "case_results" not in json.loads(result.stdout)["runs"][0]
+    assert "suite_definition" not in json.loads(result.stdout)["runs"][0]
     assert "--cases" not in runner.invoke(app, ["eval", "--help"]).stdout
     assert "Phoenix" in runner.invoke(app, ["eval", "--help"]).stdout
     assert "Evidently" not in runner.invoke(app, ["eval", "--help"]).stdout
@@ -1614,7 +1617,7 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert payload["runtime_mode"] == "standalone"
-    assert payload["config"]["expected_init_config_file"] == str(config_root / "config.env")
+    assert payload["config"]["expected_init_config_file"] == (config_root / "config.env").as_posix()
     assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
     )
@@ -1648,16 +1651,16 @@ def test_doctor_reports_ready_checkout_and_mcp_hints(
     assert payload["status"] == "action_required"
     assert payload["inventory"]["generation_state"] == "migration_required"
     assert payload["runtime_mode"] == "source_checkout"
-    assert payload["config"]["active_config_file"] == str(checkout_root / ".env")
-    assert payload["paths"]["index_db_path"] == str(index_path)
+    assert payload["config"]["active_config_file"] == (checkout_root / ".env").as_posix()
+    assert payload["paths"]["index_db_path"] == index_path.as_posix()
     assert payload["mcp"]["stdio_command"] == "uv run policynim mcp --transport stdio"
     assert payload["mcp"]["smoke_command"] == "uv run policynim mcp-smoke --format json"
     assert payload["mcp"]["local_stdio_config_commands"] == {
         "codex": "uv run policynim mcp-config --target local-stdio --client codex "
-        f"--repo-root {checkout_root} --format json",
+        f"--repo-root {shlex.quote(str(checkout_root))} --format json",
         "claude-code": (
             "uv run policynim mcp-config --target local-stdio --client claude-code "
-            f"--repo-root {checkout_root} --format json"
+            f"--repo-root {shlex.quote(str(checkout_root))} --format json"
         ),
     }
     assert payload["mcp"]["streamable_http_url"] == "http://127.0.0.1:8000/mcp"
@@ -1974,11 +1977,11 @@ def test_doctor_text_output_prints_mcp_config_commands(
     assert "policynim mcp-smoke --format json" in result.stdout
     assert (
         "uv run policynim mcp-config --target local-stdio --client codex "
-        f"--repo-root {checkout_root} --format json"
+        f"--repo-root {shlex.quote(str(checkout_root))} --format json"
     ) in result.stdout
     assert (
         "uv run policynim mcp-config --target local-stdio --client claude-code "
-        f"--repo-root {checkout_root} --format json"
+        f"--repo-root {shlex.quote(str(checkout_root))} --format json"
     ) in result.stdout
 
 
@@ -2148,11 +2151,12 @@ def test_support_bundle_can_include_local_paths_for_private_triage(
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["python"]["executable"] == sys.executable
-    assert payload["doctor"]["config"]["expected_init_config_file"] == str(
-        config_root / "config.env"
+    assert (
+        payload["doctor"]["config"]["expected_init_config_file"]
+        == (config_root / "config.env").as_posix()
     )
     assert payload["redaction"]["local_paths"] == "included"
-    assert str(config_root) in result.stdout
+    assert config_root.as_posix() in result.stdout
     assert "nvapi" not in result.stdout.lower()
 
 
@@ -2241,13 +2245,14 @@ def test_init_command_writes_config_and_prints_next_step(
     assert "policynim ingest" in result.stdout
     assert config_path.read_text(encoding="utf-8") == (
         "NVIDIA_API_KEY='nvapi-test-key'\n"
-        f"POLICYNIM_CORPUS_DIR='{custom_corpus}'\n"
-        f"POLICYNIM_GENERATIONS_DIR='{data_root / 'generations'}'\n"
-        f"POLICYNIM_INDEX_DB_PATH='{data_root / 'index.sqlite3'}'\n"
-        f"POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH='{data_root / 'runtime' / 'runtime_rules.json'}'\n"
+        f"POLICYNIM_CORPUS_DIR='{custom_corpus.as_posix()}'\n"
+        f"POLICYNIM_GENERATIONS_DIR='{(data_root / 'generations').as_posix()}'\n"
+        f"POLICYNIM_INDEX_DB_PATH='{(data_root / 'index.sqlite3').as_posix()}'\n"
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH="
+        f"'{(data_root / 'runtime' / 'runtime_rules.json').as_posix()}'\n"
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH="
-        f"'{data_root / 'runtime' / 'runtime_evidence.sqlite3'}'\n"
-        f"POLICYNIM_EVAL_WORKSPACE_DIR='{data_root / 'evals' / 'workspace'}'\n"
+        f"'{(data_root / 'runtime' / 'runtime_evidence.sqlite3').as_posix()}'\n"
+        f"POLICYNIM_EVAL_WORKSPACE_DIR='{(data_root / 'evals' / 'workspace').as_posix()}'\n"
     )
 
 
@@ -2630,7 +2635,7 @@ def test_quickstart_prints_local_mcp_path_with_source_checkout_hint(
         payload["commands"]
     )
     assert "policynim mcp-smoke" not in payload["commands"]
-    assert f"--repo-root {checkout_root}" in " ".join(payload["commands"])
+    assert f"--repo-root {shlex.quote(str(checkout_root))}" in " ".join(payload["commands"])
     assert "NVIDIA_API_KEY" in " ".join(payload["prerequisites"])
     assert "exact local filesystem paths" in " ".join(payload["safety"])
     assert "policynim support-bundle" in " ".join(payload["safety"])
@@ -2794,7 +2799,6 @@ def test_search_command_points_to_ingest_when_config_exists_but_index_is_missing
         (["preflight", "--task", "refresh token cleanup"], None),
         (["compile", "--task", "refresh token cleanup"], None),
         (["dump-index"], None),
-        (["eval", "--headless"], None),
         (
             ["runtime", "decide", "--input", "-"],
             json.dumps(
@@ -3123,7 +3127,9 @@ def test_mcp_config_prints_codex_cli_and_app_guidance(
     assert "PolicyNIM MCP config for Codex" in result.stdout
     assert "codex mcp add policynim" in result.stdout
     assert "--env NVIDIA_API_KEY=$NVIDIA_API_KEY --" in result.stdout
-    assert f"uv run --directory {checkout_root} policynim mcp --transport stdio" in result.stdout
+    assert (
+        f"uv run --directory {shlex.quote(str(checkout_root))} policynim mcp --transport stdio"
+    ) in result.stdout
     assert "Command to launch: uv" in result.stdout
     assert f"Working directory: {checkout_root}" in result.stdout
     assert "Environment variable passthrough: NVIDIA_API_KEY" in result.stdout

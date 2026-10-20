@@ -24,7 +24,7 @@ reference that used to live in the root README.
 - `policynim compile --task "..."`
 - `policynim preflight --task "..."`
 - `policynim preflight --task "..." [--trace] [--regenerate] [--max-regenerations 1] [--backend nemo|nemo_evaluator|nat]`
-- `policynim eval --mode offline|live [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
+- `policynim eval --mode offline|live [--suite reviewed.json] [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
@@ -331,6 +331,43 @@ uv run policynim eval --mode live --backend nemo --headless
 `--mode live` requires `NVIDIA_API_KEY` and a verified generation. One job lease
 retains the same generation across modes, cases, and regeneration attempts.
 Live evaluation never ingests; offline fixtures report `generation_id: null`.
+
+Live mode uses `evals/grounded_cases.json`, whose expectations refer to the
+maintained policy IDs and pinned source catalog. Offline mode retains the original
+synthetic `default_cases.json`; it verifies orchestration rather than real-corpus
+retrieval quality and runs without standalone credential setup.
+
+Use `--suite reviewed.json --mode live` for an explicitly reviewed profile suite.
+The JSON has `name`, nonempty `cases`, and `expected_catalog_digest` and/or
+`expected_policy_revisions` (policy ID to `sha256:` content revision). Obtain these
+values from `generation inspect` and `policies show` for the selected generation.
+Changed catalog/revision pins, absent expected evidence, duplicate case IDs and
+contradictory expectations fail before provider services are allocated. Custom
+suites cannot run against synthetic offline fixtures.
+
+Each case supports `expected_policy_ids`, `expected_chunk_ids`, and
+`forbidden_policy_ids`, as well as `expected_insufficient_context`. Missing required
+chunks fail preflight scoring even when a policy name matches. Forbidden policies
+fail retrieval/output scoring and are also checked in preflight's retained context,
+selected policies and compiled constraints. Returned citation coordinates and trace
+generation identity are checked independently against the held generation. These
+checks establish structural grounding; optional conformance judgments and live
+retrieval evidence remain separate measures. Generation and compilation encode
+source chunks as JSON data in a user message and explicitly reject embedded requests
+to change instruction authority or execute tools. Offline adversarial checks verify
+that message boundary and fabricated-reference rejection; they don't establish
+universal prompt-injection resistance or live model adherence.
+
+JSON reports retain the parsed suite definition, its canonical SHA256 digest,
+generation/catalog identity, configured provider models, and actual search/preflight
+outputs. Provider usage is marked unavailable for live runs because this adapter
+doesn't collect it, and not performed for synthetic offline runs; no cost is inferred. Local reports can therefore contain task text and policy excerpts; keep
+private-profile reports in the intended local workspace. The CLI prints metrics,
+identities and report paths without case bodies or suite inputs. New JSON and HTML
+files use exclusive creation and owner-only permissions on POSIX; Windows operators
+must restrict the workspace's inherited ACLs. Existing report files aren't replaced.
+Every run uses unique artifact paths so repeated invocations preserve earlier evidence. Reports from an
+older generation don't verify a changed generation.
 
 `--backend nemo` adds policy-conformance scoring for preflight eval cases. In
 offline mode it uses deterministic local fixtures; in live mode it reuses the

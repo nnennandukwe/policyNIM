@@ -14,9 +14,9 @@ from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from ipaddress import ip_address
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import NamedTemporaryFile, TemporaryFile
-from typing import Annotated, Literal, NoReturn, cast
+from typing import Annotated, Literal, NoReturn, TextIO, cast
 from urllib.parse import urlparse
 
 import typer
@@ -77,7 +77,8 @@ _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
 _EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
-_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
+_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
+_WINDOWS_PATH_TOKEN_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"'`<>),;]+")
 
 app = typer.Typer(
     add_completion=False,
@@ -841,6 +842,12 @@ def evidence_report(
 
 @app.command()
 def eval(
+    suite: Annotated[
+        Path | None,
+        typer.Option(
+            "--suite", exists=True, dir_okay=False, help="Reviewed live evaluation suite JSON."
+        ),
+    ] = None,
     mode: Annotated[
         EvalExecutionMode,
         typer.Option("--mode", help="Eval execution mode. Supported values: offline, live."),
@@ -886,19 +893,25 @@ def eval(
     """Run the PolicyNIM eval suite and persist local reports."""
     service = None
     try:
-        settings = _load_setup_dependent_settings()
+        settings = get_settings() if mode == "offline" else _load_setup_dependent_settings()
         service = create_eval_service(settings)
+        suite_options = {"suite_path": suite} if suite is not None else {}
         result = service.run(
             mode=mode,
             backend=backend,
             compare_rerank=not no_compare_rerank,
             regenerate=regenerate,
             max_regenerations=max_regenerations,
+            **suite_options,
         )
         if not headless:
             service.start_ui()
             service.publish_to_ui(result)
-        typer.echo(result.model_dump_json(indent=2))
+        typer.echo(
+            result.model_dump_json(
+                indent=2, exclude={"runs": {"__all__": {"case_results", "suite_definition"}}}
+            )
+        )
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
@@ -2551,6 +2564,8 @@ def _support_bundle_path_replacements(
         replacements[sys.executable] = "<python-executable>"
     for path, marker in candidates:
         for candidate in (
+            str(path.expanduser()),
+            str(path.expanduser().resolve(strict=False)),
             path.expanduser().as_posix(),
             path.expanduser().resolve(strict=False).as_posix(),
         ):
@@ -2601,6 +2616,7 @@ def _support_bundle_absolute_path_tokens(value: str) -> list[str]:
     except ValueError:
         tokens.extend(value.split())
     tokens.extend(match.group(2) for match in _POSIX_PATH_TOKEN_RE.finditer(value))
+    tokens.extend(match.group(0) for match in _WINDOWS_PATH_TOKEN_RE.finditer(value))
 
     paths: set[str] = set()
     for token in tokens:
@@ -2621,6 +2637,12 @@ def _support_bundle_token_is_absolute_path(value: str) -> bool:
 
 def _support_bundle_redaction_prefix(path_text: str) -> str | None:
     """Return the parent prefix to redact for an absolute path string."""
+    windows_path = PureWindowsPath(path_text)
+    if windows_path.is_absolute():
+        parent = windows_path.parent
+        if parent == windows_path or parent == PureWindowsPath(windows_path.anchor):
+            return None
+        return str(parent) if "\\" in path_text else parent.as_posix()
     if path_text.startswith("/"):
         path = Path(path_text).expanduser()
         parent = path.parent
@@ -2635,9 +2657,12 @@ def _support_bundle_path_is_known(
     replacements: dict[str, str],
 ) -> bool:
     """Return whether a path already falls under an existing redaction prefix."""
-    normalized = path_text.rstrip("/")
-    for existing in replacements:
-        prefix = existing.rstrip("/")
+    normalized = path_text.replace("\\", "/").rstrip("/")
+    for existing, marker in replacements.items():
+        prefix = existing.replace("\\", "/").rstrip("/")
+        if marker == "<home>" and normalized != prefix:
+            # Unknown directories beneath a home path still need their own redaction.
+            continue
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
             return True
     return False
@@ -2703,7 +2728,10 @@ async def _run_mcp_stdio_smoke(
                 env=_mcp_stdio_smoke_env(),
                 cwd=cwd or Path.cwd(),
             )
-            async with stdio_client(parameters, errlog=errlog) as (read_stream, write_stream):
+            async with stdio_client(parameters, errlog=cast(TextIO, errlog)) as (
+                read_stream,
+                write_stream,
+            ):
                 async with ClientSession(
                     read_stream,
                     write_stream,
