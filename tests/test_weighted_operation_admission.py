@@ -620,3 +620,29 @@ def test_submission_deadline_rechecked_after_real_writer_wait_before_charge(tmp_
             pending.result(timeout=3)
     assert admission.store.usage(principal_identity(principal().issuer, "alice")).accepted == 0
     admission.store.close()
+
+
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_activation_keeps_correlation_when_worker_context_is_missing(
+    tmp_path: Path, worker_context: bool
+) -> None:
+    """A fresh worker context replaces correlation, while absent context can't erase it."""
+    from contextlib import nullcontext
+
+    from policynim.operations import operation_correlation
+
+    admission = service(tmp_path)
+    with operation_correlation() as accepted_correlation:
+        accepted = accept(admission)
+    with operation_correlation() if worker_context else nullcontext() as worker_correlation:
+        admission.run_accepted(
+            lambda: None,
+            operation_id=accepted.operation_id,
+            principal=principal(),
+            operation_name="policy_search",
+            cancelled=lambda: False,
+        )
+    with sqlite3.connect(admission.store.path) as connection:
+        persisted = connection.execute("SELECT correlation_id FROM operation_usage").fetchone()[0]
+    assert persisted == (worker_correlation if worker_context else accepted_correlation)
+    admission.store.close()

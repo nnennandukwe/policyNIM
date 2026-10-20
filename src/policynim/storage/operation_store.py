@@ -332,7 +332,7 @@ class OperationStore:
                 return OperationAdmission(rejection=rejection)
             connection.execute(
                 "UPDATE operation_usage SET active_slot=1, owner_id=?, process_id=?, "
-                "correlation_id=? "
+                "correlation_id=COALESCE(?,correlation_id) "
                 "WHERE operation_id=?",
                 (self._owner.identity, os.getpid(), correlation_id, operation_id),
             )
