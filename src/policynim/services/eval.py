@@ -685,6 +685,7 @@ def _score_search_case(
     failure_reasons.extend(_forbidden_policy_failures(case, actual_policy_ids))
     if result.insufficient_context and result.hits:
         failure_reasons.append("insufficient-context search exposed grounded hits")
+    failure_reasons = list(dict.fromkeys(failure_reasons))
     return EvalCaseResult(
         generation_id=result.generation_id,
         case_id=case.case_id,
