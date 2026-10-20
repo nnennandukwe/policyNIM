@@ -362,14 +362,11 @@ def test_create_index_dump_service_uses_sqlite_index_factory(
     assert service._index_store.table_name == "policy_chunks"
 
 
-def test_create_runtime_health_service_uses_sqlite_index_factory(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    """Wire runtime health service through the canonical SQLite index factory."""
-    monkeypatch.setattr(health_module, "create_index_store", mock_index_store_from_settings)
-
-    settings = Settings(index_db_path=tmp_path / "health-index.sqlite3")
+def test_create_runtime_health_service_defers_generation_readiness(tmp_path: Path) -> None:
+    """Construct independent health settings without creating a missing generation root."""
+    settings = Settings(
+        index_db_path=tmp_path / "health-index.sqlite3", generations_dir=tmp_path / "generations"
+    )
 
     service = health_module.create_runtime_health_service(settings)
 
@@ -378,6 +375,10 @@ def test_create_runtime_health_service_uses_sqlite_index_factory(
     assert service._settings is not None
     assert service._settings.index_db_path == settings.index_db_path
     assert service._table_name == "policy_chunks"
+    assert service._settings.generations_dir == settings.generations_dir
+    assert not settings.generations_dir.exists()
+    assert not service.check().ready
+    assert not settings.generations_dir.exists()
 
 
 def test_create_runtime_execution_service_uses_runtime_paths(
