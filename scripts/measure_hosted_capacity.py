@@ -457,6 +457,7 @@ async def _measure(
         intervention_started_with_active_work: bool | None = None
         active_work_observed_before_intervention: bool | None = None
         intervention_probe_observed: bool | None = None
+        client_task_completed_before_intervention: bool | None = None
         try:
             if scenario in {"disconnect", "shutdown"}:
                 pending = asyncio.create_task(request(0))
@@ -478,6 +479,17 @@ async def _measure(
                     if time.monotonic() >= deadline:
                         break
                     await asyncio.sleep(0.01)
+                observed = await observe_state("intervention_final")
+                intervention_started_with_active_work = (
+                    observed.active_operations > 0 if observed is not None else None
+                )
+                if observed is not None:
+                    active_work_observed_before_intervention = bool(
+                        active_work_observed_before_intervention
+                        or intervention_started_with_active_work
+                    )
+                    active_peak = max(active_peak, observed.active_operations)
+                client_task_completed_before_intervention = pending.done()
                 if scenario == "disconnect":
                     intervention = (
                         "client_task_cancelled"
@@ -500,11 +512,14 @@ async def _measure(
                             break
                         await asyncio.sleep(0.02)
                 else:
-                    intervention = (
-                        "SIGTERM_during_active_work"
-                        if intervention_started_with_active_work
-                        else "SIGTERM_without_active_work_at_intervention"
-                    )
+                    if intervention_started_with_active_work is None:
+                        intervention = "SIGTERM_without_active_work_observation"
+                    elif client_task_completed_before_intervention:
+                        intervention = "SIGTERM_after_client_task_completed"
+                    elif intervention_started_with_active_work:
+                        intervention = "SIGTERM_during_active_work"
+                    else:
+                        intervention = "SIGTERM_without_active_work_at_intervention"
                     process.send_signal(signal.SIGTERM)
                     await asyncio.gather(pending, return_exceptions=True)
             else:
@@ -529,6 +544,7 @@ async def _measure(
                 measurement_complete
                 and intervention_started_with_active_work is True
                 and intervention_probe_observed is True
+                and client_task_completed_before_intervention is False
             )
         if scenario == "disconnect":
             measurement_complete = (
@@ -569,6 +585,7 @@ async def _measure(
             "intervention_started_with_active_work": intervention_started_with_active_work,
             "active_work_observed_before_intervention": active_work_observed_before_intervention,
             "intervention_probe_observed": intervention_probe_observed,
+            "client_task_completed_before_intervention": client_task_completed_before_intervention,
             "client_concurrency": concurrency,
         }
 
