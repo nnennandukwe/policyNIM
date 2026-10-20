@@ -79,6 +79,7 @@ packages = ["src/policynim"]
 
 [dependency-groups]
 test = [
+  "jsonschema==4.26.0",
   "pytest==8.3.4",
 ]
 dev = [

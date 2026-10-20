@@ -28,9 +28,13 @@ private upload endpoint or mutation tool.
 
    ```bash
    export POLICYNIM_PROFILE="$PWD/team-profile.toml"
-   policynim policies list --format json
-   policynim inventory --format json
+   policynim profile preview "$POLICYNIM_PROFILE" --format json
+   policynim policies list --source --format json
    ```
+
+   These commands inspect the selected editable profile. Default catalog commands
+   and `inventory` still describe the active generation until a reviewed ingest
+   publishes the new selection.
 
    Leave `POLICYNIM_CORPUS_DIR` unset when selecting a profile. Without a profile,
    that setting keeps its existing behavior: the directory replaces the bundled

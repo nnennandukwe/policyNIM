@@ -77,10 +77,15 @@ _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
 _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
-_EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
-_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
+_EXPECTED_MCP_TOOLS = (
+    "policy_preflight",
+    "policy_search",
+    "policy_compile",
+    "policy_preflight_evidence",
+)
+_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
 _WINDOWS_PATH_TOKEN_RE = re.compile(
-    r"[A-Za-z]:[\\/](?:[^\\/\r\n\"<>|?*]+[\\/])*[^\s\\/\r\n\"<>|?*]+"
+    r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
 )
 
 app = typer.Typer(
@@ -540,7 +545,7 @@ def preflight(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Retrieval depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     trace: Annotated[
@@ -669,7 +674,7 @@ def route(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -724,7 +729,7 @@ def compile(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -1744,7 +1749,8 @@ def _build_quickstart_payload(
         "agent_workflows": _quickstart_agent_workflows(),
         "next_steps": [
             "Load the generated config in your MCP client.",
-            "Ask the client to list `policy_preflight` and `policy_search`.",
+            "Ask the client to list `policy_search`, `policy_compile`, "
+            "`policy_preflight` and `policy_preflight_evidence`.",
         ],
         "safety": [
             "This command does not launch the MCP server.",
@@ -2671,7 +2677,13 @@ def _support_bundle_token_is_absolute_path(value: str) -> bool:
         return False
     if value.startswith("/") and not value.startswith("//"):
         return len(Path(value).parts) >= 3
-    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"\\", "/"}
+    return (
+        len(value) >= 3
+        and value[0].isalpha()
+        and value[1] == ":"
+        and value[2] in {"\\", "/"}
+        and ":" not in value[3:]
+    )
 
 
 def _support_bundle_redaction_prefix(path_text: str) -> str | None:

@@ -187,6 +187,25 @@ def test_unix_installer_installs_launcher_and_prints_path_guidance(tmp_path: Pat
     assert "Run `policynim init` to configure your local NVIDIA API key." in result.stdout
 
 
+@pytest.mark.skipif(os.name != "posix" or shutil.which("sh") is None, reason="requires POSIX")
+def test_unix_installer_accepts_private_creation_mask(tmp_path: Path) -> None:
+    """A private extraction mask mustn't hide a binary executable by its owner."""
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    create_unix_release_asset(release_dir)
+    result, home = run_unix_installer(tmp_path, release_dir, creation_mask=0o077)
+    assert result.returncode == 0, result.stdout + result.stderr
+    installed = home / ".local" / "share" / "policynim" / VERSION / "policynim"
+    assert installed.stat().st_mode & 0o777 == 0o755
+    launched = subprocess.run(
+        [str(home / ".local" / "bin" / "policynim")],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert launched.stdout == "fake policynim\n"
+
+
 def test_windows_installer_contract_is_actionable() -> None:
     """Check the PowerShell installer keeps checksum and PATH behavior discoverable."""
     script = INSTALL_PS1.read_text(encoding="utf-8")
@@ -232,6 +251,7 @@ def run_unix_installer(
     arch: str = "x86_64",
     path: str | None = None,
     attestation_mode: str = "",
+    creation_mask: int = -1,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     """Run the Unix installer against a local fake release directory."""
     home = tmp_path / "home"
@@ -256,6 +276,7 @@ def run_unix_installer(
         env=env,
         text=True,
         capture_output=True,
+        umask=creation_mask,
     )
     return result, home
 

@@ -229,7 +229,7 @@ fi
 
 verify_attestation "$asset_path" "$ASSET_NAME"
 extract_bundle "$asset_path" "$extract_dir"
-bundle_binary="$(find "$extract_dir" -type f -name policynim -perm -111 | head -n 1)"
+bundle_binary="$(find "$extract_dir" -type f -name policynim -perm -100 | head -n 1)"
 if [ -z "$bundle_binary" ]; then
   fail "Extracted asset $ASSET_NAME did not contain an executable policynim binary. Check $RELEASE_PAGE_URL and retry."
 fi
