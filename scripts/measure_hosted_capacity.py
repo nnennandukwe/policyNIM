@@ -340,7 +340,7 @@ async def _measure(
     config: dict[str, Any], root: Path, process: subprocess.Popen[str], scenario: str
 ) -> dict[str, object]:
     """Measure cheap probes concurrently with bounded expensive application requests."""
-    from policynim.storage.operation_store import OperationStore
+    from policynim.storage.operation_store import HostedOperationReport, OperationStore
 
     base_url = f"http://127.0.0.1:{config['port']}"
     async with httpx.AsyncClient(
@@ -367,6 +367,31 @@ async def _measure(
         sampled_peak_rss = _sample_rss(process.pid)
         stop = asyncio.Event()
 
+        state_failures: Counter[str] = Counter()
+        state_observations: Counter[str] = Counter()
+
+        async def observe_state(phase: str, *, attempts: int = 1) -> HostedOperationReport | None:
+            """Keep bounded failed reads visible without discarding HTTP measurements."""
+            for attempt in range(attempts):
+                try:
+                    observed = await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
+                except sqlite3.Error as exc:
+                    code = getattr(exc, "sqlite_errorcode", None)
+                    busy = isinstance(code, int) and code & 0xFF in {
+                        sqlite3.SQLITE_BUSY,
+                        sqlite3.SQLITE_LOCKED,
+                    }
+                    failure = "database_busy" if busy else "database_unavailable"
+                    state_failures[phase + ":" + failure] += 1
+                    if phase == "probe":
+                        cheap_outcomes["state_read_busy" if busy else "state_read_unavailable"] += 1
+                    if attempt + 1 < attempts:
+                        await asyncio.sleep(0.02)
+                else:
+                    state_observations[phase] += 1
+                    return observed
+            return None
+
         async def probes() -> None:
             """Measure discovery/readiness while expensive operations are active."""
             nonlocal active_peak, sampled_peak_rss
@@ -385,15 +410,9 @@ async def _measure(
                 else:
                     cheap_outcomes[f"health_{health.status_code}"] += 1
                 health_latencies.append((time.perf_counter() - start) * 1000)
-                try:
-                    active_peak = max(
-                        active_peak,
-                        (
-                            await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
-                        ).active_operations,
-                    )
-                except sqlite3.Error:
-                    cheap_outcomes["state_read_busy"] += 1
+                observed = await observe_state("probe")
+                if observed is not None:
+                    active_peak = max(active_peak, observed.active_operations)
                 await asyncio.sleep(0.01)
 
         samples: list[tuple[float, str, int]] = []
@@ -426,9 +445,10 @@ async def _measure(
                 pending = asyncio.create_task(request(0))
                 deadline = time.monotonic() + 5.0
                 while True:
-                    observed = await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
-                    intervention_started_with_active_work = observed.active_operations > 0
-                    active_peak = max(active_peak, observed.active_operations)
+                    observed = await observe_state("intervention")
+                    if observed is not None:
+                        intervention_started_with_active_work = observed.active_operations > 0
+                        active_peak = max(active_peak, observed.active_operations)
                     if intervention_started_with_active_work or pending.done():
                         break
                     if time.monotonic() >= deadline:
@@ -443,14 +463,16 @@ async def _measure(
                     await asyncio.gather(pending, return_exceptions=True)
                     deadline = time.monotonic() + 10.0
                     while True:
-                        observed = await asyncio.to_thread(
-                            OperationStore.report, root / "auth.sqlite3"
-                        )
-                        if observed.active_operations == 0:
+                        observed = await observe_state("drain")
+                        if observed is not None and observed.active_operations == 0:
                             drain_observation = "terminal_outcome_observed"
                             break
                         if time.monotonic() >= deadline:
-                            drain_observation = "deadline_expired_with_active_work"
+                            drain_observation = (
+                                "deadline_expired_with_active_work"
+                                if observed is not None
+                                else "deadline_expired_without_state_observation"
+                            )
                             break
                         await asyncio.sleep(0.02)
                 else:
@@ -475,9 +497,21 @@ async def _measure(
                         "Synthetic probe sampling failed: " + type(failure).__name__
                     ) from None
         seconds = time.perf_counter() - started
-        report = await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
+        report = await observe_state("final", attempts=3)
+        measurement_complete = report is not None
+        if scenario in {"disconnect", "shutdown"}:
+            measurement_complete = (
+                measurement_complete and intervention_started_with_active_work is True
+            )
+        if scenario == "disconnect":
+            measurement_complete = (
+                measurement_complete and drain_observation == "terminal_outcome_observed"
+            )
         outcomes = Counter(sample[1] for sample in samples)
         return {
+            "measurement_complete": measurement_complete,
+            "state_read_failure_counts": dict(state_failures),
+            "successful_state_observations": dict(state_observations),
             "scenario": scenario,
             "duration_seconds": round(seconds, 3),
             "attempted_requests": attempted,
@@ -495,13 +529,13 @@ async def _measure(
             "discovery_latency_ms": _percentiles(cheap_latencies),
             "health_latency_ms": _percentiles(health_latencies),
             "cheap_probe_outcomes": dict(cheap_outcomes),
-            "observed_peak_active_operations": active_peak,
+            "observed_peak_active_operations": active_peak if state_observations else None,
             "sampled_peak_server_rss_bytes": sampled_peak_rss,
             "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
             "successful_search_hit_counts": dict(
                 Counter(str(sample[2]) for sample in samples if sample[1] == "ok")
             ),
-            "operator_report": report.model_dump(mode="json"),
+            "operator_report": report.model_dump(mode="json") if report is not None else None,
             "warmup_operations": 1,
             "intervention": intervention,
             "drain_observation": drain_observation,
@@ -510,12 +544,12 @@ async def _measure(
         }
 
 
-def main() -> None:
+def main() -> int:
     """Write evidence labeled as synthetic; never connect to a production host/provider."""
     args = _parser().parse_args()
     if args.serve_config:
         _serve(args.serve_config)
-        return
+        return 0
     if not 0 <= args.provider_delay <= 2:
         raise SystemExit("--provider-delay must be between 0 and 2 seconds.")
     repository = Path(__file__).resolve().parents[1]
@@ -610,7 +644,9 @@ def main() -> None:
                 )
                 result["live_provider_usage"] = None
                 scenarios.append(result)
+    measurement_complete = all(item["measurement_complete"] for item in scenarios)
     report = {
+        "measurement_complete": measurement_complete,
         "evidence_kind": "synthetic_provider_real_http_and_sqlite_vec",
         "production_capacity_verified": False,
         "live_nvidia_calls": 0,
@@ -650,11 +686,13 @@ def main() -> None:
             {
                 "report": str(args.output.resolve()),
                 "scenarios": len(scenarios),
+                "measurement_complete": measurement_complete,
                 "production_capacity_verified": False,
             }
         )
     )
+    return 0 if measurement_complete else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
