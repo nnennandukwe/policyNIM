@@ -89,8 +89,8 @@ SQLite vector extension; generation import must succeed before the archive ships
 Create and push a version tag from the commit you want to release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The `Release` workflow builds the wheel, source distribution, and standalone

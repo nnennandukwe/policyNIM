@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version or tag, for example 0.1.0 or v0.1.0."
+        description: "Release version or tag, for example 0.2.0 or v0.2.0."
         required: false
         type: string
       publish_pypi:
