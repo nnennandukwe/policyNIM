@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +38,38 @@ def test_native_library_change_invalidates_artifact_identity(tmp_path: Path) -> 
     assert verifier.artifact_identity(command)["tree_sha256"] != original["tree_sha256"]
     native.unlink()
     assert verifier.artifact_identity(command)["tree_sha256"] != original["tree_sha256"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable mode contract.")
+def test_executable_permission_change_invalidates_artifact_identity(tmp_path: Path) -> None:
+    """An archive can't lose its executable launcher while retaining the same receipt hash."""
+    command = tmp_path / "policynim"
+    command.write_bytes(b"launcher")
+    command.chmod(0o755)
+    original = verifier.artifact_identity(command)
+    command.chmod(0o644)
+    assert verifier.artifact_identity(command)["tree_sha256"] != original["tree_sha256"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The failing child uses a POSIX executable script.")
+def test_stdio_failure_retains_redacted_child_diagnostics(tmp_path: Path) -> None:
+    """Actual child startup failure keeps its bounded stderr and removes known credentials."""
+    command = tmp_path / "broken-command"
+    command.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('startup-diagnostic-marker secret-test-token',file=sys.stderr)\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+    with pytest.raises(Exception) as failure:
+        asyncio.run(
+            verifier.checks.check_stdio(
+                {**os.environ, "TEST_SECRET": "secret-test-token"}, tmp_path, command=str(command)
+            )
+        )
+    assert "startup-diagnostic-marker" in str(failure.value)
+    assert "secret-test-token" not in str(failure.value)
 
 
 def test_artifact_identity_rejects_external_symlink(tmp_path: Path) -> None:

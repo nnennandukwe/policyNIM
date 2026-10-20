@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 from threading import Event
 
@@ -176,13 +175,15 @@ def test_authentication_observes_authority_changes_before_quota_admission(
     admission_preparing = Event()
     continue_admission = Event()
 
-    def paused_clock() -> datetime:
+    original_authenticate = service._store.authenticate_api_key
+
+    def paused_authenticate(*, key_hash: str):
         """Pause at the former gap between active-key lookup and quota consumption."""
         admission_preparing.set()
         assert continue_admission.wait(timeout=5)
-        return now
+        return original_authenticate(key_hash=key_hash)
 
-    monkeypatch.setattr(service, "_utc_now", paused_clock)
+    monkeypatch.setattr(service._store, "authenticate_api_key", paused_authenticate)
     with ThreadPoolExecutor(max_workers=1) as executor:
         pending = executor.submit(service.authenticate_api_key, token=issued.api_key)
         try:
@@ -222,7 +223,9 @@ def test_authentication_observes_authority_changes_before_quota_admission(
     assert operator_store.list_audit_events(event_type="quota_exceeded") == []
 
 
-def test_authentication_maps_committed_quota_and_account_state(tmp_path: Path) -> None:
+def test_authentication_preserves_authority_without_charging_operation_usage(
+    tmp_path: Path,
+) -> None:
     """Keep authorization status and precedence in the service's public contract."""
     settings = _settings(tmp_path).model_copy(update={"beta_daily_request_quota": 1})
     store = AuthStore(path=settings.beta_auth_db_path)
@@ -236,13 +239,13 @@ def test_authentication_maps_committed_quota_and_account_state(tmp_path: Path) -
     assert allowed.status == "authorized"
     assert allowed.source == "api_key"
     assert allowed.account == issued.account
-    assert allowed.usage is not None and allowed.usage.request_count == 1
+    assert allowed.usage is None
 
     exhausted = service.authenticate_api_key(token=issued.api_key)
-    assert exhausted.status == "quota_exceeded"
+    assert exhausted.status == "authorized"
     assert exhausted.source == "api_key"
     assert exhausted.account == issued.account
-    assert exhausted.usage is not None and exhausted.usage.remaining == 0
+    assert exhausted.usage is None
 
     service.suspend_account(github_login="octocat")
     suspended = service.authenticate_api_key(token=issued.api_key)
@@ -256,5 +259,5 @@ def test_authentication_maps_committed_quota_and_account_state(tmp_path: Path) -
     assert revoked.status == "unauthorized"
     assert revoked.source is None
     assert revoked.account is None and revoked.usage is None
-    assert service.get_portal_usage(account.account_id).request_count == 1
-    assert len(service.list_audit_events(event_type="quota_exceeded")) == 1
+    assert service.get_portal_usage(account.account_id).request_count == 0
+    assert service.list_audit_events(event_type="quota_exceeded") == []
