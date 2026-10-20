@@ -434,6 +434,9 @@ def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
     )
     monkeypatch.setattr("policynim.services.eval.time.sleep", lambda seconds: None)
 
+    clock = iter([0.0, 1.0, 21.0])
+    monkeypatch.setattr("policynim.services.eval.time.monotonic", lambda: next(clock))
+
     service.start_ui(port=8016)
 
     assert process.terminate_called is False
@@ -451,7 +454,7 @@ def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
 ) -> None:
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
     process = MockProcess(returncodes=[None, None, None])
-    monotonic_values = iter([0.0, 1.0, 2.0, 6.0])
+    monotonic_values = iter([0.0, 1.0, 2.0, 31.0])
     monkeypatch.setattr(
         "policynim.services.eval.subprocess.Popen",
         lambda *args, **kwargs: process,
@@ -558,3 +561,59 @@ def test_missing_phoenix_command_explains_isolated_install_or_headless(
     assert "arize-phoenix==20.23.0" in str(caught.value)
     assert "--headless" in str(caught.value)
     assert isinstance(caught.value.__cause__, FileNotFoundError)
+
+
+def test_phoenix_annotation_publish_waits_for_queued_spans(monkeypatch) -> None:
+    """A queued span can become visible after the first synchronous annotation request."""
+    import httpx
+
+    from policynim.services.eval import _publish_phoenix_annotations
+
+    attempts = []
+    request = httpx.Request("POST", "http://127.0.0.1/v1/span_annotations")
+
+    class PendingSpans:
+        """Model the real endpoint's missing-span response until ingestion finishes."""
+
+        def log_span_annotations(self, **kwargs):
+            """Reject the first write and accept the unchanged annotations next."""
+            attempts.append(kwargs)
+            if len(attempts) == 1:
+                response = httpx.Response(404, request=request)
+                raise httpx.HTTPStatusError("queued", request=request, response=response)
+
+    client = types.SimpleNamespace(spans=PendingSpans())
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda _: None)
+    annotations = [{"span_id": "123"}]
+    _publish_phoenix_annotations(client, annotations)
+    assert attempts == [dict(span_annotations=annotations, sync=True)] * 2
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 404])
+def test_phoenix_annotation_publish_preserves_failure_after_budget(monkeypatch, status) -> None:
+    """Permanent errors propagate immediately and missing spans have a bounded retry window."""
+    import httpx
+
+    from policynim.services.eval import _publish_phoenix_annotations
+
+    calls = []
+    request = httpx.Request("POST", "http://127.0.0.1/v1/span_annotations")
+    failure = httpx.HTTPStatusError(
+        "not ready", request=request, response=httpx.Response(status, request=request)
+    )
+
+    class FailedSpans:
+        """Retain the exact endpoint exception for caller diagnostics."""
+
+        def log_span_annotations(self, **kwargs):
+            """Fail each attempted annotation write."""
+            calls.append(kwargs)
+            raise failure
+
+    clock = iter([0.0, 1.0, 6.0])
+    monkeypatch.setattr("policynim.services.eval.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda _: None)
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        _publish_phoenix_annotations(types.SimpleNamespace(spans=FailedSpans()), [])
+    assert caught.value is failure
+    assert len(calls) == (2 if status == 404 else 1)

@@ -35,5 +35,8 @@ these advisories again. The standard hosted install doesn't include this extra.
 
 Phoenix UI and the upstream NeMo launcher run outside the main environment as
 described in [installation profiles](runtime-install-profiles.md). These runtime
-audit receipts don't cover those separate environments. The launcher's LeptonAI
+audit receipts don't cover those separate environments. A separate audit of the
+selected Phoenix 20.23.0 tool environment found no known advisories in its 151
+installed packages on Python 3.11/macOS; that result doesn't cover other tool
+versions or platforms. The launcher's LeptonAI
 AnyIO ceiling remains an upstream constraint; isolation doesn't patch it.

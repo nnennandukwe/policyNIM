@@ -34,8 +34,9 @@ uv tool dir --bin
 ```
 
 Put the reported bin directory on PATH. `policynim eval` launches `phoenix serve`,
-waits for local startup, and publishes its completed result through the Phoenix
-client. Its existing workspace and port settings still apply. Back up saved UI
+waits up to 30 seconds for local startup, and publishes its completed result
+through the Phoenix client. Annotation writes wait up to five seconds for queued
+spans to appear; other endpoint errors still propagate. Its existing workspace and port settings still apply. Back up saved UI
 data before upgrading the upstream server.
 
 For JSON and HTML reports without that server, use:

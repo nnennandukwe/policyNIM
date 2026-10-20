@@ -80,7 +80,7 @@ from policynim.types import (
 
 _PROJECT_NAME = "PolicyNIM Eval"
 _SAFE_SUITE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_DEFAULT_UI_START_TIMEOUT_SECONDS = 5.0
+_DEFAULT_UI_START_TIMEOUT_SECONDS = 30.0
 _UI_START_POLL_INTERVAL_SECONDS = 0.1
 
 
@@ -1535,7 +1535,22 @@ def _publish_eval_result_to_phoenix(result: EvalRunResult, *, endpoint: str) -> 
             client.spans.log_spans(project_identifier=_PROJECT_NAME, spans=spans)
         annotations = cast(Any, _build_phoenix_span_annotations(result, run))
         if annotations:
+            _publish_phoenix_annotations(client, annotations)
+
+
+def _publish_phoenix_annotations(client: Any, annotations: Any) -> None:
+    """Wait briefly for queued spans before writing synchronous annotations."""
+    from httpx import HTTPStatusError
+
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
             client.spans.log_span_annotations(span_annotations=annotations, sync=True)
+            return
+        except HTTPStatusError as exc:
+            if exc.response.status_code != 404 or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
 
 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
