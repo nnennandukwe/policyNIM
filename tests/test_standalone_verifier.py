@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -69,3 +71,31 @@ def test_artifact_identity_doesnt_confuse_newlines_with_record_boundaries(tmp_pa
     observed_second = verifier.artifact_identity(second / "policynim")
     assert observed_first["file_count"] == observed_second["file_count"] == 1
     assert observed_first["tree_sha256"] != observed_second["tree_sha256"]
+
+
+def test_wrong_release_version_fails_before_generation_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A functional command from another release can't earn a passed receipt."""
+    command = tmp_path / "policynim"
+    command.write_bytes(b"launcher")
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_bytes(b"locked")
+    calls: list[list[str]] = []
+
+    def respond(arguments: list[str], **kwargs: object) -> str:
+        """Expose a wrong release before any generation or provider work."""
+        calls.append(arguments)
+        return "Usage: policynim" if arguments == ["--help"] else "0.0.1"
+
+    monkeypatch.setattr(verifier.checks, "run_command", respond)
+    args = argparse.Namespace(
+        command=command,
+        lockfile=lockfile,
+        lock_digest="sha256:" + hashlib.sha256(b"locked").hexdigest(),
+        revision="a" * 40,
+        expected_version="0.1.0",
+    )
+    with pytest.raises(RuntimeError, match="Standalone version differs"):
+        verifier.verify(args)
+    assert calls == [["--help"], ["--version"]]

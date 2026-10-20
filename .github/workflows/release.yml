@@ -172,6 +172,7 @@ jobs:
               "--lockfile", str(root / "uv.lock"),
               "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
               "--revision", os.environ["GITHUB_SHA"],
+              "--expected-version", os.environ["RELEASE_TAG"].removeprefix("v"),
               "--output", "standalone-evidence-${{ matrix.platform }}.json",
           ], check=True)
           PY
