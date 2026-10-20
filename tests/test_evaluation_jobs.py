@@ -1621,3 +1621,82 @@ def test_missing_bound_accounting_record_pauses_before_another_claim(generation,
         assert service.inspect(second.job_id, principal=principal()).state == "queued"
     finally:
         worker.close()
+
+
+def test_cancellation_read_failure_releases_quota_and_preserves_worker_progress(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A real SQLite cancellation-read denial after evaluator drain can't strand quota capacity."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    first = service.submit(suite, idempotency_key="read-failure", principal=principal())
+    second = service.submit(suite, idempotency_key="after-read-failure", principal=principal())
+    deny_next_read = [False]
+    denied: list[bool] = []
+    reads_after_drain = [0]
+    connect = service.store._connect
+
+    def job_connection():
+        """Deny only the next real read of the persisted cancellation column."""
+        connection = connect()
+
+        def authorize(action, table, column, database, trigger):
+            """Deny one real SQLite read while leaving terminal writes available."""
+            if (
+                deny_next_read[0]
+                and action == sqlite3.SQLITE_READ
+                and table == "evaluation_jobs"
+                and column == "cancel_requested"
+            ):
+                reads_after_drain[0] += 1
+                if reads_after_drain[0] == 2:
+                    deny_next_read[0] = False
+                    denied.append(True)
+                    return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(authorize)
+        return connection
+
+    calls: list[str] = []
+    base = evaluator_factory(calls)
+
+    class Evaluator(base):
+        """Fail the cancellation observation only after the first evaluator has drained."""
+
+        def close(self):
+            """Arm one SQLite failure after the final budget check and provider cleanup."""
+            super().close()
+            if not denied:
+                deny_next_read[0] = True
+
+    monkeypatch.setattr(service.store, "_connect", job_connection)
+    worker = EvaluationJobWorker(service, evaluator_factory=Evaluator)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.job_id == first.job_id
+        assert result.state == "interrupted" and result.failure_code == "storage_failure"
+        assert denied == [True]
+        with sqlite3.connect(service.settings.beta_auth_db_path) as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM operation_usage WHERE active_slot=1"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                connection.execute(
+                    "SELECT outcome FROM operation_usage WHERE operation_id=?",
+                    (first.admission_id,),
+                ).fetchone()[0]
+                == "failed"
+            )
+        completed = worker.run_once()
+        assert completed is not None and completed.job_id == second.job_id
+        assert completed.state == "completed"
+        assert calls == ["case-0", "closed", "case-0", "closed"]
+    finally:
+        worker.close()
