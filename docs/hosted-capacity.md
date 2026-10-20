@@ -65,6 +65,7 @@ A token count from one successful response doesn't prove failed attempts were fr
 The application never enables raw-query analytics or full-environment capture.
 Route logs through an operator-controlled sink with a documented retention policy;
 use 30 days or less for this release and avoid unbounded indexed correlation labels.
+Uvicorn raw access logs are disabled so OAuth callback query codes aren't logged.
 Raw exception payloads/tracebacks aren't emitted for beta callback or auth-storage
 fallback failures. Public readiness remains sanitized and doesn't expose this report.
 

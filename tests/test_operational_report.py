@@ -195,3 +195,35 @@ def test_retention_environment_and_operator_cli(
     result = CliRunner().invoke(cli.app, ["beta-admin", "operations"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["retention_days"] == 7
+
+
+def test_hosted_server_disables_raw_url_access_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OAuth callback query codes can't enter Uvicorn's default raw request URL logs."""
+    from unittest.mock import Mock
+
+    import uvicorn
+    from starlette.applications import Starlette
+
+    observed = Mock()
+    monkeypatch.setattr(
+        uvicorn, "Server", lambda config: SimpleNamespace(run=lambda: observed(config))
+    )
+    mcp._run_streamable_http_app(Starlette(), host="127.0.0.1", port=8000, log_level="warning")
+    assert observed.call_count == 1
+    assert observed.call_args.args[0].access_log is False
+
+
+def test_rejection_and_untyped_failures_have_content_free_failure_classes() -> None:
+    """Failed tool events can't be grouped as successful merely because their error lacks a code."""
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    assert (
+        mcp._failure_class_from_error(RuntimeError("Authorization: Bearer private"))
+        == "RuntimeError"
+    )
+    assert (
+        mcp._failure_class_from_error(
+            OperationAdmissionError("quota_exceeded: Retry after 00:00 UTC.")
+        )
+        == "quota_exceeded"
+    )

@@ -384,7 +384,7 @@ def _failure_class_from_error(exc: BaseException) -> str | None:
         if isinstance(failure_class, str) and failure_class:
             return failure_class
         current = current.__cause__ or current.__context__
-    return None
+    return type(exc).__name__
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
@@ -1690,7 +1690,7 @@ def _run_streamable_http_app(
     """Serve the hosted HTTP app through uvicorn."""
     import uvicorn
 
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level, access_log=False)
     server = uvicorn.Server(config)
     server.run()
 
