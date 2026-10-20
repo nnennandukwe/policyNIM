@@ -114,7 +114,8 @@ Provider usage stays unavailable; `live_nvidia_calls` stays zero.
 
 The six named scenarios cover bounded baseline load, saturation above ten active
 operations, a slow provider double, a write-locked quota database, client disconnect
-and SIGTERM during accepted work. A disconnected client may leave synchronous work
+and SIGTERM during accepted work. The harness observes an active ledger row before injecting disconnect or shutdown,
+and records whether active work was observed. A disconnected client may leave synchronous work
 to finish. The harness polls its ledger for up to ten seconds; it records either an
 observed terminal outcome or an explicit drain deadline with active work remaining.
 Report that evidence instead of assuming cancellation.
