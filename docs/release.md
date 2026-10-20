@@ -76,6 +76,37 @@ The verifier refuses an installation resolved back to a source checkout. It neve
 calls model providers; protocol discovery doesn't establish live retrieval quality
 or Codex/Claude UI interoperability. Retain those acceptance results separately.
 
+Standalone builds must also import the public generation and negotiate both MCP
+protocols over stdio and authenticated HTTP. Run `scripts/verify_standalone.py`
+with `--command` pointing to the built executable, `--bundle` and `--bundle-digest`
+identifying the reviewed public archive, `--lockfile` and `--lock-digest`
+identifying the selected build lock, `--expected-version X.Y.Z` matching the
+release package version, and `--revision` and `--output` identifying the source
+commit and receipt. Both verifiers give child processes an owned temporary home directory, keeping
+user profiles outside the packaged-source check while preserving the parent environment.
+This check runs without provider credentials and records a
+digest of the complete standalone directory, including native-library bytes and
+file/directory permissions. Special entries such as FIFOs are rejected before
+execution; supported entries are regular files, directories and contained symlinks.
+Credential redaction covers the bounded log-tail
+boundary; diagnostics are omitted if a known credential exceeds its capture bound.
+The offline fixture must contain exactly six cases. Failed receipts retain the
+requested source, platform, version and digest context, clearly marked as an
+incomplete execution.
+
+The lock digest identifies the selected build checkout. The workflow performs a
+locked dependency sync before building from that checkout; the standalone receipt
+alone doesn't independently inspect every dependency version inside the frozen
+executable.
+Authenticated HTTP checks cover beta/operator keys and missing-token rejection.
+Receipts record `authentication_scope: beta_operator_key` and
+`external_oauth_e2e: not_run`. External issuer/client acceptance remains open in
+#97; this gate doesn't establish OAuth E2E, live retrieval quality or coding-client acceptance.
+
+The release workflow retains a separate `standalone-evidence-<platform>.json`
+receipt for each platform. A successful help command alone can't detect a missing
+SQLite vector extension; generation import must succeed before the archive ships.
+
 ## GitHub Release
 
 Create and push a version tag from the commit you want to release:
@@ -96,6 +127,8 @@ release with:
 - `policynim-vX.Y.Z-darwin-amd64.tar.gz`
 - `policynim-vX.Y.Z-windows-amd64.zip`
 - `SHA256SUMS`
+- `policynim-public-generation.zip` and its `policynim-public-generation.sha256`
+- Platform-specific `standalone-evidence-<platform>.json` receipts
 
 PolicyNIM publishes separate macOS bundles for Apple Silicon and Intel hosts.
 

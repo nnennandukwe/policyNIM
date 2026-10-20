@@ -388,3 +388,15 @@ def test_shell_wrappers_cant_hide_unlocked_uv_commands() -> None:
     """The release gate doesn't assume a quoted shell script is harmless data."""
     with pytest.raises(AssertionError):
         _release_uv_commands('bash -c "uv sync --group test"')
+
+
+def test_standalone_verification_requires_requested_release_version() -> None:
+    """A stale binary can't pass a version-tagged standalone build gate."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["standalone-build"]["steps"]
+        if "scripts/verify_standalone.py" in step.get("run", "")
+    )
+    assert '"--expected-version"' in command
+    assert 'os.environ["RELEASE_TAG"].removeprefix("v")' in command
