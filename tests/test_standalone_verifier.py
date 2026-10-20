@@ -361,3 +361,50 @@ def test_failed_command_receipt_keeps_requested_identity(tmp_path: Path) -> None
     assert receipt["platform"] == verifier.platform.system()
     assert "execution didn't complete" in receipt["context_scope"]
     assert "Standalone version differs" in receipt["message"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permission contract.")
+@pytest.mark.parametrize("root_directory", [False, True])
+def test_artifact_identity_includes_directory_permissions(tmp_path: Path, root_directory: bool):
+    """Directory traversal changes must invalidate the artifact identity too."""
+    artifact = tmp_path / "artifact"
+    internal = artifact / "_internal"
+    internal.mkdir(parents=True)
+    command = artifact / "policynim"
+    command.write_bytes(b"launcher")
+    (internal / "native.so").write_bytes(b"library")
+    target = artifact if root_directory else internal
+    target.chmod(0o755)
+    original = verifier.artifact_identity(command)
+    target.chmod(0o700)
+    assert verifier.artifact_identity(command)["tree_sha256"] != original["tree_sha256"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The failing child uses a POSIX executable script.")
+@pytest.mark.parametrize("secret_size", [14000, 20000])
+def test_stdio_failure_cant_leak_credential_suffix_across_capture_boundary(
+    tmp_path: Path, secret_size: int
+):
+    """A real failing child can't leak a known secret after bounded capture cuts its start."""
+    secret = "x" * secret_size + "private-credential-suffix-marker"
+    command = tmp_path / "broken-command"
+    command.write_text(
+        f"#!{sys.executable}\nimport os,sys\n"
+        "print(os.environ['TEST_SECRET'],file=sys.stderr)\n"
+        "print('padding-' * 400,file=sys.stderr)\n"
+        "print('safe-diagnostic-end-marker',file=sys.stderr)\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+    with pytest.raises(Exception) as failure:
+        asyncio.run(
+            verifier.checks.check_stdio(
+                {**os.environ, "TEST_SECRET": secret}, tmp_path, command=str(command)
+            )
+        )
+    assert "private-credential-suffix-marker" not in str(failure.value)
+    if secret_size <= 16000:
+        assert "safe-diagnostic-end-marker" in str(failure.value)
+    else:
+        assert "omitted" in str(failure.value)

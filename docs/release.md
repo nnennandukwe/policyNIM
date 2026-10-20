@@ -81,7 +81,9 @@ identifying the reviewed public archive, `--lockfile` and `--lock-digest`
 identifying the selected build lock, `--expected-version X.Y.Z` matching the
 release package version, and `--revision` and `--output` identifying the source
 commit and receipt. This check runs without provider credentials and records a
-digest of the complete standalone directory, including native-library bytes.
+digest of the complete standalone directory, including native-library bytes and
+file/directory permissions. Credential redaction covers the bounded log-tail
+boundary; diagnostics are omitted if a known credential exceeds its capture bound.
 
 Final publication requires `--archive /absolute/path/to/the/platform.tar.gz` (or the
 Windows `.zip`). The verifier copies those compressed bytes into an owned temporary
