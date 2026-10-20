@@ -78,7 +78,9 @@ _STANDALONE_MISSING_INDEX_MESSAGE = (
 )
 _EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
-_WINDOWS_PATH_TOKEN_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"'`<>),;]+")
+_WINDOWS_PATH_TOKEN_RE = re.compile(
+    r"[A-Za-z]:[\\/](?:[^\\/\r\n\"'`<>),;]+[\\/])*[^\s\\/\r\n\"'`<>),;]+"
+)
 
 app = typer.Typer(
     add_completion=False,
