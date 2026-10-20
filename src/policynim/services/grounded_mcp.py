@@ -174,7 +174,7 @@ def compile_policy(
 ) -> CompileResult:
     """Compile effective generation constraints using the existing owned service graph."""
     if principal is not None:
-        authorize_operation(principal, "policy_preflight")
+        authorize_operation(principal, "policy_compile")
     with create_policy_compiler_service(settings) as service:
         result = service.compile(request)
     packet = result.packet.model_copy(
@@ -191,7 +191,7 @@ def preflight_evidence(
 ) -> PreflightEvidenceTraceResult:
     """Trace one existing preflight execution, retaining its exact compiled packet identity."""
     if principal is not None:
-        authorize_operation(principal, "policy_preflight")
+        authorize_operation(principal, "policy_preflight_evidence")
     with create_preflight_service(settings) as service:
         traced = service.preflight_with_trace(request, principal=principal)
     run_id = uuid4().hex

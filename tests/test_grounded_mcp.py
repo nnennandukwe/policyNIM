@@ -623,3 +623,119 @@ def test_invalid_guidance_does_not_charge_principal_allowance(
             mcp_module._HOSTED_PRINCIPAL.reset(context)
 
     asyncio.run(exercise())
+
+
+def test_resource_concurrency_preserves_another_principal_without_charging(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A read-only caller can't take every hosted slot and isn't charged an operation allowance."""
+    from threading import Event, Lock
+    from urllib.parse import parse_qs
+
+    import httpx
+    import httpx2
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.shared.exceptions import MCPError
+    from test_mcp_authorization import oauth_settings, token_claims
+    from test_mcp_protocol import _serve_http
+
+    from policynim.services.authorization import IntrospectionTokenVerifier
+
+    base, _, _ = generation
+    settings = oauth_settings(
+        tmp_path,
+        generations_dir=base.generations_dir,
+        nvidia_embed_model=base.nvidia_embed_model,
+        nvidia_base_url=base.nvidia_base_url,
+        mcp_max_concurrent_operations=2,
+        mcp_max_concurrent_operations_per_principal=1,
+    )
+
+    def introspect(request: httpx.Request) -> httpx.Response:
+        """Authenticate independent subjects through the actual issuer boundary."""
+        token = parse_qs(request.content.decode())["token"][0]
+        return httpx.Response(200, json=token_claims(sub=token))
+
+    verifier = IntrospectionTokenVerifier(settings, transport=httpx.MockTransport(introspect))
+    monkeypatch.setattr(mcp_module, "IntrospectionTokenVerifier", lambda *args, **kwargs: verifier)
+    monkeypatch.setattr(registration, "get_settings", lambda: settings)
+    read = registration.read_policy_catalog
+    started, release = Event(), Event()
+    lock = Lock()
+    calls: list[int] = []
+
+    def held_read(*args, **kwargs):
+        """Keep the first real catalog read active while checking shared capacity."""
+        with lock:
+            calls.append(1)
+            first = len(calls) == 1
+        if first:
+            started.set()
+            assert release.wait(5)
+        return read(*args, **kwargs)
+
+    monkeypatch.setattr(registration, "read_policy_catalog", held_read)
+
+    async def exercise() -> None:
+        """Cross TCP, issuer authentication and resource dispatch for two principals."""
+        async with _serve_http(mcp_module._build_streamable_http_app(settings)) as origin:
+            async with (
+                httpx2.AsyncClient(
+                    headers={"Authorization": "Bearer owner"}, trust_env=False
+                ) as own,
+                httpx2.AsyncClient(
+                    headers={"Authorization": "Bearer other"}, trust_env=False
+                ) as other,
+                Client(streamable_http_client(origin + "/mcp", http_client=own)) as owner_client,
+                Client(streamable_http_client(origin + "/mcp", http_client=other)) as other_client,
+            ):
+                pending = asyncio.create_task(owner_client.read_resource("policynim://catalog"))
+                try:
+                    async with asyncio.timeout(5):
+                        while not started.is_set():
+                            await asyncio.sleep(0.001)
+                    with pytest.raises(MCPError, match="principal_busy"):
+                        await owner_client.read_resource("policynim://catalog")
+                    assert (await other_client.read_resource("policynim://catalog")).contents
+                finally:
+                    release.set()
+                    await pending
+                assert (await owner_client.read_resource("policynim://catalog")).contents
+        assert len(calls) == 3
+        assert not settings.beta_auth_db_path.exists()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("operation", ["policy_compile", "policy_preflight_evidence"])
+def test_grounded_service_checks_its_named_operation_before_provider_allocation(
+    generation, monkeypatch, operation
+) -> None:
+    """Future permission changes can't silently fall back to the older preflight rule."""
+    from policynim.services import authorization
+    from policynim.services.authorization import AuthenticatedPrincipal, AuthorizationError
+    from policynim.types import CompileRequest, PreflightRequest
+
+    settings, _, _ = generation
+    caller = AuthenticatedPrincipal(
+        issuer="https://issuer.example",
+        subject="owner",
+        client_id="fixture",
+        scopes=frozenset({"policies:read", "policies:evaluate"}),
+        source="oauth",
+    )
+    monkeypatch.setitem(authorization.OPERATION_SCOPES, operation, frozenset({"future:scope"}))
+
+    def unavailable(*args, **kwargs):
+        """Permission rejection must precede provider graph allocation."""
+        pytest.fail("unauthorized operation allocated providers")
+
+    monkeypatch.setattr(service_module, "create_policy_compiler_service", unavailable)
+    monkeypatch.setattr(service_module, "create_preflight_service", unavailable)
+    with pytest.raises(AuthorizationError, match="insufficient_scope"):
+        if operation == "policy_compile":
+            service_module.compile_policy(settings, CompileRequest(task="review"), principal=caller)
+        else:
+            service_module.preflight_evidence(
+                settings, PreflightRequest(task="review"), principal=caller
+            )
