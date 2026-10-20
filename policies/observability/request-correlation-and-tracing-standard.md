@@ -24,7 +24,7 @@ Applies to application-developer, service-operator. Select this policy when the 
 ## Required Rules
 
 - **TRACE-1** Where W3C Trace Context is supported, validate inbound traceparent, create or continue context according to its processing rules, and propagate it to supported downstream calls. Support: TRACE:3.2; TRACE:4.
-- **TRACE-2** Preserve safe operation correlation through asynchronous work and retries; log TraceId/SpanId when available. Support: OTEL-LOG:Trace Context Fields; PolicyNIM decision.
+- **TRACE-2** Preserve safe operation correlation across unsupported protocol boundaries, asynchronous work, and retries; provide a fallback correlation identifier when trace propagation isn't available, and log TraceId/SpanId when available. Support: OTEL-LOG:Trace Context Fields; PolicyNIM decision.
 - **TRACE-3** Keep secrets and user payloads out of trace metadata; never use a caller-supplied trace ID as an authorization principal. Support: TRACE:6; TRACE:7; PolicyNIM decision.
 
 ## Recommended Guidance

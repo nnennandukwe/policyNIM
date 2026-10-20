@@ -22,7 +22,7 @@ Applies to application-developer, service-operator. Select this policy when the 
 
 ## Required Rules
 
-- **CONFIG-1** Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface. Support: PolicyNIM decision.
+- **CONFIG-1** Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface and centralize environment reads through it. Support: PolicyNIM decision.
 - **CONFIG-2** Document precedence, safe defaults, model identity, and the restart or reload behavior for changed settings. Support: PolicyNIM decision.
 - **CONFIG-3** Name invalid keys or shapes without printing secret values; test missing, malformed, and boundary inputs. Support: CS-SECRET:2 General Secrets Management; PolicyNIM decision.
 

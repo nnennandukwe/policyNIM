@@ -87,6 +87,33 @@ def test_every_selected_engineering_policy_retains_scenario_coverage() -> None:
     assert {case["policy_id"] for case in SUITE["cases"]} == required_ids
 
 
+def test_authored_scenarios_match_reviewed_bundle_and_profile(tmp_path: Path) -> None:
+    """Bind source scenarios to the actual imported aggregate and separately pinned profile."""
+    settings = Settings(**NO_ENV, corpus_dir=POLICIES, generations_dir=tmp_path / "generations")
+    generations = GenerationStore(
+        root=settings.generations_dir,
+        embedding=EmbeddingIdentity(
+            model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
+        ),
+    )
+    bundle = ROOT / "artifacts/public-generation"
+    generations.import_bundle(
+        bundle / "generation.zip",
+        expected_digest=(bundle / "generation.sha256").read_text().strip(),
+        source_settings=settings,
+    )
+    with generations.pin() as snapshot:
+        assert SUITE["generation_id"] == snapshot.generation_id
+        assert SUITE["catalog_digest"] == snapshot.catalog.digest == CATALOG.digest
+        assert SUITE["profile_id"] == snapshot.manifest.profile_id
+        assert SUITE["profile_digest"] == snapshot.manifest.profile_digest
+    composed = resolve_profile(PROFILE).catalog
+    assert SUITE["full_engineering_profile"] == {
+        "profile_id": composed.profile_id,
+        "profile_digest": composed.profile_digest,
+    }
+
+
 @pytest.mark.parametrize("policy_id", sorted(set().union(*TOPICS.values())))
 def test_changed_policy_has_pinned_sources_and_paired_scope_cases(policy_id: str) -> None:
     """Every changed policy names actual sources and authored positive/negative scope."""

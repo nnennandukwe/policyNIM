@@ -23,7 +23,7 @@ Applies to api-producer, api-consumer. Select this policy when the change affect
 ## Required Rules
 
 - **API-1** Classify changes against documented supported clients; test new fields against strict consumers before calling the change additive. Support: PolicyNIM decision.
-- **API-2** Publish incompatible behavior behind a reviewed version boundary with a migration path, owner, and removal conditions. Support: PolicyNIM decision.
+- **API-2** Publish incompatible behavior behind a reviewed version boundary; the migration plan must name old and new versions, the owner, removal conditions, and target date. Never repurpose an existing field with new meaning within a supported version. Support: PolicyNIM decision.
 - **API-3** For packages adopting SemVer, declare the public API and apply its compatibility rules; an HTTP API version scheme remains a separate project decision. Support: SEMVER:1; SEMVER:7; SEMVER:8.
 
 ## Recommended Guidance

@@ -7,17 +7,17 @@
   "changed_policy_revisions": {
     "TEST-FAIL-001": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
     "TEST-CONTRACT-001": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
-    "ARCH-API-001": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
+    "ARCH-API-001": "sha256:62d0a4212b89834fda66f450634667d1475de4bc3fbafb275c2b7a7d80af8ffa",
     "API-ERROR-001": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
     "API-PAGE-001": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
     "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
     "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
-    "ARCH-JOB-001": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
-    "BE-CONFIG-001": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
+    "ARCH-JOB-001": "sha256:1975aac251ea463726b897fd3f9012158fea68e2d1d89ba3f9ac2cad7c722038",
+    "BE-CONFIG-001": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
     "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
     "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
-    "BE-LOG-001": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
-    "BE-TRACE-001": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
+    "BE-LOG-001": "sha256:a5703ab3902a636582f700c2e0731b4b4f94264236f1a9caf73dfdab7b041d34",
+    "BE-TRACE-001": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
     "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
     "SUPPLY-BUILD-001": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
     "SUPPLY-PROVENANCE-001": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39"
@@ -234,7 +234,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-API-001",
-      "policy_revision": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
+      "policy_revision": "sha256:62d0a4212b89834fda66f450634667d1475de4bc3fbafb275c2b7a7d80af8ffa",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -246,7 +246,7 @@
         },
         {
           "requirement_id": "API-2",
-          "quote": "Publish incompatible behavior behind a reviewed version boundary with a migration path, owner, and removal conditions.",
+          "quote": "Publish incompatible behavior behind a reviewed version boundary; the migration plan must name old and new versions, the owner, removal conditions, and target date. Never repurpose an existing field with new meaning within a supported version.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -273,7 +273,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-API-001",
-      "policy_revision": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
+      "policy_revision": "sha256:62d0a4212b89834fda66f450634667d1475de4bc3fbafb275c2b7a7d80af8ffa",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -285,7 +285,7 @@
         },
         {
           "requirement_id": "API-2",
-          "quote": "Publish incompatible behavior behind a reviewed version boundary with a migration path, owner, and removal conditions.",
+          "quote": "Publish incompatible behavior behind a reviewed version boundary; the migration plan must name old and new versions, the owner, removal conditions, and target date. Never repurpose an existing field with new meaning within a supported version.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -312,7 +312,7 @@
         "ARCH-API-001"
       ],
       "policy_id": "ARCH-API-001",
-      "policy_revision": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
+      "policy_revision": "sha256:62d0a4212b89834fda66f450634667d1475de4bc3fbafb275c2b7a7d80af8ffa",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The unrelated editorial correction changes no api compatibility and version boundaries behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
@@ -689,7 +689,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
+      "policy_revision": "sha256:1975aac251ea463726b897fd3f9012158fea68e2d1d89ba3f9ac2cad7c722038",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -702,14 +702,14 @@
         },
         {
           "requirement_id": "JOB-2",
-          "quote": "Bound retries and worker concurrency, classify terminal failures, and give operators a documented retry or dead-letter action.",
+          "quote": "Use bounded retries with backoff, declare worker concurrency limits in code or configuration, classify terminal failures, and give operators a documented retry or dead-letter action.",
           "support": [
             "PolicyNIM decision"
           ]
         },
         {
           "requirement_id": "JOB-3",
-          "quote": "Keep credentials out of job payloads and telemetry; preserve job correlation and report progress for long operations.",
+          "quote": "Keep credentials out of job payloads and telemetry; preserve job correlation, emit structured success, retry, and failure events, and report progress for long operations.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -727,7 +727,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
+      "policy_revision": "sha256:1975aac251ea463726b897fd3f9012158fea68e2d1d89ba3f9ac2cad7c722038",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -740,14 +740,14 @@
         },
         {
           "requirement_id": "JOB-2",
-          "quote": "Bound retries and worker concurrency, classify terminal failures, and give operators a documented retry or dead-letter action.",
+          "quote": "Use bounded retries with backoff, declare worker concurrency limits in code or configuration, classify terminal failures, and give operators a documented retry or dead-letter action.",
           "support": [
             "PolicyNIM decision"
           ]
         },
         {
           "requirement_id": "JOB-3",
-          "quote": "Keep credentials out of job payloads and telemetry; preserve job correlation and report progress for long operations.",
+          "quote": "Keep credentials out of job payloads and telemetry; preserve job correlation, emit structured success, retry, and failure events, and report progress for long operations.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -765,7 +765,7 @@
         "ARCH-JOB-001"
       ],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
+      "policy_revision": "sha256:1975aac251ea463726b897fd3f9012158fea68e2d1d89ba3f9ac2cad7c722038",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The unrelated editorial correction changes no background jobs and duplicate effects behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
@@ -780,12 +780,12 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
+      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
           "requirement_id": "CONFIG-1",
-          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface.",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface and centralize environment reads through it.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -818,12 +818,12 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
+      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
           "requirement_id": "CONFIG-1",
-          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface.",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface and centralize environment reads through it.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -856,7 +856,7 @@
         "BE-CONFIG-001"
       ],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
+      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The unrelated editorial correction changes no configuration validation and safe startup behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
@@ -1059,7 +1059,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
+      "policy_revision": "sha256:a5703ab3902a636582f700c2e0731b4b4f94264236f1a9caf73dfdab7b041d34",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1072,7 +1072,7 @@
         },
         {
           "requirement_id": "LOG-2",
-          "quote": "Use structured operation, outcome, and safe correlation fields; include trace context when available without copying arbitrary request bodies.",
+          "quote": "Use structured service, operation, outcome, and safe actor/request correlation fields when available; include trace context without copying arbitrary request bodies.",
           "support": [
             "OTEL-LOG:Trace Context Fields",
             "OTEL-LOG:Field: Resource",
@@ -1081,7 +1081,7 @@
         },
         {
           "requirement_id": "LOG-3",
-          "quote": "Record terminal failures with safe cause and operator action; bound repeated events and review access and retention.",
+          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include safe cause and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -1099,7 +1099,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
+      "policy_revision": "sha256:a5703ab3902a636582f700c2e0731b4b4f94264236f1a9caf73dfdab7b041d34",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1112,7 +1112,7 @@
         },
         {
           "requirement_id": "LOG-2",
-          "quote": "Use structured operation, outcome, and safe correlation fields; include trace context when available without copying arbitrary request bodies.",
+          "quote": "Use structured service, operation, outcome, and safe actor/request correlation fields when available; include trace context without copying arbitrary request bodies.",
           "support": [
             "OTEL-LOG:Trace Context Fields",
             "OTEL-LOG:Field: Resource",
@@ -1121,7 +1121,7 @@
         },
         {
           "requirement_id": "LOG-3",
-          "quote": "Record terminal failures with safe cause and operator action; bound repeated events and review access and retention.",
+          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include safe cause and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -1139,7 +1139,7 @@
         "BE-LOG-001"
       ],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
+      "policy_revision": "sha256:a5703ab3902a636582f700c2e0731b4b4f94264236f1a9caf73dfdab7b041d34",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The unrelated editorial correction changes no safe structured logging behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
@@ -1154,7 +1154,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
+      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1167,7 +1167,7 @@
         },
         {
           "requirement_id": "TRACE-2",
-          "quote": "Preserve safe operation correlation through asynchronous work and retries; log TraceId/SpanId when available.",
+          "quote": "Preserve safe operation correlation across unsupported protocol boundaries, asynchronous work, and retries; provide a fallback correlation identifier when trace propagation isn't available, and log TraceId/SpanId when available.",
           "support": [
             "OTEL-LOG:Trace Context Fields",
             "PolicyNIM decision"
@@ -1195,7 +1195,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
+      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1208,7 +1208,7 @@
         },
         {
           "requirement_id": "TRACE-2",
-          "quote": "Preserve safe operation correlation through asynchronous work and retries; log TraceId/SpanId when available.",
+          "quote": "Preserve safe operation correlation across unsupported protocol boundaries, asynchronous work, and retries; provide a fallback correlation identifier when trace propagation isn't available, and log TraceId/SpanId when available.",
           "support": [
             "OTEL-LOG:Trace Context Fields",
             "PolicyNIM decision"
@@ -1236,7 +1236,7 @@
         "BE-TRACE-001"
       ],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
+      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The unrelated editorial correction changes no request correlation and trace context behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
@@ -1566,7 +1566,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-API-001",
-      "policy_revision": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
+      "policy_revision": "sha256:62d0a4212b89834fda66f450634667d1475de4bc3fbafb275c2b7a7d80af8ffa",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "A proven compatible optional field can keep the current API version. SemVer doesn't prescribe HTTP path versioning or a universal deprecation duration.",
@@ -1646,7 +1646,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
+      "policy_revision": "sha256:1975aac251ea463726b897fd3f9012158fea68e2d1d89ba3f9ac2cad7c722038",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Exactly-once delivery isn't inferred from a queue setting. Deduplication scope and retention are workload decisions; an explicitly harmless repeat can be documented as such.",
@@ -1662,7 +1662,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
+      "policy_revision": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup.",
@@ -1710,7 +1710,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
+      "policy_revision": "sha256:a5703ab3902a636582f700c2e0731b4b4f94264236f1a9caf73dfdab7b041d34",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging.",
@@ -1726,7 +1726,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
+      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Trace and span IDs have different roles. A new child span normally gets a new span ID; preserve valid trace identity without requiring every hop to repeat the same span ID.",
@@ -1780,5 +1780,13 @@
       "boundary_evidence": "SLSA levels depend on their full track requirements and trust model. This selected guidance doesn't assess a builder or certify SSDF, SLSA, or OSPS compliance.",
       "rationale": "Selected artifact checks don't establish a complete framework level or certification; their narrower verified result can still be reported."
     }
-  ]
+  ],
+  "generation_id": "7ca8cd84322c089bf88d82a3c4cc944fe34077faa815a9bfa67c2c3fbafee5b6",
+  "catalog_digest": "sha256:f5daeab987c3dc4607159d7b478cb130da3c1d54276b7c4ee012660b3b9bdba6",
+  "profile_id": null,
+  "profile_digest": null,
+  "full_engineering_profile": {
+    "profile_id": "policynim.full-engineering",
+    "profile_digest": "sha256:088486597408230754d16b338619b1d0b5554e9cb02478f7b3002dcf03f1e85a"
+  }
 }

@@ -23,8 +23,8 @@ Applies to application-developer, service-operator. Select this policy when the 
 ## Required Rules
 
 - **JOB-1** Use idempotent effects or durable deduplication at the effect boundary; a lost acknowledgement can occur after an effect succeeds. Support: AWS-RETRY:Retries and backoff; PolicyNIM decision.
-- **JOB-2** Bound retries and worker concurrency, classify terminal failures, and give operators a documented retry or dead-letter action. Support: PolicyNIM decision.
-- **JOB-3** Keep credentials out of job payloads and telemetry; preserve job correlation and report progress for long operations. Support: PolicyNIM decision.
+- **JOB-2** Use bounded retries with backoff, declare worker concurrency limits in code or configuration, classify terminal failures, and give operators a documented retry or dead-letter action. Support: PolicyNIM decision.
+- **JOB-3** Keep credentials out of job payloads and telemetry; preserve job correlation, emit structured success, retry, and failure events, and report progress for long operations. Support: PolicyNIM decision.
 
 ## Recommended Guidance
 
