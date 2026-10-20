@@ -203,31 +203,6 @@ jobs:
       - name: Build standalone bundle
         run: uv run --no-sync pyinstaller --clean --noconfirm packaging/pyinstaller.spec
 
-      - name: Verify standalone generation and transports
-        shell: bash
-        run: |
-          python - <<'PY'
-          import hashlib
-          import os
-          from pathlib import Path
-          import subprocess
-
-          root = Path.cwd()
-          suffix = ".exe" if os.name == "nt" else ""
-          bundle = root / "artifacts/public-generation"
-          subprocess.run([
-              "uv", "run", "--no-sync", "python", "scripts/verify_standalone.py",
-              "--command", str(root / "dist/policynim" / ("policynim" + suffix)),
-              "--bundle", str(bundle / "generation.zip"),
-              "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
-              "--lockfile", str(root / "uv.lock"),
-              "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
-              "--revision", os.environ["GITHUB_SHA"],
-              "--expected-version", os.environ["RELEASE_TAG"].removeprefix("v"),
-              "--output", "standalone-evidence-${{ matrix.platform }}.json",
-          ], check=True)
-          PY
-
       - name: Archive Unix standalone bundle
         if: matrix.archive == 'tar'
         shell: bash
@@ -239,7 +214,7 @@ jobs:
             darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;
             *) echo "Unsupported release platform: ${{ matrix.platform }}" >&2; exit 1 ;;
           esac
-          tar -C dist -czf "standalone-archives/${ASSET_NAME}" policynim
+          COPYFILE_DISABLE=1 tar -C dist -czf "standalone-archives/${ASSET_NAME}" policynim
 
       - name: Archive Windows standalone bundle
         if: matrix.archive == 'zip'
@@ -250,22 +225,30 @@ jobs:
           $AssetName = "policynim-${RELEASE_TAG}-windows-amd64.zip"
           Compress-Archive -Path "dist/policynim/*" -DestinationPath "standalone-archives/$AssetName" -Force
 
-      - name: Bind standalone receipt to archive
+      - name: Verify standalone generation and transports
         shell: bash
         run: |
-          python - <<'PYCODE'
+          python - <<'PY'
           import hashlib
-          import json
+          import os
           from pathlib import Path
+          import subprocess
 
-          archive, = Path("standalone-archives").iterdir()
-          receipt = Path("standalone-evidence-${{ matrix.platform }}.json")
-          report = json.loads(receipt.read_text(encoding="utf-8"))
-          with archive.open("rb") as stream:
-              digest = hashlib.file_digest(stream, "sha256").hexdigest()
-          report["archive"] = {"name": archive.name, "sha256": digest}
-          receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-          PYCODE
+          root = Path.cwd()
+          bundle = root / "artifacts/public-generation"
+          archive, = (root / "standalone-archives").iterdir()
+          subprocess.run([
+              "uv", "run", "--no-sync", "python", "scripts/verify_standalone.py",
+              "--archive", str(archive),
+              "--bundle", str(bundle / "generation.zip"),
+              "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+              "--lockfile", str(root / "uv.lock"),
+              "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
+              "--revision", os.environ["GITHUB_SHA"],
+              "--expected-version", os.environ["RELEASE_TAG"].removeprefix("v"),
+              "--output", "standalone-evidence-${{ matrix.platform }}.json",
+          ], check=True)
+          PY
 
       - name: Retain standalone verification evidence
         if: always()
@@ -301,6 +284,12 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Sync publication verification dependencies
+        run: uv sync --locked --python ${{ env.PYTHON_VERSION }} --no-dev --no-default-groups
 
       - name: Download release artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -345,7 +334,7 @@ jobs:
           cp scripts/install.ps1 release-assets/install.ps1
           cp artifacts/public-generation/generation.zip release-assets/policynim-public-generation.zip
           cp artifacts/public-generation/generation.sha256 release-assets/policynim-public-generation.sha256
-          python scripts/release_manifest.py release-assets --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
+          uv run --no-sync --python ${{ env.PYTHON_VERSION }} python scripts/release_manifest.py release-assets --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
           cat > release-notes.md <<'EOF'
           PolicyNIM release artifacts:
 
