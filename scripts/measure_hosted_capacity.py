@@ -270,6 +270,7 @@ def _server_failure_diagnostics(events: list[dict[str, Any]]) -> dict[str, objec
         "timeout",
         "connection",
         "rate_limit",
+        "retry_after_limit",
     }
     phases = {"initialization", "reservation", "finish", "beta_auth_initialization"}
     classes = {
