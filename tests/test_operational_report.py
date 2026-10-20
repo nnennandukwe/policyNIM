@@ -458,3 +458,42 @@ def test_retention_backlog_is_batched_during_concurrent_admission(tmp_path: Path
         list(executor.map(reserve, range(2)))
     report = store.report(store.path)
     assert report.retained_rows == 3002 and report.active_operations == 2
+
+
+def test_callback_storage_error_keeps_cause_class_without_payload(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The real browser callback doesn't label unknown local failures as upstream failures."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from starlette.testclient import TestClient
+    from test_mcp import ControlledKeyRotationService, _self_serve_hosted_settings
+
+    sentinel = "Authorization: Bearer private-token C:\\private\\state /Users/private/state"
+
+    class FailingAccounts(ControlledKeyRotationService):
+        """Fail local account persistence after the browser completed its state handshake."""
+
+        def complete_github_oauth(self, *, code: str):
+            """Inject a private local storage exception through the actual callback route."""
+            raise OSError(sentinel)
+
+    monkeypatch.setattr(mcp, "create_beta_auth_service", lambda settings: FailingAccounts())
+    with (
+        caplog.at_level(logging.ERROR),
+        TestClient(
+            mcp._build_streamable_http_app(_self_serve_hosted_settings()),
+            base_url="https://beta.example.com",
+        ) as client,
+    ):
+        start = client.get("/auth/github/start", follow_redirects=False)
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        response = client.get(
+            "/auth/github/callback", params={"state": state, "code": "fixture-code"}
+        )
+    assert response.status_code == 502
+    assert "stage=unknown, class=OSError" in caplog.text
+    assert "auth storage health" in caplog.text
+    assert "upstream" not in response.text and "unexpected_upstream" not in caplog.text
+    assert sentinel not in caplog.text and sentinel not in response.text
+    assert "private-token" not in caplog.text and "Traceback" not in caplog.text

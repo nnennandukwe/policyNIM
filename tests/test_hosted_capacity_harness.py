@@ -47,6 +47,8 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert scenarios["disconnect"]["drain_observation"] == "terminal_outcome_observed"
     assert scenarios["disconnect"]["intervention_started_with_active_work"] is True
     assert scenarios["shutdown"]["intervention_started_with_active_work"] is True
+    assert scenarios["disconnect"]["client_concurrency"] == 1
+    assert scenarios["shutdown"]["client_concurrency"] == 1
     assert scenarios["baseline"]["outcomes"] == {"ok": 12}
     assert scenarios["baseline"]["successful_search_hit_counts"] == {"5": 12}
     assert scenarios["saturation"]["outcomes"].get("server_busy", 0) >= 1
@@ -60,3 +62,39 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
         assert scenario["live_provider_usage"] is None
         assert scenario["sampled_peak_server_rss_bytes"] > 0
         assert scenario["server_exit_code"] in {0, -15}
+
+
+def test_completed_client_isnt_reported_as_disconnected(tmp_path, monkeypatch) -> None:
+    """A request that already finished can't be evidence of a cancelled connection."""
+    import asyncio
+    import runpy
+    from unittest.mock import AsyncMock, Mock
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py")
+    )
+    measure = namespace["_measure"]
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.get.return_value = httpx.Response(200)
+    monkeypatch.setattr(httpx, "AsyncClient", Mock(return_value=client))
+    monkeypatch.setitem(measure.__globals__, "_rpc", AsyncMock(return_value=(1.0, "ok", 5)))
+    monkeypatch.setitem(measure.__globals__, "_sample_rss", lambda pid: 1)
+    OperationStore(tmp_path / "auth.sqlite3")
+    process = Mock(pid=123)
+    process.poll.return_value = None
+    result = asyncio.run(
+        measure(
+            {"port": 1234, "tokens": ["fixture"], "users": 25, "requests_per_user": 2, "delay": 0},
+            tmp_path,
+            process,
+            "disconnect",
+        )
+    )
+    assert result["intervention"] == "client_task_already_completed"
+    assert result["intervention_started_with_active_work"] is False
+    assert result["client_concurrency"] == result["attempted_requests"] == 1

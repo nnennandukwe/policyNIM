@@ -164,3 +164,10 @@ p95 was 223.342 ms; the receipt records separate saturation, locking, slow-provi
 disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
+
+Fault receipts report one configured concurrent client when only one request is
+attempted. If a client task already completed before cancellation, the intervention
+is labeled `client_task_already_completed`; that run doesn't prove a disconnect.
+Unexpected browser callback errors report an unknown stage and the exception class
+with fixed recovery guidance for identity-provider reachability and account storage.
+They don't label every unknown error as an upstream failure or log raw error text.

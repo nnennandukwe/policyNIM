@@ -346,7 +346,11 @@ async def _measure(
             lock = sqlite3.connect(root / "auth.sqlite3", timeout=0.1)
             lock.execute("BEGIN IMMEDIATE")
         count = config["users"] * config["requests_per_user"]
-        concurrency = config["users"] if scenario == "saturation" else min(10, config["users"])
+        attempted = 1 if scenario in {"disconnect", "shutdown"} else count
+        concurrency = min(
+            attempted,
+            config["users"] if scenario == "saturation" else min(10, config["users"]),
+        )
         semaphore = asyncio.Semaphore(concurrency)
 
         async def request(index: int) -> None:
@@ -374,8 +378,11 @@ async def _measure(
                         break
                     await asyncio.sleep(0.01)
                 if scenario == "disconnect":
-                    pending.cancel()
-                    intervention = "client_task_cancelled"
+                    intervention = (
+                        "client_task_cancelled"
+                        if pending.cancel()
+                        else "client_task_already_completed"
+                    )
                     await asyncio.gather(pending, return_exceptions=True)
                     deadline = time.monotonic() + 10.0
                     while True:
@@ -409,7 +416,7 @@ async def _measure(
         return {
             "scenario": scenario,
             "duration_seconds": round(seconds, 3),
-            "attempted_requests": count if intervention is None else 1,
+            "attempted_requests": attempted,
             "completed_client_responses": len(samples),
             "outcomes": dict(outcomes),
             "responses_per_second": round(len(samples) / seconds, 3),
