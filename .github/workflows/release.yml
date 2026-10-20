@@ -66,6 +66,12 @@ jobs:
     runs-on: ubuntu-24.04
     needs: verify
     steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
       - name: Download Python distribution
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -77,12 +83,47 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Smoke install built wheel
+      - name: Verify fresh wheel from locked dependencies
         run: |
-          python -m venv /tmp/policynim-wheel-smoke
-          /tmp/policynim-wheel-smoke/bin/python -m pip install dist/*.whl
-          /tmp/policynim-wheel-smoke/bin/policynim --help
-          /tmp/policynim-wheel-smoke/bin/policynim --version
+          python - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+          
+          root = Path.cwd()
+          wheel, = (root / "dist").glob("*.whl")
+          bundle = root / "artifacts/public-generation"
+          with tempfile.TemporaryDirectory(prefix="policynim-package-") as temporary:
+              runtime = Path(temporary)
+              subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
+              python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+              requirements = runtime / "locked-requirements.txt"
+              subprocess.run(["uv", "export", "--locked", "--no-dev", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--require-hashes", "--no-deps", "-r", str(requirements)], check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
+              subprocess.run(["uv", "pip", "check", "--python", str(python)], check=True)
+              subprocess.run([
+                  str(python), str(root / "scripts/verify_installed_package.py"),
+                  "--wheel", str(wheel), "--bundle", str(bundle / "generation.zip"),
+                  "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+                  "--revision", os.environ["GITHUB_SHA"],
+                  "--lockfile", str(root / "uv.lock"),
+                  "--requirements", str(requirements),
+                  "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
+                  "--output", str(root / "wheel-evidence.json"),
+              ], cwd=runtime, check=True)
+          PY
+
+      - name: Retain wheel verification evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: wheel-evidence
+          path: wheel-evidence.json
+          if-no-files-found: error
 
   standalone-build:
     needs: verify
@@ -176,6 +217,45 @@ jobs:
           ], check=True)
           PY
 
+      - name: Archive Unix standalone bundle
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          mkdir -p standalone-archives
+          case "${{ matrix.platform }}" in
+            linux-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-linux-amd64.tar.gz" ;;
+            darwin-arm64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-arm64.tar.gz" ;;
+            darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;
+            *) echo "Unsupported release platform: ${{ matrix.platform }}" >&2; exit 1 ;;
+          esac
+          tar -C dist -czf "standalone-archives/${ASSET_NAME}" policynim
+
+      - name: Archive Windows standalone bundle
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path standalone-archives | Out-Null
+          $RELEASE_TAG = $env:RELEASE_TAG
+          $AssetName = "policynim-${RELEASE_TAG}-windows-amd64.zip"
+          Compress-Archive -Path "dist/policynim/*" -DestinationPath "standalone-archives/$AssetName" -Force
+
+      - name: Bind standalone receipt to archive
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          archive, = Path("standalone-archives").iterdir()
+          receipt = Path("standalone-evidence-${{ matrix.platform }}.json")
+          report = json.loads(receipt.read_text(encoding="utf-8"))
+          with archive.open("rb") as stream:
+              digest = hashlib.file_digest(stream, "sha256").hexdigest()
+          report["archive"] = {"name": archive.name, "sha256": digest}
+          receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          PYCODE
+
       - name: Retain standalone verification evidence
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -184,33 +264,11 @@ jobs:
           path: standalone-evidence-${{ matrix.platform }}.json
           if-no-files-found: error
 
-      - name: Archive Unix standalone bundle
-        if: matrix.archive == 'tar'
-        shell: bash
-        run: |
-          mkdir -p artifacts
-          case "${{ matrix.platform }}" in
-            linux-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-linux-amd64.tar.gz" ;;
-            darwin-arm64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-arm64.tar.gz" ;;
-            darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;
-            *) echo "Unsupported release platform: ${{ matrix.platform }}" >&2; exit 1 ;;
-          esac
-          tar -C dist -czf "artifacts/${ASSET_NAME}" policynim
-
-      - name: Archive Windows standalone bundle
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          $RELEASE_TAG = $env:RELEASE_TAG
-          $AssetName = "policynim-${RELEASE_TAG}-windows-amd64.zip"
-          Compress-Archive -Path "dist/policynim/*" -DestinationPath "artifacts/$AssetName" -Force
-
       - name: Upload standalone bundle
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: standalone-${{ matrix.platform }}
-          path: artifacts/*
+          path: standalone-archives/*
           if-no-files-found: error
 
   publish-github-release:
@@ -224,6 +282,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Set up Python for manifest verification
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -268,17 +331,14 @@ jobs:
           cp scripts/install.ps1 release-assets/install.ps1
           cp artifacts/public-generation/generation.zip release-assets/policynim-public-generation.zip
           cp artifacts/public-generation/generation.sha256 release-assets/policynim-public-generation.sha256
-          (
-            cd release-assets
-            sha256sum * > SHA256SUMS
-          )
+          python scripts/release_manifest.py release-assets --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
           cat > release-notes.md <<'EOF'
           PolicyNIM release artifacts:
 
           - Python wheel and source distribution for `pipx install policynim`
           - Standalone CLI bundles for Linux, Apple Silicon macOS, Intel macOS, and Windows
           - Unix and PowerShell installer scripts
-          - SHA256SUMS for release asset verification
+          - RELEASE_MANIFEST.json and SHA256SUMS for source-bound asset verification
           EOF
 
       - name: Create draft GitHub release

@@ -388,3 +388,34 @@ def test_shell_wrappers_cant_hide_unlocked_uv_commands() -> None:
     """The release gate doesn't assume a quoted shell script is harmless data."""
     with pytest.raises(AssertionError):
         _release_uv_commands('bash -c "uv sync --group test"')
+
+
+def test_release_publication_joins_checked_artifact_evidence_before_upload() -> None:
+    """Publication can't omit the source-bound manifest or archive-linked receipts."""
+    jobs = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]
+    publication = jobs["publish-github-release"]
+    assert {"wheel-smoke", "standalone-build"} <= set(publication["needs"])
+    commands = [step.get("run", "") for step in publication["steps"]]
+    joined = next(
+        index for index, command in enumerate(commands) if "scripts/release_manifest.py" in command
+    )
+    published = next(
+        index for index, command in enumerate(commands) if "gh release create" in command
+    )
+    assert joined < published
+    assert '--source-sha "$GITHUB_SHA"' in commands[joined]
+    assert '--tag "$RELEASE_TAG"' in commands[joined]
+    wheel = "\n".join(step.get("run", "") for step in jobs["wheel-smoke"]["steps"])
+    assert '"export", "--locked"' in wheel
+    assert '"--require-hashes", "--no-deps"' in wheel
+    assert "verify_installed_package.py" in wheel
+    names = [step["name"] for step in jobs["standalone-build"]["steps"]]
+    assert names.index("Archive Unix standalone bundle") < names.index(
+        "Bind standalone receipt to archive"
+    )
+    assert names.index("Archive Windows standalone bundle") < names.index(
+        "Bind standalone receipt to archive"
+    )
+    assert names.index("Bind standalone receipt to archive") < names.index(
+        "Retain standalone verification evidence"
+    )

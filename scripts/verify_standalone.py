@@ -55,6 +55,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         "client_python": platform.python_version(),
         "client_sdk_version": importlib.metadata.version("mcp"),
         "platform": platform.system(),
+        "runner_machine": platform.machine(),
         "artifact": artifact_identity(command),
         "dependency_lock": lock_digest,
         "provider_calls": "not performed",
