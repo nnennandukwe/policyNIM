@@ -9,6 +9,7 @@ import pytest
 from test_ingest_service import MockEmbedder
 from test_policy_generations import seed_legacy
 
+from policynim.contracts import PolicyCompiler
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.generations import GenerationStore
 from policynim.services.router import PolicyRouterService
@@ -109,9 +110,15 @@ class ExactCompiler:
         )
 
 
-def pinned_compiler(tmp_path: Path, *, custom_headings: bool = False) -> PolicyCompilerService:
+def pinned_compiler(
+    tmp_path: Path,
+    *,
+    custom_headings: bool = False,
+    ids: list[str] | None = None,
+    compiler: PolicyCompiler | None = None,
+) -> PolicyCompilerService:
     """Build real owned source/index state and return its lease-owning compiler service."""
-    settings, identity, _, _ = seed_legacy(tmp_path, ids=["A"])
+    settings, identity, _, _ = seed_legacy(tmp_path, ids=ids or ["A"])
     assert settings.corpus_dir is not None
     source = settings.corpus_dir / "A.md"
     if custom_headings:
@@ -136,7 +143,7 @@ def pinned_compiler(tmp_path: Path, *, custom_headings: bool = False) -> PolicyC
                 path=snapshot.index_path, embedding_identity=identity, generation_snapshot=snapshot
             ),
         ),
-        compiler=ExactCompiler(),
+        compiler=compiler or ExactCompiler(),
     )
 
 
@@ -650,3 +657,105 @@ def test_extractive_regeneration_stops_without_redundant_sdk_or_judge_calls(
     assert len(result.attempts) == len(requests) == len(judge.requests) == 1
     assert budget.provider_attempts == 1 and budget.measured_tokens == 10
     assert budget.unavailable_usage_attempts == 0
+
+
+def test_reversed_custom_compiler_order_keeps_canonical_preflight_sources(tmp_path: Path) -> None:
+    """Source selection is a set even when a valid compiler lists its owners in reverse."""
+    from test_nvidia_generator import MockOpenAIClient
+
+    from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
+    from policynim.providers.nvidia import NVIDIAGenerator
+    from policynim.services.preflight import PreflightService
+    from policynim.types import PreflightRequest
+
+    class ReversedCompiler(ExactCompiler):
+        """Return only exact complete sources, using a different permitted constraint order."""
+
+        def compile_policy_packet(
+            self,
+            request: CompileRequest,
+            selection_packet: PolicySelectionPacket,
+            context: Sequence[ScoredChunk],
+        ) -> GeneratedCompiledPolicyDraft:
+            """Retain source identity and references while reversing the compiler's list."""
+            draft = super().compile_policy_packet(request, selection_packet, context)
+            draft.required_steps.reverse()
+            return draft
+
+    client = MockOpenAIClient('{"source_ids":["s1","s2"],"insufficient_context":false}')
+    generator = NVIDIAGenerator(
+        api_key="fixture",
+        model=NVIDIA_LIGHTNING_CHAT_MODEL,
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,
+    )
+    with PreflightService(
+        compiler_service=pinned_compiler(tmp_path, ids=["A", "B"], compiler=ReversedCompiler()),
+        generator=generator,
+    ) as service:
+        result = service.preflight(PreflightRequest(task="Review both policies", top_k=2))
+    assert not result.insufficient_context
+    assert [owner.policy_id for owner in result.applicable_policies] == ["A", "B"]
+    assert len(client.chat.completions.calls) == 1
+
+
+def test_public_compiler_accepts_router_budget_boundary_with_same_json_encoding(
+    tmp_path: Path,
+) -> None:
+    """Canonical source binding mustn't reject bytes that fit the router's context limit."""
+    import json
+
+    from policynim.ingest.chunking import chunk_policy_documents
+    from policynim.source_units import MAX_SOURCE_BYTES
+
+    settings, identity, _, _ = seed_legacy(tmp_path, ids=["A"])
+    assert settings.corpus_dir is not None
+    source = settings.corpus_dir / "A.md"
+    frontmatter = source.read_text().split("---", 2)[1]
+    source.write_text("---" + frontmatter + "---\nx")
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.build(settings, MockEmbedder())
+    with store.pin() as small:
+        context = [
+            ScoredChunk(**chunk.model_dump(), score=1.0)
+            for chunk in chunk_policy_documents(small.documents)
+        ]
+    assert len(context) == 1
+    compact_overhead = (
+        len(
+            json.dumps(
+                [c.model_dump(mode="json") for c in context],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+        - 1
+    )
+    source.write_text("---" + frontmatter + "---\n" + "x" * (MAX_SOURCE_BYTES - compact_overhead))
+    store.build(settings, MockEmbedder())
+    snapshot = store.pin()
+    expected = [
+        ScoredChunk(**chunk.model_dump(), score=1.0)
+        for chunk in chunk_policy_documents(snapshot.documents)
+    ]
+    encoded = [chunk.model_dump(mode="json") for chunk in expected]
+    assert (
+        len(json.dumps(encoded, ensure_ascii=True, separators=(",", ":")).encode())
+        <= MAX_SOURCE_BYTES
+    )
+    assert len(json.dumps(encoded, ensure_ascii=True).encode()) > MAX_SOURCE_BYTES
+    with PolicyCompilerService(
+        router=PolicyRouterService(
+            embedder=MockEmbedder(),
+            reranker=PreserveRanking(),
+            index_store=SQLiteVecIndexStore(
+                path=snapshot.index_path, embedding_identity=identity, generation_snapshot=snapshot
+            ),
+        ),
+        compiler=ExactCompiler(),
+    ) as service:
+        result = service.compile(CompileRequest(task="Review the policy", top_k=1))
+    assert not result.packet.insufficient_context
+    assert len(result.packet.required_steps) == 1

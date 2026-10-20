@@ -106,7 +106,9 @@ class SourceCatalog:
             len(context) > MAX_SOURCE_CHUNKS
             or len(
                 json.dumps(
-                    [chunk.model_dump(mode="json") for chunk in context], ensure_ascii=True
+                    [chunk.model_dump(mode="json") for chunk in context],
+                    ensure_ascii=True,
+                    separators=(",", ":"),
                 ).encode()
             )
             > MAX_SOURCE_BYTES
@@ -196,7 +198,9 @@ class SourceCatalog:
             for value in self.chunk_fingerprints
             if json.loads(value)["policy"]["policy_id"] in owners
         )
-        return SourceCatalog(tuple(selected), fingerprints)
+        return SourceCatalog(
+            tuple(unit for unit in self.units if unit.policy_id in owners), fingerprints
+        )
 
     def resolve(self, selection: SourceSelection) -> tuple[SourceUnit, ...]:
         """Reject unknown, repeated or inconsistent selections instead of repairing them."""

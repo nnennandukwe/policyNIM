@@ -203,7 +203,17 @@ def test_eval_pipeline_exposes_selected_adversarial_output_without_changing_gold
             with generations.pin() as pinned:
                 _validate_case_evidence([checked], pinned)
             assert not checked.passed, mutation
-            assert "forbidden policy_id values: A" in checked.failure_reasons, mutation
+            if mutation == "coordinates":
+                assert any(
+                    reason.startswith("citation doesn't match the pinned generation:")
+                    for reason in checked.failure_reasons
+                ), checked.failure_reasons
+            elif mutation == "owner":
+                assert (
+                    "guidance evidence doesn't match policy metadata: A" in checked.failure_reasons
+                )
+            else:
+                assert "forbidden policy_id values: A" in checked.failure_reasons, mutation
         source.write_text(source.read_text() + "\nReviewed source revision.\n")
         from policynim.services.profiles import diff_profile, update_profile
 
@@ -215,4 +225,7 @@ def test_eval_pipeline_exposes_selected_adversarial_output_without_changing_gold
         with generations.pin() as pinned:
             _validate_case_evidence([checked], pinned)
         assert not checked.passed
-        assert "forbidden policy_id values: A" in checked.failure_reasons
+        assert any(
+            reason.startswith("citation doesn't match the pinned generation:")
+            for reason in checked.failure_reasons
+        ), checked.failure_reasons
