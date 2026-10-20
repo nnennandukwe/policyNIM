@@ -759,3 +759,157 @@ def test_public_compiler_accepts_router_budget_boundary_with_same_json_encoding(
         result = service.compile(CompileRequest(task="Review the policy", top_k=1))
     assert not result.packet.insufficient_context
     assert len(result.packet.required_steps) == 1
+
+
+@pytest.mark.parametrize("regeneration", [False, True])
+def test_custom_generator_cant_restore_a_policy_excluded_by_compilation(
+    tmp_path: Path, regeneration: bool
+) -> None:
+    """Canonical source text can't bypass the compiler's selected owner set."""
+    from test_policy_regeneration_service import MockConformanceService, make_conformance_result
+
+    from policynim.services.preflight import PreflightService
+    from policynim.services.regeneration import PolicyRegenerationService
+    from policynim.source_units import SourceContext, SourceSelection
+    from policynim.types import PreflightRegenerationRequest, PreflightRequest
+
+    class FirstSourceCompiler:
+        """Select one owner while discovery retains both complete policies."""
+
+        def compile_policy_packet(self, request, selection_packet, context):
+            """Materialize only the first canonical source as compiler authority."""
+            assert isinstance(context, SourceContext)
+            return context.catalog.compiler_draft(
+                SourceSelection(
+                    source_ids=[context.catalog.units[0].source_id], insufficient_context=False
+                )
+            )
+
+    generator = SourceGenerator()
+    compiler = pinned_compiler(tmp_path, ids=["A", "B"], compiler=FirstSourceCompiler())
+    if regeneration:
+        judge = MockConformanceService([make_conformance_result(passed=True)])
+        with PolicyRegenerationService(
+            compiler_service=compiler, generator=generator, conformance_service=judge
+        ) as service:
+            output = service.regenerate(
+                PreflightRegenerationRequest(task="Review both policies", top_k=2)
+            )
+        assert not output.passed
+        assert output.stop_reason == "insufficient_context"
+        assert output.attempts[-1].result.insufficient_context
+        assert not judge.requests
+    else:
+        with PreflightService(compiler_service=compiler, generator=generator) as service:
+            result = service.preflight(PreflightRequest(task="Review both policies", top_k=2))
+        assert result.insufficient_context
+        assert not result.applicable_policies
+    assert generator.calls == 1
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"source_ids": [], "insufficient_context": False},
+        {"source_ids": ["s1"], "insufficient_context": True},
+        {"source_ids": ["s1", "s1"], "insufficient_context": False},
+        {"source_ids": ["s1"], "insufficient_context": False},
+    ],
+)
+def test_inconsistent_sdk_selection_keeps_public_invalid_response_error(
+    tmp_path: Path, selection: dict[str, object]
+) -> None:
+    """An invalid provider response stays an error rather than a valid no-source answer."""
+    import json
+
+    from test_nvidia_generator import MockOpenAIClient
+
+    from policynim.errors import ProviderError
+    from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
+    from policynim.providers.nvidia import NVIDIAGenerator
+    from policynim.services.preflight import PreflightService
+    from policynim.types import PreflightRequest
+
+    client = MockOpenAIClient(json.dumps(selection))
+    generator = NVIDIAGenerator(
+        api_key="fixture",
+        model=NVIDIA_LIGHTNING_CHAT_MODEL,
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,
+    )
+    with (
+        PreflightService(
+            compiler_service=pinned_compiler(tmp_path, ids=["A", "B"]), generator=generator
+        ) as service,
+        pytest.raises(ProviderError, match="source selection isn't valid") as caught,
+    ):
+        service.preflight(PreflightRequest(task="Review both policies", top_k=2))
+    assert caught.value.failure_class == "invalid_response"
+    assert len(client.chat.completions.calls) == 1
+
+
+@pytest.mark.parametrize("regeneration", [False, True])
+def test_custom_generator_can_preserve_only_compiler_selected_source(
+    tmp_path: Path, regeneration: bool
+) -> None:
+    """Retained discovery sources stay available without expanding selected authority."""
+    from test_policy_regeneration_service import MockConformanceService, make_conformance_result
+
+    from policynim.services.preflight import PreflightService
+    from policynim.services.regeneration import PolicyRegenerationService
+    from policynim.source_units import SourceContext, SourceSelection
+    from policynim.types import PreflightRegenerationRequest, PreflightRequest
+
+    class FirstSourceCompiler:
+        """Select one complete source from two retained discovery owners."""
+
+        def compile_policy_packet(self, request, selection_packet, context):
+            """Retain the first owner as the only compiled source."""
+            assert isinstance(context, SourceContext)
+            return context.catalog.compiler_draft(
+                SourceSelection(
+                    source_ids=[context.catalog.units[0].source_id], insufficient_context=False
+                )
+            )
+
+    class CompiledSourceGenerator:
+        """Use the compiler-authorized catalog within the held full source binding."""
+
+        def generate_preflight(
+            self, request, context, *, compiled_packet=None, regeneration_context=None
+        ):
+            """Return the canonical full body for exactly the compiled owner."""
+            assert isinstance(context, SourceContext)
+            assert compiled_packet is not None
+            assert len(context.catalog.units) == 2
+            selected = context.catalog.compiled_sources(compiled_packet)
+            return selected.preflight_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in selected.units],
+                    insufficient_context=False,
+                )
+            )
+
+    compiler = pinned_compiler(tmp_path, ids=["A", "B"], compiler=FirstSourceCompiler())
+    if regeneration:
+        judge = MockConformanceService([make_conformance_result(passed=True)])
+        with PolicyRegenerationService(
+            compiler_service=compiler,
+            generator=CompiledSourceGenerator(),
+            conformance_service=judge,
+        ) as service:
+            output = service.regenerate(
+                PreflightRegenerationRequest(task="Review both policies", top_k=2)
+            )
+        assert output.passed and len(judge.requests) == 1
+        result = output.attempts[0].result
+    else:
+        with PreflightService(
+            compiler_service=compiler, generator=CompiledSourceGenerator()
+        ) as service:
+            result = service.preflight(PreflightRequest(task="Review both policies", top_k=2))
+    assert not result.insufficient_context
+    assert len(result.applicable_policies) == len(result.plan_steps) == 1
+    assert {policy.policy_id for policy in result.applicable_policies} == {"A"}

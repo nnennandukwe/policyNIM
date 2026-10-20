@@ -170,7 +170,8 @@ class PreflightService:
             )
 
         retained_context = compile_result.retained_context
-        catalog = source_catalog_for(self._compiler_service, retained_context)
+        retained_catalog = source_catalog_for(self._compiler_service, retained_context)
+        catalog = retained_catalog.compiled_sources(compiled_packet)
         if not catalog.units:
             return _preflight_output(
                 result=_insufficient_context_result(request),
@@ -181,7 +182,7 @@ class PreflightService:
         check_budget()
         generated = self._generator.generate_preflight(
             request,
-            SourceContext(tuple(retained_context), catalog),
+            SourceContext(tuple(retained_context), retained_catalog),
             compiled_packet=compiled_packet,
         )
         draft = _coerce_generated_draft(generated)
@@ -197,7 +198,7 @@ class PreflightService:
                     citation_ids=draft.citation_ids if raw_valid else [],
                 )
             )
-        owned = source_catalog_for(self._compiler_service, retained_context) == catalog
+        owned = source_catalog_for(self._compiler_service, retained_context) == retained_catalog
         validated = (
             _validate_and_materialize_result(request, retained_context, draft, catalog=catalog)
             if owned and raw_valid

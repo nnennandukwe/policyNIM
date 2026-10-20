@@ -292,13 +292,14 @@ class PolicyRegenerationService:
         trace_steps: list[PolicyConformanceTraceStep],
     ) -> PreflightResult:
         """Generate one candidate only if the shared budget still permits work."""
-        catalog = source_catalog_for(self._compiler_service, retained_context)
+        retained_catalog = source_catalog_for(self._compiler_service, retained_context)
+        catalog = retained_catalog.compiled_sources(compiled_packet)
         if not catalog.units:
             return _insufficient_context_result(request)
         check_budget()
         generated = self._generator.generate_preflight(
             request,
-            SourceContext(tuple(retained_context), catalog),
+            SourceContext(tuple(retained_context), retained_catalog),
             compiled_packet=compiled_packet,
             regeneration_context=regeneration_context,
         )
@@ -319,7 +320,8 @@ class PolicyRegenerationService:
         )
         validated = (
             _validate_and_materialize_result(request, retained_context, draft, catalog=catalog)
-            if raw_valid and source_catalog_for(self._compiler_service, retained_context) == catalog
+            if raw_valid
+            and source_catalog_for(self._compiler_service, retained_context) == retained_catalog
             else None
         )
         if validated is None:
