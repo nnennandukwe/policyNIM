@@ -13,9 +13,9 @@ client version and observed deployment identity.
 | MCP server SDK | `mcp==2.2.0` | Resolved from `uv.lock`; the installed verifier records the actual version. |
 | Modern protocol | `2026-07-28` | Actual installed SDK clients negotiate stdio and Streamable HTTP. |
 | Legacy protocol | `2025-11-25` | Actual installed SDK clients negotiate the same two transports in legacy mode. |
-| Linux wheel | Ubuntu 24.04, Python 3.11/3.12 | Candidate package jobs pass at `5436bf44ed284d97b79179a1797a2fd7f25e32e4`. |
-| Windows wheel | Windows Server 2022, Python 3.11/3.12 | The same candidate passes package jobs after explicit UTF-8 decoding. |
-| Docker | `Dockerfile` and `Dockerfile.railway` | Offline build/import/startup checks pass without provider credentials. |
+| Linux wheel | Ubuntu 24.04, Python 3.11/3.12 | Require passing package jobs on the final revision; retain their per-commit CI receipts. |
+| Windows wheel | Windows Server 2022, Python 3.11/3.12 | Require the same final-revision package jobs with explicit UTF-8 decoding. |
+| Docker | `Dockerfile` and `Dockerfile.railway` | Require offline build/import/startup checks without provider credentials. |
 
 SDK checks also call `policy_search` with an invalid argument and require rejection
 without provider work. These checks don't prove that a coding client can complete a
@@ -48,13 +48,13 @@ inferred from bearer-key checks or mocked introspection.
 | `nvidia-eval` | `nemo-evaluator==0.2.5`, `nvidia-nat-eval==1.6.0`, `nvidia-simple-evals==26.3` | Locked install and offline tests. Package-gated conformance adapters still use the configured NVIDIA judge endpoint. |
 | `nvidia-eval-launcher` | `nemo-evaluator-launcher==0.2.4`, `nvidia-nat[eval]==1.6.0` | Locked install and offline tests; no independent launcher workflow or live benchmark claim. |
 
-The complete extra set installs together on macOS with Python 3.11.13: 259
-installed packages pass `uv pip check`, and 1,694 offline tests pass at the
-engineering candidate `e443de6999671e59fade05cb7e525088b80b189d`, before
-its subsequent policy-text review changes.
-This doesn't establish extra compatibility on every operating system.
-`httpx==0.27.2` and `httpx2==2.6.0` remain explicit separate distributions;
-the combined locked install passes without replacing either pin.
+Verify the combined extra set with a fresh locked install, `uv pip check` and the
+offline suite on the final revision. Retain the platform, Python version, lock
+digest and package versions with that result. An earlier candidate's passing
+result can't satisfy this gate. Cross-platform extra compatibility needs its own
+receipts; installing the packages doesn't prove a live launcher workflow.
+`httpx==0.27.2` and `httpx2==2.6.0` remain explicit separate distributions in the
+reviewed lockfile. Don't silently replace either pin during release verification.
 
 ## Final release gate
 

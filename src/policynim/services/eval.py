@@ -733,8 +733,23 @@ def _score_preflight_case(
 ) -> EvalCaseResult:
     """Score grounded output and preserve its actual generation evidence."""
     actual_policy_ids = [policy.policy_id for policy in result.applicable_policies]
+    citations_by_id = {citation.chunk_id: citation for citation in result.citations}
+    bound_policy_ids: set[str] = set()
+    guidance_failures: list[str] = []
+    for policy in result.applicable_policies:
+        if not policy.citation_ids or any(
+            citation_id not in citations_by_id
+            or citations_by_id[citation_id].policy_id != policy.policy_id
+            or citations_by_id[citation_id].title != policy.title
+            for citation_id in policy.citation_ids
+        ):
+            guidance_failures.append(
+                "guidance evidence doesn't match policy metadata: " + policy.policy_id
+            )
+        else:
+            bound_policy_ids.add(policy.policy_id)
     matched_policy_ids = [
-        policy_id for policy_id in case.expected_policy_ids if policy_id in set(actual_policy_ids)
+        policy_id for policy_id in case.expected_policy_ids if policy_id in bound_policy_ids
     ]
     actual_chunk_ids = [citation.chunk_id for citation in result.citations]
     matched_chunk_ids = [
@@ -747,6 +762,7 @@ def _score_preflight_case(
         matched_ids=matched_policy_ids,
         label="policy_id",
     )
+    failure_reasons.extend(guidance_failures)
     missing_chunks = [value for value in case.expected_chunk_ids if value not in matched_chunk_ids]
     if missing_chunks:
         failure_reasons.append("missing expected chunk_id values: " + ", ".join(missing_chunks))
