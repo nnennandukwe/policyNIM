@@ -10,7 +10,7 @@ import re
 import socket
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -22,6 +22,7 @@ import httpx
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.ingest import chunk_policy_documents
+from policynim.nvidia_models import chat_request_configuration
 from policynim.operations import ResourceStack, check_budget, close_components, operation_scope
 from policynim.runtime_paths import (
     resolve_eval_suite_path,
@@ -29,7 +30,7 @@ from policynim.runtime_paths import (
     resolve_runtime_path,
 )
 from policynim.services.compiler import PolicyCompilerService
-from policynim.services.conformance import PolicyConformanceService
+from policynim.services.conformance import PolicyConformanceService, conformance_thresholds
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
 from policynim.services.generations import GenerationSnapshot
 from policynim.services.index_store import create_index_store, pinned_generation
@@ -48,9 +49,13 @@ from policynim.types import (
     EvalCaseMetrics,
     EvalCaseResult,
     EvalComparisonDelta,
+    EvalEffectiveConfiguration,
     EvalExecutionMode,
+    EvalFamilyCoverage,
+    EvalFamilySource,
     EvalModeRunResult,
     EvalRunResult,
+    EvalSourceCoverage,
     EvalSuite,
     GeneratedCompiledPolicyDraft,
     GeneratedPolicyConformanceDraft,
@@ -491,6 +496,10 @@ class EvalService:
             catalog_digest=snapshot.catalog.digest if snapshot else None,
             suite_definition=suite,
             provider_usage="unavailable" if mode == "live" else "not_performed",
+            effective_configuration=_effective_configuration(
+                self._settings, case_results, rerank_enabled, mode=mode
+            ),
+            source_coverage=_source_coverage(suite, case_results, snapshot),
             provider_models=(
                 {
                     "embedding": self._settings.nvidia_embed_model,
@@ -541,6 +550,8 @@ class EvalService:
             metrics=metrics,
             rows=report_rows,
             generation_id=result_payload.generation_id,
+            effective_configuration=result_payload.effective_configuration,
+            source_coverage=result_payload.source_coverage,
         )
 
         return EvalModeRunResult(
@@ -549,6 +560,8 @@ class EvalService:
             catalog_digest=result_payload.catalog_digest,
             provider_models=result_payload.provider_models,
             provider_usage=result_payload.provider_usage,
+            effective_configuration=result_payload.effective_configuration,
+            source_coverage=result_payload.source_coverage,
             generation_id=result_payload.generation_id,
             backend=backend,
             rerank_enabled=rerank_enabled,
@@ -557,6 +570,118 @@ class EvalService:
             report_html_path=report_html_path.as_posix(),
             case_results=case_results,
         )
+
+
+def _case_conformance_results(case: EvalCaseResult) -> Iterator[PolicyConformanceResult]:
+    """Retain judged attempts even when the final regeneration result lacks a judgment."""
+    if case.conformance_result is not None:
+        yield case.conformance_result
+    if case.regeneration_result is not None:
+        for attempt in case.regeneration_result.attempts:
+            if attempt.conformance_result is not None:
+                yield attempt.conformance_result
+
+
+def _effective_configuration(
+    settings: Settings,
+    cases: Sequence[EvalCaseResult],
+    rerank_enabled: bool,
+    *,
+    mode: EvalExecutionMode,
+) -> EvalEffectiveConfiguration:
+    """Record resolved settings with the same sampling and thresholds used by dispatch."""
+    judged = any(
+        metric.name in {"final_adherence", "trajectory_adherence"}
+        for case in cases
+        for conformance in _case_conformance_results(case)
+        for metric in conformance.metrics
+    )
+    live = mode == "live"
+    return EvalEffectiveConfiguration(
+        provider="nvidia" if live else "synthetic",
+        embedding_model=settings.nvidia_embed_model if live else None,
+        reranking_model=settings.nvidia_rerank_model if live and rerank_enabled else None,
+        chat=chat_request_configuration(settings.nvidia_chat_model) if live else None,
+        top_k_by_case={case.case_id: case.top_k for case in cases},
+        rerank_enabled=rerank_enabled,
+        request_timeout_seconds=settings.nvidia_timeout_seconds if live else None,
+        operation_timeout_seconds=settings.operation_timeout_seconds,
+        max_retries=settings.nvidia_max_retries if live else None,
+        conformance_thresholds=conformance_thresholds() if judged else None,
+    )
+
+
+def _source_family(policy: PolicyMetadata) -> tuple[str, EvalFamilySource]:
+    """Use declared pinned pack provenance, falling back explicitly to the source domain."""
+    pack_id = policy.provenance.pack_id if policy.provenance is not None else None
+    return (pack_id, "pack") if pack_id else (policy.domain, "domain")
+
+
+def _source_coverage(
+    suite: EvalSuite, results: Sequence[EvalCaseResult], snapshot: GenerationSnapshot | None
+) -> EvalSourceCoverage:
+    """Assign only executed gold expectations to families from the held source generation."""
+    policies = (
+        {
+            entry.policy.policy_id: entry.policy
+            for entry in snapshot.catalog.policies
+            if entry.state == "active"
+        }
+        if snapshot is not None
+        else {}
+    )
+    chunk_owners = (
+        {
+            chunk.chunk_id: chunk.policy.policy_id
+            for chunk in chunk_policy_documents(snapshot.documents)
+        }
+        if snapshot is not None
+        else {}
+    )
+    gold = {case.case_id: case for case in suite.cases}
+    families: dict[tuple[str, EvalFamilySource], list[EvalCaseResult]] = {
+        _source_family(policy): [] for policy in policies.values()
+    }
+    for result in results:
+        expected = gold.get(result.case_id)
+        selected = set(expected.expected_policy_ids) if expected is not None else set()
+        if expected is not None:
+            selected.update(
+                chunk_owners[cid] for cid in expected.expected_chunk_ids if cid in chunk_owners
+            )
+        assignments: set[tuple[str, EvalFamilySource]] = set()
+        for policy_id in selected:
+            policy = policies.get(policy_id)
+            if policy is None:
+                continue
+            assignments.add(_source_family(policy))
+        if not assignments:
+            assignments.add(("unassigned", "unassigned"))
+        for assignment in sorted(assignments):
+            families.setdefault(assignment, []).append(result)
+    return EvalSourceCoverage(
+        profile_id=snapshot.catalog.profile_id if snapshot is not None else None,
+        profile_digest=snapshot.catalog.profile_digest if snapshot is not None else None,
+        executed_case_count=len(results),
+        families=[
+            EvalFamilyCoverage(
+                family=family,
+                source=source,
+                case_ids=[case.case_id for case in cases],
+                passed_case_ids=[case.case_id for case in cases if case.passed],
+                case_count=len(cases),
+                passed_case_count=sum(case.passed for case in cases),
+                conformance_case_count=sum(
+                    any(True for _ in _case_conformance_results(case)) for case in cases
+                ),
+                operation_counts={
+                    kind: sum(case.kind == kind for case in cases)
+                    for kind in ("search", "preflight")
+                },
+            )
+            for (family, source), cases in sorted(families.items())
+        ],
+    )
 
 
 def _write_private_eval_file(path: Path, text: str) -> None:
@@ -1250,6 +1375,8 @@ def _write_eval_html_report(
     metrics: EvalAggregateMetrics,
     rows: Sequence[dict[str, object]],
     generation_id: GenerationID | None = None,
+    effective_configuration: EvalEffectiveConfiguration | None = None,
+    source_coverage: EvalSourceCoverage | None = None,
 ) -> None:
     """Write an inspectable report with the selected generation in its summary."""
     summary_rows: list[tuple[str, object]] = [
@@ -1257,6 +1384,16 @@ def _write_eval_html_report(
         ("Suite path", suite_path.as_posix()),
         ("Mode", mode),
         ("Policy generation", generation_id or "none (offline fixtures)"),
+        (
+            "Effective request configuration",
+            effective_configuration.model_dump_json()
+            if effective_configuration is not None
+            else "not performed",
+        ),
+        (
+            "Executed source coverage",
+            source_coverage.model_dump_json() if source_coverage is not None else "unavailable",
+        ),
         ("Backend", backend),
         ("Rerank mode", "rerank-on" if rerank_enabled else "rerank-off"),
         ("Case count", metrics.case_count),
@@ -1798,6 +1935,21 @@ class _OfflineIndexStore(IndexStore):
 
     def count(self) -> int:
         return sum(len(chunks) for chunks in self._candidates_by_query.values())
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
 
     def list_chunks(self) -> list[Any]:
         unique_chunks: dict[str, ScoredChunk] = {}

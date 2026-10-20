@@ -315,9 +315,15 @@ def test_chat_options_are_specific_to_replacement_model(model):
         response_format = calls[0]["response_format"]
         assert response_format["type"] == "json_schema"
         assert response_format["json_schema"]["strict"] is True
-        assert (
-            response_format["json_schema"]["schema"] == GeneratedPreflightDraft.model_json_schema()
-        )
+        schema = response_format["json_schema"]["schema"]
+        assert response_format["json_schema"]["name"] == GeneratedPreflightDraft.__name__
+        assert set(schema["properties"]) == set(GeneratedPreflightDraft.model_fields)
+        assert schema["properties"]["citation_ids"]["items"]["enum"] == [candidate().chunk_id]
+        variants = schema["properties"]["applicable_policies"]["items"]["anyOf"]
+        assert len(variants) == 1
+        assert variants[0]["properties"]["policy_id"]["enum"] == [candidate().policy.policy_id]
+        assert variants[0]["properties"]["title"]["enum"] == [candidate().policy.title]
+        assert variants[0]["properties"]["citation_ids"]["items"]["enum"] == [candidate().chunk_id]
     else:
         assert "response_format" not in calls[0]
 

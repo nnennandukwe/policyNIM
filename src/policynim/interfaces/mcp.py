@@ -50,6 +50,7 @@ from policynim.errors import (
     IndexCompatibilityError,
     InvalidPolicyDocumentError,
     MissingIndexError,
+    PolicyContextError,
     PolicyNIMError,
     ProviderError,
 )
@@ -662,7 +663,7 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
             "the retained generations with `policynim generation inspect`. Import a verified "
             "bundle or explicitly migrate standalone index and rules if no generation exists."
         )
-    if isinstance(exc, OperationAdmissionError):
+    if isinstance(exc, (OperationAdmissionError, PolicyContextError)):
         return str(exc)
     if isinstance(exc, IndexCompatibilityError):
         return (
@@ -768,7 +769,10 @@ def _register_tools(
         domain: Annotated[str | None, Field(description="Optional policy domain filter.")] = None,
         top_k: Annotated[
             TopK | None,
-            Field(description="Chunks to retrieve, from 1 to 20; omitted uses runtime default."),
+            Field(
+                description="Discovery hits, 1 to 20; complete selected-policy context can exceed "
+                "this count. Omitted uses runtime default."
+            ),
         ] = None,
         *,
         ctx: Context,

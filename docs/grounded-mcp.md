@@ -17,7 +17,7 @@ The evidence tool returns the same `run_id` in `result` and `evidence_trace`. `c
 
 ## Resources
 
-Read `policynim://catalog` to inspect the active catalog. Its `resource_uri` points to that exact catalog, and `policy_resources` contains the retained policy links.
+`policynim://catalog` returns the catalog used by configured retrieval: the active generation, or the retained generation selected through `POLICYNIM_GENERATION_ID`. Its `resource_uri` points to that exact catalog, and `policy_resources` contains the retained policy links.
 
 | URI | Returned JSON |
 |---|---|

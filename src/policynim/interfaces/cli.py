@@ -549,7 +549,7 @@ def preflight(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Retrieval depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     trace: Annotated[
@@ -678,7 +678,7 @@ def route(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -733,7 +733,7 @@ def compile(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[

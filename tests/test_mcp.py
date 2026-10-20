@@ -1287,8 +1287,29 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
             """Implement the test store's replacement protocol with a synthetic build receipt."""
             raise NotImplementedError
 
-        def list_chunks(self) -> list[PolicyChunk]:  # pragma: no cover - protocol filler
-            return []
+        def read_policy_chunks(
+            self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+        ) -> list[PolicyChunk]:
+            """Bound the selected in-memory fixture while preserving its canonical source values."""
+            from policynim.errors import IndexReadLimitError
+
+            selected = [
+                chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids
+            ]
+            if (
+                len(selected) > max_chunks
+                or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+                > max_source_bytes
+            ):
+                raise IndexReadLimitError()
+            return selected
+
+        def list_chunks(self) -> list[PolicyChunk]:
+            """Return the same canonical source used by search and generation."""
+            return [
+                PolicyChunk(**chunk.model_dump(exclude={"score"}))
+                for chunk in self.search([1.0, 0.0], top_k=1)
+            ]
 
     class StaticReranker:
         def rerank(
@@ -2124,3 +2145,29 @@ def test_healthz_os_errors_never_echo_untrusted_exception_text(monkeypatch, fail
     assert "test_mcp.py" in caplog.text
     assert "health-secret-sentinel" not in caplog.text
     assert "/private/policy" not in caplog.text
+
+
+@pytest.mark.parametrize("identity_mismatch", [False, True])
+def test_preflight_context_refusal_preserves_actionable_safe_tool_error(
+    monkeypatch: pytest.MonkeyPatch, identity_mismatch: bool
+) -> None:
+    """Expose whole-context refusal through actual MCP dispatch and close its service."""
+    from policynim.errors import PolicyContextError
+
+    class RefusingService(MockPreflightService):
+        """Return a fixed source-context boundary error before generation."""
+
+        def preflight(self, request: PreflightRequest) -> PreflightResult:
+            """Refuse the operation with the same error class used by the public router."""
+            raise PolicyContextError(identity_mismatch=identity_mismatch)
+
+    service = RefusingService()
+    monkeypatch.setattr(mcp_module, "create_preflight_service", lambda settings: service)
+    expected = (
+        "Preserve the generation" if identity_mismatch else "No partial policy context was used"
+    )
+    with pytest.raises(ToolError, match=expected) as refused:
+        _call_tool("policy_preflight", {"task": "Review cleanup job", "top_k": 1})
+    assert service.closed
+    if not identity_mismatch:
+        assert "top_k" in str(refused.value)

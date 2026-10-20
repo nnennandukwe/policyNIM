@@ -20,7 +20,7 @@ import sqlite_vec
 from pydantic import ValidationError
 
 from policynim.contracts import GenerationLease, IndexStore
-from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.errors import IndexCompatibilityError, IndexReadLimitError, MissingIndexError
 from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
 from policynim.types import (
     EmbeddedChunk,
@@ -328,6 +328,57 @@ class SQLiteVecIndexStore(IndexStore):
             except (OSError, sqlite3.DatabaseError):
                 return 0
 
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Preflight selected UTF-8 row payloads in one snapshot before decoding text."""
+        if max_chunks < 1 or max_source_bytes < 1:
+            raise ValueError("Row and byte budgets must be positive.")
+        selected_ids = tuple(dict.fromkeys(policy_ids))
+        if not selected_ids:
+            return []
+        placeholders = ",".join("?" for _ in selected_ids)
+        selection = f"""
+            SELECT c.*,
+                (SELECT value FROM {_METADATA_TABLE}
+                 WHERE key = 'provenance:' || c.policy_id) AS policy_provenance_json
+            FROM {_CHUNKS_TABLE} AS c
+            WHERE c.policy_id IN ({placeholders})
+        """
+        columns = (
+            "chunk_id",
+            "path",
+            "section",
+            "lines",
+            "text",
+            "policy_id",
+            "title",
+            "doc_type",
+            "domain",
+            "tags_json",
+            "grounded_in_json",
+            "policy_provenance_json",
+        )
+        byte_sum = " + ".join(f"length(CAST(COALESCE({column}, '') AS BLOB))" for column in columns)
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            count = conn.execute(
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {_CHUNKS_TABLE} "
+                f"WHERE policy_id IN ({placeholders}) LIMIT ?)",
+                (*selected_ids, max_chunks + 1),
+            ).fetchone()[0]
+            if count > max_chunks:
+                raise IndexReadLimitError()
+            source_bytes = conn.execute(
+                f"SELECT COALESCE(SUM({byte_sum}), 0) FROM ({selection})", selected_ids
+            ).fetchone()[0]
+            if source_bytes > max_source_bytes:
+                raise IndexReadLimitError()
+            rows = conn.execute(
+                selection + " ORDER BY c.rowid ASC LIMIT ?", (*selected_ids, max_chunks)
+            ).fetchall()
+            return [_policy_chunk_from_row(row) for row in rows]
+
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
         with self._reader_lock, closing(self._require_connection()) as conn:
@@ -577,6 +628,7 @@ def _initialize_schema(conn: sqlite3.Connection, *, dimension: int) -> None:
         ON {_CHUNKS_TABLE}(domain)
         """
     )
+    conn.execute(f"CREATE INDEX idx_policy_chunks_policy_id ON {_CHUNKS_TABLE}(policy_id)")
     conn.execute(
         f"""
         CREATE VIRTUAL TABLE {_VECTORS_TABLE}
