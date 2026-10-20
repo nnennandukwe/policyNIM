@@ -79,7 +79,9 @@ with `--command` pointing to the built executable, `--bundle` and `--bundle-dige
 identifying the reviewed public archive, `--lockfile` and `--lock-digest`
 identifying the selected build lock, `--expected-version X.Y.Z` matching the
 release package version, and `--revision` and `--output` identifying the source
-commit and receipt. This check runs without provider credentials and records a
+commit and receipt. Both verifiers give child processes an owned temporary home directory, keeping
+user profiles outside the packaged-source check while preserving the parent environment.
+This check runs without provider credentials and records a
 digest of the complete standalone directory, including native-library bytes and
 file/directory permissions. Credential redaction covers the bounded log-tail
 boundary; diagnostics are omitted if a known credential exceeds its capture bound.
@@ -91,7 +93,10 @@ The lock digest identifies the selected build checkout. The workflow performs a
 locked dependency sync before building from that checkout; the standalone receipt
 alone doesn't independently inspect every dependency version inside the frozen
 executable.
-It doesn't establish live retrieval quality or coding-client acceptance.
+Authenticated HTTP checks cover beta/operator keys and missing-token rejection.
+Receipts record `authentication_scope: beta_operator_key` and
+`external_oauth_e2e: not_run`. External issuer/client acceptance remains open in
+#97; this gate doesn't establish OAuth E2E, live retrieval quality or coding-client acceptance.
 
 The release workflow retains a separate `standalone-evidence-<platform>.json`
 receipt for each platform. A successful help command alone can't detect a missing

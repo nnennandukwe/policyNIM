@@ -312,6 +312,8 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         "sdk_version": importlib.metadata.version("mcp"),
         "provider_calls": "not performed",
         "coding_client_ui": "not tested",
+        "authentication_scope": "beta_operator_key",
+        "external_oauth_e2e": "not_run",
     }
     env = {
         key: value
@@ -322,8 +324,12 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         cwd = Path(temporary)
         config = cwd / "empty.env"
         config.write_text("")
+        child_home = cwd / "home"
+        child_home.mkdir()
         env.update(
             {
+                "HOME": str(child_home),
+                "USERPROFILE": str(child_home),
                 "POLICYNIM_CONFIG_FILE": str(config),
                 "POLICYNIM_GENERATIONS_DIR": str(cwd / "generations"),
                 "POLICYNIM_EVAL_WORKSPACE_DIR": str(cwd / "evaluations"),
