@@ -554,7 +554,7 @@ def _update_profile_locked(path: Path, *, expected_digest: str) -> ProfileDiff:
 
 def _sync_profile_directory(path: Path) -> None:
     """Persist the replacement entry on POSIX after the staged contents are durable."""
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(descriptor)
     finally:

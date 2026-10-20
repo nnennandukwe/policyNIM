@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal
 
 from policynim.contracts import Embedder, Generator, IndexStore, PolicyCompiler, Reranker
 from policynim.iterables import ordered_unique
@@ -33,6 +33,17 @@ DraftPolicyGuidance = GeneratedPolicyGuidance
 _INSUFFICIENT_CONTEXT_SUMMARY = (
     "PolicyNIM could not find enough grounded policy evidence for this task."
 )
+
+
+GroundingRefusalCode = Literal[
+    "model_insufficient_context",
+    "empty_source_context",
+    "missing_citations",
+    "unknown_citation",
+    "policy_id_mismatch",
+    "policy_title_mismatch",
+    "missing_policy_guidance",
+]
 
 
 class PreflightService:
@@ -168,6 +179,17 @@ class PreflightService:
             )
         validated = _validate_and_materialize_result(request, retained_context, draft)
         if validated is None:
+            refusal = _grounding_refusal_code(retained_context, draft)
+            assert refusal is not None
+            if trace_steps is not None:
+                trace_steps.append(
+                    _trace_step(
+                        step_id="grounding_validation",
+                        kind="grounding_refusal",
+                        summary=f"Grounding refused: {refusal}.",
+                        citation_ids=[],
+                    )
+                )
             return _preflight_output(
                 result=_insufficient_context_result(request),
                 compiled_packet=compiled_packet,
@@ -260,49 +282,58 @@ def _coerce_generated_policy_guidance(item: Any) -> GeneratedPolicyGuidance:
     )
 
 
+def _grounding_refusal_code(
+    context: Sequence[ScoredChunk], draft: GeneratedPreflightDraft
+) -> GroundingRefusalCode | None:
+    """Classify existing grounding guards without returning any model-supplied values."""
+    if draft.insufficient_context:
+        return "model_insufficient_context"
+    context_by_id = {chunk.chunk_id: chunk for chunk in context}
+    if not context_by_id:
+        return "empty_source_context"
+    citation_ids = ordered_unique(
+        draft.citation_ids
+        + [i for policy in draft.applicable_policies for i in policy.citation_ids]
+    )
+    if not citation_ids:
+        return "missing_citations"
+    if any(citation_id not in context_by_id for citation_id in citation_ids):
+        return "unknown_citation"
+    supported_policy = False
+    for policy in draft.applicable_policies:
+        if not policy.citation_ids:
+            continue
+        if any(context_by_id[i].policy.policy_id != policy.policy_id for i in policy.citation_ids):
+            return "policy_id_mismatch"
+        if any(context_by_id[i].policy.title != policy.title for i in policy.citation_ids):
+            return "policy_title_mismatch"
+        supported_policy = True
+    return None if supported_policy else "missing_policy_guidance"
+
+
 def _validate_and_materialize_result(
     request: PreflightRequest,
     context: Sequence[ScoredChunk],
     draft: GeneratedPreflightDraft,
 ) -> PreflightResult | None:
-    if draft.insufficient_context:
+    """Materialize only source-bound guidance; preserve the shared regeneration contract."""
+    if _grounding_refusal_code(context, draft) is not None:
         return None
-
     context_by_id = {chunk.chunk_id: chunk for chunk in context}
-    if not context_by_id:
-        return None
-
     citation_ids = ordered_unique(
         draft.citation_ids
-        or [
-            citation_id
-            for policy in draft.applicable_policies
-            for citation_id in policy.citation_ids
-        ]
+        + [i for policy in draft.applicable_policies for i in policy.citation_ids]
     )
-    if not citation_ids:
-        return None
-    if any(citation_id not in context_by_id for citation_id in citation_ids):
-        return None
-
-    applicable_policies: list[PolicyGuidance] = []
-    for policy in draft.applicable_policies:
-        policy_citation_ids = ordered_unique(policy.citation_ids)
-        if not policy_citation_ids:
-            continue
-        if any(citation_id not in context_by_id for citation_id in policy_citation_ids):
-            return None
-        applicable_policies.append(
-            PolicyGuidance(
-                policy_id=policy.policy_id,
-                title=policy.title,
-                rationale=policy.rationale,
-                citation_ids=policy_citation_ids,
-            )
+    applicable_policies = [
+        PolicyGuidance(
+            policy_id=policy.policy_id,
+            title=policy.title,
+            rationale=policy.rationale,
+            citation_ids=ordered_unique(policy.citation_ids),
         )
-
-    if not applicable_policies:
-        return None
+        for policy in draft.applicable_policies
+        if policy.citation_ids
+    ]
 
     citations = [
         Citation(

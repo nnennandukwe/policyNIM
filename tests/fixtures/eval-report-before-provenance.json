@@ -1,0 +1,104 @@
+{
+  "origin": "Actual offline EvalService.run at cda87acc54bfdc25cdd70a1cce234e22e5205d4a; controlled synthetic search, no provider or quality claim.",
+  "case_json_sha256": {
+    "logging": "c7b6649e11c2f175a9ee5f6350eb0a0a172c85197f796091d0daa27c2b59ed94"
+  },
+  "mode": {
+    "generation_id": null,
+    "suite_digest": "sha256:c0dcec15db459380a544624e0c5b7b893fcecb7d7999bf3e10f141b2457b887d",
+    "suite_definition": {
+      "name": "historical-controlled-search",
+      "cases": [
+        {
+          "case_id": "logging",
+          "kind": "search",
+          "input": "fix backend logging",
+          "domain": null,
+          "top_k": 2,
+          "expected_insufficient_context": false,
+          "expected_chunk_ids": [],
+          "expected_policy_ids": [
+            "BACKEND-LOG-001"
+          ],
+          "forbidden_policy_ids": []
+        }
+      ],
+      "expected_catalog_digest": null,
+      "expected_policy_revisions": {}
+    },
+    "catalog_digest": null,
+    "provider_models": {},
+    "provider_usage": "not_performed",
+    "backend": "default",
+    "rerank_enabled": true,
+    "metrics": {
+      "case_count": 1,
+      "passed_count": 0,
+      "search_case_count": 1,
+      "search_passed_count": 0,
+      "preflight_case_count": 0,
+      "preflight_passed_count": 0,
+      "overall_pass_rate": 0.0,
+      "search_pass_rate": 0.0,
+      "preflight_pass_rate": 0.0,
+      "expected_chunk_recall": 0.0,
+      "expected_policy_recall": 0.0,
+      "insufficient_context_accuracy": 0.0,
+      "conformance_case_count": 0,
+      "conformance_passed_count": 0,
+      "conformance_pass_rate": 0.0,
+      "conformance_score": 0.0
+    },
+    "result_json_path": "<historical-result.json>",
+    "report_html_path": "<historical-report.html>",
+    "case_results": [
+      {
+        "generation_id": null,
+        "case_id": "logging",
+        "kind": "search",
+        "input": "fix backend logging",
+        "domain": null,
+        "top_k": 2,
+        "rerank_enabled": true,
+        "passed": false,
+        "failure_reasons": [
+          "insufficient_context mismatch: expected False, got True",
+          "insufficient_context mismatch: expected False, got True",
+          "missing expected policy_id values: BACKEND-LOG-001"
+        ],
+        "expected_insufficient_context": false,
+        "actual_insufficient_context": true,
+        "expected_chunk_ids": [],
+        "actual_chunk_ids": [],
+        "matched_chunk_ids": [],
+        "expected_policy_ids": [
+          "BACKEND-LOG-001"
+        ],
+        "actual_policy_ids": [],
+        "matched_policy_ids": [],
+        "forbidden_policy_ids": [],
+        "actual_citations": [],
+        "search_result": {
+          "query": "fix backend logging",
+          "domain": null,
+          "top_k": 2,
+          "hits": [],
+          "insufficient_context": true,
+          "generation_id": null
+        },
+        "preflight_result": null,
+        "actual_summary": null,
+        "conformance_result": null,
+        "evidence_trace": null,
+        "regeneration_result": null,
+        "metrics": {
+          "expected_chunk_recall": 1.0,
+          "expected_policy_recall": 0.0,
+          "insufficient_context_correct": false,
+          "conformance_score": null,
+          "conformance_passed": null
+        }
+      }
+    ]
+  }
+}

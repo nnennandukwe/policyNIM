@@ -83,8 +83,16 @@ constraints, not setup mistakes.
 
 - PolicyNIM can return `insufficient_context=true` even when `search` finds useful
   chunks.
-- This happens when the grounded answer does not survive citation validation or the
+- This happens when the grounded answer doesn't survive citation validation or the
   retained evidence is too weak for a trustworthy result.
+- Each exposed policy ID and title must match the authoritative owner of every
+  citation in that guidance item. Invalid owner metadata fails closed. Global
+  citations added by compiled constraints can still span several policies.
+- The generation prompt requires source-supported details and exact policy
+  metadata. It instructs the model to leave numeric limits, technology choices,
+  APIs, and endpoints unspecified unless the task or source supplies them. Prompt instructions and
+  structural validation don't prove that every sentence follows its source;
+  review the cited evidence before relying on a proposed implementation detail.
 - The system intentionally prefers no grounded answer over a fabricated one.
 - `preflight --trace` can show which chunks, selected policies, and compiled
   constraints were retained before the fail-closed result, including retained
