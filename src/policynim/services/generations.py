@@ -27,7 +27,14 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from policynim.contracts import Embedder
-from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError, ProviderError
+from policynim.errors import (
+    ConfigurationError,
+    GenerationError,
+    IndexCompatibilityError,
+    MissingIndexError,
+    PolicyNIMError,
+    ProviderError,
+)
 from policynim.ingest.chunking import chunk_policy_documents
 from policynim.operations import ResourceStack, check_budget, close_components
 from policynim.services.catalog import CatalogPack, PolicyCatalog
@@ -420,8 +427,12 @@ class GenerationStore:
             self._fault(name)
 
     @contextmanager
-    def _locked(self, *, initialize: bool = False) -> Iterator[None]:
+    def _locked(
+        self, *, initialize: bool = False, expected_root_identity: tuple[int, int] | None = None
+    ) -> Iterator[None]:
         """Verify root ownership and serialize supported readers, publishers and retention."""
+        if expected_root_identity is not None:
+            self._require_root_identity(expected_root_identity)
         if self.root.is_symlink():
             raise GenerationError("open", "The selected generation root can't be a symlink.")
         if initialize:
@@ -453,6 +464,8 @@ class GenerationStore:
         if not owner.exists() and not initialize:
             raise GenerationError("open", "The directory isn't an owned generation store.")
         with exclusive_file_lock(self.root / ".publish.lock", on_wait=check_budget):
+            if expected_root_identity is not None:
+                self._require_root_identity(expected_root_identity)
             if not owner.exists():
                 interrupted: list[tuple[Path, tuple[int, int], bytes]] = []
                 for entry in self.root.iterdir():
@@ -498,14 +511,25 @@ class GenerationStore:
             yield
 
     @contextmanager
-    def _writer(self, *, initialize: bool = False) -> Iterator[None]:
+    def _writer(
+        self, *, initialize: bool = False, expected_root_identity: tuple[int, int] | None = None
+    ) -> Iterator[None]:
         """Serialize preparation and retention while allowing readers during provider I/O."""
-        with self._locked(initialize=initialize):
+        with self._locked(initialize=initialize, expected_root_identity=expected_root_identity):
             pass
         with exclusive_file_lock(self.root / ".writer.lock", on_wait=check_budget):
-            with self._locked():
+            with self._locked(expected_root_identity=expected_root_identity):
                 self._pointer()
             yield
+
+    def _require_root_identity(self, expected: tuple[int, int]) -> None:
+        """Restrict fresh-root initialization to the directory this invocation created."""
+        try:
+            observed = self.root.lstat()
+        except OSError as exc:
+            raise GenerationError("bootstrap", "Fresh generation-root identity changed.") from exc
+        if not stat.S_ISDIR(observed.st_mode) or (observed.st_dev, observed.st_ino) != expected:
+            raise GenerationError("bootstrap", "Fresh generation-root identity changed.")
 
     def _pointer(self) -> GenerationPointer | None:
         """Read the sole canonical activation record without inferring missing state."""
@@ -830,6 +854,23 @@ class GenerationStore:
                         _VALIDATION_CACHE.move_to_end(key)
             if cached is not None:
                 result = cached.readiness
+                try:
+                    with closing(
+                        SQLiteVecIndexStore(
+                            path=directory / "index.sqlite3", embedding_identity=self.embedding
+                        )
+                    ) as index:
+                        index.probe_readability()
+                except IndexCompatibilityError as exc:
+                    raise GenerationError(
+                        "read", "Generation index is invalid or corrupt."
+                    ) from exc
+                except MissingIndexError as exc:
+                    raise GenerationError(
+                        "read",
+                        "Generation index couldn't be read. "
+                        "Check runtime resources and access; inspect it before retrying.",
+                    ) from exc
                 if self._artifact_token(directory) != token:
                     raise GenerationError(
                         "inspect", "Generation changed during readiness inspection."
@@ -1599,10 +1640,10 @@ class GenerationStore:
                 raise
             return expected_digest
 
-    def import_bundle(
-        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
-    ) -> PublicationResult:
-        """Import verified bytes offline; optionally require current packaged sources to match."""
+    def _read_bundle_inputs(
+        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None
+    ) -> tuple[dict[str, bytes], SourceSnapshot | None]:
+        """Verify one archive and optional packaged source agreement before publication."""
         try:
             raw = _read_regular(bundle, max_bytes=256 * 1024 * 1024)
             if digest_bytes(raw) != expected_digest:
@@ -1655,6 +1696,17 @@ class GenerationStore:
                     "Publish an updated bundle explicitly before building this application.",
                 )
 
+        return contents, incoming
+
+    def _publish_bundle_inputs(
+        self,
+        contents: dict[str, bytes],
+        *,
+        source_settings: Settings | None,
+        incoming: SourceSnapshot | None,
+    ) -> PublicationResult:
+        """Publish already checked bytes through the shared staged activation transaction."""
+
         def prepare(stage: Path) -> GenerationSnapshot:
             """Prepare and validate all artifact bytes before entering the common commit point."""
             for name in sorted(_FILES):
@@ -1662,11 +1714,136 @@ class GenerationStore:
             self._step("staging_validate")
             return self._inspect(stage, expected_embedding=self.embedding, staging=True)
 
+        if source_settings is not None:
+            assert incoming is not None
+            self._require_fresh_sources(incoming, source_settings)
+        return self._publish_stage(prepare)
+
+    def import_bundle(
+        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
+    ) -> PublicationResult:
+        """Import verified bytes offline; optionally require current packaged sources to match."""
+        contents, incoming = self._read_bundle_inputs(
+            bundle, expected_digest=expected_digest, source_settings=source_settings
+        )
+
         def publish() -> PublicationResult:
-            """Recheck source-match inputs after any writer wait before installing the bundle."""
-            if source_settings is not None:
-                assert incoming is not None
-                self._require_fresh_sources(incoming, source_settings)
-            return self._publish_stage(prepare)
+            """Recheck source agreement after writer admission and activate the explicit import."""
+            return self._publish_bundle_inputs(
+                contents, source_settings=source_settings, incoming=incoming
+            )
 
         return self._execute(publish)
+
+    def bootstrap_bundle(
+        self,
+        bundle: Path,
+        *,
+        expected_digest: str,
+        source_settings: Settings | None = None,
+        expected_seed_id: str | None = None,
+    ) -> PublicationResult:
+        """Seed once or preserve selection within service-controlled roots and parent paths.
+
+        Directory identity checks don't isolate same-UID pathname mutation after admission.
+        All writers must cooperate with the store's ownership and locking protocol.
+        """
+        fresh_identity: tuple[int, int] | None = None
+        contents: dict[str, bytes] | None = None
+        incoming: SourceSnapshot | None = None
+        result: PublicationResult | None = None
+        try:
+            try:
+                self.root.lstat()
+            except FileNotFoundError:
+                contents, incoming = self._read_bundle_inputs(
+                    bundle, expected_digest=expected_digest, source_settings=source_settings
+                )
+                self._inspect_bootstrap_seed(contents)
+                if expected_seed_id is not None:
+                    expected = self._selected_id(expected_seed_id, None)
+                    if sha256(contents["manifest.json"]).hexdigest() != expected:
+                        raise GenerationError(
+                            "bootstrap",
+                            "Seed generation doesn't match the configured selection; "
+                            "choose a matching trusted seed before initializing this root.",
+                        )
+                missing: list[Path] = []
+                ancestor = self.root.parent
+                while not ancestor.exists():
+                    missing.append(ancestor)
+                    ancestor = ancestor.parent
+                self.root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                try:
+                    self.root.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass  # Another supported initializer owns the existing-root path.
+                else:
+                    observed = self.root.lstat()
+                    fresh_identity = observed.st_dev, observed.st_ino
+                    self._step("bootstrap_root_created")
+                    for directory in [self.root, *missing]:
+                        _sync_directory(directory.parent)
+            self._step("bootstrap_before_writer")
+            with self._writer(
+                initialize=fresh_identity is not None, expected_root_identity=fresh_identity
+            ):
+                pointer = self._pointer()
+                if pointer is not None:
+                    selected = self.inspect(pointer.active)
+                    result = PublicationResult(
+                        generation_id=selected.generation_id,
+                        manifest=selected.manifest,
+                        previous_generation_id=pointer.previous,
+                    )
+                elif fresh_identity is None:
+                    raise GenerationError(
+                        "bootstrap",
+                        "An existing generation root has no active selection; "
+                        "preserve it and recover explicitly.",
+                    )
+                else:
+                    assert contents is not None
+                    result = self._publish_bundle_inputs(
+                        contents, source_settings=source_settings, incoming=incoming
+                    )
+            return result
+        except Exception as exc:
+            if result is not None:
+                result.warnings.append(
+                    "Generation selected; bootstrap writer cleanup needs inspection."
+                )
+                return result
+            if isinstance(exc, PolicyNIMError):
+                raise
+            raise GenerationError(
+                "bootstrap",
+                "Generation bootstrap didn't complete; preserve existing state "
+                "and inspect it before explicit recovery.",
+            ) from exc
+
+    def _inspect_bootstrap_seed(self, contents: dict[str, bytes]) -> None:
+        """Reclaim one owned seed stage under its stable per-target inspection lock."""
+        self.root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for directory in [self.root.parent, *self.root.parent.parents]:
+            _sync_directory(directory)
+        key = sha256(os.path.abspath(self.root).encode()).hexdigest()
+        stage = self.root.parent / (".policynim-seed-" + key)
+        lock = stage.with_suffix(".lock")
+        self._step("bootstrap_seed_lock")
+        with exclusive_file_lock(lock, on_wait=check_budget):
+            self._remove_stage(stage)
+            stage.mkdir(mode=0o700)
+            observed = stage.lstat()
+            identity = observed.st_dev, observed.st_ino
+            try:
+                self._step("bootstrap_seed_created")
+                self._write(stage / ".owner", _STAGE_OWNER, "bootstrap_seed_owner")
+                _sync_directory(stage)
+                for name, data in contents.items():
+                    self._write(stage / name, data, "bootstrap_seed_" + name)
+                self._step("bootstrap_seed_inspect")
+                self._inspect(stage, expected_embedding=self.embedding, staging=True)
+            finally:
+                self._remove_stage(stage, identity)
+                _sync_directory(stage.parent)
