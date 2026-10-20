@@ -734,7 +734,7 @@ def test_concurrent_schema_upgrade_keeps_accepted_jobs(
         assert restored.job_id == accepted.job_id
         assert restored.work_units == 1 and restored.admission_id is None
     with sqlite3.connect(service.store.path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         names = [row[1] for row in db.execute("PRAGMA table_info(evaluation_jobs)")]
     assert names.count("active_case_start_attempts") == 1
 
@@ -1698,5 +1698,81 @@ def test_cancellation_read_failure_releases_quota_and_preserves_worker_progress(
         assert completed is not None and completed.job_id == second.job_id
         assert completed.state == "completed"
         assert calls == ["case-0", "closed", "case-0", "closed"]
+    finally:
+        worker.close()
+
+
+def test_exhausted_allowance_rejects_before_generation_capture(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """An exhausted caller can't force another archive export by changing submission keys."""
+    from policynim.services.generations import GenerationStore
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.settings.mcp_principal_daily_operation_quota = 1
+    accepted = service.submit(suite, idempotency_key="last-unit", principal=principal())
+    exports: list[bool] = []
+    export = GenerationStore.export_bundle
+
+    def record_export(self, *args, **kwargs):
+        """Observe the real archive-export boundary rather than substituting job admission."""
+        exports.append(True)
+        return export(self, *args, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", record_export)
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="new-exhausted-key", principal=principal())
+    assert exports == []
+    assert service.submit(suite, idempotency_key="last-unit", principal=principal()) == accepted
+
+
+def test_cancel_during_attempt_reservation_reports_known_unsent_work(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """Cancellation before dispatch doesn't turn a reservation into an uncertain provider call."""
+    from policynim.operations import current_budget
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="unsent-cancel", principal=principal())
+    save_usage = service.store.save_usage
+    cancelled = [False]
+    calls: list[str] = []
+
+    def persist_then_cancel(job_id, worker_token, usage):
+        """Cancel through the ordinary service immediately after the first durable reservation."""
+        save_usage(job_id, worker_token, usage)
+        if usage.provider_attempts == 1 and not cancelled[0]:
+            cancelled[0] = True
+            service.cancel(job_id, principal=principal())
+
+    class Evaluator:
+        """Use the provider reservation boundary while recording whether dispatch was reached."""
+
+        def __init__(self, settings):
+            """Keep the accepted generation settings for the injected result."""
+            self.settings = settings
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """The reservation must reject cancellation before this evaluator can dispatch."""
+            current_budget().reserve_provider_call()
+            calls.append("would_send")
+            return case_result(self.settings, suite, case_id)
+
+        def close(self):
+            """Record evaluator drain even when pre-dispatch admission rejects."""
+            calls.append("closed")
+
+    monkeypatch.setattr(service.store, "save_usage", persist_then_cancel)
+    worker = EvaluationJobWorker(service, evaluator_factory=Evaluator)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "cancelled"
+        report = service.result(accepted.job_id, principal=principal()).report
+        assert report.usage.provider_attempts == report.usage.unavailable_usage_attempts == 0
+        assert report.usage.usage_status == "not_performed"
+        assert report.completed_cases == [] and report.uncertain_case_id is None
+        assert calls == ["closed"]
     finally:
         worker.close()

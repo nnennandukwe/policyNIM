@@ -461,7 +461,7 @@ def test_historical_report_parts_migrate_once_and_reject_corruption(
     assert service.report_part(accepted.job_id, 0, principal=principal()) == first
     with sqlite3.connect(service.store.path) as connection:
         connection.execute(
-            "UPDATE evaluation_job_report_parts SET content='tampered' WHERE job_id=? AND part=0",
+            "UPDATE evaluation_job_report_parts SET digest='tampered' WHERE job_id=? AND part=0",
             (accepted.job_id,),
         )
     with pytest.raises(service_module.EvaluationJobError, match="report_invalid"):
@@ -491,3 +491,30 @@ def test_foreground_cli_rejects_an_existing_worker_before_announcing_start(
         assert "Evaluation worker running" not in result.output
     finally:
         worker.close()
+
+
+def test_schema4_fragment_drift_cant_replace_the_canonical_report(job_context) -> None:
+    """Changed fragment content and its hash can't override the retained canonical report."""
+    import sqlite3
+
+    from policynim.storage.evaluation_jobs import EvaluationJobStore
+
+    service, suite, _ = job_context
+    accepted = service.submit(suite, idempotency_key="fragment-drift", principal=principal())
+    service.cancel(accepted.job_id, principal=principal())
+    original = service.report_part(accepted.job_id, 0, principal=principal())
+    altered = "tampered-fragment"
+    digest = "sha256:" + hashlib.sha256(altered.encode()).hexdigest()
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute("DROP TABLE evaluation_job_report_parts")
+        connection.execute(
+            "CREATE TABLE evaluation_job_report_parts "
+            "(job_id TEXT,part INTEGER,content TEXT,digest TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO evaluation_job_report_parts VALUES (?,0,?,?)",
+            (accepted.job_id, altered, digest),
+        )
+        connection.execute("PRAGMA user_version=4")
+    service.store = EvaluationJobStore(service.store.path)
+    assert service.report_part(accepted.job_id, 0, principal=principal()) == original

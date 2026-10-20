@@ -76,7 +76,7 @@ class EvaluationJobStore:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
             migration = (
                 "ALTER TABLE evaluation_jobs ADD COLUMN active_case_start_attempts "
@@ -93,6 +93,9 @@ class EvaluationJobStore:
                 )
             if version in (1, 2, 3):
                 migration += "ALTER TABLE evaluation_jobs ADD COLUMN report_part_count INTEGER;"
+            if version in (1, 2, 3, 4):
+                connection.execute("DROP TABLE IF EXISTS evaluation_job_report_parts")
+                migration += "UPDATE evaluation_jobs SET report_part_count=NULL;"
             schema = f"""
                 CREATE TABLE IF NOT EXISTS evaluation_job_metadata (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL
@@ -127,12 +130,12 @@ class EvaluationJobStore:
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
                 CREATE TABLE IF NOT EXISTS evaluation_job_report_parts (
-                    job_id TEXT NOT NULL, part INTEGER NOT NULL, content TEXT NOT NULL,
+                    job_id TEXT NOT NULL, part INTEGER NOT NULL,
                     digest TEXT NOT NULL, PRIMARY KEY(job_id, part),
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
                 {migration}
-                PRAGMA user_version=4;
+                PRAGMA user_version=5;
             """
             for statement in schema.split(";"):
                 if statement.strip():
@@ -454,20 +457,24 @@ class EvaluationJobStore:
         self, connection: sqlite3.Connection, job_id: str, serialized: str
     ) -> None:
         """Commit bounded hashed transport parts with their canonical immutable report."""
-        parts = [
-            serialized[index : index + REPORT_PART_SIZE]
-            for index in range(0, len(serialized), REPORT_PART_SIZE)
-        ]
+        count = (len(serialized) + REPORT_PART_SIZE - 1) // REPORT_PART_SIZE
         connection.execute("DELETE FROM evaluation_job_report_parts WHERE job_id=?", (job_id,))
         connection.executemany(
-            "INSERT INTO evaluation_job_report_parts VALUES (?, ?, ?, ?)",
-            [
-                (job_id, index, content, "sha256:" + hashlib.sha256(content.encode()).hexdigest())
-                for index, content in enumerate(parts)
-            ],
+            "INSERT INTO evaluation_job_report_parts VALUES (?, ?, ?)",
+            (
+                (
+                    job_id,
+                    index,
+                    "sha256:"
+                    + hashlib.sha256(
+                        serialized[start : start + REPORT_PART_SIZE].encode()
+                    ).hexdigest(),
+                )
+                for index, start in enumerate(range(0, len(serialized), REPORT_PART_SIZE))
+            ),
         )
         connection.execute(
-            "UPDATE evaluation_jobs SET report_part_count=? WHERE job_id=?", (len(parts), job_id)
+            "UPDATE evaluation_jobs SET report_part_count=? WHERE job_id=?", (count, job_id)
         )
 
     def report_part(self, job_id: str, owner_id: str, index: int) -> EvaluationJobReportPart:
@@ -475,7 +482,8 @@ class EvaluationJobStore:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN")
             row = connection.execute(
-                "SELECT state,expires_at,result_expired,report_part_count,report_sha256 "
+                "SELECT rowid AS report_rowid,state,expires_at,result_expired,report_part_count,"
+                "report_sha256,typeof(report_json) AS report_type "
                 "FROM evaluation_jobs WHERE job_id=? AND owner_id=?",
                 (job_id, owner_id),
             ).fetchone()
@@ -491,28 +499,47 @@ class EvaluationJobStore:
                 )
             count = row["report_part_count"]
             if count is not None:
-                if index >= count:
+                if type(count) is not int or count < 1:
+                    raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
+                if index < 0 or index >= count:
                     raise EvaluationJobError("unknown_report_part: This report part doesn't exist.")
+                if row["report_type"] != "text":
+                    raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
                 part = connection.execute(
-                    "SELECT content,digest FROM evaluation_job_report_parts "
-                    "WHERE job_id=? AND part=?",
+                    "SELECT digest FROM evaluation_job_report_parts WHERE job_id=? AND part=?",
                     (job_id, index),
                 ).fetchone()
+                # Incremental BLOB reads also support TEXT in Python3.11+/SQLite. The one
+                # canonical ASCII report stays authoritative; no duplicate part payload drifts.
+                with connection.blobopen(
+                    "evaluation_jobs", "report_json", row["report_rowid"], readonly=True
+                ) as report:
+                    if count != (len(report) + REPORT_PART_SIZE - 1) // REPORT_PART_SIZE:
+                        raise EvaluationJobError(
+                            "report_invalid: Preserve job storage for inspection."
+                        )
+                    report.seek(index * REPORT_PART_SIZE)
+                    content = report.read(REPORT_PART_SIZE)
                 if (
                     part is None
-                    or "sha256:" + hashlib.sha256(part["content"].encode()).hexdigest()
-                    != part["digest"]
+                    or "sha256:" + hashlib.sha256(content).hexdigest() != part["digest"]
                 ):
                     raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
+                try:
+                    text = content.decode("ascii")
+                except UnicodeDecodeError as exc:
+                    raise EvaluationJobError(
+                        "report_invalid: Preserve job storage for inspection."
+                    ) from exc
                 return EvaluationJobReportPart(
                     job_id=job_id,
                     part=index,
                     part_count=count,
                     report_sha256=row["report_sha256"],
                     part_sha256=part["digest"],
-                    content=part["content"],
+                    content=text,
                 )
-        # Only historical schema1-3 reports need a one-time verified transport migration.
+        # Only historical schema1-4 reports need a one-time verified transport migration.
         stored = self.result(job_id, owner_id)
         serialized = canonical_json(stored.report.model_dump(mode="json"))
         with self._transaction() as connection:
@@ -771,7 +798,7 @@ def inspect_job_backlog(path: Path) -> dict[str, int] | None:
         return None
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version != 4:
+        if version != 5:
             raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
         return {
             state: count

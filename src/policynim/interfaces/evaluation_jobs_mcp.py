@@ -25,18 +25,12 @@ from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJ
 from policynim.types import EvalSuite
 
 
-def _report_parts(service: EvaluationJobService, job_id: str, principal: AuthenticatedPrincipal):
-    """Validate the report manifest once and read its persisted transport part count."""
-    stored = service.result(job_id, principal=principal)
-    count = service.report_part(job_id, 0, principal=principal).part_count
-    return stored, count
-
-
 def report_manifest(
     service: EvaluationJobService, job_id: str, principal: AuthenticatedPrincipal
 ) -> EvaluationJobReportManifest:
     """Return logical part references without exceeding the SDK's default SSE event limit."""
-    stored, part_count = _report_parts(service, job_id, principal)
+    stored = service.result(job_id, principal=principal)
+    part_count = service.report_part(job_id, 0, principal=principal).part_count
     info = service.inspect(job_id, principal=principal)
     report = stored.report
     return EvaluationJobReportManifest(

@@ -38,7 +38,7 @@ Out of scope: native Tasks, distributed scheduling, exact provider replay, autom
 
 ## Dependencies And Settings
 
-Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 4 (migrating development versions 1, 2 and 3). Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
+Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 5 (migrating development versions 1 through 4). Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
 
 ## Canonical Contracts
 
@@ -58,7 +58,7 @@ One database stores accepted specs, content-addressed generation archive blobs, 
 
 ### State and commit-point model
 
-Canonical state is the SQLite job row plus its referenced archive/spec/case rows. Submission commits archive+snapshot+queued row in one SQLite transaction. Before publishing that job row, a separate quota transaction prepays validated case executions under a permanent owner/store/key reservation. The current interface selects one configuration, so units equal validated cases; interactive calls remain one unit. A submission failure before the job COMMIT leaves no queued job, while a committed quota reservation can remain. Same-key retry reuses that reservation without charging again; a different request digest conflicts. No cross-database atomicity is claimed. Queued reservations consume no active slot; worker activation acquires one slot without another charge. Worker claim commits running state before any provider activity; case completion commits the result before another case starts. Terminal report bytes, bounded hashed transport parts and terminal job state commit together. No external provider effect is claimed atomic with SQLite.
+Canonical state is the SQLite job row plus its referenced archive/spec/case rows. Submission commits archive+snapshot+queued row in one SQLite transaction. Before publishing that job row, a separate quota transaction prepays validated case executions under a permanent owner/store/key reservation. The current interface selects one configuration, so units equal validated cases; interactive calls remain one unit. A submission failure before the job COMMIT leaves no queued job, while a committed quota reservation can remain. Same-key retry reuses that reservation without charging again; a different request digest conflicts. No cross-database atomicity is claimed. Queued reservations consume no active slot; worker activation acquires one slot without another charge. Worker claim commits running state before any provider activity; case completion commits the result before another case starts. Terminal report bytes, bounded transport-part hashes and terminal job state commit together. No external provider effect is claimed atomic with SQLite.
 
 | Transition | Commit operation | Recovery |
 |---|---|---|
@@ -131,6 +131,6 @@ All accepted jobs survive client disconnect/restart with unchanged captured inpu
 Initial supported topology is one worker per local job database. An accepted job's authorization snapshot contains no bearer token or provider credential; expired delegated authority blocks a queued job before execution. Active provider requests may have incurred usage before cancellation or process interruption, so missing usage remains explicitly unavailable. The full generation archive is captured once per generation and shared by accepted jobs until report retention expires.
 
 
-## Verification status
+## Verification scope
 
-Implemented CLI/MCP disconnect recovery, process-kill recovery, generation pruning/restoration, case-write faults, provider retry bounds, ownership, queue bounds, report integrity/expiry and confirmed-404 Phoenix lookup tests. Full offline suite and final Qodo review remain the handoff gates. The fault matrix describes required behavior; it doesn't claim a separate executed test for every filesystem or physical-storage fault. Production volume, live evaluation quality and deployment evidence belong to the release gate.
+Runtime tests exercise CLI/MCP disconnect recovery, process-kill recovery, generation pruning/restoration, case and terminal commit faults, provider retry bounds, ownership, weighted allowance, queue bounds, bounded report reads, report integrity/expiry and confirmed-404 Phoenix lookup. The PR records commands, tested revisions, review coverage and exact-head CI/Qodo results. Package receipts identify their source revision, artifact hash and public bundle separately. The fault matrix doesn't claim a separate executed test for every filesystem or physical-storage fault. Production volume, live evaluation quality and deployment evidence belong to the release gate.

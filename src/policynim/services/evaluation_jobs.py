@@ -229,6 +229,14 @@ class EvaluationJobService:
             if existing is not None:
                 return existing
             self.store.ensure_capacity(owner)
+            reservation_key = payload_digest(
+                {
+                    "namespace": "evaluation-job",
+                    "job_store_id": self.store.store_id,
+                    "owner_id": owner,
+                    "idempotency_key": idempotency_key,
+                }
+            ).removeprefix("sha256:")
             generation_store = GenerationStore(
                 root=resolve_runtime_path(self.settings.generations_dir),
                 embedding=EmbeddingIdentity(
@@ -237,6 +245,18 @@ class EvaluationJobService:
             )
             with generation_store.pin(self.settings.generation_id) as snapshot:
                 validate_suite_generation(suite, snapshot)
+                allowance = OperationAdmissionService(self.settings)
+                try:
+                    allowance.check_work_allowance(
+                        principal=principal,
+                        operation_name="eval_submit",
+                        reservation_key=reservation_key,
+                        request_digest=request_digest.removeprefix("sha256:"),
+                        work_units=len(suite.cases),
+                        check_ready=check_budget,
+                    )
+                finally:
+                    allowance.store.close()
                 with TemporaryDirectory(
                     prefix="job-capture-", dir=self.store.path.parent
                 ) as directory:
@@ -261,14 +281,7 @@ class EvaluationJobService:
                     accepted = admission.accept_work(
                         principal=principal,
                         operation_name="eval_submit",
-                        reservation_key=payload_digest(
-                            {
-                                "namespace": "evaluation-job",
-                                "job_store_id": self.store.store_id,
-                                "owner_id": owner,
-                                "idempotency_key": idempotency_key,
-                            }
-                        ).removeprefix("sha256:"),
+                        reservation_key=reservation_key,
                         request_digest=request_digest.removeprefix("sha256:"),
                         work_units=len(suite.cases),
                         check_ready=check_budget,
@@ -506,7 +519,9 @@ class EvaluationJobWorker:
                 attempts = values["provider_attempts"]
                 missing = values["unavailable_usage_attempts"]
                 usage_status = (
-                    "unavailable"
+                    "not_performed"
+                    if attempts == 0
+                    else "unavailable"
                     if missing == attempts
                     else "measured"
                     if missing == 0
