@@ -1,8 +1,8 @@
 {
   "name": "grounded-policy-baseline",
-  "expected_catalog_digest": "sha256:f5daeab987c3dc4607159d7b478cb130da3c1d54276b7c4ee012660b3b9bdba6",
+  "expected_catalog_digest": "sha256:4afa01ea24f98cb7745998b0f6ba57bdbd61ca617f817fcdaba04528c4ea716b",
   "expected_policy_revisions": {
-    "ARCH-JOB-001": "sha256:1975aac251ea463726b897fd3f9012158fea68e2d1d89ba3f9ac2cad7c722038",
+    "ARCH-JOB-001": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
     "SEC-SESSION-001": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
     "MCP-AUTH-001": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
     "TEST-FAIL-001": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",

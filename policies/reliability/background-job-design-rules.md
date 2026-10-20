@@ -32,7 +32,7 @@ Choose mechanisms that fit the system's actual failure model. Requirements marke
 
 ## Review and Test Expectations
 
-Test duplicate delivery, crash after the effect before acknowledgement, exhausted retries, and an operator retry. Verify the intended side effect occurs once within the documented deduplication window.
+Review retry policy, timeout behavior, and idempotency together. Test duplicate delivery, crash after the effect before acknowledgement, exhausted retries, and an operator retry. Verify the intended side effect occurs once within the documented deduplication window.
 
 ## Exceptions and Boundaries
 

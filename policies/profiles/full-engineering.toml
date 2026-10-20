@@ -33,12 +33,12 @@ TEST-FAIL-001 = "sha256:4673373c636fce7068a86c16154c5f7b59ac255ef59f6881de19b918
 path = "../api"
 pack_id = "policynim.api"
 version = "0.3.0"
-digest = "sha256:885142dc632309baf203d5324d164035b4316c30eb2f5f16202ebf211c994428"
+digest = "sha256:7928d95d2e49998bb57ea01040ad909f9683a5f680b16b7da506c99cf2589eff"
 
 [packs.policies]
 API-ERROR-001 = "sha256:96cb4bb61361b37b49c6b005ec5554f83f0efbe3b203a2204c959fe383d47998"
 API-PAGE-001 = "sha256:33f1fe94f02dd326ab636d15972a1d1f165267e5e6183e56cdbcb143eab94faf"
-ARCH-API-001 = "sha256:1fc19467a4a468bcf2fb840302571a94cdf1731fc9bf60f9e30094d32001349a"
+ARCH-API-001 = "sha256:4b54a116f392e266fb09e29504b801966606e89e59c1624071f0be303c07fea0"
 
 [[packs]]
 path = "../data"
@@ -54,10 +54,10 @@ DATA-TRANSACTION-001 = "sha256:3888193d954ac3c19aeabde8e1f72c33418ad15c110174769
 path = "../reliability"
 pack_id = "policynim.reliability"
 version = "0.3.0"
-digest = "sha256:f1d8e404a9e8e12668de15f1b4f23c1c106c907ed94391d01f46567eb5d624c1"
+digest = "sha256:deb414e913e7308e192e4b3a4b024a0a0b2a44656c80579d5ebfea3592a2e5ed"
 
 [packs.policies]
-ARCH-JOB-001 = "sha256:e24ba382a43a5aab12f25bec67b54ca6fb26a594eacfadb3b957bfdce9c8465c"
+ARCH-JOB-001 = "sha256:cde110c361bba2e6bd9f0d8c0260fd4802f6479e53e05da618bb5239c6e66d58"
 BE-CONFIG-001 = "sha256:0d038a527228c1e490406d1e9f42a346e50703abc7ec9a2c9d7f4d5d887b20c5"
 REL-OVERLOAD-001 = "sha256:5b7c50916529e2d2f1f4b085c63e722545dc2d748bd724444bd1f669819f7273"
 REL-TIMEOUT-001 = "sha256:9feccfb3e03f44f4c72ae63081b32232be7089bb2c2cae943808205f8d977bba"
@@ -66,10 +66,10 @@ REL-TIMEOUT-001 = "sha256:9feccfb3e03f44f4c72ae63081b32232be7089bb2c2cae94380820
 path = "../observability"
 pack_id = "policynim.observability"
 version = "0.3.0"
-digest = "sha256:617ef0f5520d1d83c590b34120e2be033cc711792a01dade9a9cb7645ac3cdd8"
+digest = "sha256:b9b901f5627796064e72c0986402ae5bbc9b5f0fed94b0b0e94052cdf0533fad"
 
 [packs.policies]
-BE-LOG-001 = "sha256:60f7189cf169e51ad24fd421264c7d18bae1bc351553ad4c24c5ea17ba9e23f5"
+BE-LOG-001 = "sha256:920777705bb2df85bdfc258d0d9369280a0ebed786fb53916976b4b00908d314"
 BE-TRACE-001 = "sha256:f0029fc0dee7cb9ed75bf39383ac677815066ef1ca75da7f2f1d01f84cdffea8"
 OBS-READINESS-001 = "sha256:ebba533b77ec44ed5b4b5b610c173da3715f05f4a1cd66cf7bcba9b093b32c45"
 
