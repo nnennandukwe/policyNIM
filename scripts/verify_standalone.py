@@ -25,6 +25,12 @@ def artifact_identity(command: Path) -> dict[str, object]:
     root = command.parent
     digest = hashlib.sha256()
     count = 0
+    digest.update(
+        (
+            json.dumps(["directory", ".", stat.S_IMODE(root.stat().st_mode)], separators=(",", ":"))
+            + "\n"
+        ).encode("ascii")
+    )
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root).as_posix()
         if path.is_symlink():
@@ -37,6 +43,8 @@ def artifact_identity(command: Path) -> dict[str, object]:
                 file_digest = hashlib.file_digest(content, "sha256").hexdigest()
             record = ["file", relative, file_digest, stat.S_IMODE(path.stat().st_mode)]
             count += 1
+        elif path.is_dir():
+            record = ["directory", relative, stat.S_IMODE(path.stat().st_mode)]
         else:
             continue
         digest.update(
@@ -46,7 +54,7 @@ def artifact_identity(command: Path) -> dict[str, object]:
     return {
         "tree_sha256": digest.hexdigest(),
         "file_count": count,
-        "digest_format": "json-records-v2-file-modes",
+        "digest_format": "json-records-v3-file-directory-modes",
     }
 
 

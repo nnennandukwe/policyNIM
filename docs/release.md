@@ -80,7 +80,9 @@ identifying the reviewed public archive, `--lockfile` and `--lock-digest`
 identifying the selected build lock, `--expected-version X.Y.Z` matching the
 release package version, and `--revision` and `--output` identifying the source
 commit and receipt. This check runs without provider credentials and records a
-digest of the complete standalone directory, including native-library bytes.
+digest of the complete standalone directory, including native-library bytes and
+file/directory permissions. Credential redaction covers the bounded log-tail
+boundary; diagnostics are omitted if a known credential exceeds its capture bound.
 The offline fixture must contain exactly six cases. Failed receipts retain the
 requested source, platform, version and digest context, clearly marked as an
 incomplete execution.
