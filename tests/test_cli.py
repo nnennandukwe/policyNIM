@@ -6,7 +6,7 @@ import asyncio
 import json
 import shlex
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -489,6 +489,21 @@ class MockIndexDumpService:
     def __init__(self) -> None:
         """Track whether the CLI closed the dump service."""
         self.closed = False
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
 
     def list_chunks(self) -> list[PolicyChunk]:
         return [
@@ -2689,21 +2704,25 @@ def test_quickstart_help_mentions_targets_clients_and_json_output() -> None:
 
 
 def test_route_help_mentions_task_type_override() -> None:
+    """Route help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["route", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
 
 
 def test_compile_help_mentions_task_type_override() -> None:
+    """Compile help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["compile", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:
@@ -2730,12 +2749,13 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
 
 
 def test_preflight_help_mentions_current_top_k_behavior() -> None:
+    """Preflight help identifies the discovery limit and trace option."""
     result = runner.invoke(app, ["preflight", "--help"])
     help_text = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "Retrieval depth." in help_text
-    assert "1-20." in help_text
+    assert "Discovery hits," in help_text
+    assert "1-20;" in help_text
     assert "--trace" in help_text
     assert "Reserved retrieval depth" not in help_text
 

@@ -13,6 +13,8 @@ operations into separate pages so the root README can stay short.
   MCP, runtime/evidence, eval, and troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,
   recovery, container build flow, and Railway deployment notes
+- [Chat availability recovery](chat-availability-recovery.md): current chat model,
+  account-access failures, explicit overrides, and validated request options
 - [hosted-authorization.md](hosted-authorization.md): external issuer foundation,
   operation scopes, key migration, and remaining OAuth acceptance checks
 - [release.md](release.md): package, GitHub release, PyPI, and standalone

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -177,6 +178,36 @@ def test_generator_rejects_json_with_invalid_citation_shape() -> None:
 
     with pytest.raises(ProviderError, match="malformed JSON"):
         generator.generate_preflight(PreflightRequest(task="task"), [make_chunk()])
+
+
+@pytest.mark.parametrize("model", ["nvidia/nemotron-3.5-lightning-30b-a3b", "mock-model"])
+def test_generator_rejects_object_guidance_from_live_cleanup_regression(model: str) -> None:
+    """Keep typed rejection if a provider ignores the requested output schema."""
+    client = MockOpenAIClient(
+        json.dumps(
+            {
+                "summary": "Implement bounded refresh-token cleanup.",
+                "implementation_guidance": [
+                    {"step": "bounded_batch_loop", "description": "Check cancellation."}
+                ],
+                "citation_ids": ["BACKEND-1"],
+            }
+        )
+    )
+    generator = NVIDIAGenerator(
+        api_key="test-key",
+        model=model,
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=2,
+        client=client,
+    )
+    with pytest.raises(ProviderError, match="malformed JSON") as caught:
+        generator.generate_preflight(
+            PreflightRequest(task="cleanup refresh tokens"), [make_chunk()]
+        )
+    assert caught.value.failure_class == "invalid_response"
+    assert len(client.chat.completions.calls) == 1
 
 
 def test_generator_classifies_upstream_rate_limits() -> None:

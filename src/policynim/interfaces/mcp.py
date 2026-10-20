@@ -50,6 +50,7 @@ from policynim.errors import (
     IndexCompatibilityError,
     InvalidPolicyDocumentError,
     MissingIndexError,
+    PolicyContextError,
     PolicyNIMError,
     ProviderError,
 )
@@ -619,6 +620,8 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
             "Import a verified bundle or explicitly migrate the standalone index and rules "
             "when no managed generation exists. Don't retry unchanged requests."
         )
+    if isinstance(exc, PolicyContextError):
+        return str(exc)
     if isinstance(exc, IndexCompatibilityError):
         return (
             "The policy index is incompatible or incomplete. Ask the operator to preserve "
@@ -636,6 +639,14 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
         return "PolicyNIM configuration is invalid. Ask the operator to check the server settings."
     if isinstance(exc, ProviderError):
         messages = {
+            "endpoint_not_found": (
+                "The policy model endpoint or model isn't available (HTTP 404); don't retry "
+                "unchanged requests. Ask the operator to verify POLICYNIM_NVIDIA_CHAT_MODEL, "
+                "POLICYNIM_NVIDIA_EMBED_MODEL, POLICYNIM_NVIDIA_RERANK_MODEL, "
+                "POLICYNIM_NVIDIA_BASE_URL, and POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL, "
+                "then confirm account access with a minimal request. "
+                "Catalog listing alone doesn't prove access."
+            ),
             "endpoint_unavailable": (
                 "The policy model endpoint is unavailable (HTTP 410). Do not retry unchanged "
                 "requests. Ask the operator to verify NVIDIA model and endpoint settings "
@@ -712,12 +723,19 @@ def _register_tools(
         domain: Annotated[str | None, Field(description="Optional policy domain filter.")] = None,
         top_k: Annotated[
             TopK | None,
-            Field(description="Chunks to retrieve, from 1 to 20; omitted uses runtime default."),
+            Field(
+                description="Discovery hits, 1 to 20; complete selected-policy context can exceed "
+                "this count. Omitted uses runtime default."
+            ),
         ] = None,
         *,
         ctx: Context,
     ) -> PreflightResult:
-        """Get citation-backed policy guidance, review flags and tests for a coding task."""
+        """Get citation-backed policy guidance, review flags and tests for a coding task.
+
+        Recommendations are generated advice. Review their cited source before applying
+        implementation details; they aren't independently verified policy facts.
+        """
         principal = get_principal("policy_preflight")
         try:
             CompileRequest(task=task, domain=domain, top_k=_resolve_top_k(top_k))
