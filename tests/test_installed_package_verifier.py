@@ -191,7 +191,12 @@ def test_client_requires_argument_validation_instead_of_any_tool_error(message: 
                 SimpleNamespace(
                     name=name, input_schema={"type": "object"}, output_schema={"type": "object"}
                 )
-                for name in ["policy_search", "policy_preflight"]
+                for name in [
+                    "policy_compile",
+                    "policy_preflight",
+                    "policy_preflight_evidence",
+                    "policy_search",
+                ]
             ]
         )
 
