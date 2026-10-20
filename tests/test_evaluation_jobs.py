@@ -574,3 +574,51 @@ def test_actual_nvidia_retry_boundary_respects_the_call_budget() -> None:
         "measured_tokens": 0,
         "unavailable_usage_attempts": 1,
     }
+
+
+def test_invalid_snapshot_is_quarantined_without_blocking_other_jobs(
+    generation, tmp_path: Path
+) -> None:
+    """A damaged interrupted job can't wedge recovery or yield a fabricated report."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    damaged = service.submit(suite, idempotency_key="damaged", principal=principal())
+    intact = service.submit(suite, idempotency_key="intact", principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_jobs SET state='running',snapshot_json='{}' WHERE job_id=?",
+            (damaged.job_id,),
+        )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        completed = worker.run_once()
+        assert completed is not None and completed.job_id == intact.job_id
+        assert completed.state == "completed"
+        failed = service.inspect(damaged.job_id, principal=principal())
+        assert failed.state == "failed" and failed.failure_code == "job_artifact_invalid"
+        assert failed.report_sha256 is None
+        with pytest.raises(EvaluationJobError, match="report_unavailable"):
+            service.result(damaged.job_id, principal=principal())
+        assert worker.run_once() is None
+    finally:
+        worker.close()
+    assert calls == ["case-0", "closed"]
+
+
+def test_operator_backlog_read_doesnt_create_storage_or_expose_callers(
+    generation, tmp_path: Path
+) -> None:
+    """Operator counts reflect durable state while absent storage stays absent."""
+    from policynim.storage.evaluation_jobs import inspect_job_backlog
+
+    absent = tmp_path / "absent" / "jobs.sqlite3"
+    assert inspect_job_backlog(absent) is None and not absent.parent.exists()
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="operator", principal=principal())
+    assert inspect_job_backlog(service.store.path) == {"queued": 1}
+    service.cancel(accepted.job_id, principal=principal())
+    assert inspect_job_backlog(service.store.path) == {"cancelled": 1}

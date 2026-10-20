@@ -12,6 +12,8 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from policynim.job_types import (
     TERMINAL_JOB_STATES,
     EvaluationJobError,
@@ -260,6 +262,32 @@ class EvaluationJobStore:
         failure_code: str | None = None,
         uncertain: bool = False,
     ) -> EvaluationJobInfo:
+        """Quarantine invalid artifacts without blocking other jobs or inventing a report."""
+        try:
+            return self._finish_report(
+                connection, row, state, failure_code=failure_code, uncertain=uncertain
+            )
+        except (EvaluationJobError, ValidationError, TypeError):
+            connection.execute(
+                "UPDATE evaluation_jobs SET state='failed',finished_at=?,"
+                "failure_code='job_artifact_invalid',worker_token=NULL,"
+                "report_json=NULL,report_sha256=NULL WHERE job_id=?",
+                (self.clock(), row["job_id"]),
+            )
+            current = connection.execute(
+                "SELECT * FROM evaluation_jobs WHERE job_id=?", (row["job_id"],)
+            ).fetchone()
+            return self._info(current)
+
+    def _finish_report(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        state: EvaluationJobState,
+        *,
+        failure_code: str | None = None,
+        uncertain: bool = False,
+    ) -> EvaluationJobInfo:
         """Commit terminal state and immutable report bytes together."""
         if row["state"] in TERMINAL_JOB_STATES:
             return self._info(row)
@@ -336,6 +364,11 @@ class EvaluationJobStore:
             if row["state"] not in TERMINAL_JOB_STATES:
                 raise EvaluationJobError(
                     "result_pending: Inspect the job until it reaches a terminal state."
+                )
+            if row["report_json"] is None:
+                raise EvaluationJobError(
+                    "report_unavailable: Job artifacts failed validation. "
+                    "Preserve job storage for operator inspection."
                 )
             report = EvaluationJobReport.model_validate_json(row["report_json"])
             if payload_digest(report.model_dump(mode="json")) != row["report_sha256"]:
@@ -530,3 +563,21 @@ class EvaluationJobStore:
                     "SELECT state, COUNT(*) AS count FROM evaluation_jobs GROUP BY state"
                 )
             }
+
+
+def inspect_job_backlog(path: Path) -> dict[str, int] | None:
+    """Read aggregate operator evidence without creating a database or revealing caller data."""
+    if not path.exists():
+        return None
+    if path.is_symlink():
+        raise EvaluationJobError("job_store_invalid: Job storage can't be a symlink.")
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version != 1:
+            raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
+        return {
+            state: count
+            for state, count in db.execute(
+                "SELECT state, COUNT(*) FROM evaluation_jobs GROUP BY state"
+            )
+        }

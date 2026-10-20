@@ -56,3 +56,5 @@ operations into separate pages so the root README can stay short.
 
 - [Complete policy generations](policy-generations.md): atomic activation, migration, rollback,
   retained readers, and verified offline deployment bundles.
+
+- [Durable evaluation jobs](evaluation-jobs.md): accepted inputs, bounded workers, report resources and interruption recovery.

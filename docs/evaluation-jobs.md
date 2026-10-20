@@ -1,0 +1,66 @@
+# Durable evaluation jobs
+
+A live evaluation can outlast a client connection. PolicyNIM's application jobs accept a suite, archive its policy generation and persist progress so the same principal can inspect the outcome after disconnect or process restart. These jobs use ordinary MCP tools; they don't advertise the optional MCP Tasks extension.
+
+## Submit and retrieve
+
+The suite must pin its catalog digest or policy revisions. Submission captures its JSON, provider/model configuration, limits and complete generation archive in one SQLite transaction. Provider credentials and bearer tokens aren't stored. Changing source files, activating another generation or pruning the original generation can't change an accepted job's inputs.
+
+```console
+policynim eval-jobs submit suite.json --idempotency-key demo-2026 \
+  --deadline-seconds 600 --max-provider-calls 100
+policynim eval-jobs inspect JOB_ID
+policynim eval-jobs worker --once
+policynim eval-jobs result JOB_ID
+policynim eval-jobs cancel JOB_ID
+policynim eval-jobs prune
+```
+
+`submit` returns a queued job handle without running an evaluation. Run `worker` continuously to process the local queue, or use `worker --once` for at most one job. The local CLI identifies its operator through the operating-system user ID. It doesn't accept an arbitrary job owner argument.
+
+Use the same idempotency key to retry an uncertain submission. Identical inputs return the original job, including after it finishes or its report expires. Changed inputs under an existing key return `idempotency_conflict`. Use a new key when you intentionally want another run. A request without an explicit generation ID retains its original resolved generation on duplicate submission.
+
+Authenticated hosted MCP adds these tools:
+
+| Tool | Behavior |
+|---|---|
+| `eval_submit(suite, idempotency_key, deadline_seconds?, max_provider_calls?)` | Accept immutable inputs and start the managed worker |
+| `eval_inspect(job_id)` | Read accepted hashes, state and progress |
+| `eval_cancel(job_id)` | Cancel queued work or request cancellation of active work |
+| `eval_result(job_id)` | Read the terminal report manifest and bounded resource links |
+
+Every job read, cancellation and report resource checks current caller scope and ownership. Ownership hashes issuer plus subject; another client for the same principal can reconnect. Unknown and other-owner IDs return the same `job_unavailable` error. Every application job operation needs both `policies:read` and `policies:evaluate`. An authenticated server resumes queued work during startup. Unauthenticated MCP sessions don't expose these application job tools.
+
+MCP results reference `policynim://evaluation-jobs/{job_id}/report` and numbered `/report/{part}` resources. Each part contains at most 128 KiB of canonical ASCII JSON text plus its SHA256 digest. Concatenate `content` in manifest order to recover the complete report, then verify `report_sha256`. The manifest and each part require fresh authorization. This keeps individual events below the SDK's default transport limit.
+
+## Bounds and usage
+
+The default queue accepts at most eight nonterminal jobs globally and two per owner. One kernel-locked worker processes one job at a time per database. Queue rejection doesn't start provider work. The worker uses the shared principal admission service; duplicate submissions and polling don't consume expensive-work allowances.
+
+Default limits are 100 cases, 3,600 seconds, 512 provider attempts and seven days of report retention. The CLI can set up to 1,000 cases, 86,400 seconds, 10,000 attempts and 30 days of retention. Hosted MCP restricts submission to at most 3,600 seconds and 512 attempts. Suite JSON is limited to 1 MiB. The deadline starts when the job's accepted, including queue time, and survives restart. Each provider attempt, including retries, reserves its budget durably before dispatch. Cancellation, deadline and call-budget checks run before the next provider stage.
+
+Reports record the exact generation, suite/configuration/snapshot hashes, completed and unfinished cases, uncertain active case, provider attempts, measured token subtotal and unavailable usage attempts. Missing provider usage isn't zero usage. Token or monetary cost isn't inferred when the provider hasn't returned evidence.
+
+## Recovery and retention
+
+States progress from `queued` to `running`, then `completed`, `failed`, `cancelled`, `deadline_exceeded`, `budget_exhausted` or `interrupted`. Queued cancellation and deadline expiry can finish without any provider call. A running cancellation first sets a durable request; synchronous in-flight HTTP work drains before cleanup and terminal state. Worker shutdown follows the same cleanup boundary.
+
+Each completed case commits before the next case begins. A crashed worker's running job becomes `interrupted` on the next worker's recovery pass. Completed cases remain in the report; an active case is marked uncertain. The worker doesn't replay terminal or uncertain provider work automatically. Inspect its evidence, then submit a new key if another evaluation's needed. A provider may have accepted a request whose response wasn't persisted, so interruption doesn't prove the provider performed no work.
+
+Terminal state and report hash commit together. If stored inputs or case artifacts fail integrity validation, the job becomes `failed` with `job_artifact_invalid`, its unverified artifacts remain for operator inspection, and no verified report's fabricated. Other jobs can continue. A storage failure can leave the last transition uncertain; preserve the volume, repair access and inspect before retrying. Submission retries must retain the same key.
+
+Expired reports return `result_expired`. Worker maintenance or `eval-jobs prune` removes expired input/report payloads and unreferenced generation archives. Job summaries, original hashes and idempotency records remain. Retention isn't an indefinite evidence archive; export required reports before expiry.
+
+## Supported topology
+
+Job state lives at `<eval_workspace_dir>/jobs/jobs.sqlite3`. Mount the existing evaluation workspace on a private persistent local volume. SQLite uses WAL and FULL synchronization; database creation uses mode 0600 and newly created parent directories use mode 0700. Restrict access to the whole workspace, including SQLite sidecars and restored generation artifacts. Operators must protect and back up this caller-specific evidence.
+
+One local filesystem and one worker per database are supported. A kernel file lock excludes competing workers, and database transactions guard queue claims and idempotency. Distributed workers and network filesystems aren't supported. Physical durability still depends on the mounted volume. A hosted process owns its background worker, drains it on shutdown and resumes queued jobs on startup. Provider credentials come from the current worker environment; accepted authorization claims are rechecked before expensive admission, including expiry and beta-key revocation.
+
+Phoenix project lookup creates a project only after a confirmed HTTP 404. Authentication, authorization, server and transport failures propagate without attempting creation.
+
+## Tasks compatibility
+
+The project's pinned MCP Python SDK 2.2.0 doesn't implement the optional Tasks extension. Upstream 2.3.0 still lists it as unimplemented in its [versioned roadmap](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/ROADMAP.md). Native Tasks discovery and client interoperability remain blocked under #102. No application job handle should be described as native Tasks support.
+
+Offline tests cover real SQLite transactions, generation archive restoration after pruning, process-kill recovery, cancellation drain, retry budgets through the NVIDIA SDK HTTP boundary, owner isolation, CLI commands and an authenticated MCP disconnect/reconnect flow. These checks don't establish live model quality, hosted volume configuration or production capacity; release evidence must verify those separately.

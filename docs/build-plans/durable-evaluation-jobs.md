@@ -1,0 +1,132 @@
+# Durable Evaluation Jobs Build Plan
+
+## Summary
+
+Implement #101's application evaluation-job lifecycle with pinned inputs, bounded work, owner isolation and restart evidence. Baseline: the grounded MCP branch plus #119's public per-case evaluator and #98's principal admission. One stacked PR. Native MCP Tasks stays blocked under #102.
+
+## Skills To Use
+
+| Stage | Skill | Responsibility |
+|---|---|---|
+| Planning | software-build-plan | Define accepted job behavior and review boundaries. |
+| Standards | qodo-get-rules | Apply loaded Python/schema/service rules. |
+| Durable state | transaction-proof | Commit-point, ownership, failure and recovery model below. |
+| Concurrency | sqlite-concurrency-hardening | Transactional claims, deduplication and kernel worker ownership. |
+| Workflow | workflow-invariants | Explicit job and case transitions; forbid terminal reexecution. |
+| Failure verification | failure-path-testing | Disconnect, restart, cancellation, saturation, deadline and authorization. |
+| Interface audit | dx-audit | Match CLI/MCP schemas and recovery documentation. |
+| Review | qodo-review | Final full diff against a pushed dependency fixed point, remediation and re-review. |
+
+Qodo Local Review eligibility: eligible repository; use the pushed #119 dependency base. No new runtime dependencies. Provider implementation stays NVIDIA. Phoenix lookup correction from #73 is narrowed to confirmed-404 creation.
+
+## Scope
+
+In scope: durable submit/inspect/result/cancel services and CLI, bounded single-worker topology, optional hosted application-job tools and authenticated report resources, immutable reports and retention, provider call budgets/usage, public live per-case evaluator integration, narrow Phoenix lookup fix.
+
+Out of scope: native Tasks, distributed scheduling, exact provider replay, automatic replay of interrupted provider stages, custom remote policy administration.
+
+## Package Layout / File-to-Task Mapping
+
+- job_types.py: typed immutable submission, state, usage and report contracts.
+- storage/evaluation_jobs.py: SQLite transactions, deduplication, queue claims, case/report persistence and expiry.
+- services/evaluation_jobs.py: pinned suite/generation capture, principal checks, worker lifecycle, provider execution and recovery.
+- interfaces/evaluation_jobs_cli.py: submit, inspect, result, cancel, worker and expiry commands.
+- interfaces/evaluation_jobs_mcp.py: authenticated application-job operations/report reads; no Tasks capability.
+- operations.py and providers/nvidia.py: enforce and report actual provider attempt limits.
+- tests/test_evaluation_jobs.py: storage/service/process lifecycle integration.
+- docs/evaluation-jobs.md: topology, authority, budgets, retention and recovery limits.
+
+## Dependencies And Settings
+
+Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 1. Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
+
+## Canonical Contracts
+
+States: queued -> running -> completed | failed | cancelled | deadline_exceeded | budget_exhausted | interrupted. queued -> cancelled or deadline_exceeded is allowed without provider execution. Running cancellation is requested first; terminal state is recorded after provider work drains. Terminal jobs never execute again.
+
+Submission requires an idempotency key scoped to issuer+subject. Identical key+snapshot returns the existing job; different inputs under that key return a conflict. Queue rejection starts no worker/provider work. Inspection/result/cancel always check current caller scope and owner. Unknown and other-owner IDs share a non-disclosing error.
+
+Reports include captured suite/configuration digests, exact generation, provider/model IDs, completed and unfinished cases, actual attempt count, measured token subtotal, unavailable usage markers and artifact hashes. No unsupported token/cost estimate is presented as measured.
+
+## TDD And BDD Implementation Strategy
+
+Verification-first slices: store submit/dedup/owner checks; concurrent queue admission/claims; pinned generation capture and restart restoration; per-case results and immutable reports; cancellation/deadline/call budget; process interruption and no-repeat proof; actual CLI/MCP dispatch; confirmed Phoenix lookup contract. Fake model calls only at provider/evaluator boundaries; real SQLite, generation archives and worker locks remain in integration paths.
+
+## Component Design
+
+One database stores accepted specs, content-addressed generation archive blobs, mutable job state, completed case records and terminal report JSON. Each write uses BEGIN IMMEDIATE and one explicit commit. A process-held worker kernel lock permits one supported worker per database; claims use state compare-and-swap. The evaluator consumes captured EvalSuite and an explicit generation ID through EvalService.evaluate_case, never rereading changed source suites. The worker owns its NVIDIA clients, operation budget, shutdown signal and cleanup.
+
+### State and commit-point model
+
+Canonical state is the SQLite job row plus its referenced archive/spec/case rows. Submission commits archive+snapshot+queued row in one SQLite transaction. That commit is the first accepted state. A submission failure before COMMIT leaves no accepted job. Worker claim commits running state before any provider activity; case completion commits the result before another case starts. Terminal report bytes and terminal job state commit together. No external provider effect is claimed atomic with SQLite.
+
+| Transition | Commit operation | Recovery |
+|---|---|---|
+| absent -> queued | SQLite COMMIT of archive/spec/job | Retry same idempotency key. |
+| queued -> running | SQLite COMMIT of guarded claim | Interrupted running work never reexecutes automatically. |
+| running case -> completed case | SQLite COMMIT of typed result | Retain completed cases; don't replay uncertain case. |
+| running -> terminal | SQLite COMMIT of report+state | Read immutable report and digest. |
+| retained -> expired | SQLite COMMIT deleting expired payloads | Metadata/digest remains inspectable; result read reports expiry. |
+
+### Invariants
+
+1. Exactly one accepted job exists per owner/idempotency key and input digest.
+2. Queue saturation never starts provider work; terminal jobs never claim again.
+3. Only the worker holding the process kernel lock recovers/executes jobs; no two supported workers execute one job concurrently.
+4. Every case uses the accepted suite and archived generation; source activation/retention can't change accepted inputs.
+5. Every inspection, result and cancellation enforces owner+scope before reading caller-specific payloads.
+6. A running interruption preserves completed cases and reports an uncertain active case; no uncertain provider outcome is automatically repeated.
+7. A terminal state and report hash commit together; cleanup failure can't rewrite terminal success as a failed provider run.
+8. Provider attempts can't exceed the accepted limit; missing token usage remains unavailable.
+
+### Fault matrix and lifecycle closure
+
+| Effect or boundary | Injected event | Required state and recovery | Evidence |
+|---|---|---|---|
+| Directory/create/connect/schema | permission or SQLite failure | No accepted job; fix owned volume and retry key | storage creation test |
+| Generation export/read/hash | missing/tampered source generation | No accepted job/provider work | capture rejection test |
+| Submission insert/COMMIT | rollback or interruption before commit | No partial accepted row/blob | transaction failpoint test |
+| Post-submit response | disconnect | queued work stays inspectable | disconnect test |
+| Concurrent submit | same key or saturated queue | one accepted row, no over-admission | concurrent submit test |
+| Worker lock/claim | competing process | second worker doesn't execute | process worker test |
+| Before provider call | cancellation/deadline/call limit | blocked before next request | budget test |
+| During provider call | cancellation/shutdown/crash | drain when alive; retain partial/uncertain evidence after restart | cancellation/process crash tests |
+| Case result COMMIT | write failure after provider response | interrupted/uncertain; never replay | result failpoint test |
+| Terminal report COMMIT | write failure | preserve durable case records; recovery marks interruption | report failpoint test |
+| Generation restore/hash | corrupted archive | fail without provider call; retain diagnosis | archive tamper test |
+| Retention transaction | interruption | transaction rolls back; owner payload remains consistent | expiry test |
+| Phoenix lookup | 401/403/500/transport | propagate; never create project | pinned-client exception tests |
+
+No file replacement or deletion is used as the job commit point. Temporary archive files are transaction-owned and removed by TemporaryDirectory; their cleanup can't remove unrelated paths. Physical database durability depends on SQLite FULL synchronization and the local volume's guarantees; network/distributed filesystems aren't supported.
+
+## Failure And Recovery Rules
+
+Rejected submissions remain absent. A duplicate key returns the accepted job even after client disconnect. Interrupted running jobs become terminal interrupted after a new worker obtains the exclusive lock; queued jobs can start because they haven't invoked providers. Explicit cancellation and deadlines remain separate. A failed case retains completed cases and names unfinished ones. Reports expire after the configured retention; cross-principal or unauthenticated report requests never return content.
+
+## Commit Plan
+
+1. feat(eval): persist immutable job submissions, owner isolation and bounded claims.
+2. feat(eval): execute pinned cases with recoverable worker lifecycle and usage evidence.
+3. feat(eval): expose application-job CLI/MCP and documented report retention.
+4. fix(eval): create Phoenix project only after confirmed absence.
+
+## Branch And PR Flow
+
+Use feat/durable-evaluation-jobs stacked on reviewed #100/#119/#98. Run focused lifecycle tests and full Ruff/Pyright/offline pytest. Review the final complete local diff through Qodo using a pushed dependency base and ticket URLs. Reproduce findings, fix supported issues, rerun focused/full checks and final review. Open/attach a PR, wait for CI and exact-head Qodo, coordinate root before merge. No force push, manual finding status, deployment or Tasks claim.
+
+## Test Plan
+
+Run uv run --no-sync pytest -q tests/test_evaluation_jobs.py plus affected provider/CLI/MCP/eval tests. Required gates: uv run --no-sync ruff check; uv run --no-sync pyright; uv run --no-sync pytest -q -m 'not live and not docker_live'. Exercise real process locks and restart using subprocesses. Actual NVIDIA quality and production rollout remain separate root gates. Qodo reviews the final verified snapshot; fresh fixes require renewed checks/review.
+
+## Definition Of Done
+
+All accepted jobs survive client disconnect/restart with unchanged captured inputs. No supported competing worker executes the same job. Owner isolation, queue/call/deadline limits, cancellation, interruption and immutable report hashes pass actual boundary tests. CLI and authenticated MCP report paths match docs. Full checks and exact-head reviews pass; no unsupported distributed or Tasks claim is made.
+
+## Assumptions And Defaults
+
+Initial supported topology is one worker per local job database. An accepted job's authorization snapshot contains no bearer token or provider credential; expired delegated authority blocks a queued job before execution. Active provider requests may have incurred usage before cancellation or process interruption, so missing usage remains explicitly unavailable. The full generation archive is captured once per generation and shared by accepted jobs until report retention expires.
+
+
+## Verification status
+
+Implemented CLI/MCP disconnect recovery, process-kill recovery, generation pruning/restoration, case-write faults, provider retry bounds, ownership, queue bounds, report integrity/expiry and confirmed-404 Phoenix lookup tests. Full offline suite and final Qodo review remain the handoff gates. The fault matrix describes required behavior; it doesn't claim a separate executed test for every filesystem or physical-storage fault. Production volume, live evaluation quality and deployment evidence belong to the release gate.

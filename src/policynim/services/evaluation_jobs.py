@@ -407,6 +407,7 @@ class EvaluationJobWorker:
                     principal=_principal(snapshot.authorization),
                     operation_name="eval_submit",
                     cancelled=signal.is_set,
+                    check_ready=budget.remaining,
                 )
             finally:
                 admission.store.close()
