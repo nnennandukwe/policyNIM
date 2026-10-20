@@ -45,8 +45,8 @@ constraints, not setup mistakes.
   backend: `nemo`, `nemo_evaluator`, or `nat`.
 - `nemo_evaluator` and `nat` are lazy optional package-gated paths. Install the
   pinned project extra with `uv sync --extra nvidia-eval` before using them.
-- The NeMo Evaluator Launcher path requires the additional
-  `nvidia-eval-launcher` extra and the project `httpx==0.27.2` pin.
+- The upstream NeMo Evaluator Launcher runs outside the PolicyNIM environment;
+  it isn't a bundled application backend.
 - The Guardrails-backed preflight generator is internal only. Install
   `uv sync --extra nvidia-guardrails` before constructing it directly; default
   CLI, MCP, eval, and regeneration factory behavior do not use it.

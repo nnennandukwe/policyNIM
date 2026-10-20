@@ -252,6 +252,83 @@ def _percentiles(values: list[float]) -> dict[str, float | None]:
     }
 
 
+def _server_failure_diagnostics(events: list[dict[str, Any]]) -> dict[str, object]:
+    """Retain bounded static categories and observed tool latency without private log payloads."""
+    failure_codes = {
+        "server_busy",
+        "principal_busy",
+        "quota_exceeded",
+        "admission_unavailable",
+        "admission_busy",
+        "accounting_incomplete",
+        "acceptance_conflict",
+        "acceptance_finalized",
+        "acceptance_not_found",
+        "server_shutting_down",
+        "cancelled",
+        "deadline_exhausted",
+        "timeout",
+        "connection",
+        "rate_limit",
+    }
+    phases = {"initialization", "reservation", "finish", "beta_auth_initialization"}
+    classes = {
+        "OperationalError",
+        "DatabaseError",
+        "IntegrityError",
+        "ProgrammingError",
+        "AuthDatabaseError",
+        "OSError",
+        "PermissionError",
+        "ValueError",
+        "TimeoutError",
+    }
+    failures: Counter[str] = Counter()
+    storage: Counter[tuple[str, str, int | None, int | None]] = Counter()
+    latencies: list[float] = []
+    for event in events:
+        if event.get("event") == "operation.storage_failure":
+            phase = event.get("phase")
+            category = event.get("exception_class")
+            code, number = event.get("sqlite_code"), event.get("os_errno")
+            storage[
+                (
+                    phase if isinstance(phase, str) and phase in phases else "other",
+                    category if isinstance(category, str) and category in classes else "OtherError",
+                    code if type(code) is int and 0 <= code <= 65535 else None,
+                    number if type(number) is int and 0 <= number <= 4095 else None,
+                )
+            ] += 1
+        elif event.get("event") == "mcp.tool":
+            failure = event.get("upstream_failure_class")
+            if failure is None:
+                continue
+            failures[
+                failure if isinstance(failure, str) and failure in failure_codes else "other"
+            ] += 1
+            latency = event.get("latency_ms")
+            if type(latency) in {int, float} and math.isfinite(latency) and latency >= 0:
+                latencies.append(float(latency))
+    selected = storage.most_common(16)
+    return {
+        "tool_failure_counts": dict(failures),
+        "tool_failure_latency_ms": _percentiles(latencies),
+        "storage_failures": [
+            {
+                "phase": phase,
+                "exception_class": category,
+                "sqlite_code": code,
+                "os_errno": number,
+                "count": count,
+            }
+            for (phase, category, code, number), count in selected
+        ],
+        "additional_storage_failure_events": sum(storage.values())
+        - sum(count for _, count in selected),
+        "database_lock_timing": "not_sampled",
+    }
+
+
 async def _rpc(
     client: httpx.AsyncClient, token: str, *, index: int = 0, discovery: bool = False
 ) -> tuple[float, str, int]:
@@ -688,6 +765,7 @@ def main() -> int:
                         if item.get("event") == "provider.operation" and item.get("kind") == "stage"
                     )
                 )
+                result["server_failure_diagnostics"] = _server_failure_diagnostics(events)
                 result["live_provider_usage"] = None
                 scenarios.append(result)
     measurement_complete = all(item["measurement_complete"] for item in scenarios)

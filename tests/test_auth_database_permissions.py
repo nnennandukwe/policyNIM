@@ -586,6 +586,7 @@ def test_operation_admission_preserves_unsafe_file_recovery(tmp_path: Path, suff
     assert message.startswith("admission_unavailable:")
     assert "auth_storage_unsafe:" in message
     assert "ownership, permissions and aliases" in message
+    assert "Ask the operator" in message and "retry as the service user" not in message
     assert "database locks" not in message
     assert "private-admission-sentinel" not in message and str(tmp_path) not in message
     assert target.read_bytes() == b"retained-private-records"

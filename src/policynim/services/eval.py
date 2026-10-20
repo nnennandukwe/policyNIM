@@ -82,7 +82,7 @@ from policynim.types import (
 
 _PROJECT_NAME = "PolicyNIM Eval"
 _SAFE_SUITE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_DEFAULT_UI_START_TIMEOUT_SECONDS = 5.0
+_DEFAULT_UI_START_TIMEOUT_SECONDS = 30.0
 _UI_START_POLL_INTERVAL_SECONDS = 0.1
 
 
@@ -312,6 +312,13 @@ class EvalService:
                     stderr=subprocess.STDOUT,
                     env=env,
                 )
+        except FileNotFoundError as exc:
+            raise PolicyNIMError(
+                "Phoenix UI command wasn't found. Install its separate environment with "
+                "`uv tool install --python 3.11 arize-phoenix==20.23.0` and make its "
+                "bin directory available on PATH, or run evaluations with --headless. "
+                f"See {log_path.as_posix()} for details."
+            ) from exc
         except OSError as exc:
             raise PolicyNIMError(
                 f"Could not start Phoenix UI. See {log_path.as_posix()} for details."
@@ -1528,10 +1535,86 @@ def _publish_eval_result_to_phoenix(result: EvalRunResult, *, endpoint: str) -> 
     for run in result.runs:
         spans = cast(Any, _build_phoenix_spans(result, run))
         if spans:
-            client.spans.log_spans(project_identifier=_PROJECT_NAME, spans=spans)
+            _publish_phoenix_spans(client, spans)
         annotations = cast(Any, _build_phoenix_span_annotations(result, run))
         if annotations:
+            _publish_phoenix_annotations(client, annotations)
+
+
+def _publish_phoenix_spans(client: Any, spans: Sequence[dict[str, Any]]) -> None:
+    """Resume publication only when existing spans match this report's content."""
+    from phoenix.client.exceptions import SpanCreationError
+
+    identifiers = [span["context"]["span_id"] for span in spans]
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("Phoenix report span identifiers must be unique.")
+    for offset in range(0, len(spans), 64):
+        pending = {span["context"]["span_id"]: span for span in spans[offset : offset + 64]}
+        while pending:
+            try:
+                client.spans.log_spans(
+                    project_identifier=_PROJECT_NAME, spans=list(pending.values())
+                )
+                break
+            except SpanCreationError as exc:
+                if exc.total_invalid or exc.invalid_spans or exc.total_queued:
+                    raise
+                duplicate_ids = {row["span_id"] for row in exc.duplicate_spans}
+                if (
+                    not duplicate_ids
+                    or len(duplicate_ids) != exc.total_duplicates
+                    or exc.total_received != len(pending)
+                    or not duplicate_ids <= pending.keys()
+                    or any(
+                        row["trace_id"] != pending[row["span_id"]]["context"]["trace_id"]
+                        for row in exc.duplicate_spans
+                    )
+                ):
+                    raise
+                existing = client.spans.get_spans(
+                    project_identifier=_PROJECT_NAME,
+                    trace_ids=[
+                        pending[identifier]["context"]["trace_id"] for identifier in duplicate_ids
+                    ],
+                    limit=len(duplicate_ids),
+                )
+                observed = {row["context"]["span_id"]: row for row in existing}
+                fields = (
+                    "name",
+                    "context",
+                    "span_kind",
+                    "status_code",
+                    "status_message",
+                    "attributes",
+                )
+                if any(
+                    identifier not in observed
+                    or any(
+                        observed[identifier].get(field) != pending[identifier][field]
+                        for field in fields
+                    )
+                    or observed[identifier].get("parent_id") is not None
+                    or bool(observed[identifier].get("events"))
+                    for identifier in duplicate_ids
+                ):
+                    raise
+                for identifier in duplicate_ids:
+                    del pending[identifier]
+
+
+def _publish_phoenix_annotations(client: Any, annotations: Any) -> None:
+    """Wait briefly for queued spans before writing synchronous annotations."""
+    from httpx import HTTPStatusError
+
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
             client.spans.log_span_annotations(span_annotations=annotations, sync=True)
+            return
+        except HTTPStatusError as exc:
+            if exc.response.status_code != 404 or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
 
 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
