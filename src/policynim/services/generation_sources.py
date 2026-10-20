@@ -227,12 +227,15 @@ def capture_sources(settings: Settings) -> tuple[SourceSnapshot, list[Path]]:
             for path in discover_policy_paths(root)
         ]
         selected = {member.path for member in members}
-        notices = {
-            path.relative_to(root).as_posix(): read_pack_bytes(
-                root, path.relative_to(root).as_posix()
-            ).decode("utf-8")
-            for path in sorted((root / "licenses").glob("*.txt"))
-        }
+        notices: dict[str, str] = {}
+        for path in sorted((root / "licenses").glob("*.txt")):
+            relative_path = path.relative_to(root).as_posix()
+            try:
+                notices[relative_path] = read_pack_bytes(root, relative_path).decode("utf-8")
+            except UnicodeError as exc:
+                raise InvalidPolicyDocumentError(
+                    f"Couldn't decode license notice {root.name}/{relative_path} as UTF-8."
+                ) from exc
         packs.append(
             SourcePack(
                 root_name=root.name,

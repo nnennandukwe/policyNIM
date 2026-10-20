@@ -1281,6 +1281,18 @@ def beta_admin_audit_log(
     typer.echo(json.dumps([event.model_dump(mode="json") for event in events], indent=2))
 
 
+@beta_admin_app.command("operations")
+def beta_admin_operations() -> None:
+    """Print aggregate local admission/outcome evidence without credentials or request content."""
+    from policynim.services.operational_report import inspect_operational_report
+
+    try:
+        report = inspect_operational_report(get_settings())
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    typer.echo(json.dumps(report, indent=2, sort_keys=True))
+
+
 def main() -> None:
     """Run the PolicyNIM CLI."""
     app()
@@ -1382,7 +1394,7 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
     """Write rendered CLI artifact text to a user-provided path atomically."""
     output_value = output.strip()
     if not output_value:
-        raise PolicyNIMError("Runtime evidence report output path must not be empty.")
+        raise PolicyNIMError("Runtime evidence report output path can't be empty.")
 
     target = resolve_runtime_path(Path(output_value))
     if target.exists() and target.is_dir():
@@ -1404,13 +1416,18 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
             temp_file.write("\n")
         os.replace(temp_path, target)
     except OSError as exc:
+        cleanup_note = ""
         if temp_path is not None:
             try:
                 Path(temp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as cleanup_exc:
+                cleanup_note = (
+                    " Staged report cleanup also failed "
+                    f"({type(cleanup_exc).__name__[:64]}, errno={cleanup_exc.errno}). "
+                    "Inspect the output directory for a retained .tmp file before retrying."
+                )
         raise PolicyNIMError(
-            f"Could not write runtime evidence report to {target}: {exc}."
+            f"Couldn't write runtime evidence report to {target}: {exc}.{cleanup_note}"
         ) from exc
     return target
 
