@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
-    nvidia_chat_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    nvidia_chat_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
     nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
     nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"

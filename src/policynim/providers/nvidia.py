@@ -623,7 +623,10 @@ def _request_chat_completion(
 ) -> Any:
     """Request structured chat output and sanitize provider failures."""
     options: dict[str, Any] = {"temperature": 0, "top_p": 1}
-    if model == "nvidia/nemotron-3-super-120b-a12b":
+    if model in {
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+    }:
         options = {
             "temperature": 1,
             "top_p": 0.95,
@@ -715,6 +718,16 @@ def _request_with_retry(
                 exc.status_code if isinstance(exc, APIStatusError) else exc.response.status_code
             )
             failure = "rate_limit" if status == 429 else "http_status"
+            if status == 404:
+                failure = "endpoint_unavailable"
+                raise ProviderError(
+                    f"NVIDIA {operation} endpoint or model isn't available (HTTP 404); "
+                    "don't retry unchanged requests. "
+                    f"Verify POLICYNIM_NVIDIA_{model_setting}_MODEL and "
+                    f"POLICYNIM_NVIDIA_{endpoint_setting}, and confirm this account has "
+                    "access with a minimal request. Catalog listing alone doesn't prove access.",
+                    failure_class=failure,
+                ) from exc
             if status == 410:
                 failure = "endpoint_unavailable"
                 raise _endpoint_unavailable(operation, model_setting, endpoint_setting) from exc

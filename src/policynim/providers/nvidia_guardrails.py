@@ -29,7 +29,7 @@ from policynim.types import (
 _NEMO_GUARDRAILS_DISTRIBUTION = "nemoguardrails"
 _NVIDIA_GUARDRAILS_EXTRA = "nvidia-guardrails"
 _NVIDIA_GUARDRAILS_INSTALL_HINT = "uv sync --extra nvidia-guardrails"
-_DEFAULT_GUARDRAILS_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+_DEFAULT_GUARDRAILS_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 _MODEL_PLACEHOLDER = "__POLICYNIM_NVIDIA_CHAT_MODEL__"
 _ASSET_ROOT = ("templates", "nvidia_guardrails", "preflight_output")
 _CONFIG_ASSET = "config.yml"
