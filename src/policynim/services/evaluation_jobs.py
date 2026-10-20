@@ -300,6 +300,11 @@ class EvaluationJobService:
             )
 
     @_job_storage_boundary
+    def prune_expired(self) -> int:
+        """Run operator retention with the same storage-failure boundary as other job actions."""
+        return self.store.purge_expired()
+
+    @_job_storage_boundary
     def inspect(self, job_id: str, *, principal: AuthenticatedPrincipal) -> EvaluationJobInfo:
         """Inspect the accepted generation and progress rather than current policy sources."""
         return self.store.inspect(job_id, self._owner(principal, "eval_inspect"))
@@ -451,7 +456,7 @@ class EvaluationJobWorker:
                 result = self.run_once()
                 if time.monotonic() >= next_cleanup:
                     next_cleanup = time.monotonic() + 60.0
-                    self.store.purge_expired()
+                    self.service.prune_expired()
                 if result is None:
                     self._stop.wait(0.5)
             except Exception as exc:

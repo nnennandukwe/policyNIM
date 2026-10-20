@@ -166,7 +166,7 @@ def run_worker(
 def prune_jobs() -> None:
     """Delete expired report/input payloads while preserving job summaries and digests."""
     try:
-        count = _service().store.purge_expired()
+        count = _service().prune_expired()
         typer.echo('{"expired_reports_removed":' + str(count) + "}")
     except (PolicyNIMError, OSError, sqlite3.Error) as exc:
         _failure(exc)
