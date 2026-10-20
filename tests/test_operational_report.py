@@ -661,7 +661,7 @@ def test_readonly_report_separates_live_crashed_and_unknown_ownership(tmp_path: 
     assert report.unknown_owner_operations == report.reserved_operations == 1
 
 
-@pytest.mark.parametrize("damage", ["legacy", "symlink", "corrupt"])
+@pytest.mark.parametrize("damage", ["legacy", "symlink", "broken_symlink", "corrupt"])
 def test_report_preserves_generation_when_job_store_is_unavailable(generation, tmp_path, damage):
     """One damaged telemetry source can't hide independently verified generation readiness."""
     settings, _, generation_id = generation
@@ -672,13 +672,14 @@ def test_report_preserves_generation_when_job_store_is_unavailable(generation, t
     if damage == "legacy":
         with sqlite3.connect(path) as db:
             db.execute("PRAGMA user_version=1")
-    elif damage == "symlink":
+    elif damage in {"symlink", "broken_symlink"}:
         target = tmp_path / "private-target.sqlite3"
-        target.write_bytes(b"private-content")
+        if damage == "symlink":
+            target.write_bytes(b"private-content")
         path.symlink_to(target)
     else:
         path.write_bytes(b"private-corrupt-database")
-    before = path.read_bytes()
+    before = path.read_bytes() if damage != "broken_symlink" else None
     settings = settings.model_copy(
         update={"beta_auth_db_path": operations.path, "eval_workspace_dir": workspace}
     )
@@ -693,11 +694,12 @@ def test_report_preserves_generation_when_job_store_is_unavailable(generation, t
             == {
                 "legacy": "job_store_version",
                 "symlink": "job_store_invalid",
+                "broken_symlink": "job_store_invalid",
                 "corrupt": "job_store_unreadable",
             }[damage]
         )
-        assert path.read_bytes() == before
-        assert path.is_symlink() == (damage == "symlink")
+        assert (path.read_bytes() if damage != "broken_symlink" else None) == before
+        assert path.is_symlink() == (damage in {"symlink", "broken_symlink"})
         assert "private" not in json.dumps(report)
     finally:
         operations.close()

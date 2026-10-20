@@ -634,10 +634,10 @@ class EvaluationJobStore:
 
 def inspect_job_backlog(path: Path) -> dict[str, int] | None:
     """Read aggregate operator evidence without creating a database or revealing caller data."""
-    if not path.exists():
-        return None
     if path.is_symlink():
         raise EvaluationJobError("job_store_invalid: Job storage can't be a symlink.")
+    if not path.exists():
+        return None
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version != 3:
