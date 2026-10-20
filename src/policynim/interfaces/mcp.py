@@ -369,6 +369,17 @@ def _elapsed_ms(start_time: float) -> float:
 def _failure_class_from_error(exc: BaseException) -> str | None:
     current: BaseException | None = exc
     while current is not None:
+        if isinstance(current, (OperationAdmissionError, ToolError)):
+            code = str(current).split(":", 1)[0]
+            if code in {
+                "server_busy",
+                "principal_busy",
+                "quota_exceeded",
+                "admission_unavailable",
+                "accounting_incomplete",
+                "server_shutting_down",
+            }:
+                return code
         failure_class = getattr(current, "failure_class", None)
         if isinstance(failure_class, str) and failure_class:
             return failure_class

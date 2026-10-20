@@ -131,7 +131,17 @@ def test_telemetry_hashes_request_ids_and_correlates_provider_events(
         finally:
             await executor.close()
 
-    asyncio.run(scenario())
+    loggers = [
+        logging.getLogger(mcp._HOSTED_LOGGER_NAME),
+        logging.getLogger("policynim.operations"),
+    ]
+    for logger in loggers:
+        logger.addHandler(caplog.handler)
+    try:
+        asyncio.run(scenario())
+    finally:
+        for logger in loggers:
+            logger.removeHandler(caplog.handler)
     events = [
         json.loads(record.message) for record in caplog.records if record.message.startswith('{"')
     ]

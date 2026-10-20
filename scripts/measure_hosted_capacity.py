@@ -38,8 +38,12 @@ def _bounded_count(minimum: int, maximum: int):
 
 def _parser() -> argparse.ArgumentParser:
     """Keep the experiment bounded and its synthetic settings explicit."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        "--output", type=Path, required=True, help="Destination JSON evidence report"
+    )
     parser.add_argument("--users", type=_bounded_count(1, 25), default=25)
     parser.add_argument("--chunks", type=_bounded_count(1, 10000), default=10000)
     parser.add_argument("--requests-per-user", type=_bounded_count(1, 10), default=2)
@@ -193,6 +197,21 @@ def _serve(config_path: Path) -> None:
         )
 
 
+def _sample_rss(process_id: int) -> int | None:
+    """Sample POSIX process RSS without reading environment or requiring an optional library."""
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(process_id)],
+            text=True,
+            capture_output=True,
+            timeout=1,
+            check=True,
+        )
+        return int(result.stdout.strip()) * 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def _percentiles(values: list[float]) -> dict[str, float | None]:
     """Report nearest-rank observed percentiles without manufacturing empty samples."""
     ordered = sorted(values)
@@ -294,12 +313,16 @@ async def _measure(
         health_latencies: list[float] = []
         cheap_outcomes: Counter[str] = Counter()
         active_peak = 0
+        sampled_peak_rss = _sample_rss(process.pid)
         stop = asyncio.Event()
 
         async def probes() -> None:
             """Measure discovery/readiness while expensive operations are active."""
-            nonlocal active_peak
+            nonlocal active_peak, sampled_peak_rss
             while not stop.is_set():
+                sampled = await asyncio.to_thread(_sample_rss, process.pid)
+                if sampled is not None:
+                    sampled_peak_rss = max(sampled_peak_rss or 0, sampled)
                 latency, outcome, _ = await _rpc(client, config["tokens"][0], discovery=True)
                 cheap_latencies.append(latency)
                 cheap_outcomes[outcome] += 1
@@ -371,6 +394,8 @@ async def _measure(
             "health_latency_ms": _percentiles(health_latencies),
             "cheap_probe_outcomes": dict(cheap_outcomes),
             "observed_peak_active_operations": active_peak,
+            "sampled_peak_server_rss_bytes": sampled_peak_rss,
+            "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
             "successful_search_hit_counts": dict(
                 Counter(str(sample[2]) for sample in samples if sample[1] == "ok")
             ),
