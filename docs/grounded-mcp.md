@@ -27,7 +27,7 @@ Read `policynim://catalog` to inspect the active catalog. Its `resource_uri` poi
 
 Generation IDs contain 64 lowercase hexadecimal characters. Policy and chunk keys are SHA256 hashes of their logical IDs. Clients should follow the returned links. The service matches these keys against the selected generation's catalog or index; it never treats a URI key as a filesystem path.
 
-`policy_compile` and `policy_preflight_evidence` citations include `resource_uri` links whenever an authoritative generation exists. Read these links to inspect the exact evidence supporting the answer. Resource listing, template discovery, resource reads and prompt discovery don't invoke NVIDIA models.
+`policy_compile` and `policy_preflight_evidence` citations include `resource_uri` links whenever an authoritative generation exists. Read these links to inspect the exact evidence supporting the answer. Resource listing, template discovery, resource reads and prompt discovery don't invoke NVIDIA models. Resource reads share the hosted executor's global and per-principal concurrency limits while leaving accepted-operation allowances unchanged.
 
 Historical links remain valid while the operator retains the generation, even if the runtime embedding model or endpoint changes. Read-only archival validation uses the selected generation's sealed identity; live retrieval still requires the configured identity to match. Reader leases protect reads already in progress. An unknown, invalid or purged generation fails explicitly; it never resolves to the current generation. An unknown policy or chunk fails without reading arbitrary files. Use the [generation operations guide](policy-generations.md) to inspect retention and restore retained bundles when needed.
 

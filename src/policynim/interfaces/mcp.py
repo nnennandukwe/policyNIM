@@ -80,6 +80,7 @@ from policynim.services.health import log_health_failure
 from policynim.services.operation_admission import (
     OperationAdmissionError,
     OperationAdmissionService,
+    principal_identity,
 )
 from policynim.settings import Settings, get_settings
 from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
@@ -183,6 +184,7 @@ class _ToolExecutor:
         self._clients = NVIDIAClients()
         self._lock = Lock()
         self._budgets: set[OperationBudget] = set()
+        self._principal_active: dict[str, int] = {}
         self._closed = False
         self._operation_usage: OperationAdmissionService | None = None
         self._usage_lock = Lock()
@@ -195,12 +197,18 @@ class _ToolExecutor:
         *,
         principal: AuthenticatedPrincipal | None = None,
         operation_name: str | None = None,
+        charge_usage: bool = True,
     ) -> _OperationResult:
         """Admit one budget, borrow shared clients, and cooperatively cancel later stages."""
         from policynim.providers.lifecycle import borrow_clients
 
         settings = self._settings or get_settings()
         budget = OperationBudget(settings.operation_timeout_seconds)
+        principal_id = (
+            principal_identity(principal.issuer, principal.subject)
+            if principal is not None
+            else None
+        )
         with self._lock:
             if self._closed:
                 raise ToolError("server_shutting_down: Retry later.")
@@ -209,8 +217,20 @@ class _ToolExecutor:
                 self._admission = BoundedSemaphore(capacity)
                 self._workers = anyio.CapacityLimiter(capacity)
             admission = self._admission
+            if (
+                principal_id is not None
+                and self._principal_active.get(principal_id, 0)
+                >= settings.mcp_max_concurrent_operations_per_principal
+            ):
+                raise OperationAdmissionError(
+                    "principal_busy: Your operation limit is active. Retry after it drains."
+                )
             if not admission.acquire(blocking=False):
                 raise ToolError("server_busy: PolicyNIM is at capacity. Retry later.")
+            if principal_id is not None:
+                self._principal_active[principal_id] = (
+                    self._principal_active.get(principal_id, 0) + 1
+                )
             self._budgets.add(budget)
             self._drained.clear()
 
@@ -222,7 +242,7 @@ class _ToolExecutor:
         def run_owned() -> _OperationResult:
             """Apply hosted accounting around the complete worker/service lifecycle."""
             budget.remaining()
-            if principal is not None:
+            if principal is not None and charge_usage:
                 if operation_name is None:
                     raise ValueError("Hosted work requires an operation name.")
                 with self._usage_lock:
@@ -245,6 +265,12 @@ class _ToolExecutor:
         finally:
             with self._lock:
                 self._budgets.remove(budget)
+                if principal_id is not None:
+                    remaining = self._principal_active[principal_id] - 1
+                    if remaining:
+                        self._principal_active[principal_id] = remaining
+                    else:
+                        del self._principal_active[principal_id]
                 admission.release()
                 if not self._budgets:
                     self._drained.set()
@@ -505,13 +531,16 @@ async def _run_logged_tool(
     ctx: Context,
     executor: _ToolExecutor,
     principal: AuthenticatedPrincipal | None = None,
+    charge_usage: bool = True,
 ) -> dict[str, object]:
     """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
     auth_result = "authorized" if get_access_token() is not None else _HOSTED_AUTH_RESULT.get()
     request_id = _request_id_from_context(ctx)
     try:
-        result = await executor.run(operation, principal=principal, operation_name=tool_name)
+        result = await executor.run(
+            operation, principal=principal, operation_name=tool_name, charge_usage=charge_usage
+        )
     except asyncio.CancelledError:
         _emit_hosted_event(
             "mcp.tool",
@@ -716,11 +745,14 @@ def _register_tools(
         name: str, operation: Callable[[], dict[str, object]], ctx: Context
     ) -> dict[str, object]:
         """Keep every grounded operation inside the existing budget and lifecycle."""
-        principal = (
-            get_principal(name) if name in {"policy_compile", "policy_preflight_evidence"} else None
-        )
+        principal = get_principal(name)
         return await _run_logged_tool(
-            name, operation, ctx=ctx, executor=executor, principal=principal
+            name,
+            operation,
+            ctx=ctx,
+            executor=executor,
+            principal=principal,
+            charge_usage=name in {"policy_compile", "policy_preflight_evidence"},
         )
 
     register_grounded_capabilities(
