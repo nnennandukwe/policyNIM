@@ -54,7 +54,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert scenarios["baseline"]["outcomes"] == {"ok": 12}
     assert scenarios["baseline"]["successful_search_hit_counts"] == {"5": 12}
     assert scenarios["saturation"]["outcomes"].get("server_busy", 0) >= 1
-    assert scenarios["locked-database"]["outcomes"] == {"admission_unavailable": 12}
+    assert scenarios["locked-database"]["outcomes"] == {"admission_busy": 12}
     assert scenarios["locked-database"]["operator_report"]["retained_rows"] == 1  # warmup only
     assert scenarios["locked-database"]["provider_stage_counts"]["embed_query"] == 1
     for scenario in scenarios.values():
@@ -140,3 +140,81 @@ def test_completed_client_isnt_reported_as_disconnected(
 
     if probe_failure == "transport":
         assert result["cheap_probe_outcomes"]["health_transport_failure"] >= 1
+
+
+@pytest.mark.parametrize(
+    ("envelope", "discovery", "expected"),
+    [
+        (
+            {"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "private"}},
+            False,
+            "jsonrpc_error",
+        ),
+        ({"jsonrpc": "2.0", "id": 1}, False, "invalid_rpc_response"),
+        ([], False, "invalid_rpc_response"),
+        ({"jsonrpc": "2.0", "id": 2, "result": {}}, False, "invalid_rpc_response"),
+        ({"jsonrpc": "1.0", "id": 1, "result": {}}, False, "invalid_rpc_response"),
+        (
+            {"jsonrpc": "2.0", "id": 1, "result": {}, "error": {"code": -1, "message": "private"}},
+            False,
+            "invalid_rpc_response",
+        ),
+        ({"jsonrpc": "2.0", "id": 1, "result": {"content": []}}, False, "invalid_rpc_response"),
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [], "structuredContent": {"hits": []}},
+            },
+            False,
+            "invalid_rpc_response",
+        ),
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "content": [],
+                    "structuredContent": {"query": "fixture", "top_k": 5, "hits": []},
+                },
+            },
+            False,
+            "ok",
+        ),
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "content": [{"type": "text", "text": "admission_busy: retry shortly"}],
+                    "isError": True,
+                },
+            },
+            False,
+            "admission_busy",
+        ),
+        ({"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}, True, "ok"),
+        ({"jsonrpc": "2.0", "id": 1, "result": {}}, True, "invalid_rpc_response"),
+    ],
+)
+def test_rpc_doesnt_count_protocol_or_missing_search_results_as_success(
+    envelope: object, discovery: bool, expected: str
+) -> None:
+    """HTTP success alone can't inflate measured successful tool work or warmup readiness."""
+    import asyncio
+    import runpy
+
+    import httpx
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py")
+    )
+
+    async def request() -> tuple[float, str, int]:
+        """Exercise the real HTTP parser with a controlled response envelope."""
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, json=envelope))
+        async with httpx.AsyncClient(base_url="http://fixture", transport=transport) as client:
+            return await namespace["_rpc"](client, "fixture", discovery=discovery)
+
+    elapsed, outcome, hits = asyncio.run(request())
+    assert elapsed >= 0 and outcome == expected and hits == 0

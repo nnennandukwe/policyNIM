@@ -17,7 +17,7 @@
     "platform": "macOS-26.6-arm64-arm-64bit",
     "python": "3.11.13"
   },
-  "harness_sha256": "167bed6a02d3aec74329fcc2701ff16aa5d7722a7d696118864ac0c71d35a979",
+  "harness_sha256": "ce19a91fe6f18ca49bdd40820033da47b9376088b8109795b5a9b1658856e37f",
   "limits": [
     "Only search is measured; other tools require separate workload evidence.",
     "Synthetic vectors don't measure model quality or NVIDIA latency.",
@@ -30,9 +30,9 @@
   "scenarios": [
     {
       "accepted_operation_latency_ms": {
-        "p50": 132.846,
-        "p95": 177.801,
-        "p99": 196.241
+        "p50": 137.277,
+        "p95": 182.927,
+        "p99": 213.533
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
@@ -42,16 +42,16 @@
       "client_concurrency": 10,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 1.501,
-        "p95": 5.377,
-        "p99": 10.684
+        "p50": 1.839,
+        "p95": 6.512,
+        "p99": 22.036
       },
       "drain_observation": null,
-      "duration_seconds": 0.774,
+      "duration_seconds": 0.804,
       "health_latency_ms": {
-        "p50": 12.993,
-        "p95": 21.811,
-        "p99": 25.784
+        "p50": 13.062,
+        "p95": 23.843,
+        "p99": 28.081
       },
       "intervention": null,
       "intervention_started_with_active_work": null,
@@ -60,11 +60,12 @@
       "observed_peak_active_operations": 10,
       "operator_report": {
         "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 129.005,
-        "latency_p95_ms": 167.984,
-        "latency_p99_ms": 185.113,
+        "latency_p50_ms": 134.828,
+        "latency_p95_ms": 179.483,
+        "latency_p99_ms": 202.294,
         "latency_sample_count": 51,
         "latency_sample_limit": 1000,
         "latency_window": "most_recent_timed_terminal_operations",
@@ -73,13 +74,16 @@
         },
         "provider_retry_totals": null,
         "provider_usage": null,
+        "reserved_operations": 0,
         "retained_rows": 51,
-        "scope": "local_single_instance"
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
       },
       "outcomes": {
         "ok": 50
       },
-      "peak_server_rss_bytes": 163889152,
+      "peak_server_rss_bytes": 163381248,
       "peak_server_rss_scope": "process_max_at_application_shutdown",
       "provider_delay_seconds": 0.1,
       "provider_stage_counts": {
@@ -93,15 +97,15 @@
         "p99": null
       },
       "response_latency_ms": {
-        "p50": 132.846,
-        "p95": 177.801,
-        "p99": 196.241
+        "p50": 137.277,
+        "p95": 182.927,
+        "p99": 213.533
       },
-      "responses_per_second": 64.573,
-      "sampled_peak_server_rss_bytes": 163725312,
+      "responses_per_second": 62.208,
+      "sampled_peak_server_rss_bytes": 163250176,
       "scenario": "baseline",
       "server_exit_code": -15,
-      "successful_operations_per_second": 64.573,
+      "successful_operations_per_second": 62.208,
       "successful_search_hit_counts": {
         "5": 50
       },
@@ -109,9 +113,9 @@
     },
     {
       "accepted_operation_latency_ms": {
-        "p50": 172.041,
-        "p95": 211.456,
-        "p99": 211.456
+        "p50": 173.102,
+        "p95": 205.817,
+        "p99": 205.817
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
@@ -121,16 +125,16 @@
       "client_concurrency": 25,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 2.319,
-        "p95": 8.687,
-        "p99": 8.687
+        "p50": 2.267,
+        "p95": 14.669,
+        "p99": 14.669
       },
       "drain_observation": null,
-      "duration_seconds": 0.223,
+      "duration_seconds": 0.224,
       "health_latency_ms": {
-        "p50": 13.805,
-        "p95": 46.568,
-        "p99": 46.568
+        "p50": 14.017,
+        "p95": 40.063,
+        "p99": 40.063
       },
       "intervention": null,
       "intervention_started_with_active_work": null,
@@ -139,11 +143,12 @@
       "observed_peak_active_operations": 10,
       "operator_report": {
         "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 152.588,
-        "latency_p95_ms": 187.333,
-        "latency_p99_ms": 187.333,
+        "latency_p50_ms": 148.16,
+        "latency_p95_ms": 190.198,
+        "latency_p99_ms": 190.198,
         "latency_sample_count": 11,
         "latency_sample_limit": 1000,
         "latency_window": "most_recent_timed_terminal_operations",
@@ -152,14 +157,17 @@
         },
         "provider_retry_totals": null,
         "provider_usage": null,
+        "reserved_operations": 0,
         "retained_rows": 11,
-        "scope": "local_single_instance"
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
       },
       "outcomes": {
         "ok": 10,
         "server_busy": 40
       },
-      "peak_server_rss_bytes": 154550272,
+      "peak_server_rss_bytes": 153747456,
       "peak_server_rss_scope": "process_max_at_application_shutdown",
       "provider_delay_seconds": 0.1,
       "provider_stage_counts": {
@@ -168,20 +176,20 @@
       },
       "provider_stage_event_count": 22,
       "rejected_response_latency_ms": {
-        "p50": 15.53,
-        "p95": 30.912,
-        "p99": 32.53
+        "p50": 16.092,
+        "p95": 37.157,
+        "p99": 39.088
       },
       "response_latency_ms": {
-        "p50": 17.046,
-        "p95": 184.992,
-        "p99": 211.456
+        "p50": 16.361,
+        "p95": 182.381,
+        "p99": 205.817
       },
-      "responses_per_second": 223.969,
-      "sampled_peak_server_rss_bytes": 154288128,
+      "responses_per_second": 222.977,
+      "sampled_peak_server_rss_bytes": 153419776,
       "scenario": "saturation",
       "server_exit_code": -15,
-      "successful_operations_per_second": 44.794,
+      "successful_operations_per_second": 44.595,
       "successful_search_hit_counts": {
         "5": 10
       },
@@ -189,28 +197,28 @@
     },
     {
       "accepted_operation_latency_ms": {
-        "p50": 543.14,
-        "p95": 595.993,
-        "p99": 600.431
+        "p50": 540.932,
+        "p95": 587.621,
+        "p99": 593.104
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
-        "health_200": 75,
-        "ok": 75
+        "health_200": 72,
+        "ok": 72
       },
       "client_concurrency": 10,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 1.7,
-        "p95": 2.32,
-        "p99": 5.849
+        "p50": 2.022,
+        "p95": 2.445,
+        "p99": 6.088
       },
       "drain_observation": null,
-      "duration_seconds": 2.803,
+      "duration_seconds": 2.787,
       "health_latency_ms": {
-        "p50": 13.194,
-        "p95": 20.344,
-        "p99": 42.259
+        "p50": 13.395,
+        "p95": 19.283,
+        "p99": 50.452
       },
       "intervention": null,
       "intervention_started_with_active_work": null,
@@ -219,11 +227,12 @@
       "observed_peak_active_operations": 10,
       "operator_report": {
         "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 539.755,
-        "latency_p95_ms": 588.021,
-        "latency_p99_ms": 597.436,
+        "latency_p50_ms": 537.966,
+        "latency_p95_ms": 576.473,
+        "latency_p99_ms": 579.79,
         "latency_sample_count": 51,
         "latency_sample_limit": 1000,
         "latency_window": "most_recent_timed_terminal_operations",
@@ -232,13 +241,16 @@
         },
         "provider_retry_totals": null,
         "provider_usage": null,
+        "reserved_operations": 0,
         "retained_rows": 51,
-        "scope": "local_single_instance"
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
       },
       "outcomes": {
         "ok": 50
       },
-      "peak_server_rss_bytes": 166019072,
+      "peak_server_rss_bytes": 165183488,
       "peak_server_rss_scope": "process_max_at_application_shutdown",
       "provider_delay_seconds": 0.5,
       "provider_stage_counts": {
@@ -252,15 +264,15 @@
         "p99": null
       },
       "response_latency_ms": {
-        "p50": 543.14,
-        "p95": 595.993,
-        "p99": 600.431
+        "p50": 540.932,
+        "p95": 587.621,
+        "p99": 593.104
       },
-      "responses_per_second": 17.838,
-      "sampled_peak_server_rss_bytes": 165822464,
+      "responses_per_second": 17.938,
+      "sampled_peak_server_rss_bytes": 165036032,
       "scenario": "slow-provider",
       "server_exit_code": -15,
-      "successful_operations_per_second": 17.838,
+      "successful_operations_per_second": 17.938,
       "successful_search_hit_counts": {
         "5": 50
       },
@@ -274,22 +286,22 @@
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
-        "health_200": 17,
-        "ok": 17
+        "health_200": 65,
+        "ok": 65
       },
       "client_concurrency": 10,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 2.032,
-        "p95": 5.787,
-        "p99": 5.787
+        "p50": 1.816,
+        "p95": 2.187,
+        "p99": 2.611
       },
       "drain_observation": null,
-      "duration_seconds": 0.627,
+      "duration_seconds": 2.338,
       "health_latency_ms": {
-        "p50": 13.183,
-        "p95": 23.155,
-        "p99": 23.155
+        "p50": 12.937,
+        "p95": 14.369,
+        "p99": 15.089
       },
       "intervention": null,
       "intervention_started_with_active_work": null,
@@ -298,11 +310,12 @@
       "observed_peak_active_operations": 0,
       "operator_report": {
         "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 125.81,
-        "latency_p95_ms": 125.81,
-        "latency_p99_ms": 125.81,
+        "latency_p50_ms": 127.656,
+        "latency_p95_ms": 127.656,
+        "latency_p99_ms": 127.656,
         "latency_sample_count": 1,
         "latency_sample_limit": 1000,
         "latency_window": "most_recent_timed_terminal_operations",
@@ -311,13 +324,16 @@
         },
         "provider_retry_totals": null,
         "provider_usage": null,
+        "reserved_operations": 0,
         "retained_rows": 1,
-        "scope": "local_single_instance"
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
       },
       "outcomes": {
-        "admission_unavailable": 50
+        "admission_busy": 50
       },
-      "peak_server_rss_bytes": 146980864,
+      "peak_server_rss_bytes": 148701184,
       "peak_server_rss_scope": "process_max_at_application_shutdown",
       "provider_delay_seconds": 0.1,
       "provider_stage_counts": {
@@ -326,17 +342,17 @@
       },
       "provider_stage_event_count": 2,
       "rejected_response_latency_ms": {
-        "p50": 121.713,
-        "p95": 129.288,
-        "p99": 133.298
+        "p50": 460.439,
+        "p95": 473.15,
+        "p99": 474.952
       },
       "response_latency_ms": {
-        "p50": 121.713,
-        "p95": 129.288,
-        "p99": 133.298
+        "p50": 460.439,
+        "p95": 473.15,
+        "p99": 474.952
       },
-      "responses_per_second": 79.74,
-      "sampled_peak_server_rss_bytes": 146653184,
+      "responses_per_second": 21.384,
+      "sampled_peak_server_rss_bytes": 148373504,
       "scenario": "locked-database",
       "server_exit_code": -15,
       "successful_operations_per_second": 0.0,
@@ -357,16 +373,16 @@
       "client_concurrency": 1,
       "completed_client_responses": 0,
       "discovery_latency_ms": {
-        "p50": 1.892,
-        "p95": 3.822,
-        "p99": 3.822
+        "p50": 1.748,
+        "p95": 2.26,
+        "p99": 2.26
       },
       "drain_observation": "terminal_outcome_observed",
-      "duration_seconds": 0.565,
+      "duration_seconds": 0.561,
       "health_latency_ms": {
-        "p50": 13.401,
-        "p95": 15.909,
-        "p99": 15.909
+        "p50": 13.172,
+        "p95": 16.064,
+        "p99": 16.064
       },
       "intervention": "client_task_cancelled",
       "intervention_started_with_active_work": true,
@@ -375,11 +391,12 @@
       "observed_peak_active_operations": 1,
       "operator_report": {
         "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 527.047,
-        "latency_p95_ms": 536.389,
-        "latency_p99_ms": 536.389,
+        "latency_p50_ms": 529.874,
+        "latency_p95_ms": 533.15,
+        "latency_p99_ms": 533.15,
         "latency_sample_count": 2,
         "latency_sample_limit": 1000,
         "latency_window": "most_recent_timed_terminal_operations",
@@ -388,11 +405,14 @@
         },
         "provider_retry_totals": null,
         "provider_usage": null,
+        "reserved_operations": 0,
         "retained_rows": 2,
-        "scope": "local_single_instance"
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
       },
       "outcomes": {},
-      "peak_server_rss_bytes": 146735104,
+      "peak_server_rss_bytes": 146931712,
       "peak_server_rss_scope": "process_max_at_application_shutdown",
       "provider_delay_seconds": 0.5,
       "provider_stage_counts": {
@@ -411,7 +431,7 @@
         "p99": null
       },
       "responses_per_second": 0.0,
-      "sampled_peak_server_rss_bytes": 146407424,
+      "sampled_peak_server_rss_bytes": 146702336,
       "scenario": "disconnect",
       "server_exit_code": -15,
       "successful_operations_per_second": 0.0,
@@ -420,30 +440,30 @@
     },
     {
       "accepted_operation_latency_ms": {
-        "p50": 538.714,
-        "p95": 538.714,
-        "p99": 538.714
+        "p50": 534.083,
+        "p95": 534.083,
+        "p99": 534.083
       },
       "attempted_requests": 1,
       "cheap_probe_outcomes": {
-        "health_200": 3,
-        "health_transport_failure": 19,
-        "ok": 3,
-        "transport_failure": 19
+        "health_200": 1,
+        "health_transport_failure": 22,
+        "ok": 1,
+        "transport_failure": 22
       },
       "client_concurrency": 1,
       "completed_client_responses": 1,
       "discovery_latency_ms": {
-        "p50": 0.805,
-        "p95": 2.022,
-        "p99": 3.431
+        "p50": 0.88,
+        "p95": 1.609,
+        "p99": 1.679
       },
       "drain_observation": null,
-      "duration_seconds": 0.55,
+      "duration_seconds": 0.552,
       "health_latency_ms": {
-        "p50": 0.359,
-        "p95": 15.428,
-        "p99": 17.324
+        "p50": 0.334,
+        "p95": 0.403,
+        "p99": 12.676
       },
       "intervention": "SIGTERM_during_active_work",
       "intervention_started_with_active_work": true,
@@ -452,11 +472,12 @@
       "observed_peak_active_operations": 1,
       "operator_report": {
         "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 532.554,
-        "latency_p95_ms": 534.515,
-        "latency_p99_ms": 534.515,
+        "latency_p50_ms": 523.571,
+        "latency_p95_ms": 526.504,
+        "latency_p99_ms": 526.504,
         "latency_sample_count": 2,
         "latency_sample_limit": 1000,
         "latency_window": "most_recent_timed_terminal_operations",
@@ -465,13 +486,16 @@
         },
         "provider_retry_totals": null,
         "provider_usage": null,
+        "reserved_operations": 0,
         "retained_rows": 2,
-        "scope": "local_single_instance"
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
       },
       "outcomes": {
         "ok": 1
       },
-      "peak_server_rss_bytes": 146751488,
+      "peak_server_rss_bytes": 145768448,
       "peak_server_rss_scope": "process_max_at_application_shutdown",
       "provider_delay_seconds": 0.5,
       "provider_stage_counts": {
@@ -485,21 +509,21 @@
         "p99": null
       },
       "response_latency_ms": {
-        "p50": 538.714,
-        "p95": 538.714,
-        "p99": 538.714
+        "p50": 534.083,
+        "p95": 534.083,
+        "p99": 534.083
       },
-      "responses_per_second": 1.819,
-      "sampled_peak_server_rss_bytes": 146554880,
+      "responses_per_second": 1.812,
+      "sampled_peak_server_rss_bytes": 145440768,
       "scenario": "shutdown",
       "server_exit_code": -15,
-      "successful_operations_per_second": 1.819,
+      "successful_operations_per_second": 1.812,
       "successful_search_hit_counts": {
         "5": 1
       },
       "warmup_operations": 1
     }
   ],
-  "source_revision": "d2ca1287628cfb03a0e7e4110bc47b4275f31056",
+  "source_revision": "3838e0d6c220d3664b11da2fda31c3526a4acb9f",
   "working_tree_dirty": false
 }

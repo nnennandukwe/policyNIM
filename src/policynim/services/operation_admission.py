@@ -10,7 +10,11 @@ from threading import Event
 from typing import Literal, TypeVar
 
 from policynim.errors import PolicyNIMError, ProviderError
-from policynim.operations import current_correlation_id, emit_operation_event
+from policynim.operations import (
+    current_correlation_id,
+    emit_operation_event,
+    safe_exception_diagnostics,
+)
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import (
     AuthenticatedPrincipal,
@@ -49,7 +53,7 @@ def record_operation_storage_failure(
         level=logging.ERROR,
         event="operation.storage_failure",
         phase=phase,
-        exception_class=type(error).__name__,
+        **safe_exception_diagnostics(error),
         sqlite_code=code if isinstance(code, int) else None,
         os_errno=os_errno if isinstance(os_errno, int) else None,
         operation_id=operation_id,

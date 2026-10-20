@@ -10,6 +10,7 @@ import stat
 import uuid
 import weakref
 from pathlib import Path
+from typing import Literal
 
 
 class OperationOwner:
@@ -22,19 +23,31 @@ class OperationOwner:
         self.identity = uuid.uuid4().hex
         path = self.directory / (self.identity + ".lock")
         self._path = path
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        pending = self.directory / ("." + self.identity + ".pending")
+        descriptor = os.open(pending, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        published = False
         try:
             os.write(descriptor, b"0")
             _lock(descriptor)
-        except BaseException:
+            os.link(pending, path)  # Publish only an already-held inode, without replacing a lease.
+            published = True
             try:
-                path.unlink()
+                pending.unlink()
             except OSError:
                 logging.getLogger(__name__).warning(
-                    "Operation owner cleanup failed: storage_unavailable."
+                    "Operation owner temporary alias cleanup deferred: storage_unavailable."
                 )
-            finally:
-                os.close(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            for unfinished in (pending, path) if published else (pending,):
+                try:
+                    unfinished.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logging.getLogger(__name__).warning(
+                        "Operation owner cleanup failed: storage_unavailable."
+                    )
             raise
         self._descriptor = descriptor
         self._release = weakref.finalize(self, os.close, descriptor)
@@ -99,3 +112,30 @@ def _lock(descriptor: int) -> None:
         import fcntl
 
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def inspect_owner_lease(database: Path, identity: str) -> Literal["live", "abandoned", "unknown"]:
+    """Observe an existing kernel lease without creating files or changing durable state."""
+    if not re.fullmatch(r"[0-9a-f]{32}", identity):
+        return "unknown"
+    path = database.with_name(database.name + ".owners") / (identity + ".lock")
+    mode = os.O_RDWR if os.name == "nt" else os.O_RDONLY
+    try:
+        descriptor = os.open(path, mode | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return "unknown"
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return "unknown"
+        try:
+            if os.name == "nt":
+                _lock(descriptor)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as exc:
+            return "live" if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK} else "unknown"
+        return "abandoned"
+    finally:
+        os.close(descriptor)

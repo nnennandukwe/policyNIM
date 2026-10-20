@@ -141,8 +141,10 @@ isn't durable across deployments. Set `POLICYNIM_BETA_AUTH_DB_PATH` to
 `/app/state/auth.sqlite3` on the mounted volume; beta accounts, keys and operation
 accounting share that database. Preserve its sibling `auth.sqlite3.owners/` directory
 across restarts so interrupted-operation recovery can inspect old owner leases.
-Use SQLite's online backup API for a running database and retain matching ownership
-metadata; don't copy only the main database file while writers are active.
+Quiesce admissions and drain or stop workers before preserving a matching database
+and owner-directory snapshot. Use SQLite's online backup API rather than copying only
+the main file while writers are active. A database-only emergency restore can leave
+unknown ownership; preserve those reservations for operator reconciliation.
 For durable evaluations, set `POLICYNIM_EVAL_WORKSPACE_DIR` to
 `/app/state/evals/workspace`; the job database lives under `jobs/jobs.sqlite3`.
 Back up evaluation artifacts and job state together, and verify restored job recovery
@@ -167,11 +169,11 @@ supply that production evidence, and this change doesn't authorize more replicas
 
 The [uniform receipt](evidence/hosted-capacity/uniform-synthetic.json) and
 [skewed receipt](evidence/hosted-capacity/skewed-synthetic.json) were generated from
-clean source `d2ca1287628cfb03a0e7e4110bc47b4275f31056` on the hardware named
+clean source `3838e0d6c220d3664b11da2fda31c3526a4acb9f` on the hardware named
 inside each report. Each run used 25 synthetic callers, 10,000 chunks, two requests
 per caller and a global cap of ten. Both baseline scenarios completed all 50
 requests with ten active operations observed. Uniform baseline accepted-request
-p95 was 178.943 ms; the receipt records separate saturation, locking, slow-provider,
+p95 was 215.422 ms; the receipt records separate saturation, locking, slow-provider,
 disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
@@ -187,3 +189,22 @@ Readiness transport failures during intentional shutdown remain counted as
 `health_transport_failure`; they don't silently end the sampling series.
 Unexpected probe exceptions fail the harness with a sanitized exception class
 instead of producing a success receipt with incomplete probes.
+
+The report separates confirmed live-owner work (`active_operations`) from all
+reserved rows (`reserved_operations`), abandoned owners awaiting transactional
+recovery (`unreconciled_operations`) and unavailable ownership evidence
+(`unknown_owner_operations`). Observation acquires only existing kernel leases;
+it creates no owner files and doesn't mark rows recovered. Admission still counts
+all reserved rows until its own committed recovery, so observation can't free a slot.
+Load-generator report reads run in worker threads so SQLite waits don't block HTTP
+client timers on the asyncio event loop.
+
+Unexpected tool/callback diagnostics retain at most eight owned package locations
+(module, function and line) and four exception classes. They omit filenames,
+source lines, locals, exception messages and request/provider bodies. The innermost
+owned location helps identify a failure stage without exposing a raw traceback.
+
+The harness validates JSON-RPC version/request identity and typed MCP discovery/tool
+results before counting success. HTTP 200 protocol errors, missing results and malformed
+search payloads produce explicit error outcomes; warmup fails instead of inflating
+successful throughput. Responses and validation error text never enter the receipt.
