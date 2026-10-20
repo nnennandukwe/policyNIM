@@ -159,17 +159,23 @@ def run_cli(arguments: list[str], *, env: dict[str, str], cwd: Path) -> dict:
     return json.loads(run_command(arguments, env=env, cwd=cwd))
 
 
-async def check_client(client: Client, mode: str) -> dict[str, object]:
+async def check_client(
+    client: Client, mode: str, *, authenticated: bool = False
+) -> dict[str, object]:
     """Discover real installed tools and check the negotiated protocol."""
     expected = "2025-11-25" if mode == "legacy" else "2026-07-28"
     require(client.protocol_version == expected, "Unexpected negotiated MCP protocol.")
     listing = await client.list_tools()
     names = sorted(tool.name for tool in listing.tools)
-    require(
-        names
-        == ["policy_compile", "policy_preflight", "policy_preflight_evidence", "policy_search"],
-        "Installed MCP tools differ.",
-    )
+    expected_tools = [
+        "policy_compile",
+        "policy_preflight",
+        "policy_preflight_evidence",
+        "policy_search",
+    ]
+    if authenticated:
+        expected_tools += ["eval_submit", "eval_inspect", "eval_cancel", "eval_result"]
+    require(names == sorted(expected_tools), "Installed MCP tools differ.")
     require(
         all(tool.input_schema and tool.output_schema for tool in listing.tools),
         "Missing advertised tool schemas.",
@@ -203,7 +209,7 @@ async def check_http(origin: str, token: str) -> list[dict[str, object]]:
             async with asyncio.timeout(45):
                 transport = streamable_http_client(origin + "/mcp", http_client=http_client)
                 async with Client(transport, mode=mode, read_timeout_seconds=20) as client:
-                    results.append(await check_client(client, mode))
+                    results.append(await check_client(client, mode, authenticated=True))
     return results
 
 
