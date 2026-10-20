@@ -140,6 +140,8 @@ def test_completed_client_isnt_reported_as_disconnected(
 
     if probe_failure == "transport":
         assert result["cheap_probe_outcomes"]["health_transport_failure"] >= 1
+        assert result["intervention_probe_observed"] is False
+        assert result["measurement_complete"] is False
 
 
 @pytest.mark.parametrize(
@@ -338,3 +340,46 @@ def test_public_harness_final_state_cant_replace_missing_workload_observations(
     assert scenario["observed_peak_active_operations"] is None
     assert scenario["measurement_complete"] is False
     assert report["measurement_complete"] is False and exit_code == 1
+
+
+def test_shutdown_waits_for_observed_health_probe_before_intervention(tmp_path: Path) -> None:
+    """Delay local RSS sampling while real HTTP work starts, retaining the race receipt."""
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "delayed-health-shutdown.json"
+    script = """
+import runpy
+import sys
+import time
+namespace = runpy.run_path('scripts/measure_hosted_capacity.py')
+main = namespace['main']
+original = namespace['_sample_rss']
+calls = 0
+
+def delayed_sample(pid):
+    '''Model a slow local process sampler before the first measured health request.'''
+    global calls
+    calls += 1
+    if calls == 2:
+        time.sleep(0.25)
+    return original(pid)
+
+main.__globals__['_sample_rss'] = delayed_sample
+sys.argv = ['measure', '--output', sys.argv[1], '--users', '1', '--chunks', '10',
+            '--requests-per-user', '1', '--provider-delay', '0.2', '--scenarios', 'shutdown']
+raise SystemExit(main())
+"""
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(output)],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=45,
+        check=False,
+    )
+    report = json.loads(output.read_text())
+    scenario = report["scenarios"][0]
+    assert process.returncode == 0, process.stderr
+    assert scenario["intervention_started_with_active_work"] is True
+    assert scenario["cheap_probe_outcomes"].get("health_200", 0) > 0, scenario
+    assert scenario["intervention_probe_observed"] is True
+    assert report["live_nvidia_calls"] == 0 and report["production_capacity_verified"] is False
