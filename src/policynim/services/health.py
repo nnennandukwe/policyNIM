@@ -8,6 +8,7 @@ from pathlib import Path
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError, GenerationError, IndexCompatibilityError
+from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.generations import GenerationStore
 from policynim.services.index_store import pinned_generation
@@ -150,9 +151,10 @@ def _check_hosted_runtime_health(
 
 
 def _derive_mcp_url(settings: Settings) -> str | None:
+    """Return the optional public MCP route included in readiness responses."""
     if settings.mcp_public_base_url is None:
         return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+    return public_route_url(settings.mcp_public_base_url, "/mcp")
 
 
 def format_health_failure_reason(exc: Exception) -> str:
