@@ -612,3 +612,16 @@ def test_preflight_expected_policy_needs_its_own_source_evidence(
     assert scored.matched_policy_ids == []
     assert scored.metrics.expected_policy_recall == 0
     assert any("guidance evidence" in reason for reason in scored.failure_reasons)
+
+
+def test_search_context_mismatch_has_one_failure_reason() -> None:
+    """Chunk and policy expectation checks mustn't duplicate one context failure."""
+    case = EvalCase(
+        case_id="context-mismatch",
+        kind="search",
+        input="Search",
+        expected_insufficient_context=True,
+    )
+    result = SearchResult(query=case.input, top_k=1, hits=[], insufficient_context=False)
+    scored = _score_search_case(case, result=result, rerank_enabled=True)
+    assert sum("insufficient_context mismatch" in reason for reason in scored.failure_reasons) == 1
