@@ -16,7 +16,8 @@ fields use the prefixes shown in the example; the manifest checksum is bare hex.
 Each required check has a unique ID and scope. Execution checks need nonempty named
 cases and exact context. Client context includes client/version, server SDK, protocol,
 transport and auth mode. Deployment context includes provider project, environment,
-service, deployment and application source. Select every client/protocol/transport
+service, deployment and application source. Published installation checks require the
+channel and distribution. Select every client/protocol/transport
 combination that's required; one SDK receipt can't substitute for a coding-client run.
 
 The artifact check recomputes local download sizes and checksums against the selected
@@ -101,7 +102,7 @@ CHANGELOG section plus one Unreleased section. Empty/comment-only/placeholder bo
 fail before rendering or replacing earlier notes. Candidate feature status remains
 in the authored body; the checker doesn't turn pending integration into a shipped claim.
 
-For later workflow integration, root can call the notes checker after resolving the
+For later integration, the release workflow can call the notes checker after resolving the
 release version and before draft creation. Call the collector after existing manifest
 and attestation verification, storing its output outside `release-assets`. Hosted and
 actual-client jobs should retain their own normalized receipts, then use an explicitly

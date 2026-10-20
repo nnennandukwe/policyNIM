@@ -307,7 +307,9 @@ def provenance_receipt(selection: dict, assets: Path) -> dict:
     }
 
 
-@pytest.mark.parametrize("fault", [None, "source", "workflow", "subject", "unverified", "failed"])
+@pytest.mark.parametrize(
+    "fault", [None, "source", "workflow", "subject", "unverified", "failed", "contradictory"]
+)
 def test_provenance_receipt_is_bound_to_every_recomputed_subject(
     candidate, tmp_path: Path, fault
 ) -> None:
@@ -326,6 +328,8 @@ def test_provenance_receipt_is_bound_to_every_recomputed_subject(
         receipt["subjects"][0]["verified"] = False
     elif fault == "failed":
         receipt.update(status="failed", failure="attestation_rejected")
+    elif fault == "contradictory":
+        receipt["failure"] = "attestation_rejected"
     receipt_path = tmp_path / "provenance.json"
     receipt_path.write_text(json.dumps(receipt))
     process, report = run_collector(path, assets, "--provenance-receipt", str(receipt_path))
@@ -494,3 +498,39 @@ raise SystemExit(collector.main())
         check=False,
     )
     assert process.returncode == 0, process.stderr
+
+
+@pytest.mark.parametrize("missing", ["channel", "distribution", "both"])
+def test_published_install_needs_selected_channel_and_distribution(candidate, missing) -> None:
+    """A named installation case can't stand in for its missing publication target."""
+    path, selection, assets = candidate
+    context = {"channel": "github-release", "distribution": "wheel"}
+    if missing == "both":
+        context.clear()
+    else:
+        context.pop(missing)
+    selection["required_checks"].append(
+        {"id": "published", "kind": "published_install", "context": context, "cases": ["install"]}
+    )
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import ValidationError as JSONSchemaValidationError
+
+    schema = json.loads((ROOT / "docs/release-evidence-selection.schema.json").read_text())
+    with pytest.raises(JSONSchemaValidationError):
+        Draft202012Validator(schema).validate(selection)
+    path.write_text(json.dumps(selection))
+    process, report = run_collector(path, assets)
+    assert process.returncode == 2 and report["reason"] == "invalid_selection"
+
+
+def test_success_label_with_recorded_failure_holds(candidate, tmp_path: Path) -> None:
+    """Contradictory failure evidence can't be ignored by a passing execution label."""
+    path, selection, assets = candidate
+    selection["required_checks"].append(client_requirement())
+    path.write_text(json.dumps(selection))
+    receipt = execution_receipt(selection)
+    receipt["failure_class"] = "assertion_failed"
+    receipt_path = tmp_path / "contradictory.json"
+    receipt_path.write_text(json.dumps(receipt))
+    process, report = run_collector(path, assets, "--execution-receipt", str(receipt_path))
+    assert process.returncode == 1 and report["checks"][1]["reason"] == "recorded_execution_failed"

@@ -133,6 +133,13 @@ REQUIREMENT_SCHEMA_EXTRA: dict[str, Any] = {
             },
         },
         {
+            "if": {"properties": {"kind": {"const": "published_install"}}},
+            "then": {
+                "required": ["context"],
+                "properties": {"context": {"required": ["channel", "distribution"]}},
+            },
+        },
+        {
             "if": {
                 "properties": {
                     "kind": {"enum": ["rollback", "published_install", "ci", "optional_extras"]}
@@ -172,9 +179,11 @@ class Requirement(StrictModel):
             if self.kind == "client"
             else DEPLOYMENT_CONTEXT
             if self.kind == "deployment"
+            else {"channel", "distribution"}
+            if self.kind == "published_install"
             else set()
         )
-        allowed = required if required else OTHER_CONTEXT
+        allowed = required if self.kind in {"client", "deployment"} else OTHER_CONTEXT
         if self.kind == "deployment":
             allowed = allowed | {"image_digest", "auth_mode"}
         if not required <= self.context.keys() or self.context.keys() - allowed:
@@ -419,6 +428,7 @@ def provenance_result(
         if (
             artifacts["status"] != "passed"
             or receipt.get("status") != "passed"
+            or receipt.get("failure") is not None
             or receipt.get("repository") != expected.repository
             or receipt.get("source_revision") != expected.source_sha
             or receipt.get("signer_workflow")
@@ -469,7 +479,7 @@ def recorded_result(
         result["reason"] = "identity_mismatch"
     elif receipt.context != requirement.context:
         result["reason"] = "context_mismatch"
-    elif receipt.status != "passed" or receipt.exit_code != 0:
+    elif receipt.status != "passed" or receipt.exit_code != 0 or receipt.failure_class is not None:
         result["reason"] = "recorded_execution_failed"
     elif {case.id for case in receipt.cases} != set(requirement.cases) or any(
         case.status != "passed" for case in receipt.cases

@@ -136,6 +136,28 @@
           "if": {
             "properties": {
               "kind": {
+                "const": "published_install"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "required": [
+                  "channel",
+                  "distribution"
+                ]
+              }
+            },
+            "required": [
+              "context"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
                 "enum": [
                   "rollback",
                   "published_install",
