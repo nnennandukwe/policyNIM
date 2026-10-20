@@ -49,6 +49,7 @@ def oauth_settings(tmp_path: Path, **overrides: object) -> Settings:
         "index_db_path": tmp_path / "index.sqlite3",
         "generations_dir": tmp_path / "generations",
         "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        "eval_workspace_dir": tmp_path / "evaluations",
         "runtime_rules_artifact_path": tmp_path / "rules.json",
     }
     values.update(overrides)
