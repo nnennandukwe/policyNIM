@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
+import pytest
 import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -13,9 +16,75 @@ HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 
 
+def _workflow_files(directory: Path) -> tuple[Path, ...]:
+    """Include every supported workflow extension, including newly added files."""
+    return tuple(sorted([*directory.glob("*.yml"), *directory.glob("*.yaml")]))
+
+
+WORKFLOW_FILES = _workflow_files(REPO_ROOT / ".github/workflows")
+NODE24_ACTION_MAJOR_COMMENTS = {
+    "actions/checkout": {"v5", "v6", "v7"},
+    "actions/setup-python": {"v6"},
+    "actions/upload-artifact": {"v6", "v7"},
+    "actions/download-artifact": {"v7", "v8"},
+    "astral-sh/setup-uv": {"v8"},
+}
+
+
 def _read_text(path: Path) -> str:
     """Read a workflow file as UTF-8 text."""
     return path.read_text(encoding="utf-8")
+
+
+def _workflow_uses(path: Path) -> list[tuple[str, str, str | None]]:
+    """Read actual YAML keys and refs, retaining source comments for approved versions."""
+    text = _read_text(path)
+    lines = text.splitlines()
+    document = yaml.compose(text)
+    results: list[tuple[str, str, str | None]] = []
+
+    def visit(node: Node) -> None:
+        """Traverse scalar uses keys regardless of YAML quoting or whitespace."""
+        if isinstance(node, MappingNode):
+            for key, value in node.value:
+                if isinstance(key, ScalarNode) and key.value == "uses":
+                    assert isinstance(value, ScalarNode), "Action refs must be scalar strings."
+                    action, separator, ref = value.value.rpartition("@")
+                    assert separator, "Remote action refs must name a revision."
+                    version = re.search(r"#\s*(v[0-9][^\s#]*)", lines[value.start_mark.line])
+                    results.append((action, ref, version.group(1) if version else None))
+                visit(value)
+        elif isinstance(node, SequenceNode):
+            for item in node.value:
+                visit(item)
+
+    assert document is not None
+    visit(document)
+    return results
+
+
+def _assert_workflow_pins(path: Path) -> None:
+    """Reject mutable refs, retaining only the exact release publisher exception."""
+    for action, ref, version in _workflow_uses(path):
+        if action == "pypa/gh-action-pypi-publish":
+            assert path.resolve() == RELEASE_WORKFLOW.resolve()
+            assert ref == "v1.14.0"
+            continue
+        assert re.fullmatch(r"[0-9a-f]{40}", ref), (path, action, ref)
+        assert version is not None, (path, action)
+        assert version.split(".")[0] in NODE24_ACTION_MAJOR_COMMENTS[action], (
+            path,
+            action,
+            version,
+        )
+    assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in _read_text(path)
+
+
+def test_workflows_pin_node24_compatible_actions() -> None:
+    """Keep all workflows on reviewed Node 24 action commits."""
+    assert WORKFLOW_FILES
+    for path in WORKFLOW_FILES:
+        _assert_workflow_pins(path)
 
 
 def test_ci_pytest_gate_excludes_all_live_markers() -> None:
@@ -88,9 +157,9 @@ def test_release_workflow_runs_offline_verification_before_release_artifacts() -
         "tags:",
         '- "v*.*.*"',
         "uv lock --check",
-        "uv run ruff check .",
-        "uv run pyright",
-        'uv run pytest -q -m "not live and not docker_live"',
+        "uv run --no-sync ruff check .",
+        "uv run --no-sync pyright",
+        'uv run --no-sync pytest -q -m "not live and not docker_live"',
         "uv build --out-dir dist",
         "wheel-smoke:",
         "standalone-build:",
@@ -186,3 +255,102 @@ def test_fresh_wheel_install_uses_locked_hashed_dependencies() -> None:
     assert '"export", "--locked"' in command
     assert '"--require-hashes", "--no-deps"' in command
     assert '"--lockfile"' in command and '"--lock-digest"' in command
+    assert '"--requirements"' in command
+
+
+def _assert_locked_release_dependencies(workflow: dict) -> None:
+    """Require a locked setup step in each build job before checking no-sync commands."""
+    for name, groups in {"verify": ("test", "dev"), "standalone-build": ("release",)}.items():
+        commands = [
+            line.strip()
+            for step in workflow["jobs"][name]["steps"]
+            for line in step.get("run", "").splitlines()
+        ]
+        syncs = [
+            shlex.split(line, comments=True)
+            for line in commands
+            if shlex.split(line, comments=True)[:2] == ["uv", "sync"]
+        ]
+        assert syncs, f"{name} must install from the reviewed lockfile."
+        for group in groups:
+            assert any(
+                "--locked" in tokens
+                and any(
+                    tokens[index : index + 2] == ["--group", group] for index in range(len(tokens))
+                )
+                for tokens in syncs
+            )
+    for job in workflow["jobs"].values():
+        for step in job["steps"]:
+            for line in step.get("run", "").splitlines():
+                if line.strip().startswith("uv "):
+                    tokens = shlex.split(line, comments=True)
+                    if tokens[:2] == ["uv", "sync"]:
+                        assert "--locked" in tokens
+                    if tokens[:2] == ["uv", "run"]:
+                        assert "--no-sync" in tokens
+
+
+def test_release_uses_locked_dependencies_without_implicit_resync() -> None:
+    """Release verification and standalone builds must use the reviewed lockfile."""
+    _assert_locked_release_dependencies(yaml.safe_load(_read_text(RELEASE_WORKFLOW)))
+
+
+@pytest.mark.parametrize("reference", ["main", "v5", "abc123", "A" * 40])
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+def test_action_reference_parser_doesnt_hide_mutable_refs(
+    tmp_path: Path, reference: str, quote: str
+) -> None:
+    """Unpinned refs must reach the pin assertion, including quoted YAML values."""
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: {quote}actions/checkout@{reference}{quote} # v5.0.1\n")
+    uses = _workflow_uses(path)
+    assert uses == [("actions/checkout", reference, "v5.0.1")]
+    assert re.fullmatch(r"[0-9a-f]{40}", uses[0][1]) is None
+
+
+@pytest.mark.parametrize("key", ['"uses":', "uses :", "'uses':"])
+def test_yaml_key_spelling_cant_hide_an_unpinned_action(tmp_path: Path, key: str) -> None:
+    """Valid quoted or spaced YAML keys must still reach the pin assertion."""
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"{key} actions/checkout@main # v5.0.1\n")
+    with pytest.raises(AssertionError):
+        _assert_workflow_pins(path)
+
+
+def test_discovery_includes_new_workflow_files(tmp_path: Path) -> None:
+    """A new workflow can't escape the common action checks."""
+    for name in ("ci.yml", "new-delivery.yaml"):
+        (tmp_path / name).write_text("uses: actions/checkout@main\n")
+    assert {path.name for path in _workflow_files(tmp_path)} == {"ci.yml", "new-delivery.yaml"}
+
+
+@pytest.mark.parametrize("ref", ["main", "v1.14.0"])
+def test_publisher_exception_cant_be_used_outside_release(tmp_path: Path, ref: str) -> None:
+    """The approved publisher exception doesn't apply to CI or other workflow files."""
+    path = tmp_path / "ci.yml"
+    path.write_text(f"uses: pypa/gh-action-pypi-publish@{ref}\n")
+    with pytest.raises(AssertionError):
+        _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize("job", ["verify", "standalone-build"])
+def test_replacing_locked_setup_with_unlocked_install_fails(job: str) -> None:
+    """Build jobs can't remove locked setup while keeping a vacuous no-sync check."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for step in workflow["jobs"][job]["steps"]:
+        if step.get("run", "").startswith("uv sync"):
+            step["run"] = "python -m pip install ."
+    with pytest.raises(AssertionError):
+        _assert_locked_release_dependencies(workflow)
+
+
+@pytest.mark.parametrize("job", ["verify", "standalone-build"])
+def test_comment_flags_cant_satisfy_locked_setup(job: str) -> None:
+    """A shell comment can't turn an unlocked command into a passing locked gate."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for step in workflow["jobs"][job]["steps"]:
+        if step.get("run", "").startswith("uv sync"):
+            step["run"] = step["run"].replace("--locked", "") + " # --locked"
+    with pytest.raises(AssertionError):
+        _assert_locked_release_dependencies(workflow)

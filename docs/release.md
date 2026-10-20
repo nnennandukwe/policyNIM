@@ -27,10 +27,11 @@ policynim ingest
 Run the deterministic gates locally:
 
 ```bash
+uv sync --locked --group test --group dev
 uv lock --check
-uv run ruff check .
-uv run pyright
-uv run pytest -q -m "not live and not docker_live"
+uv run --no-sync ruff check .
+uv run --no-sync pyright
+uv run --no-sync pytest -q -m "not live and not docker_live"
 uv build --out-dir dist
 ```
 
