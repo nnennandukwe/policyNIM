@@ -50,6 +50,6 @@ Out of scope: An unrelated editorial-only change by a documentation editor doesn
 ## Sources and Change Notice
 
 - TRACE: [W3C Trace Context Recommendation](https://www.w3.org/TR/2021/REC-trace-context-1-20211123/); revision `W3C Recommendation 2021-11-23`. Sections: 3.2, 4, 6, 7.
-- OTEL-LOG: [OpenTelemetry stable Logs Data Model](https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md); revision `3e4f2ff15933d70356cc18a9a96719b78d116233`. Sections: Trace Context Fields, Field: Resource, Severity Fields.
+- OTEL-LOG: [OpenTelemetry stable Logs Data Model](https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md); revision `3e4f2ff15933d70356cc18a9a96719b78d116233`. Sections: Trace Context Fields.
 
 Original PolicyNIM review guidance; source text isn't reproduced. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.

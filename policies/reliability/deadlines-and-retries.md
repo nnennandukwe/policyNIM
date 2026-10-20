@@ -50,6 +50,6 @@ Out of scope: An unrelated editorial-only change by a documentation editor doesn
 ## Sources and Change Notice
 
 - AWS-RETRY: [AWS: Timeouts, retries, and backoff with jitter](https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter); revision `Published and last modified 2019-12-05`. Sections: Timeouts, Retries and backoff, Jitter.
-- HTTP: [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html); revision `RFC 9110, June 2022`. Sections: 9.2.2, 15, 10.2.3.
+- HTTP: [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html); revision `RFC 9110, June 2022`. Sections: 10.2.3.
 
 Original PolicyNIM review guidance; source text isn't reproduced. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.

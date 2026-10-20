@@ -3,24 +3,24 @@
   "name": "engineering-source-coverage",
   "scope": "authored_source_scenarios",
   "evaluation_status": "not_model_evaluated",
-  "review_status": "independent_source_reviewed_not_model_evaluated",
+  "review_status": "author_revised_pending_independent_source_review_not_model_evaluated",
   "changed_policy_revisions": {
-    "TEST-FAIL-001": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
-    "TEST-CONTRACT-001": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+    "TEST-FAIL-001": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+    "TEST-CONTRACT-001": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
     "ARCH-API-001": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
-    "API-ERROR-001": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+    "API-ERROR-001": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
     "API-PAGE-001": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
     "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
     "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
-    "ARCH-JOB-001": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
-    "BE-CONFIG-001": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
-    "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+    "ARCH-JOB-001": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+    "BE-CONFIG-001": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+    "REL-TIMEOUT-001": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
     "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
-    "BE-LOG-001": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
-    "BE-TRACE-001": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
+    "BE-LOG-001": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+    "BE-TRACE-001": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
     "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
-    "SUPPLY-BUILD-001": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
-    "SUPPLY-PROVENANCE-001": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39"
+    "SUPPLY-BUILD-001": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+    "SUPPLY-PROVENANCE-001": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e"
   },
   "source_aliases": {
     "SSDF": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
@@ -52,7 +52,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "TEST-FAIL-001",
-      "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -90,7 +90,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "TEST-FAIL-001",
-      "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -128,7 +128,7 @@
         "TEST-FAIL-001"
       ],
       "policy_id": "TEST-FAIL-001",
-      "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -144,7 +144,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "TEST-CONTRACT-001",
-      "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -182,7 +182,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "TEST-CONTRACT-001",
-      "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -220,7 +220,7 @@
         "TEST-CONTRACT-001"
       ],
       "policy_id": "TEST-CONTRACT-001",
-      "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -330,7 +330,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "API-ERROR-001",
-      "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -368,7 +368,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "API-ERROR-001",
-      "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -406,7 +406,7 @@
         "API-ERROR-001"
       ],
       "policy_id": "API-ERROR-001",
-      "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -696,7 +696,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -734,7 +734,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -772,7 +772,7 @@
         "ARCH-JOB-001"
       ],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -788,7 +788,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -826,7 +826,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -864,7 +864,7 @@
         "BE-CONFIG-001"
       ],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -880,7 +880,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "REL-TIMEOUT-001",
-      "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -920,7 +920,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "REL-TIMEOUT-001",
-      "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -960,7 +960,7 @@
         "REL-TIMEOUT-001"
       ],
       "policy_id": "REL-TIMEOUT-001",
-      "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -1070,7 +1070,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1110,7 +1110,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1150,7 +1150,7 @@
         "BE-LOG-001"
       ],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -1166,7 +1166,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1207,7 +1207,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1248,7 +1248,7 @@
         "BE-TRACE-001"
       ],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -1358,7 +1358,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "SUPPLY-BUILD-001",
-      "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1399,7 +1399,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "SUPPLY-BUILD-001",
-      "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1440,7 +1440,7 @@
         "SUPPLY-BUILD-001"
       ],
       "policy_id": "SUPPLY-BUILD-001",
-      "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -1456,7 +1456,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "SUPPLY-PROVENANCE-001",
-      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1495,7 +1495,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "SUPPLY-PROVENANCE-001",
-      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1534,7 +1534,7 @@
         "SUPPLY-PROVENANCE-001"
       ],
       "policy_id": "SUPPLY-PROVENANCE-001",
-      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
@@ -1544,33 +1544,33 @@
       "case_id": "test-fail-001-boundary",
       "kind": "boundary",
       "role": "application-developer",
-      "input": "An application developer corrects a comment without changing executable behavior; existing runtime checks remain unchanged.",
+      "input": "An application developer changes publisher recovery after an interrupted activation, injects the failure through the runtime boundary, restarts the process, verifies durable state and a successful retry, and records the tested revision. The review reports these as project reliability checks without claiming SSDF mandates every general reliability case.",
       "expected_policy_ids": [
         "TEST-FAIL-001"
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "TEST-FAIL-001",
-      "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "A static text correction without a runtime effect doesn't need fault injection. These are project verification rules; SSDF addresses security testing and doesn't mandate every listed general reliability case.",
-      "rationale": "A comment-only correction has no runtime effect, so it doesn't require injecting a publisher failure."
+      "rationale": "Changed recovery behavior selects this policy and receives runtime failure and recovery checks. Its SSDF boundary limits framework claims even when the project verification passes."
     },
     {
       "case_id": "test-contract-001-boundary",
       "kind": "boundary",
       "role": "library-maintainer",
-      "input": "A library maintainer renames a private helper; wire output and exported APIs stay unchanged, and the existing installed-consumer contract tests pass.",
+      "input": "A library maintainer changes a public serialized response by adding an optional generation field. A strict installed consumer fixture accepts the new response and previous supported payload, rejects malformed IDs, and retains the regression and dependency identities. The report labels this offline contract evidence and doesn't claim semantic retrieval or live provider quality.",
       "expected_policy_ids": [
         "TEST-CONTRACT-001"
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "TEST-CONTRACT-001",
-      "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Internal refactors with unchanged public behavior can reuse existing contract tests. Synthetic fixtures don't prove semantic retrieval or live provider quality.",
-      "rationale": "An internal refactor can reuse passing contract tests when public behavior hasn't changed; a new external contract isn't invented."
+      "rationale": "Changed public serialization selects this policy and receives consumer-boundary verification. Passing synthetic contract fixtures still doesn't establish semantic retrieval or live provider quality."
     },
     {
       "case_id": "arch-api-001-boundary",
@@ -1598,7 +1598,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "API-ERROR-001",
-      "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "RFC 9457 is an optional common error format. Existing documented error formats can remain; this policy doesn't require converting every response into problem details.",
@@ -1662,7 +1662,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "ARCH-JOB-001",
-      "policy_revision": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Exactly-once delivery isn't inferred from a queue setting. Deduplication scope and retention are workload decisions; an explicitly harmless repeat can be documented as such.",
@@ -1678,7 +1678,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup.",
@@ -1694,7 +1694,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "REL-TIMEOUT-001",
-      "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Timeout values follow measured latency, acceptable failure rates, and caller budgets. AWS example percentiles aren't universal requirements; non-idempotent effects need extra protection.",
@@ -1726,7 +1726,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging.",
@@ -1742,7 +1742,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-TRACE-001",
-      "policy_revision": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Trace and span IDs have different roles. A new child span normally gets a new span ID; preserve valid trace identity without requiring every hop to repeat the same span ID.",
@@ -1774,7 +1774,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "SUPPLY-BUILD-001",
-      "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Exact patch pins alone don't prove bit-for-bit reproducibility. Document platform, toolchain, network inputs, and remaining nondeterminism before making that claim.",
@@ -1790,7 +1790,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "SUPPLY-PROVENANCE-001",
-      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "SLSA levels depend on their full track requirements and trust model. This selected guidance doesn't assess a builder or certify SSDF, SLSA, or OSPS compliance.",
@@ -1803,6 +1803,6 @@
   "profile_digest": null,
   "full_engineering_profile": {
     "profile_id": "policynim.full-engineering",
-    "profile_digest": "sha256:36dadb90216688cdc303eb1c8f47051cdeaade79d3655e5d681b5b19bb629433"
+    "profile_digest": "sha256:862df46d965e63c57b010543815cfb4eb470bf60474db8c758f3af358de76159"
   }
 }

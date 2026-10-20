@@ -48,7 +48,7 @@ The aggregate's selected provenance names `policynim.baseline`; topic selection 
 
 The manifest pins SSDF 1.1 final (February 2022), the 2016 Google SRE book chapters, AWS's article published/last modified December 5, 2019, immutable RFC editions, PostgreSQL 18, the November 23, 2021 W3C Trace Context Recommendation, an exact OpenTelemetry specification commit, SLSA 1.2, and OSPS 2026.08.28. Source aliases in `evals/engineering_scenarios.json` match each policy's manifest sources. Review the exact sections listed there; a framework name alone isn't evidence for a requirement.
 
-New engineering prose is original project guidance. `PolicyNIM decision` marks project choices such as pagination consistency, migration rollout, readiness design, limits, and integration proof. PostgreSQL transaction guidance is platform-specific. RFC 9457 and HTTP Link pagination remain optional format choices. AWS example latency percentiles aren't universal timeout thresholds. SSDF security-test guidance isn't presented as a general reliability mandate.
+BE-LOG-001 and BE-CONFIG-001 retain their OWASP adaptation labels. The other engineering prose is original project guidance. `PolicyNIM decision` marks project choices such as pagination consistency, migration rollout, readiness design, limits, and integration proof. PostgreSQL transaction guidance is platform-specific. RFC 9457 and HTTP Link pagination remain optional format choices. AWS example latency percentiles aren't universal timeout thresholds. SSDF security-test guidance isn't presented as a general reliability mandate.
 
 SLSA 1.2 uses Community Specification License 1.0. OpenTelemetry's selected specification uses Apache 2.0. W3C, IETF, NIST, PostgreSQL, SemVer, OpenSSF, and retained OWASP material keep their recorded terms and attribution. Public availability of Google SRE/AWS prose doesn't supply a reuse grant; no book/article text is redistributed. See `policies/licenses/ENGINEERING-SOURCES.txt` and the selected pack's notices.
 
@@ -69,13 +69,21 @@ Paired authored scenarios cover incompatible API changes, pagination/errors, int
 
 Boundary cases exercise compatible API additions, optional error formats, small collections, harmless repeats, disabled integrations, new child span IDs and limits on framework claims. Their expected outcomes are reviewed source expectations; structural checks don't independently establish a model's semantic judgment.
 
-A separate agent reviewed all 64 expected outcomes against the 16 current policy
-sources, without using generated answers. The [full source review](evidence/engineering-source-review/full.json)
-retains each source-based assessment; the [final binding](evidence/engineering-source-review/final.json)
-rechecks five role clarifications with every expected outcome unchanged. CI binds the
-current case/revision/source-alias payload to that review digest. Review-status metadata
-is excluded from that payload so annotating the review doesn't change its expectations.
-These receipts are source-alignment evidence. They don't measure model or retrieval
-quality, runtime compliance, external framework compliance, or release readiness.
+The [full source review](evidence/engineering-source-review/full.json) and
+[role-only follow-up](evidence/engineering-source-review/final.json) are historical
+receipts for their stated source revisions. Later review found that two boundary
+inputs described harmless refactors while their paired exclusions expected no
+policy selection. Those boundary inputs now exercise changed recovery and public
+serialization, preserving the expected boundary verdicts and the unchanged
+out-of-scope cases. Their source policies and other affected policies now list
+only the sections cited for their requirements; broader retryability and severity
+choices remain labeled as project guidance rather than borrowed source mandates.
 
-The [current fixture binding](evidence/engineering-source-review/current-fixture-binding.json) records the checked-in file hash after the review-status annotation. CI checks that file hash and its reviewed payload separately. The two original review receipts retain the historical file hashes from their stated revisions.
+The [current fixture binding](evidence/engineering-source-review/current-fixture-binding.json)
+marks these author revisions as pending independent source review. The original
+receipts haven't been rewritten to review the new inputs or source revisions.
+The checked-in generation and grounded-suite binding are also historical until
+the reviewed source receives a new bundle. The final independent-review and
+bundle-equality checks must pass before this revision can ship. These receipts
+don't measure model or retrieval quality, runtime compliance, external framework
+compliance, or release readiness.

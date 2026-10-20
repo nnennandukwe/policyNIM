@@ -1,6 +1,6 @@
 Engineering source references
 
-The engineering policies are original PolicyNIM recommendations. They refer to standards and engineering publications; they don't redistribute those publications or claim their endorsement. Source requirements, contextual recommendations, and PolicyNIM choices remain separately labeled.
+BE-LOG-001 and BE-CONFIG-001 retain their OWASP adaptation labels and recorded attribution and reuse terms. The other engineering policies are original PolicyNIM recommendations informed by the cited standards and publications. Source requirements, contextual recommendations, and PolicyNIM choices remain separately labeled; none claims source endorsement. Google SRE and AWS source prose isn't redistributed.
 
 SSDF: NIST SSDF 1.1 final
 URL: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf

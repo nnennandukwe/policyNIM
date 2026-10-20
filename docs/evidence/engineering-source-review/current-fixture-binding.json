@@ -1,9 +1,12 @@
 {
-  "kind": "derived_current_fixture_binding",
-  "scenario_sha256": "sha256:57c2d66352f56f18955431d96d558fdeb2183345ea6134bef82328466aac6990",
-  "reviewed_semantic_payload_sha256": "sha256:361c8ae44b0ebfa1c7b16a8be9a72d76a2b7fba8086cd4a1b63e937ce8510e9e",
-  "review_receipt_sha256": "sha256:341dc260cc0e31d891605122f2be9f4e6992cf29ee2382242a86c1f6f43e9e0a",
+  "kind": "pending_independent_source_review_binding",
+  "scenario_sha256": "sha256:2161e9b0d0200ae48e68ee55d03f6a0159a79e4983a81bec5065698233118cfe",
+  "semantic_payload_sha256": "sha256:ab0980bee32e2d116fe9c540f263559e67e60955553318a501bb313649f766a5",
   "model_evaluated": false,
-  "reviewed_fixture_revision": "ecf3f1bebaf38529150ca1bef94d345280759b96",
-  "changes_since_reviewed_fixture": "review_status annotation only; five role clarifications were already included and independently rechecked in the referenced review"
+  "previous_reviewed_fixture_revision": "ecf3f1bebaf38529150ca1bef94d345280759b96",
+  "previous_reviewed_semantic_payload_sha256": "sha256:361c8ae44b0ebfa1c7b16a8be9a72d76a2b7fba8086cd4a1b63e937ce8510e9e",
+  "previous_review_receipt_sha256": "sha256:341dc260cc0e31d891605122f2be9f4e6992cf29ee2382242a86c1f6f43e9e0a",
+  "changes_since_review": "Two boundary inputs now exercise applicable runtime/public serialization changes; per-policy sections and OWASP adaptation notices were corrected, with affected revision/profile pins refreshed. Historical receipts remain unchanged and don't review these revised inputs.",
+  "source_catalog_digest": "sha256:04a26d71f3b54eb63e41e779585177ce397767cdf89da9368de3e92d61667a26",
+  "bundle_status": "historical_bundle_pending_rebuild_after_independent_source_review"
 }

@@ -50,4 +50,4 @@ Out of scope: An unrelated editorial-only change by a documentation editor doesn
 
 - CS-SECRET: [OWASP Secrets Management Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md); revision `72865b1e3b5754246a101778dc00b37f9c233373`. Sections: 2 General Secrets Management.
 
-Original PolicyNIM review guidance; source text isn't reproduced. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.
+PolicyNIM adaptation of the cited OWASP cheat sheet, with project-specific requirements and additional references labeled above. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.

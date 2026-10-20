@@ -320,3 +320,71 @@ def test_authored_expectations_match_the_independent_source_review() -> None:
     assert final["comparison"]["case_count"] == len(SUITE["cases"]) == 64
     assert final["comparison"]["only_role_values_changed"] is True
     assert SUITE["review_status"] == "independent_source_reviewed_not_model_evaluated"
+
+
+def test_noop_scope_pairs_keep_runtime_changes_in_applicable_boundaries() -> None:
+    """Boundary verdicts exercise applicable work instead of contradicting no-op exclusions."""
+    cases = {case["case_id"]: case for case in SUITE["cases"]}
+    failure = cases["test-fail-001-boundary"]
+    contract = cases["test-contract-001-boundary"]
+    assert "changes publisher recovery" in failure["input"]
+    assert "restarts the process" in failure["input"]
+    assert "SSDF" in failure["input"]
+    assert "changes a public serialized response" in contract["input"]
+    assert "strict installed consumer" in contract["input"]
+    assert "live provider quality" in contract["input"]
+    for policy_id in ("test-fail-001", "test-contract-001"):
+        boundary = cases[f"{policy_id}-boundary"]
+        excluded = cases[f"{policy_id}-out-of-scope"]
+        assert boundary["expected_policy_ids"] == [boundary["policy_id"]]
+        assert boundary["expected_outcome"] == "respect_documented_boundary"
+        assert excluded["expected_policy_ids"] == []
+        assert excluded["expected_outcome"] == "not_applicable"
+
+
+@pytest.mark.parametrize(
+    "policy_id,alias,sections",
+    [
+        ("TEST-FAIL-001", "SSDF", ["PW.8.1", "PW.8.2"]),
+        ("TEST-CONTRACT-001", "SSDF", ["PW.8.2"]),
+        ("TEST-CONTRACT-001", "SRE-TEST", ["Traditional Tests"]),
+        ("SUPPLY-BUILD-001", "SSDF", ["PW.4.1"]),
+        (
+            "SUPPLY-BUILD-001",
+            "OSPS",
+            ["OSPS-BR-01.01", "OSPS-BR-01.03", "OSPS-BR-05.01", "OSPS-DO-06.01"],
+        ),
+        ("SUPPLY-PROVENANCE-001", "SSDF", ["PS.2.1"]),
+        ("SUPPLY-PROVENANCE-001", "OSPS", ["OSPS-BR-06.01"]),
+        ("API-ERROR-001", "HTTP", ["15"]),
+        ("REL-TIMEOUT-001", "HTTP", ["10.2.3"]),
+        ("ARCH-JOB-001", "AWS-RETRY", ["Retries and backoff"]),
+        ("BE-LOG-001", "OTEL-LOG", ["Trace Context Fields", "Field: Resource"]),
+        ("BE-TRACE-001", "OTEL-LOG", ["Trace Context Fields"]),
+    ],
+)
+def test_source_section_lists_are_specific_to_the_policy(
+    policy_id: str, alias: str, sections: list[str]
+) -> None:
+    """Related policies don't inherit the union of every section from a shared reference."""
+    entry = CATALOG.show(policy_id)
+    assert entry.policy.provenance is not None
+    source = next(
+        source
+        for source in entry.policy.provenance.sources
+        if str(source.url) == SUITE["source_aliases"][alias]
+    )
+    assert source.sections == sections
+    assert f"Sections: {', '.join(sections)}." in entry.body
+
+
+@pytest.mark.parametrize("policy_id", ["BE-LOG-001", "BE-CONFIG-001"])
+def test_owasp_adaptation_body_and_aggregate_notices_agree(policy_id: str) -> None:
+    """Retained adaptations keep their attribution in prose as well as manifest fields."""
+    entry = CATALOG.show(policy_id)
+    assert entry.policy.provenance is not None
+    assert entry.policy.provenance.grounding_kind == "adaptation"
+    assert "PolicyNIM adaptation of the cited OWASP" in entry.body
+    assert "Original PolicyNIM review guidance; source text isn't reproduced." not in entry.body
+    notice = (POLICIES / "licenses/ENGINEERING-SOURCES.txt").read_text()
+    assert "BE-LOG-001 and BE-CONFIG-001 retain their OWASP adaptation" in notice

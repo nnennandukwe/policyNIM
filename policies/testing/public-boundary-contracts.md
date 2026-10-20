@@ -49,7 +49,7 @@ Out of scope: An unrelated editorial-only change by a documentation editor doesn
 
 ## Sources and Change Notice
 
-- SSDF: [NIST SSDF 1.1 final](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf); revision `SP 800-218, February 2022`. Sections: PW.8.1, PW.8.2, PW.4.1, PS.2.1, PS.3.1.
-- SRE-TEST: [Google SRE: Testing for Reliability](https://sre.google/sre-book/testing-reliability/); revision `Site Reliability Engineering, 2016, chapter 17`. Sections: Types of Software Testing, Traditional Tests, Production Tests.
+- SSDF: [NIST SSDF 1.1 final](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf); revision `SP 800-218, February 2022`. Sections: PW.8.2.
+- SRE-TEST: [Google SRE: Testing for Reliability](https://sre.google/sre-book/testing-reliability/); revision `Site Reliability Engineering, 2016, chapter 17`. Sections: Traditional Tests.
 
 Original PolicyNIM review guidance; source text isn't reproduced. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.

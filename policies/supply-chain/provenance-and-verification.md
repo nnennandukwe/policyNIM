@@ -50,8 +50,8 @@ Out of scope: An unrelated editorial-only change by a documentation editor doesn
 
 ## Sources and Change Notice
 
-- SSDF: [NIST SSDF 1.1 final](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf); revision `SP 800-218, February 2022`. Sections: PW.8.1, PW.8.2, PW.4.1, PS.2.1, PS.3.1.
-- OSPS: [OpenSSF OSPS Baseline 2026.08.28](https://baseline.openssf.org/versions/2026-08-28); revision `2026.08.28`. Sections: OSPS-BR-01.01, OSPS-BR-01.03, OSPS-BR-04.01, OSPS-BR-05.01, OSPS-BR-06.01, OSPS-DO-06.01.
+- SSDF: [NIST SSDF 1.1 final](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf); revision `SP 800-218, February 2022`. Sections: PS.2.1.
+- OSPS: [OpenSSF OSPS Baseline 2026.08.28](https://baseline.openssf.org/versions/2026-08-28); revision `2026.08.28`. Sections: OSPS-BR-06.01.
 - SLSA: [SLSA 1.2: Verifying artifacts](https://slsa.dev/spec/v1.2/verifying-artifacts); revision `1.2`. Sections: How to verify, Forming Expectations.
 
 Original PolicyNIM review guidance; source text isn't reproduced. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.

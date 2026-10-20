@@ -49,7 +49,7 @@ Out of scope: An unrelated editorial-only change by a documentation editor doesn
 
 ## Sources and Change Notice
 
-- HTTP: [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html); revision `RFC 9110, June 2022`. Sections: 9.2.2, 15, 10.2.3.
+- HTTP: [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html); revision `RFC 9110, June 2022`. Sections: 15.
 - PROBLEM: [RFC 9457: Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457.html); revision `RFC 9457, July 2023`. Sections: 3, 5.
 
 Original PolicyNIM review guidance; source text isn't reproduced. Attribution, source reuse terms, and the reviewed source sections are recorded in `pack.toml` and `licenses/ENGINEERING-SOURCES.txt`. This policy doesn't certify a project against an external framework.
