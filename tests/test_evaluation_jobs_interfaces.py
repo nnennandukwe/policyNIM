@@ -315,3 +315,47 @@ def test_foreground_cli_reports_accounting_pause_and_exits(job_context, monkeypa
     assert "Traceback" not in result.output
     assert service.inspect(queued.job_id, principal=principal()).state == "queued"
     assert calls == ["case-0", "closed"]
+
+
+def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context) -> None:
+    """A rejected request can't start the shared worker or execute another owner's job."""
+    from mcp.server import MCPServer
+
+    service, suite, _ = job_context
+    accepted = service.submit(suite, idempotency_key="other-owner", principal=principal("other"))
+    calls: list[str] = []
+    started = Event()
+
+    class Worker(EvaluationJobWorker):
+        """Observe whether the rejected request starts the real worker."""
+
+        def start(self) -> None:
+            super().start()
+            started.set()
+
+    worker = Worker(service, evaluator_factory=evaluator_factory(calls))
+    server = MCPServer("job rejection fixture")
+
+    async def run_tool(name, operation, ctx):
+        return operation()
+
+    mcp_jobs.register_evaluation_jobs(
+        server, get_principal=lambda _: principal(), get_worker=lambda: worker, run_tool=run_tool
+    )
+    rejected = suite.model_copy(update={"expected_catalog_digest": "sha256:" + "0" * 64})
+
+    async def exercise() -> None:
+        async with Client(server) as client:
+            result = await client.call_tool(
+                "eval_submit",
+                {"suite": rejected.model_dump(mode="json"), "idempotency_key": "invalid"},
+            )
+            assert result.is_error
+
+    try:
+        asyncio.run(exercise())
+        assert not started.is_set()
+        assert service.inspect(accepted.job_id, principal=principal("other")).state == "queued"
+        assert calls == []
+    finally:
+        worker.close()

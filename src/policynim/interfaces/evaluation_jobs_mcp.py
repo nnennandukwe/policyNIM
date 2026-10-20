@@ -121,15 +121,17 @@ def register_evaluation_jobs(
 
         def operation() -> dict[str, object]:
             """Accept inputs without charging duplicate submissions for provider work."""
-            worker.start()
-            return worker.service.submit(
+            worker.require_admission_ready()
+            accepted = worker.service.submit(
                 suite,
                 idempotency_key=idempotency_key,
                 principal=caller,
                 limits=EvaluationJobLimits(
                     deadline_seconds=deadline_seconds, max_provider_calls=max_provider_calls
                 ),
-            ).model_dump(mode="json")
+            )
+            worker.start()
+            return accepted.model_dump(mode="json")
 
         result = await run_tool("eval_submit", operation, ctx)
         return EvaluationJobInfo.model_validate(result)

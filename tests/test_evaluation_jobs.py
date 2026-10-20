@@ -956,3 +956,162 @@ def test_real_principal_capacity_defers_accepted_job_until_owner_releases(
     finally:
         worker.close()
         held.store.close()
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_terminal_report_commit_fault_preserves_cases_and_restart_outcome(
+    generation, tmp_path: Path, phase: str
+) -> None:
+    """A terminal COMMIT fault keeps saved cases and never replays their provider work."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="terminal-fault", principal=principal())
+    claimed = service.store.claim("fixture-worker")
+    assert claimed is not None and claimed.job_id == accepted.job_id
+    service.store.begin_case(accepted.job_id, "fixture-worker", "case-0")
+    service.store.save_case(
+        accepted.job_id,
+        "fixture-worker",
+        case_result(
+            service.settings.model_copy(update={"generation_id": generation_id}), suite, "case-0"
+        ),
+    )
+
+    def interrupt(observed: str) -> None:
+        """Fail at the actual SQLite commit boundary after report construction."""
+        if observed == phase:
+            raise sqlite3.OperationalError("fixture terminal commit interruption")
+
+    service.store.fault = interrupt
+    with pytest.raises(sqlite3.OperationalError, match="terminal commit"):
+        service.store.finish(accepted.job_id, "fixture-worker", "completed")
+    service.store.fault = None
+    stored = service.inspect(accepted.job_id, principal=principal())
+    assert stored.completed_case_count == 1
+    assert stored.state == ("running" if phase == "before_commit" else "completed")
+    calls: list[str] = []
+    restarted = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    assert restarted.run_once() is None
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.state == ("interrupted" if phase == "before_commit" else "completed")
+    assert [case.case_id for case in report.completed_cases] == ["case-0"]
+    assert report.unfinished_case_ids == [] and report.uncertain_case_id is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_retention_commit_fault_keeps_owner_payloads_atomic(
+    generation, tmp_path: Path, phase: str
+) -> None:
+    """Retention atomically removes expired payloads while preserving another owner."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [1000.0]
+    service.store.clock = lambda: now[0]
+    expired = service.submit(
+        suite,
+        idempotency_key="short",
+        principal=principal(),
+        limits=EvaluationJobLimits(retention_seconds=60),
+    )
+    retained = service.submit(
+        suite,
+        idempotency_key="long",
+        principal=principal("other"),
+        limits=EvaluationJobLimits(retention_seconds=120),
+    )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    first = worker.run_once()
+    second = worker.run_once()
+    assert first is not None and first.state == "completed"
+    assert second is not None and second.state == "completed"
+    retained_report = service.result(retained.job_id, principal=principal("other"))
+    original_digest = service.inspect(expired.job_id, principal=principal()).report_sha256
+    now[0] += 61
+
+    def interrupt(observed: str) -> None:
+        """Fail before or after the transaction's actual durable COMMIT."""
+        if observed == phase:
+            raise sqlite3.OperationalError("fixture retention interruption")
+
+    service.store.fault = interrupt
+    with pytest.raises(sqlite3.OperationalError, match="retention interruption"):
+        service.store.purge_expired()
+    service.store.fault = None
+    with sqlite3.connect(service.store.path) as connection:
+        row = connection.execute(
+            "SELECT snapshot_json,report_json,result_expired FROM evaluation_jobs WHERE job_id=?",
+            (expired.job_id,),
+        ).fetchone()
+        case_count = connection.execute(
+            "SELECT COUNT(*) FROM evaluation_job_cases WHERE job_id=?", (expired.job_id,)
+        ).fetchone()[0]
+        assert (row[0] is None, row[1] is None, row[2], case_count) == (
+            (False, False, 0, 1) if phase == "before_commit" else (True, True, 1, 0)
+        )
+        assert connection.execute("SELECT COUNT(*) FROM evaluation_job_archives").fetchone()[0] == 1
+    assert service.result(retained.job_id, principal=principal("other")) == retained_report
+    assert service.store.purge_expired() == (1 if phase == "before_commit" else 0)
+    assert service.inspect(expired.job_id, principal=principal()).report_sha256 == original_digest
+    now[0] += 60
+    assert service.store.purge_expired() == 1
+    with sqlite3.connect(service.store.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM evaluation_job_archives").fetchone()[0] == 0
+    assert calls == ["case-0", "closed", "case-0", "closed"]
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_case_commit_fault_recovers_only_unconfirmed_provider_result(
+    generation, tmp_path: Path, phase: str
+) -> None:
+    """Case COMMIT recovery separates an unsaved response from a fully saved case."""
+    import sqlite3
+
+    from policynim.job_types import EvaluationJobUsage
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="case-commit", principal=principal())
+    assert service.store.claim("fixture-worker") is not None
+    service.store.begin_case(accepted.job_id, "fixture-worker", "case-0")
+    service.store.save_usage(
+        accepted.job_id,
+        "fixture-worker",
+        EvaluationJobUsage(provider_attempts=1, measured_tokens=7, usage_status="measured"),
+    )
+
+    def interrupt(observed: str) -> None:
+        """Interrupt the actual result transaction on either side of its COMMIT."""
+        if observed == phase:
+            raise sqlite3.OperationalError("fixture case commit interruption")
+
+    service.store.fault = interrupt
+    with pytest.raises(sqlite3.OperationalError, match="case commit"):
+        service.store.save_case(
+            accepted.job_id,
+            "fixture-worker",
+            case_result(
+                service.settings.model_copy(update={"generation_id": generation_id}),
+                suite,
+                "case-0",
+            ),
+        )
+    service.store.fault = None
+    calls: list[str] = []
+    assert (
+        EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once() is None
+    )
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.state == "interrupted" and report.usage.measured_tokens == 7
+    assert report.uncertain_case_id == ("case-0" if phase == "before_commit" else None)
+    assert [case.case_id for case in report.completed_cases] == (
+        [] if phase == "before_commit" else ["case-0"]
+    )
+    assert calls == []

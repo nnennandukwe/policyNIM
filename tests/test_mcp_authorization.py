@@ -803,6 +803,7 @@ def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool
         from fixtures.mcp_fixture_server import OfflineSettings, offline_services
         from policynim.interfaces import mcp
         settings = OfflineSettings(
+            eval_workspace_dir={str(tmp_path / "stdio-evaluations")!r},
             default_top_k=3, mcp_require_auth=True, mcp_bearer_tokens=['local-fixture'],
             mcp_public_base_url='https://policy.example',
             mcp_oauth_issuer_url={repr(ISSUER) if oauth else "None"},
@@ -829,6 +830,7 @@ def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool
                 assert result.structured_content["query"] == "local"
 
     asyncio.run(exercise())
+    assert not (tmp_path / "stdio-evaluations").exists()
 
 
 def test_oauth_only_startup_doesnt_require_beta_storage(tmp_path: Path) -> None:

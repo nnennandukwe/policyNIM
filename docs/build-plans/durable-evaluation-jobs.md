@@ -91,10 +91,10 @@ Canonical state is the SQLite job row plus its referenced archive/spec/case rows
 | Worker lock/claim | competing process | second worker doesn't execute | process worker test |
 | Before provider call | cancellation/deadline/call limit | blocked before next request | budget test |
 | During provider call | cancellation/shutdown/crash | drain when alive; retain partial/uncertain evidence after restart | cancellation/process crash tests |
-| Case result COMMIT | write failure after provider response | interrupted/uncertain; never replay | result failpoint test |
-| Terminal report COMMIT | write failure | preserve durable case records; recovery marks interruption | report failpoint test |
+| Case result COMMIT | failure before/after commit | uncommitted response stays uncertain; committed case remains saved; neither replays | `test_case_commit_fault_recovers_only_unconfirmed_provider_result` |
+| Terminal report COMMIT | failure before/after commit | rollback leaves recoverable running state; committed terminal report stays terminal; saved cases remain | `test_terminal_report_commit_fault_preserves_cases_and_restart_outcome` |
 | Generation restore/hash | corrupted archive | fail without provider call; retain diagnosis | archive tamper test |
-| Retention transaction | interruption | transaction rolls back; owner payload remains consistent | expiry test |
+| Retention transaction | failure before/after commit | expired payload deletion is atomic; another owner retains its report and shared archive | `test_retention_commit_fault_keeps_owner_payloads_atomic` |
 | Phoenix lookup | 401/403/500/transport | propagate; never create project | pinned-client exception tests |
 
 No file replacement or deletion is used as the job commit point. Temporary archive files are transaction-owned and removed by TemporaryDirectory; their cleanup can't remove unrelated paths. Physical database durability depends on SQLite FULL synchronization and the local volume's guarantees; network/distributed filesystems aren't supported.

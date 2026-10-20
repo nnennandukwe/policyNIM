@@ -668,6 +668,7 @@ class _ManagedMCPServer(MCPServer):
 
     runtime: _ToolExecutor
     jobs: EvaluationJobWorker | None = None
+    jobs_enabled: bool = False
 
 
 def _register_tools(
@@ -675,6 +676,7 @@ def _register_tools(
 ) -> _ManagedMCPServer:
     """Register authorized tools against the executor already owned by this server."""
     executor = server.runtime
+    server.jobs_enabled = require_principal
     if capacity is not None:
         if executor._admission is not None:
             raise ValueError("Register tool capacity before serving requests.")
@@ -831,7 +833,7 @@ def _new_mcp_server(
         # including stateless requests. Server.run owns it for stdio.
         # See test_stateless_http_retains_one_pool_across_sequential_and_concurrent_requests.
         assert isinstance(server, _ManagedMCPServer)
-        if settings is not None and settings.mcp_require_auth:
+        if settings is not None and server.jobs_enabled:
             from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 
             if not isinstance(server.jobs, EvaluationJobWorker):
