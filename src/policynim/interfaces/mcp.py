@@ -1627,6 +1627,18 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
 
 def _build_streamable_http_app(settings: Settings) -> ASGIApp:
     """Create the streamable-http ASGI app, wrapping auth only when required."""
+    if not settings.mcp_require_auth:
+        try:
+            loopback = ip_address(settings.mcp_host).is_loopback
+        except ValueError:
+            loopback = settings.mcp_host.lower() == "localhost"
+        if not loopback:
+            LOGGER.warning(
+                "Authentication is disabled on a non-loopback HTTP bind. "
+                "This mode supports trusted local development only; principal and daily quotas "
+                "don't apply. Set POLICYNIM_MCP_REQUIRE_AUTH=true and configure credentials "
+                "before production use."
+            )
     beta_auth_service = _build_beta_auth_service(settings)
     server = _create_mcp_server(settings, beta_auth_service=beta_auth_service)
     security = _transport_security(settings)

@@ -1237,3 +1237,35 @@ def test_invalid_search_keeps_daily_allowance(
     assert calls == ["valid"]
     usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
     assert (usage.accepted, usage.completed) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "host, warns",
+    [
+        ("127.0.0.1", False),
+        ("localhost", False),
+        ("::1", False),
+        ("0.0.0.0", True),
+        ("::", True),
+        ("policy.internal", True),
+    ],
+)
+def test_unprotected_public_bind_warns_without_inventing_principal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, warns: bool
+) -> None:
+    """Keep open HTTP compatible while diagnosing unsupported production configuration."""
+    warning = Mock()
+    monkeypatch.setattr(mcp_module.LOGGER, "warning", warning)
+    settings = Settings().model_copy(
+        update={
+            "mcp_host": host,
+            "mcp_require_auth": False,
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        }
+    )
+    mcp_module._build_streamable_http_app(settings)
+    assert warning.called is warns
+    if warns:
+        assert "POLICYNIM_MCP_REQUIRE_AUTH=true" in warning.call_args.args[0]
+        assert "principal and daily quotas" in warning.call_args.args[0]
+    assert not settings.beta_auth_db_path.exists()

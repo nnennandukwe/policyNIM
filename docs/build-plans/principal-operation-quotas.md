@@ -40,7 +40,7 @@ Public seams are admission service, beta authentication/portal and MCP executor.
 
 ## Component Design
 
-Storage returns a typed accounting/credential snapshot under its write lock; the service owns authority and quota decisions before storage reserves the row. No HTTP objects enter storage. Service owns scope validation and maps storage rejection to sanitized caller guidance. Executor owns the active worker and finishes the persisted outcome only after provider cleanup. SQLite COMMIT of an accepted row is the charge point. Rows transition accepted -> completed/failed/cancelled; process loss releases a private kernel-backed owner lease and startup recovers its accepted rows to interrupted. Recovery never refunds accepted work.
+Storage returns a typed accounting/credential snapshot under its write lock; the service owns authority and quota decisions before storage reserves the row. No HTTP objects enter storage. Service owns scope validation and maps storage rejection to sanitized caller guidance. Executor owns the active worker and finishes the persisted outcome only after provider cleanup. SQLite COMMIT of an accepted row is the charge point. Rows transition accepted -> completed/failed/cancelled; process loss releases a private kernel-backed owner lease and startup and each reservation recover its accepted rows to interrupted. Recovery never refunds accepted work.
 
 ## Failure And Recovery Rules
 
@@ -51,7 +51,7 @@ Storage returns a typed accounting/credential snapshot under its write lock; the
 | Provider failure | Accepted charge retained, outcome failed; caller retries under allowance. |
 | Cancellation/shutdown | Worker drains; outcome cancelled; active capacity releases after cleanup. |
 | Outcome persistence failure | Preserve accepted row and charge, reject further admission until operator recovery; don't misreport provider success as refunded work. |
-| Process loss | Explicit startup recovery marks previous accepted rows interrupted; no refund. Kernel-backed owner leases prove workers can no longer run, including reused container PIDs. |
+| Process loss | Startup and reservation-time recovery mark previous accepted rows interrupted; no refund. Kernel-backed owner leases prove workers can no longer run, including reused container PIDs. |
 
 Invariants: accepted totals never exceed configured daily limits; active rows never exceed principal/global limits; rejected/unauthorized work never starts a provider; rotation never resets an account's usage; only accepted rows transition outcomes. Filesystem durability follows SQLite's supported guarantees; disk failure after a commit can't establish whether a client observed the response.
 
@@ -77,3 +77,9 @@ Hosted authentication charges zero operations. Only admitted work charges accept
 ## Assumptions And Defaults
 
 One hosted instance; no billing; provider usage unknown unless measured. Existing historical HTTP counters remain historical and aren't silently reinterpreted as accepted-operation counts. Root owns release integration and external issuer decisions.
+
+Auth-disabled HTTP remains a trusted local development mode with only the global
+worker cap. There's no principal/daily accounting without authentication. Production
+requires `POLICYNIM_MCP_REQUIRE_AUTH=true`; a non-loopback unprotected bind warns at
+startup. This preserves existing open development compatibility without inventing
+an authenticated identity.
