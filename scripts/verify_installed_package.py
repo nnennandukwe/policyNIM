@@ -142,13 +142,14 @@ def run_command(arguments: list[str], *, env: dict[str, str], cwd: Path) -> str:
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=90,
         check=False,
     )
     require(
         completed.returncode == 0,
         f"Installed CLI check failed: {arguments[0]} (exit {completed.returncode}). "
-        + safe_diagnostic(completed.stderr + "\n" + completed.stdout, env),
+        + safe_diagnostic((completed.stderr or "") + "\n" + (completed.stdout or ""), env),
     )
     return completed.stdout
 
@@ -327,7 +328,9 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                 report["http"] = asyncio.run(check_http(origin, token))
             except Exception as error:
                 log.flush()
-                diagnostic = safe_diagnostic((cwd / "server.log").read_text(errors="replace"), env)
+                diagnostic = safe_diagnostic(
+                    (cwd / "server.log").read_text(encoding="utf-8", errors="replace"), env
+                )
                 raise RuntimeError(f"{error}\nHTTP server diagnostics:\n{diagnostic}") from error
             finally:
                 process.terminate()
