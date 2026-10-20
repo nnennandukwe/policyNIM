@@ -18,3 +18,18 @@ A valid existing root takes the coordinated validation path without reading or m
 | Atomic commit refusal | Mutation during final inspection or before commit still uses the existing activation token checks; bootstrap doesn't bypass them. |
 
 Use real temporary filesystem/SQLite/public store paths. Fault callbacks model named boundary interruption and supported writer interleaving. Don't claim arbitrary external filesystem mutation is a serialized writer or that every concurrent startup succeeds. Run native Windows generation tests and the full offline suite. Hosted process/container/volume startup remains root's separate integration proof.
+
+
+## Filesystem trust boundary
+
+The root and its parent directories must stay under service-controlled ownership
+and permissions. Directory identity checks prevent adopting a replacement observed
+at initialization or writer admission. They aren't a filesystem sandbox. A
+same-UID actor that independently renames roots after admission can redirect
+path-based staging and object writes before later validation refuses activation.
+A retained witness reproduces that boundary in a mode-0700 parent with the same
+OS user: bootstrap refuses activation and preserves the other store's pointer,
+but an orphan object reaches that other store. It doesn't establish a cross-UID
+exploit. Supported publisher interleaving remains serialized and preserves the
+winner; independent pathname mutation falls outside that protocol. Hosted volume
+ownership and parent permissions need separate deployment readback.
