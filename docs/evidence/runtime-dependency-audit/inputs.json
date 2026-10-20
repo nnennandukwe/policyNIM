@@ -2,7 +2,7 @@
   "observed_at": "2026-10-20T23:02:53.307033+00:00",
   "auditor": "pip-audit 2.10.1",
   "service": "pypi",
-  "python": "3.9.6",
+  "python": "3.11 (selected with uvx --python 3.11)",
   "platform": "Darwin",
   "scope": "Selected standard and supported-extra requirements evaluated on Python 3.11 macOS; no exploit or all-platform claim.",
   "lock_sha256": "sha256:f7c1cfc394222fc394d2215feae6edff9b2b80b58d270f7db5cb2e3b0e2cf6a9",
