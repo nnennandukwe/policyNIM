@@ -11,6 +11,16 @@ class PolicyNIMError(Exception):
         self.failure_class = failure_class
 
 
+class IndexReadLimitError(PolicyNIMError):
+    """Refuse a bounded row read before materializing an oversized payload."""
+
+    def __init__(self) -> None:
+        """Keep the storage failure independent of caller-specific recovery policy."""
+        super().__init__(
+            "Selected index rows exceed the read budget.", failure_class="index_read_limit"
+        )
+
+
 class PolicyContextError(PolicyNIMError):
     """Refuse incomplete or unbound selected-policy context before generation."""
 

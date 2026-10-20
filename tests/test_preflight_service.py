@@ -81,6 +81,21 @@ class MockIndexStore:
         self._chunks = [ScoredChunk(**chunk.model_dump(exclude={"vector"})) for chunk in chunks]
         return "test-build"
 
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
+
     def list_chunks(self) -> list[PolicyChunk]:
         return [PolicyChunk(**chunk.model_dump(exclude={"score"})) for chunk in self._chunks]
 

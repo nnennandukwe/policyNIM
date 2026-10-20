@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
-from policynim.errors import PolicyContextError
+from policynim.errors import IndexReadLimitError, PolicyContextError
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.index_store import (
     create_index_store,
@@ -189,8 +189,15 @@ def _complete_selected_context(
 ) -> list[ScoredChunk]:
     """Append whole selected policies from one pinned index without inventing relevance."""
     check_budget()
-    indexed = index_store.list_chunks()
     selected = {chunk.policy.policy_id: chunk.policy for chunk in discovery}
+    try:
+        indexed = index_store.read_policy_chunks(
+            list(selected),
+            max_chunks=_MAX_POLICY_CONTEXT_CHUNKS,
+            max_source_bytes=_MAX_POLICY_CONTEXT_BYTES,
+        )
+    except IndexReadLimitError as exc:
+        raise PolicyContextError() from exc
     canonical = {}
     for chunk in indexed:
         if chunk.policy.policy_id not in selected:
