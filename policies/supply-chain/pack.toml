@@ -1,0 +1,67 @@
+schema_version = 1
+pack_id = "policynim.supply-chain"
+version = "0.3.0"
+
+[[policies]]
+policy_id = "SUPPLY-BUILD-001"
+path = "dependencies-and-builds.md"
+requirement_level = "required"
+applicability = ["build-maintainer", "release-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.4.1"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "OpenSSF OSPS Baseline 2026.08.28"
+url = "https://baseline.openssf.org/versions/2026-08-28"
+revision = "2026.08.28"
+sections = ["OSPS-BR-01.01", "OSPS-BR-01.03", "OSPS-BR-05.01", "OSPS-DO-06.01"]
+retrieved_on = 2026-10-20
+license = "Apache-2.0"
+attribution = "OSPS Baseline contributors; a Series of LF Projects, LLC"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "SUPPLY-PROVENANCE-001"
+path = "provenance-and-verification.md"
+requirement_level = "required"
+applicability = ["build-maintainer", "release-operator", "artifact-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PS.2.1"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "OpenSSF OSPS Baseline 2026.08.28"
+url = "https://baseline.openssf.org/versions/2026-08-28"
+revision = "2026.08.28"
+sections = ["OSPS-BR-06.01"]
+retrieved_on = 2026-10-20
+license = "Apache-2.0"
+attribution = "OSPS Baseline contributors; a Series of LF Projects, LLC"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "SLSA 1.2: Verifying artifacts"
+url = "https://slsa.dev/spec/v1.2/verifying-artifacts"
+revision = "1.2"
+sections = ["How to verify", "Forming Expectations"]
+retrieved_on = 2026-10-20
+license = "Community Specification License 1.0"
+attribution = "SLSA contributors; The Linux Foundation"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

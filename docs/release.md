@@ -64,9 +64,12 @@ Also supply `--lockfile /absolute/path/to/checkout/uv.lock`,
 `--lock-digest sha256:<digest>`, and `--requirements` with the absolute path to the
 exported runtime requirements used for installation. Relative paths resolve from
 the working directory where you launch the verifier, not from its script directory.
-CI exports with `uv export --locked --no-dev --no-emit-project`, installs those
+CI exports with
+`uv export --locked --no-dev --group verification --no-emit-project`, installs those
 artifacts with required hashes, and installs the wheel without dependency resolution.
-The report records the lock digest, requirements digest and actual installed versions.
+The `verification` group supplies the verifier's locked `packaging` parser; include
+it in the export for manual fresh-environment checks too. The report records the
+lock digest, requirements digest and actual installed versions.
 Bootstrap installer packages are recorded separately when they weren't selected
 for the runtime installation.
 The verifier refuses an installation resolved back to a source checkout. It never
@@ -80,9 +83,13 @@ release artifact, `--bundle` and `--bundle-digest`
 identifying the reviewed public archive, `--lockfile` and `--lock-digest`
 identifying the selected build lock, `--expected-version X.Y.Z` matching the
 release package version, and `--revision` and `--output` identifying the source
-commit and receipt. This check runs without provider credentials and records a
+commit and receipt. Both verifiers give child processes an owned temporary home directory, keeping
+user profiles outside the packaged-source check while preserving the parent environment.
+This check runs without provider credentials and records a
 digest of the complete standalone directory, including native-library bytes and
-file/directory permissions. Credential redaction covers the bounded log-tail
+file/directory permissions. Special entries such as FIFOs are rejected before
+execution; supported entries are regular files, directories and contained symlinks.
+Credential redaction covers the bounded log-tail
 boundary; diagnostics are omitted if a known credential exceeds its capture bound.
 
 Final publication requires `--archive /absolute/path/to/the/platform.tar.gz` (or the
@@ -98,7 +105,10 @@ The lock digest identifies the selected build checkout. The workflow performs a
 locked dependency sync before building from that checkout; the standalone receipt
 alone doesn't independently inspect every dependency version inside the frozen
 executable.
-It doesn't establish live retrieval quality or coding-client acceptance.
+Authenticated HTTP checks cover beta/operator keys and missing-token rejection.
+Receipts record `authentication_scope: beta_operator_key` and
+`external_oauth_e2e: not_run`. External issuer/client acceptance remains open in
+#97; this gate doesn't establish OAuth E2E, live retrieval quality or coding-client acceptance.
 
 The release workflow retains a separate `standalone-evidence-<platform>.json`
 receipt for each platform. A successful help command alone can't detect a missing
