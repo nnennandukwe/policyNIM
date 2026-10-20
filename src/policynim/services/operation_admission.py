@@ -249,6 +249,7 @@ class OperationAdmissionService:
         reservation_key: str,
         request_digest: str,
         work_units: int,
+        check_ready: Callable[[], object] | None = None,
     ) -> AcceptedWork:
         """Commit idempotent weighted acceptance without acquiring an execution slot."""
         if type(work_units) is not int or work_units < 1:
@@ -261,7 +262,7 @@ class OperationAdmissionService:
 
         def accept() -> OperationAdmission:
             """Reserve against a write-locked daily allowance after checking current authority."""
-            self._require_ready(principal, operation_name, lambda: False, None)
+            self._require_ready(principal, operation_name, lambda: False, check_ready)
             return admit_operation(
                 self.store,
                 principal_id=principal_identity(principal.issuer, principal.subject),
@@ -274,7 +275,7 @@ class OperationAdmissionService:
                 beta_account_id=int(principal.subject) if principal.source == "beta_key" else None,
                 credential_id=principal.credential_id,
                 before_accept=lambda: self._require_ready(
-                    principal, operation_name, lambda: False, None
+                    principal, operation_name, lambda: False, check_ready
                 ),
                 correlation_id=current_correlation_id(),
                 retention_days=self.settings.mcp_operation_retention_days,
