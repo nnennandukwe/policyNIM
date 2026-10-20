@@ -28,6 +28,7 @@ import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
 from policynim.errors import (
     ConfigurationError,
+    GenerationError,
     IndexCompatibilityError,
     MissingIndexError,
     PolicyNIMError,
@@ -166,9 +167,12 @@ def policies_show(
     """Show one policy's source text, content digest, and declared provenance."""
     try:
         catalog = build_policy_catalog(source_only=source)
-        entry = catalog.show(policy_id)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
+    try:
+        entry = catalog.show(policy_id)
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format, scope=catalog.scope, generation_id=catalog.generation_id)
     if output_format == "json":
         typer.echo(
             CatalogPolicyView(
@@ -225,10 +229,26 @@ def policies_validate(
             typer.echo("Unlisted Markdown (not selected): " + ", ".join(catalog.unlisted_markdown))
 
 
-def _catalog_error(error: PolicyNIMError, output_format: str) -> NoReturn:
+def _catalog_error(
+    error: PolicyNIMError,
+    output_format: str,
+    *,
+    scope: Literal["source", "generation"] | None = None,
+    generation_id: str | None = None,
+) -> NoReturn:
     """Keep validation failures machine-readable with a nonzero command exit."""
     if output_format == "json":
-        typer.echo(json.dumps({"status": "error", "scope": "source", "message": str(error)}))
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "scope": scope
+                    or ("generation" if isinstance(error, GenerationError) else "source"),
+                    "generation_id": generation_id,
+                    "message": str(error),
+                }
+            )
+        )
         raise typer.Exit(code=1)
     _exit_with_error(str(error))
 

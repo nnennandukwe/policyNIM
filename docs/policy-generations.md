@@ -42,6 +42,15 @@ Catalog commands read the active generation by default. `--source` inspects the
 configured editable source/profile instead. With no active generation, catalog
 commands report source scope and an unknown indexed count. An invalid active
 pointer fails validation rather than silently reading editable files.
+Missing-policy errors identify the selected catalog scope and, when known, its
+generation ID. Source-scope lookup guidance keeps `--source` on the list command.
+
+Readers need writable publication locks and lease directories, even though sealed
+artifacts stay immutable. Permission or storage failures during admission produce
+bounded generation errors; inventory reports the unavailable generation and
+allows inspection and retry. Preserve the active object, repair access to its
+locks and leases, then retry. MCP search and preflight return safe generation
+inspection and verified-bundle recovery guidance without filesystem paths.
 
 Search, preflight, runtime decisions, health, and live eval expose `generation_id`.
 A live eval job pins one generation across all modes, cases, and regeneration
