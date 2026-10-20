@@ -24,6 +24,10 @@ calls in offline CI or turn an internal integration into an advertised MCP tool.
 The normal NVIDIA embedding, reranking and chat adapters remain part of the main
 install.
 
+The fresh installed-package verifier also uses the locked `verification` group
+for its `packaging` parser. CI explicitly includes that group in its requirements
+export; it isn't an application runtime dependency.
+
 ## Run evaluations with or without Phoenix
 
 Install the optional Phoenix UI command independently:

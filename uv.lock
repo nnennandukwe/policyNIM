@@ -1998,6 +1998,9 @@ test = [
     { name = "jsonschema" },
     { name = "pytest" },
 ]
+verification = [
+    { name = "packaging" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2037,6 +2040,7 @@ test = [
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "pytest", specifier = "==8.3.4" },
 ]
+verification = [{ name = "packaging", specifier = "==26.3" }]
 
 [[package]]
 name = "pre-commit"

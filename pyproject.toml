@@ -71,6 +71,9 @@ packages = ["src/policynim"]
 "evals" = "policynim/evals"
 
 [dependency-groups]
+verification = [
+  "packaging==26.3",
+]
 test = [
   "jsonschema==4.26.0",
   "pytest==8.3.4",
