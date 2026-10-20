@@ -117,7 +117,9 @@ discovery/readiness percentiles, sampled active peak,
 terminal ledger counts, sampled process RSS and process maximum RSS when available.
 RSS sampling uses POSIX `ps` during probes, so the harness supports macOS/Linux.
 The samples include setup/ingestion memory that remains resident; they can miss
-short peaks. A missing shutdown-hook maximum stays `null`. A
+short peaks. The server captures its process maximum at application lifespan shutdown,
+before Uvicorn restores SIGTERM, and names that phase in `peak_server_rss_scope`.
+A failed or missing shutdown measurement stays `null`. A
 warmup search contributes one explicitly identified ledger charge per scenario.
 Provider usage stays unavailable; `live_nvidia_calls` stays zero.
 
@@ -165,11 +167,23 @@ supply that production evidence, and this change doesn't authorize more replicas
 
 The [uniform receipt](evidence/hosted-capacity/uniform-synthetic.json) and
 [skewed receipt](evidence/hosted-capacity/skewed-synthetic.json) were generated from
-clean source `bc98a78aad3b283f0dc017c23fe9e6a9c9fee63d` on the hardware named
+clean source `d2ca1287628cfb03a0e7e4110bc47b4275f31056` on the hardware named
 inside each report. Each run used 25 synthetic callers, 10,000 chunks, two requests
 per caller and a global cap of ten. Both baseline scenarios completed all 50
 requests with ten active operations observed. Uniform baseline accepted-request
-p95 was 223.342 ms; the receipt records separate saturation, locking, slow-provider,
+p95 was 178.943 ms; the receipt records separate saturation, locking, slow-provider,
 disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
+
+Fault receipts report one configured concurrent client when only one request is
+attempted. If a client task already completed before cancellation, the intervention
+is labeled `client_task_already_completed`; that run doesn't prove a disconnect.
+Unexpected browser callback errors report an unknown stage and the exception class
+with fixed recovery guidance for identity-provider reachability and account storage.
+They don't label every unknown error as an upstream failure or log raw error text.
+
+Readiness transport failures during intentional shutdown remain counted as
+`health_transport_failure`; they don't silently end the sampling series.
+Unexpected probe exceptions fail the harness with a sanitized exception class
+instead of producing a success receipt with incomplete probes.

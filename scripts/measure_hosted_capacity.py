@@ -85,6 +85,7 @@ def _serve(config_path: Path) -> None:
     from collections.abc import Sequence
 
     import uvicorn
+    from starlette.types import Message, Receive, Scope, Send
 
     from policynim.errors import ProviderError
     from policynim.interfaces import mcp
@@ -180,9 +181,40 @@ def _serve(config_path: Path) -> None:
         mcp_url=None,
     )
     mcp._configure_hosted_logger()
+    application = mcp._build_streamable_http_app(settings)
+    emitted = False
+
+    def emit_peak(phase: str) -> None:
+        """Capture process maximum RSS before Uvicorn restores the terminating signal."""
+        nonlocal emitted
+        if emitted:
+            return
+        emitted = True
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(
+            json.dumps(
+                {
+                    "fixture_peak_rss_bytes": peak if sys.platform == "darwin" else peak * 1024,
+                    "fixture_peak_rss_scope": phase,
+                }
+            ),
+            flush=True,
+        )
+
+    async def measured_application(scope: Scope, receive: Receive, send: Send) -> None:
+        """Observe application shutdown completion without replacing the real lifespan."""
+
+        async def measured_send(message: Message) -> None:
+            """Record the process high-water mark after application cleanup finishes."""
+            if message["type"] == "lifespan.shutdown.complete":
+                emit_peak("process_max_at_application_shutdown")
+            await send(message)
+
+        await application(scope, receive, measured_send)
+
     try:
         uvicorn.run(
-            mcp._build_streamable_http_app(settings),
+            measured_application,
             host="127.0.0.1",
             port=config["port"],
             log_level="warning",
@@ -190,12 +222,7 @@ def _serve(config_path: Path) -> None:
             timeout_graceful_shutdown=15,
         )
     finally:
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        print(
-            json.dumps(
-                {"fixture_peak_rss_bytes": peak if sys.platform == "darwin" else peak * 1024}
-            )
-        )
+        emit_peak("process_max_at_server_return")
 
 
 def _sample_rss(process_id: int) -> int | None:
@@ -328,9 +355,13 @@ async def _measure(
                 cheap_latencies.append(latency)
                 cheap_outcomes[outcome] += 1
                 start = time.perf_counter()
-                health = await client.get("/healthz")
+                try:
+                    health = await client.get("/healthz")
+                except httpx.HTTPError:
+                    cheap_outcomes["health_transport_failure"] += 1
+                else:
+                    cheap_outcomes[f"health_{health.status_code}"] += 1
                 health_latencies.append((time.perf_counter() - start) * 1000)
-                cheap_outcomes[f"health_{health.status_code}"] += 1
                 try:
                     active_peak = max(
                         active_peak, OperationStore.report(root / "auth.sqlite3").active_operations
@@ -346,7 +377,11 @@ async def _measure(
             lock = sqlite3.connect(root / "auth.sqlite3", timeout=0.1)
             lock.execute("BEGIN IMMEDIATE")
         count = config["users"] * config["requests_per_user"]
-        concurrency = config["users"] if scenario == "saturation" else min(10, config["users"])
+        attempted = 1 if scenario in {"disconnect", "shutdown"} else count
+        concurrency = min(
+            attempted,
+            config["users"] if scenario == "saturation" else min(10, config["users"]),
+        )
         semaphore = asyncio.Semaphore(concurrency)
 
         async def request(index: int) -> None:
@@ -374,8 +409,11 @@ async def _measure(
                         break
                     await asyncio.sleep(0.01)
                 if scenario == "disconnect":
-                    pending.cancel()
-                    intervention = "client_task_cancelled"
+                    intervention = (
+                        "client_task_cancelled"
+                        if pending.cancel()
+                        else "client_task_already_completed"
+                    )
                     await asyncio.gather(pending, return_exceptions=True)
                     deadline = time.monotonic() + 10.0
                     while True:
@@ -402,14 +440,19 @@ async def _measure(
                 lock.rollback()
                 lock.close()
             stop.set()
-            await asyncio.gather(probe_task, return_exceptions=True)
+            probe_results = await asyncio.gather(probe_task, return_exceptions=True)
+            for failure in probe_results:
+                if isinstance(failure, BaseException):
+                    raise RuntimeError(
+                        "Synthetic probe sampling failed: " + type(failure).__name__
+                    ) from None
         seconds = time.perf_counter() - started
         report = OperationStore.report(root / "auth.sqlite3")
         outcomes = Counter(sample[1] for sample in samples)
         return {
             "scenario": scenario,
             "duration_seconds": round(seconds, 3),
-            "attempted_requests": count if intervention is None else 1,
+            "attempted_requests": attempted,
             "completed_client_responses": len(samples),
             "outcomes": dict(outcomes),
             "responses_per_second": round(len(samples) / seconds, 3),
@@ -514,6 +557,14 @@ def main() -> None:
                         item["fixture_peak_rss_bytes"]
                         for item in events
                         if "fixture_peak_rss_bytes" in item
+                    ),
+                    None,
+                )
+                result["peak_server_rss_scope"] = next(
+                    (
+                        item["fixture_peak_rss_scope"]
+                        for item in events
+                        if "fixture_peak_rss_scope" in item
                     ),
                     None,
                 )

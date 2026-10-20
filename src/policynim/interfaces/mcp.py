@@ -997,13 +997,16 @@ def _register_beta_routes(
             )
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
-        except Exception:
-            LOGGER.error("Hosted beta callback failed: unexpected_upstream_error.")
+        except Exception as exc:
+            LOGGER.error(
+                "Hosted beta callback failed: unexpected_error, stage=unknown, class=%s. "
+                "Check identity-provider reachability and auth storage health.",
+                type(exc).__name__,
+            )
             return _render_beta_landing(
                 settings,
                 message=(
-                    "GitHub sign-in failed due to an unexpected upstream error. "
-                    "Retry the sign-in flow."
+                    "GitHub sign-in failed due to an unexpected error. Retry the sign-in flow."
                 ),
                 status_code=502,
             )
@@ -1451,8 +1454,9 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "and the writable auth volume."
             ) from exc
         LOGGER.error(
-            "Hosted beta auth initialization failed: storage_unavailable. "
-            "Continuing with env-issued break-glass tokens only."
+            "Hosted beta authentication is unavailable: storage_unavailable. "
+            "Env-issued break-glass authentication "
+            "remains available, but protected operations still require healthy operation storage."
         )
         return None
 
