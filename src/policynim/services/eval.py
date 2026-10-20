@@ -672,6 +672,10 @@ def _source_coverage(
                 case_count=len(cases),
                 passed_case_count=sum(case.passed for case in cases),
                 conformance_case_count=sum(
+                    case.kind == "preflight" and case.conformance_result is not None
+                    for case in cases
+                ),
+                judged_case_count=sum(
                     any(True for _ in _case_conformance_results(case)) for case in cases
                 ),
                 operation_counts={

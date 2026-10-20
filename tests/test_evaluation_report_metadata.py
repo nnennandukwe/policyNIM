@@ -333,7 +333,8 @@ def test_public_run_records_pinned_gold_coverage_and_sanitized_effective_config(
             assert family.case_count == len(family.case_ids)
             assert family.passed_case_count == len(family.passed_case_ids)
             preflight_count = int("preflight" in family.case_ids)
-            assert family.conformance_case_count == preflight_count
+            assert family.conformance_case_count == (0 if regenerate else preflight_count)
+            assert family.judged_case_count == preflight_count
             assert family.operation_counts == {
                 "search": family.case_count - preflight_count,
                 "preflight": preflight_count,
@@ -501,3 +502,23 @@ def test_actual_offline_reports_capture_synthetic_settings_and_only_executed_thr
     output = Path(run.report_html_path).read_text() + Path(run.result_json_path).read_text()
     assert "PRIVATE-KEY-SENTINEL" not in output and "UNUSED-MODEL-SENTINEL" not in output
     assert configuration.model_dump_json() in html.unescape(output)
+
+
+def test_historical_family_coverage_doesnt_infer_retained_judgments() -> None:
+    """Older report totals stay readable without inventing missing history evidence."""
+    from policynim.types import EvalFamilyCoverage
+
+    family = EvalFamilyCoverage.model_validate(
+        {
+            "family": "backend",
+            "source": "domain",
+            "case_ids": ["case"],
+            "passed_case_ids": [],
+            "case_count": 1,
+            "passed_case_count": 0,
+            "conformance_case_count": 1,
+            "operation_counts": {"preflight": 1},
+        }
+    )
+    assert family.conformance_case_count == 1
+    assert family.judged_case_count is None
