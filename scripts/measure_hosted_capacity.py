@@ -358,6 +358,7 @@ async def _measure(
 
         started = time.perf_counter()
         intervention: str | None = None
+        drain_observation: str | None = None
         try:
             if scenario in {"disconnect", "shutdown"}:
                 pending = asyncio.create_task(request(0))
@@ -366,7 +367,16 @@ async def _measure(
                     pending.cancel()
                     intervention = "client_task_cancelled"
                     await asyncio.gather(pending, return_exceptions=True)
-                    await asyncio.sleep(config["delay"] + 0.15)
+                    deadline = time.monotonic() + 10.0
+                    while True:
+                        observed = OperationStore.report(root / "auth.sqlite3")
+                        if observed.active_operations == 0:
+                            drain_observation = "terminal_outcome_observed"
+                            break
+                        if time.monotonic() >= deadline:
+                            drain_observation = "deadline_expired_with_active_work"
+                            break
+                        await asyncio.sleep(0.02)
                 else:
                     intervention = "SIGTERM_during_active_work"
                     process.send_signal(signal.SIGTERM)
@@ -409,6 +419,7 @@ async def _measure(
             "operator_report": report.model_dump(mode="json"),
             "warmup_operations": 1,
             "intervention": intervention,
+            "drain_observation": drain_observation,
             "client_concurrency": concurrency,
         }
 

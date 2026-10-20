@@ -389,3 +389,72 @@ def test_report_closes_owned_index_after_inspection(
     else:
         assert inspect_operational_report(settings)["index_state"] == "missing"
     index.close.assert_called_once_with()
+
+
+def test_idle_auth_database_has_zero_readonly_operations(tmp_path: Path) -> None:
+    """Healthy beta state doesn't need a hosted operation before reporting zero usage."""
+    from policynim.storage.auth_store import AuthStore
+
+    path = tmp_path / "auth.sqlite3"
+    AuthStore(path=path)
+    with sqlite3.connect(path) as connection:
+        before = connection.execute("SELECT name, sql FROM sqlite_master ORDER BY name").fetchall()
+    report = OperationStore.report(path)
+    assert report.retained_rows == report.active_operations == report.latency_sample_count == 0
+    assert report.outcomes == {} and report.latency_p95_ms is None
+    with sqlite3.connect(path) as connection:
+        assert (
+            connection.execute("SELECT name, sql FROM sqlite_master ORDER BY name").fetchall()
+            == before
+        )
+
+
+def test_recovery_downtime_is_excluded_from_operation_latency(tmp_path: Path) -> None:
+    """Keep crash-recovery outcomes while leaving unknown execution duration out of tails."""
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        connection.executemany(
+            "INSERT INTO operation_usage (operation_id, principal_id, operation, usage_date, "
+            "outcome, process_id, started_at, finished_at, owner_id) "
+            "VALUES (?, 'identity', 'policy_search', '2026-01-01', ?, 1, 0, ?, 'fixture-owner')",
+            [("timed", "completed", 0.1), ("crashed", "interrupted", 86400)],
+        )
+    report = store.report(store.path)
+    assert report.outcomes == {"completed": 1, "interrupted": 1}
+    assert report.latency_sample_count == 1 and report.latency_p99_ms == 100
+
+
+def test_retention_backlog_is_batched_during_concurrent_admission(tmp_path: Path) -> None:
+    """A large terminal backlog only removes 1000 rows per short admission transaction."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        connection.executemany(
+            "INSERT INTO operation_usage (operation_id, principal_id, operation, usage_date, "
+            "outcome, process_id, started_at, finished_at, owner_id) "
+            "VALUES (?, 'old', 'policy_search', '2000-01-01', "
+            "'completed', 1, 0, 1, 'fixture-owner')",
+            [(str(index),) for index in range(6000)],
+        )
+    assert store.prune(retention_days=30) == 1000
+    gate = Barrier(2)
+
+    def reserve(index: int) -> None:
+        """Interleave two real writer transactions against remaining retention debt."""
+        gate.wait(timeout=5)
+        decision = admit_operation(
+            store,
+            principal_id=str(index),
+            operation="policy_search",
+            daily_limit=10,
+            principal_limit=10,
+            global_limit=10,
+        )
+        assert decision.rejection is None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(reserve, range(2)))
+    report = store.report(store.path)
+    assert report.retained_rows == 3002 and report.active_operations == 2

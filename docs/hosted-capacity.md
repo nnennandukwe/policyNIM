@@ -17,14 +17,17 @@ policynim beta-admin operations
 
 The read-only JSON report contains active operations, retained completed/failed/
 cancelled/interrupted outcomes and nearest-rank p50/p95/p99 duration over the most
-recent 1,000 terminal operations. The duration uses persisted UTC wall timestamps from admission through worker
+recent 1,000 completed, failed or cancelled operations. Interrupted outcomes stay
+counted but don't contribute latency: their recovery timestamp includes unknown
+downtime. The duration uses persisted UTC wall timestamps from admission through worker
 cleanup; it isn't an end-to-end client latency measurement. The report names
 that clock. Rows with reversed timestamps are excluded from latency samples;
 clock adjustments can still affect historical durations. Use the monotonic
 provider/tool logs and harness timings for latency diagnosis. The report names that
 sample window and count. It also reports local index state/build identity and
 configured active/retention limits. It doesn't create or migrate absent state.
-A missing or locked database produces a nonzero exit with state-volume recovery
+An existing auth database with no operation table reports zero usage without
+creating that table. A missing or locked database produces a nonzero exit with state-volume recovery
 guidance, without disclosing paths or database error text.
 
 Principal identifiers, client tokens, request bodies, task text, source text and
@@ -35,10 +38,11 @@ Generation identity and durable job backlog remain unavailable in this slice;
 #93/#101 integration must supply those fields before #103 can close.
 
 `POLICYNIM_MCP_OPERATION_RETENTION_DAYS` defaults to `30` and accepts 1–365.
-Each admission prunes older terminal rows inside its write transaction. It never
+Each admission prunes at most 1,000 older terminal rows inside its write transaction. It never
 removes active rows or today's usage, even if timestamps are inconsistent. Locked
 or failed cleanup rolls back with admission, preserving prior accounting. Run at
-least one accepted-operation admission after changing retention to apply it.
+successive admissions after changing retention to clear a larger eligible backlog.
+Each transaction bounds deletion work; retention debt can remain between admissions.
 Retained outcome counts describe the retained window; they aren't lifetime totals.
 Back up the database and its `.owners` directory together. Active/recovery owner lease files stay preserved. Failed initialization and a
 drained service remove their unused lease files. Monitor remaining recovery
@@ -111,7 +115,9 @@ Provider usage stays unavailable; `live_nvidia_calls` stays zero.
 The six named scenarios cover bounded baseline load, saturation above ten active
 operations, a slow provider double, a write-locked quota database, client disconnect
 and SIGTERM during accepted work. A disconnected client may leave synchronous work
-to finish; report the observed terminal outcome instead of assuming cancellation.
+to finish. The harness polls its ledger for up to ten seconds; it records either an
+observed terminal outcome or an explicit drain deadline with active work remaining.
+Report that evidence instead of assuming cancellation.
 SIGTERM can drain accepted work successfully before shutdown. Transport failures
 during intentional shutdown are identified separately from normal operation results.
 
