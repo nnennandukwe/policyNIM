@@ -159,6 +159,11 @@ The image defaults to `/app/data/generations`. Hosted deployments must mount
 objects and their active pointer survive redeploys. The container startup validates
 the existing selected generation, or imports the trusted image seed once when the
 target root is absent. It never activates a new image seed over existing state.
+Persistent deployments also set `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`.
+The hosted entrypoint refuses an unmounted path or generation, authentication,
+evaluation, or runtime-evidence paths outside that volume before creating state.
+This startup check doesn't establish cross-redeploy durability; verify that
+separately. Leaving the setting absent permits an ephemeral image test.
 An unowned, incomplete, incompatible, or damaged root blocks startup and remains
 available for operator recovery. Restart doesn't rebuild or call providers.
 
@@ -183,6 +188,10 @@ Example hosted run:
 docker run --rm -p 8000:8000 \
   --mount type=volume,source=policynim-state,target=/app/state \
   -e POLICYNIM_GENERATIONS_DIR=/app/state/generations \
+  -e POLICYNIM_HOSTED_STATE_MOUNT=/app/state \
+  -e POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3 \
+  -e POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace \
+  -e POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3 \
   -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
   -e POLICYNIM_MCP_REQUIRE_AUTH=true \
   -e POLICYNIM_MCP_BEARER_TOKENS=token-a \
@@ -251,7 +260,9 @@ Recommended beta setup:
    - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
    - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
    - `POLICYNIM_GENERATIONS_DIR=/app/state/generations`
+   - `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`
    - `POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace`
+   - `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3`
    - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`

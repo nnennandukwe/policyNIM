@@ -28,6 +28,14 @@ Explicit import/activate/rollback stays an operator action.
 
 ## Invariants
 
+Persistent deployments set `POLICYNIM_HOSTED_STATE_MOUNT` to their actual volume
+root. Before reading or creating generation state, hosted startup requires that
+root to be a mount point and requires generation, authentication, evaluation, and
+runtime-evidence paths to resolve beneath it. Missing mounts and escaped paths
+fail without writes. The production example and persistent Docker command set
+this contract explicitly; the short image test remains ephemeral. Mount-point
+detection doesn't replace the required cross-redeploy durability observation.
+
 1. Startup only seeds an absent root and never rewrites a valid active pointer.
 2. The conditional first import rechecks state while holding the store writer lock.
 3. Existing unowned, corrupt, incompatible, or incomplete state blocks startup.

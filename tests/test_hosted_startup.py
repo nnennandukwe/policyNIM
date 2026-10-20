@@ -34,6 +34,85 @@ def test_production_example_loads_persistent_runtime_paths(
     assert settings.eval_workspace_dir == Path("/app/state/evals/workspace")
     assert settings.beta_auth_db_path == Path("/app/state/auth.sqlite3")
     assert settings.runtime_evidence_db_path == Path("/app/state/runtime_evidence.sqlite3")
+    assert settings.hosted_state_mount == Path("/app/state")
+
+
+def persistent_settings(settings: Settings) -> Settings:
+    """Place every mutable hosted path below the fixture's declared volume root."""
+    mount = settings.generations_dir.parent
+    return settings.model_copy(
+        update={
+            "hosted_state_mount": mount,
+            "beta_auth_db_path": mount / "auth.sqlite3",
+            "eval_workspace_dir": mount / "evals/workspace",
+            "runtime_evidence_db_path": mount / "runtime_evidence.sqlite3",
+        }
+    )
+
+
+def test_missing_declared_mount_never_creates_state(hosted_seed: HostedSeed) -> None:
+    """An absent declared volume can't be replaced by apparently durable image storage."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, target, seed, _ = hosted_seed
+    with pytest.raises(GenerationError, match="isn't mounted"):
+        prepare_hosted_generation(persistent_settings(settings), seed_dir=seed)
+    assert not target.root.exists()
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["generations_dir", "beta_auth_db_path", "eval_workspace_dir", "runtime_evidence_db_path"],
+)
+def test_declared_mount_rejects_a_state_path_outside_it(
+    hosted_seed: HostedSeed, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str
+) -> None:
+    """A mounted generation root alone can't make the other mutable stores durable."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, target, seed, _ = hosted_seed
+    settings.generations_dir.parent.mkdir()
+    monkeypatch.setattr(Path, "is_mount", lambda path: True)
+    outside = tmp_path / "outside"
+    configured = persistent_settings(settings).model_copy(update={field: outside})
+    with pytest.raises(GenerationError, match="outside the configured hosted state volume"):
+        prepare_hosted_generation(configured, seed_dir=seed)
+    assert not target.root.exists()
+    assert not outside.exists()
+
+
+def test_declared_mount_admits_all_volume_backed_paths(
+    hosted_seed: HostedSeed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Valid configured paths use normal generation publication after mount admission."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, _, seed, expected = hosted_seed
+    settings.generations_dir.parent.mkdir()
+    monkeypatch.setattr(Path, "is_mount", lambda path: True)
+    assert prepare_hosted_generation(persistent_settings(settings), seed_dir=seed) == expected
+
+
+def test_declared_mount_rejects_a_state_directory_symlink_escape(
+    hosted_seed: HostedSeed, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A lexical volume prefix can't hide an evaluation directory pointing elsewhere."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, target, seed, _ = hosted_seed
+    mount = settings.generations_dir.parent
+    mount.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (mount / "evals").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Creating directory symlinks isn't permitted on this platform.")
+    monkeypatch.setattr(Path, "is_mount", lambda path: True)
+    with pytest.raises(GenerationError, match="outside the configured hosted state volume"):
+        prepare_hosted_generation(persistent_settings(settings), seed_dir=seed)
+    assert not target.root.exists()
+    assert not list(outside.iterdir())
 
 
 @pytest.fixture

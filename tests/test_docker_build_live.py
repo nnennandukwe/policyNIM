@@ -86,6 +86,28 @@ def test_runtime_image_imports_generation_without_credentials(dockerfile: str) -
         assert report["health"]["row_count"] > 0
         assert report["modern"] == report["legacy"] == ["policy_preflight", "policy_search"]
         assert report["provider_credentials"] is False
+        missing_mount = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network=none",
+                "-e",
+                "POLICYNIM_HOSTED_STATE_MOUNT=/app/state",
+                "-e",
+                "POLICYNIM_GENERATIONS_DIR=/app/state/generations",
+                tag,
+                "python",
+                "-c",
+                "from pathlib import Path; from policynim.interfaces.hosted import main; "
+                "assert main() == 1; assert not Path('/app/state/generations').exists()",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert missing_mount.returncode == 0, missing_mount.stdout + missing_mount.stderr
+        assert "isn't mounted" in missing_mount.stderr
         subprocess.run(["docker", "volume", "create", volume], check=True, capture_output=True)
         arguments = [
             "docker",
@@ -96,6 +118,14 @@ def test_runtime_image_imports_generation_without_credentials(dockerfile: str) -
             f"type=volume,source={volume},target=/app/state",
             "-e",
             "POLICYNIM_GENERATIONS_DIR=/app/state/generations",
+            "-e",
+            "POLICYNIM_HOSTED_STATE_MOUNT=/app/state",
+            "-e",
+            "POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3",
+            "-e",
+            "POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace",
+            "-e",
+            "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3",
             tag,
             "python",
             "-c",

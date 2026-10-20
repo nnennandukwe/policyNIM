@@ -17,8 +17,45 @@ from policynim.types import EmbeddingIdentity
 _SEED_DIR = Path("/app/artifacts/public-generation")
 
 
+def _require_state_mount(settings: Settings) -> None:
+    """Reject a missing declared volume or mutable paths outside it before any writes."""
+    mount = settings.hosted_state_mount
+    if mount is None:
+        return
+    try:
+        if (
+            not mount.is_absolute()
+            or mount.parent == mount
+            or mount.is_symlink()
+            or not mount.is_mount()
+        ):
+            raise GenerationError(
+                "storage_mount",
+                "The configured hosted state volume isn't mounted. Mount it before restarting.",
+            )
+        root = mount.resolve(strict=True)
+        paths = (
+            settings.generations_dir,
+            settings.beta_auth_db_path,
+            settings.eval_workspace_dir,
+            settings.runtime_evidence_db_path,
+        )
+        if any(not path.resolve().is_relative_to(root) for path in paths):
+            raise GenerationError(
+                "storage_mount",
+                "A mutable state path is outside the configured hosted state volume. "
+                "Put generation, auth, evaluation, and runtime evidence paths on that volume.",
+            )
+    except (OSError, RuntimeError) as error:
+        raise GenerationError(
+            "storage_mount",
+            "Hosted state storage couldn't be inspected. Check the mount and path permissions.",
+        ) from error
+
+
 def prepare_hosted_generation(settings: Settings, *, seed_dir: Path = _SEED_DIR) -> str:
     """Keep the active volume selection, or conditionally seed a genuinely absent root."""
+    _require_state_mount(settings)
     store = GenerationStore(
         root=settings.generations_dir.absolute(),
         embedding=EmbeddingIdentity(
