@@ -29,7 +29,7 @@ from pydantic import BaseModel, ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
-from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
+from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL, chat_request_configuration
 from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
 from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
@@ -664,19 +664,16 @@ def _request_chat_completion(
     retry_max_seconds: float = 8.0,
 ) -> Any:
     """Request structured chat output and sanitize provider failures."""
-    options: dict[str, Any] = {"temperature": 0, "top_p": 1}
-    if model in {
-        "nvidia/nemotron-3-super-120b-a12b",
-        NVIDIA_LIGHTNING_CHAT_MODEL,
-    }:
-        options = {
-            "temperature": 1,
-            "top_p": 0.95,
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    configuration = chat_request_configuration(model)
+    options: dict[str, Any] = {
+        "temperature": configuration.temperature,
+        "top_p": configuration.top_p,
+    }
+    if configuration.enable_thinking is not None:
+        options["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": configuration.enable_thinking}
         }
-    if model == NVIDIA_LIGHTNING_CHAT_MODEL:
-        options["temperature"] = 0
-        options["top_p"] = 1
+    if configuration.output_mode == "json_schema":
         options["response_format"] = {
             "type": "json_schema",
             "json_schema": {

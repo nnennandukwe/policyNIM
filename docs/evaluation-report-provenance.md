@@ -1,0 +1,13 @@
+# Reading evaluation configuration and source coverage
+
+Each newly written mode report includes `effective_configuration` and `source_coverage` in JSON and its HTML summary. Historical reports can omit either field; a missing value means the report didn't retain that evidence.
+
+`effective_configuration` records the resolved model names, chat sampling/output settings, per-case `top_k`, rerank selection, request/operation timeouts, and retry limit. The actual provider dispatcher and report writer share the chat configuration builder. Credentials and endpoint URLs aren't copied into this metadata. These are run settings: a configured chat model doesn't prove a search-only case invoked it, and a configured retry limit doesn't count attempts. `provider_usage` remains separate and can be unavailable.
+
+Conformance thresholds appear only when executed cases contain judge adherence metrics. The fixed final and trajectory boundaries come from the same function used by scoring. A threshold and a returned score don't establish independent semantic correctness. Controlled offline judge outputs in tests verify serialization and score handling; they aren't live-model quality evidence.
+
+`source_coverage` takes the profile ID and digest from the generation held by the run. It assigns executed gold expectations to policy families using the pinned policy's declared pack ID. Sources without pack provenance use an explicit `domain` fallback. Cases without assignable gold expectations remain `unassigned`; source families with no executed gold cases stay visible with zero counts.
+
+A case can expect policies from several families, so family counts can overlap and shouldn't be summed as a unique case total. `executed_case_count` is the unique executed total. Each family also records search/preflight counts, passed case IDs, and cases with conformance results. Returned model answers, nearby unselected packs, authored scenario counts, and earlier run receipts don't create family coverage.
+
+Case-result fields haven't changed. A retained historical fixture was generated through the public offline evaluator at `cda87acc54bfdc25cdd70a1cce234e22e5205d4a`; its case JSON digests remain unchanged when the current models read it. Retained jobs embed case results rather than mode reports, so this slice doesn't migrate their report hashes. The standalone `evaluate_case` path doesn't write report files.

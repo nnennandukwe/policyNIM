@@ -1266,6 +1266,63 @@ class EvalAggregateMetrics(StrictModel):
     conformance_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class ChatRequestConfiguration(StrictModel):
+    """Resolved sampling and output settings shared by dispatch and reporting."""
+
+    model: str
+    temperature: float
+    top_p: float
+    enable_thinking: bool | None = None
+    output_mode: Literal["default", "json_schema"] = "default"
+
+
+class ConformanceThresholds(StrictModel):
+    """Score boundaries used by the optional conformance judge."""
+
+    final_adherence: float = Field(ge=0.0, le=1.0)
+    trajectory_adherence: float = Field(ge=0.0, le=1.0)
+
+
+class EvalEffectiveConfiguration(StrictModel):
+    """Resolved run settings, without credentials or claims about provider invocation."""
+
+    provider: Literal["nvidia"] = "nvidia"
+    embedding_model: str
+    reranking_model: str | None = None
+    chat: ChatRequestConfiguration
+    top_k_by_case: dict[str, int]
+    rerank_enabled: bool
+    request_timeout_seconds: float
+    operation_timeout_seconds: float
+    max_retries: int
+    conformance_thresholds: ConformanceThresholds | None = None
+
+
+EvalFamilySource = Literal["pack", "domain", "unassigned"]
+
+
+class EvalFamilyCoverage(StrictModel):
+    """Executed gold cases assigned to a sealed source family."""
+
+    family: str
+    source: EvalFamilySource
+    case_ids: list[str]
+    passed_case_ids: list[str]
+    case_count: int = Field(ge=0)
+    passed_case_count: int = Field(ge=0)
+    conformance_case_count: int = Field(default=0, ge=0)
+    operation_counts: dict[EvalKind, int]
+
+
+class EvalSourceCoverage(StrictModel):
+    """Pinned profile and overlapping family coverage from executed expectations only."""
+
+    profile_id: str | None = None
+    profile_digest: str | None = None
+    executed_case_count: int = Field(ge=0)
+    families: list[EvalFamilyCoverage] = Field(default_factory=list)
+
+
 class EvalModeRunResult(StrictModel):
     """All eval results for one rerank mode."""
 
@@ -1275,6 +1332,8 @@ class EvalModeRunResult(StrictModel):
     catalog_digest: str | None = None
     provider_models: dict[str, str] = Field(default_factory=dict)
     provider_usage: Literal["not_performed", "unavailable"] = "not_performed"
+    effective_configuration: EvalEffectiveConfiguration | None = None
+    source_coverage: EvalSourceCoverage | None = None
 
     backend: EvalBackend = "default"
     rerank_enabled: bool
