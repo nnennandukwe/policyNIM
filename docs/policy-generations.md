@@ -49,6 +49,13 @@ attempts; it doesn't ingest a temporary index. Offline eval uses synthetic fixtu
 and reports no generation. An explicit `POLICYNIM_GENERATION_ID` selects a retained
 object for repeatable jobs without changing the active pointer.
 
+Source-resource readers can use `GenerationStore.pin_retained(generation_id)`
+with an explicit retained ID. It validates the manifest and every artifact
+against the generation's sealed embedding identity and holds the same reader
+lease, even when the current retrieval model or endpoint has changed. Ordinary
+`pin()` and application index factories still require the configured embedding
+identity; archival source reads don't authorize queries with mismatched vectors.
+
 ## Roll back and retain readers
 
 Inspect the current ID first and pass it as a concurrency token:
@@ -89,6 +96,12 @@ Pruning deletes only validated owned objects. Changed or unknown entries remain
 preserved with warnings. After interruption, cleanup can remove empty folders with
 managed stage/trash names; unmatched names and nonempty unowned entries stay
 preserved. Dangling staging links stay in place and produce a warning.
+An interrupted initial owner record can resume under the publication lock only
+when the directory contains reserved owner-record names and prefixes of the
+expected marker bytes. Unknown entries stay preserved. Pruning recovers a
+partial staging marker only in an otherwise empty managed stage. A partial
+trash marker is repaired only after every original artifact passes the complete
+generation inspector; changed or incomplete data stays preserved.
 Cleanup diagnostics identify the managed relative path
 and a safe cause. All processes must use the same store and filesystem locking
 semantics. This isn't a sandbox against arbitrary writes by the same OS

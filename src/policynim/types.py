@@ -291,11 +291,13 @@ class ShellCommandActionRequest(RuntimeActionRequestBase):
     @field_validator("command")
     @classmethod
     def validate_command(cls, value: list[str]) -> list[str]:
-        """Require at least one non-empty shell argument."""
-        normalized: list[str] = []
-        for item in value:
-            normalized.append(_validate_non_empty_string(item, field_name="command item"))
-        return normalized
+        """Validate executable and argument boundaries without changing their contents."""
+        if not value[0].strip():
+            raise ValueError("command executable must not be empty.")
+        for index, item in enumerate(value):
+            if "\x00" in item:
+                raise ValueError(f"command item {index} must not contain NUL bytes.")
+        return value
 
 
 class FileWriteActionRequest(RuntimeActionRequestBase):
@@ -353,16 +355,8 @@ class ShellCommandExecutionRequest(RuntimeExecutionRequestBase):
     """Sanitized execution request for one shell command."""
 
     kind: Literal["shell_command"]
+    # Evidence readers must preserve historical argv, even if new actions would reject it.
     command: list[str] = Field(min_length=1)
-
-    @field_validator("command")
-    @classmethod
-    def validate_command(cls, value: list[str]) -> list[str]:
-        """Require at least one non-empty shell argument."""
-        normalized: list[str] = []
-        for item in value:
-            normalized.append(_validate_non_empty_string(item, field_name="command item"))
-        return normalized
 
 
 class FileWriteExecutionRequest(RuntimeExecutionRequestBase):
