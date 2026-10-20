@@ -13,12 +13,14 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import secrets
 import socket
 import subprocess
 import sysconfig
 import tempfile
 import time
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -65,6 +67,35 @@ def check_wheel(wheel: Path) -> dict[str, object]:
         "verified_package_files": checked,
         "package_version": importlib.metadata.version("policynim"),
     }
+
+
+def check_dependencies(lockfile: Path, expected_digest: str) -> dict[str, object]:
+    """Bind installed dependency versions to the exact reviewed lockfile bytes."""
+    require(lockfile.is_file(), "Dependency lockfile is missing.")
+    data = lockfile.read_bytes()
+    digest = "sha256:" + hashlib.sha256(data).hexdigest()
+    require(
+        digest == expected_digest, "Dependency lockfile digest differs from the expected revision."
+    )
+    packages = tomllib.loads(data.decode("utf-8"))["package"]
+    locked: dict[str, set[str]] = {}
+    for package in packages:
+        name = re.sub(r"[-_.]+", "-", package["name"]).lower()
+        locked.setdefault(name, set()).add(package["version"])
+    versions: dict[str, str] = {}
+    bootstrap: dict[str, str] = {}
+    for distribution in importlib.metadata.distributions():
+        name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+        version = distribution.version
+        if name in {"pip", "setuptools", "wheel"} and name not in locked:
+            bootstrap[name] = version
+            continue
+        require(
+            version in locked.get(name, set()),
+            f"Installed dependency isn't locked: {name}=={version}.",
+        )
+        versions[name] = version
+    return {"sha256": digest, "installed_versions": versions, "bootstrap_versions": bootstrap}
 
 
 def installed_command() -> str:
@@ -161,6 +192,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         "python": platform.python_version(),
         "platform": platform.system(),
         "wheel": check_wheel(args.wheel),
+        "dependency_lock": check_dependencies(args.lockfile, args.lock_digest),
         "sdk_version": importlib.metadata.version("mcp"),
         "provider_calls": "not performed",
         "coding_client_ui": "not tested",
@@ -294,6 +326,8 @@ def main() -> None:
     """Persist a reviewable result with explicit failure instead of silently skipping checks."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
+    parser.add_argument("--lockfile", type=Path, required=True)
+    parser.add_argument("--lock-digest", required=True)
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--bundle-digest", required=True)
     parser.add_argument("--revision", required=True)

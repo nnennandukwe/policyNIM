@@ -1243,6 +1243,8 @@ class EvalAggregateMetrics(StrictModel):
     """Aggregate metrics for one rerank mode run."""
 
     case_count: int = Field(ge=0)
+    expected_chunk_case_count: int = Field(default=0, ge=0)
+    expected_policy_case_count: int = Field(default=0, ge=0)
     passed_count: int = Field(ge=0)
     search_case_count: int = Field(ge=0)
     search_passed_count: int = Field(ge=0)
