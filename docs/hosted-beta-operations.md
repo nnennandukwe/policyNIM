@@ -402,11 +402,12 @@ Hosted authentication doesn't consume work-unit allowance. Interactive expensive
 work (search, preflight, compile and preflight evidence) reserves one unit when its
 admission transaction commits, before providers start. Durable evaluation work
 reserves its validated case/configuration weight before the job is queued; worker
-activation doesn't reserve another unit. Later provider failure, cancellation or process loss
-keeps that charge: upstream usage may already exist. Invalid credentials, missing
-scopes, saturation and exhausted allowance start no provider and add no charge.
-A cancelled/expired worker is rejected before reservation, and cancellation is
-checked again with the write-locked snapshot; neither check charges usage.
+activation doesn't reserve another unit. Later provider failure, cancellation or
+process loss keeps the accepted charge. A rejected new acceptance adds no charge.
+Cancellation/deadline checks run again with the write-locked acceptance snapshot.
+Queued activation also rechecks authority, cancellation, deadline and active caps:
+rejection starts no provider and adds no units, while the prior reservation stays
+charged. Cancelling or expiring an already accepted queued job doesn't refund it.
 Initialization, discovery, public health, resources and job polling aren't expensive
 operations. Resources, review prompts, job inspection, results and cancellation
 reserve no units. Returning an existing durable submission reserves no additional

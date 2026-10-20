@@ -163,17 +163,20 @@ it doesn't obtain an MCP OAuth token.
 
 In compatibility mode, a bounded read-only lookup recognizes locally issued
 key hashes, including revoked keys, before any issuer request. Recognition grants
-no access; the existing transactional authenticator still checks revocation,
-account status. Work acceptance and execution activation check the key and account again in
-the same transaction that charges usage. Known denied keys never reach the issuer. Unknown opaque
+no access; the existing transactional authenticator still checks revocation and
+account status. Work acceptance checks the key and account in the transaction that
+reserves units. Later execution activation rechecks them while acquiring a slot,
+without reserving units again. Known denied keys never reach the issuer. Unknown opaque
 tokens, including ones starting with `pnm_`, can still be verified by the issuer.
 If local recognition storage fails, unrecognized tokens can continue to issuer
 verification; local authorization never succeeds from a failed lookup.
 
 In compatibility mode, beta key rotation revokes the previous key immediately;
-operator revoke and account suspension block subsequent authentication. Authentication and discovery don't charge quota in either mode. Hosted search,
-preflight and other expensive operation executions charge at admission, including
-work that later fails or is cancelled. Rotation preserves account usage.
+operator revoke and account suspension block subsequent authentication.
+Authentication and discovery don't reserve units in either mode. Interactive
+expensive operations reserve one unit at admission; evaluation submission reserves
+its validated case/configuration weight before queuing. Failed or cancelled
+accepted work keeps its units. Rotation preserves account usage.
 [Operation limits and recovery](hosted-beta-operations.md#principal-operation-limits)
 describe configuration, outcomes and the single-instance boundary.
 
