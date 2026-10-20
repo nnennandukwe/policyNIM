@@ -482,7 +482,11 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
 
     class MockPhoenixProjects:
         def get(self, *, project_name: str) -> None:
-            raise RuntimeError(f"missing project {project_name}")
+            import httpx
+
+            request = httpx.Request("GET", "http://127.0.0.1/projects/PolicyNIM%20Eval")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Project not found", request=request, response=response)
 
         def create(self, *, name: str) -> dict[str, str]:
             return {"name": name}

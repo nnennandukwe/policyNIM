@@ -439,13 +439,13 @@ def test_mixed_suite_metrics_include_every_applicable_expectation() -> None:
 def test_shipped_live_expectations_match_the_shipped_catalog(installed_generation) -> None:
     """Policy changes require an explicit reviewed fixture update in offline CI."""
     from policynim.services.catalog import build_policy_catalog
-    from policynim.services.eval import _load_eval_suite, _validate_suite_generation
+    from policynim.services.eval import _load_eval_suite, validate_suite_generation
 
     suite = _load_eval_suite(ROOT / "evals/grounded_cases.json")
     _, generations = installed_generation
     with generations.pin() as snapshot:
         assert snapshot.catalog.digest == build_policy_catalog(ROOT / "policies").digest
-        _validate_suite_generation(suite, snapshot)
+        validate_suite_generation(suite, snapshot)
     assert all(
         case.expected_chunk_ids for case in suite.cases if not case.expected_insufficient_context
     )

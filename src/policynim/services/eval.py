@@ -137,7 +137,7 @@ class EvalService:
                 snapshot = pinned_generation(store)
                 if snapshot is None:
                     raise PolicyNIMError("Live evaluation requires a verified policy generation.")
-                _validate_suite_generation(suite, snapshot)
+                validate_suite_generation(suite, snapshot)
                 worker = EvalService(
                     settings=self._settings.model_copy(
                         update={"generation_id": snapshot.generation_id}, deep=True
@@ -188,7 +188,7 @@ class EvalService:
             snapshot = pinned_generation(store)
             if snapshot is None or snapshot.generation_id != self._settings.generation_id:
                 raise PolicyNIMError("Case evaluation couldn't pin its requested generation.")
-            _validate_suite_generation(captured, snapshot)
+            validate_suite_generation(captured, snapshot)
             results = self._run_suite_cases(
                 captured.model_copy(update={"cases": [case]}),
                 mode="live",
@@ -1016,7 +1016,7 @@ def _forbidden_policy_failures(case: EvalCase, observed: Sequence[str] | set[str
     return ["forbidden policy_id values: " + ", ".join(unexpected)] if unexpected else []
 
 
-def _validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
+def validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
     """Reject stale or impossible custom fixtures before constructing provider services."""
     if suite.expected_catalog_digest is None and not suite.expected_policy_revisions:
         raise PolicyNIMError(

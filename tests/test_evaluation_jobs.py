@@ -665,3 +665,34 @@ def test_busy_worker_prunes_expired_payloads_before_queue_becomes_empty(
         ).fetchone()[0]
     assert snapshot is None
     assert service.inspect(waiting.job_id, principal=principal()).state == "queued"
+
+
+@pytest.mark.parametrize("invalid", ["blank-input", "blank-domain", "revision", "policy", "chunk"])
+def test_submission_rejects_invalid_case_before_acceptance_or_quota(
+    generation, tmp_path: Path, invalid: str
+) -> None:
+    """Invalid case contracts and absent evidence can't enter an admitted worker job."""
+    from pydantic import ValidationError
+
+    from policynim.errors import PolicyNIMError
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    updates = {
+        "blank-input": {"input": "   "},
+        "blank-domain": {"domain": " "},
+        "policy": {
+            "expected_policy_ids": ["missing-policy"],
+            "expected_insufficient_context": False,
+        },
+        "chunk": {"expected_chunk_ids": ["missing-chunk"], "expected_insufficient_context": False},
+    }
+    if invalid == "revision":
+        suite = suite.model_copy(update={"expected_policy_revisions": {"A": "sha256:" + "0" * 64}})
+    else:
+        suite = suite.model_copy(
+            update={"cases": [suite.cases[0].model_copy(update=updates[invalid])]}
+        )
+    with pytest.raises((PolicyNIMError, ValidationError)):
+        service.submit(suite, idempotency_key="invalid", principal=principal())
+    assert service.store.aggregate_counts() == {}
+    assert not service.settings.beta_auth_db_path.exists()

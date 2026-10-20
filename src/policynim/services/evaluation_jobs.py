@@ -16,6 +16,8 @@ from threading import Event, Lock, Thread
 from typing import ParamSpec, Protocol, TypeVar
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from policynim.errors import PolicyNIMError, ProviderError
 from policynim.job_types import (
     EvaluationJobAuthorization,
@@ -32,7 +34,7 @@ from policynim.operations import OperationBudget, operation_scope
 from policynim.providers.lifecycle import NVIDIAClients, borrow_clients
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
-from policynim.services.eval import EvalService
+from policynim.services.eval import EvalService, validate_suite_generation
 from policynim.services.generations import GenerationStore
 from policynim.services.operation_admission import (
     OperationAdmissionError,
@@ -46,7 +48,7 @@ from policynim.storage.evaluation_jobs import (
     payload_digest,
 )
 from policynim.storage.file_lock import try_exclusive_file_lock
-from policynim.types import EmbeddingIdentity, EvalCaseResult, EvalSuite
+from policynim.types import CompileRequest, EmbeddingIdentity, EvalCaseResult, EvalSuite
 
 _LOG = logging.getLogger("policynim.jobs")
 _KEY_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
@@ -178,6 +180,14 @@ class EvaluationJobService:
             raise EvaluationJobError(
                 "suite_too_large: Reduce the case count or suite payload before retrying."
             )
+        try:
+            for case in suite.cases:
+                CompileRequest(task=case.input, domain=case.domain, top_k=case.top_k)
+        except ValidationError as exc:
+            raise EvaluationJobError(
+                "invalid_case_request: Provide a nonblank case input and domain, "
+                "with top_k between 1 and 20."
+            ) from exc
         configuration = _configuration(self.settings, rerank_enabled)
         request_digest = payload_digest(
             {
@@ -198,17 +208,7 @@ class EvaluationJobService:
             ),
         )
         with generation_store.pin(self.settings.generation_id) as snapshot:
-            if suite.expected_catalog_digest is None and not suite.expected_policy_revisions:
-                raise EvaluationJobError(
-                    "suite_unpinned: Pin its catalog digest or policy revisions before submitting."
-                )
-            if (
-                suite.expected_catalog_digest is not None
-                and suite.expected_catalog_digest != snapshot.catalog.digest
-            ):
-                raise EvaluationJobError(
-                    "suite_generation_mismatch: Submit expectations for the selected generation."
-                )
+            validate_suite_generation(suite, snapshot)
             with TemporaryDirectory(prefix="job-capture-", dir=self.store.path.parent) as directory:
                 path = Path(directory) / "generation.zip"
                 digest = generation_store.export_bundle(path, snapshot.generation_id)
