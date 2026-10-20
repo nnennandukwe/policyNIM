@@ -76,7 +76,12 @@ _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
 _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
-_EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
+_EXPECTED_MCP_TOOLS = (
+    "policy_preflight",
+    "policy_search",
+    "policy_compile",
+    "policy_preflight_evidence",
+)
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
 
 app = typer.Typer(

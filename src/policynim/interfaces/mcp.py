@@ -517,6 +517,17 @@ async def _run_logged_tool(
 
 def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
+    from policynim.errors import GenerationError
+    from policynim.services.grounded_mcp import PolicyResourceError
+
+    if isinstance(exc, PolicyResourceError):
+        return str(exc)
+    if isinstance(exc, GenerationError):
+        return (
+            "generation_unavailable: The selected policy generation is unavailable or invalid. "
+            "Historical references never use a newer generation. Ask the operator to inspect "
+            "the retained generations."
+        )
     if isinstance(exc, IndexCompatibilityError):
         return (
             "The policy index is incompatible or incomplete. Ask the operator to preserve "
@@ -650,6 +661,20 @@ def _register_tools(
         )
         return SearchResult.model_validate(result)
 
+    from policynim.interfaces.grounded_mcp import register_grounded_capabilities
+
+    async def run_grounded_tool(
+        name: str, operation: Callable[[], dict[str, object]], ctx: Context
+    ) -> dict[str, object]:
+        """Keep every grounded operation inside the existing budget and lifecycle."""
+        return await _run_logged_tool(name, operation, ctx=ctx, executor=executor)
+
+    register_grounded_capabilities(
+        server,
+        get_principal=get_principal,
+        run_tool=run_grounded_tool,
+        resolve_top_k=_resolve_top_k,
+    )
     return server
 
 

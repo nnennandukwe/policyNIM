@@ -3581,8 +3581,16 @@ def test_mcp_smoke_failure_text_prints_recovery_steps(
 @pytest.mark.parametrize(
     ("tool_names", "expected_status", "missing_tools"),
     [
-        (["policy_search", "policy_preflight"], "ok", []),
-        (["policy_search"], "error", ["policy_preflight"]),
+        (
+            ["policy_search", "policy_preflight", "policy_compile", "policy_preflight_evidence"],
+            "ok",
+            [],
+        ),
+        (
+            ["policy_search"],
+            "error",
+            ["policy_preflight", "policy_compile", "policy_preflight_evidence"],
+        ),
     ],
 )
 def test_mcp_stdio_smoke_discovers_sdk_tools_with_float_timeout(
@@ -3657,7 +3665,12 @@ def test_mcp_stdio_smoke_reports_sdk_failures_and_closes_session(
 
     assert report["status"] == "error"
     assert report["tools"] == []
-    assert report["missing_tools"] == ["policy_preflight", "policy_search"]
+    assert report["missing_tools"] == [
+        "policy_preflight",
+        "policy_search",
+        "policy_compile",
+        "policy_preflight_evidence",
+    ]
     assert type(failure).__name__ in str(report["message"])
     assert "policynim doctor" in " ".join(cast(list[str], report["next_steps"]))
     session.__aexit__.assert_awaited_once()
