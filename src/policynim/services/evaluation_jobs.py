@@ -445,10 +445,13 @@ class EvaluationJobWorker:
 
     def _loop(self) -> None:
         """Recover only after acquiring ownership and keep storage failures observable."""
+        next_cleanup = 0.0
         while not self._stop.is_set() and not self._admission_paused.is_set():
             try:
                 result = self.run_once()
-                self.store.purge_expired()
+                if time.monotonic() >= next_cleanup:
+                    next_cleanup = time.monotonic() + 60.0
+                    self.store.purge_expired()
                 if result is None:
                     self._stop.wait(0.5)
             except Exception as exc:
@@ -503,6 +506,7 @@ class EvaluationJobWorker:
     def _execute(self, job: EvaluationJobInfo) -> EvaluationJobInfo:
         """Keep input restoration, admission, provider work and cleanup in one owned lifecycle."""
         signal = _CancellationSignal(self.store, job.job_id, self._stop)
+        execution_started = False
         try:
             snapshot = self.store.captured_snapshot(job.job_id, self.worker_token)
             remaining = job.deadline_at - self.store.clock()
@@ -542,6 +546,8 @@ class EvaluationJobWorker:
 
             def run_owned() -> None:
                 """Hold shared quota admission through every case and provider cleanup."""
+                nonlocal execution_started
+                execution_started = True
                 _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
                 settings = self._restore(snapshot, archive)
                 clients = NVIDIAClients()
@@ -563,11 +569,18 @@ class EvaluationJobWorker:
 
             admission = OperationAdmissionService(self.service.settings)
             accounting_cancelled = False
+            accounting_interrupted = False
+
+            def observe_interruption() -> bool:
+                """Keep the exact operator-stop decision used by terminal accounting."""
+                nonlocal accounting_interrupted
+                accounting_interrupted = self._stop.is_set()
+                return accounting_interrupted
 
             def observe_cancellation() -> bool:
                 """Keep the exact cancellation decision used by terminal admission accounting."""
                 nonlocal accounting_cancelled
-                accounting_cancelled = signal.is_set()
+                accounting_cancelled = self.store.cancellation_requested(job.job_id)
                 return accounting_cancelled
 
             try:
@@ -581,6 +594,7 @@ class EvaluationJobWorker:
                             principal=_principal(snapshot.authorization),
                             operation_name="eval_submit",
                             cancelled=observe_cancellation,
+                            interrupted=observe_interruption,
                             check_ready=budget.remaining,
                         )
                     else:
@@ -590,19 +604,35 @@ class EvaluationJobWorker:
                             principal=_principal(snapshot.authorization),
                             operation_name="eval_submit",
                             cancelled=observe_cancellation,
+                            interrupted=observe_interruption,
                             check_ready=budget.remaining,
                         )
             finally:
                 admission.store.close()
-            if accounting_cancelled:
+            if accounting_cancelled or accounting_interrupted:
                 return self.store.finish(
                     job.job_id,
                     self.worker_token,
-                    "interrupted" if self._stop.is_set() else "cancelled",
-                    failure_code="worker_stopped" if self._stop.is_set() else "cancelled",
+                    "interrupted" if accounting_interrupted else "cancelled",
+                    failure_code="worker_stopped" if accounting_interrupted else "cancelled",
                 )
             return self.store.finish(job.job_id, self.worker_token, "completed")
         except Exception as exc:
+            if isinstance(exc, OperationAdmissionError):
+                admission_failure = str(exc).partition(":")[0]
+                if admission_failure == "accounting_incomplete":
+                    self._admission_paused.set()
+                elif admission_failure in {"server_busy", "principal_busy", "admission_busy"}:
+                    return self.store.defer_admission(
+                        job.job_id, self.worker_token, admission_failure
+                    )
+            if (
+                self._stop.is_set()
+                and not execution_started
+                and isinstance(exc, ProviderError)
+                and exc.failure_class == "cancelled"
+            ):
+                return self.store.defer_admission(job.job_id, self.worker_token, "worker_stopped")
             if self._stop.is_set():
                 state: EvaluationJobState = "interrupted"
                 failure = "worker_stopped"

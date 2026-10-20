@@ -719,6 +719,14 @@ def test_concurrent_schema_upgrade_keeps_accepted_jobs(
     service, suite, _ = job_setup(generation, tmp_path)
     accepted = service.submit(suite, idempotency_key="before-upgrade", principal=principal())
     with sqlite3.connect(service.store.path) as db:
+        # The historical schema didn't have indexes introduced by the current worker.
+        for name in (
+            "evaluation_jobs_pending_finalization",
+            "evaluation_jobs_state",
+            "evaluation_jobs_expiring_payloads",
+            "evaluation_jobs_retained_generations",
+        ):
+            db.execute(f"DROP INDEX {name}")
         if previous_version == 1:
             db.execute("ALTER TABLE evaluation_jobs DROP COLUMN active_case_start_attempts")
         db.execute("ALTER TABLE evaluation_jobs DROP COLUMN work_units")
@@ -1906,3 +1914,172 @@ def test_completed_job_doesnt_require_an_extra_terminal_quota_transaction(
             writer.rollback()
             writer.close()
         worker.close()
+
+
+def test_idle_worker_throttles_retention_between_polls(generation, tmp_path, monkeypatch):
+    """Idle polling keeps maintenance bounded even while retained summaries accumulate."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, _, _ = job_setup(generation, tmp_path)
+    worker = EvaluationJobWorker(service)
+    cleanups: list[int] = []
+    polls: list[int] = []
+    purge = service.store.purge_expired
+
+    def record_cleanup():
+        """Retain real cleanup while counting maintenance transactions."""
+        cleanups.append(1)
+        return purge()
+
+    def finish_after_five_polls(timeout):
+        """Drive the real idle loop without sleeping between its five polls."""
+        polls.append(1)
+        if len(polls) == 5:
+            worker._stop.set()
+        return worker._stop.is_set()
+
+    monkeypatch.setattr(service.store, "purge_expired", record_cleanup)
+    monkeypatch.setattr(worker._stop, "wait", finish_after_five_polls)
+    try:
+        worker._loop()
+        assert len(polls) == 5
+        assert len(cleanups) == 1
+    finally:
+        worker.close()
+
+
+def test_shutdown_drain_keeps_quota_and_job_interruption_outcomes_equal(
+    generation, tmp_path, monkeypatch
+):
+    """Operator shutdown after provider cleanup isn't recorded as caller cancellation."""
+    from policynim.services import evaluation_jobs as module
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="shutdown-drain", principal=principal())
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    original = module.NVIDIAClients
+
+    class Clients(original):
+        """Stop the actual worker after provider-owned clients have drained."""
+
+        def close(self):
+            """Keep cleanup before recording the operator's stop signal."""
+            super().close()
+            worker._stop.set()
+
+    monkeypatch.setattr(module, "NVIDIAClients", Clients)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "interrupted"
+        assert result.failure_code == "worker_stopped"
+        assert service.result(accepted.job_id, principal=principal()).report.state == "interrupted"
+        report = OperationStore.report(service.settings.beta_auth_db_path)
+        assert report.outcomes == {"interrupted": 1}
+        assert report.active_operations == 0
+    finally:
+        worker.close()
+
+
+def test_shutdown_before_capacity_admission_keeps_unstarted_job_queued(
+    generation, tmp_path, monkeypatch
+):
+    """A proven pre-dispatch rejection can resume after the operator restarts the worker."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import (
+        OperationAdmissionError,
+        OperationAdmissionService,
+    )
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(
+        suite, idempotency_key="shutdown-before-admission", principal=principal()
+    )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    original = OperationAdmissionService.run_accepted
+
+    def busy_during_shutdown(self, operation, **kwargs):
+        """Stop before activation and reject at the real admission boundary."""
+        worker._stop.set()
+        raise OperationAdmissionError("server_busy: Retry after work drains.")
+
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", busy_during_shutdown)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "queued"
+        assert result.completed_case_count == 0
+        assert calls == []
+    finally:
+        worker.close()
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", original)
+    service.store.clock = lambda: accepted.accepted_at + 2
+    resumed = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        result = resumed.run_once()
+        assert result is not None and result.state == "completed"
+        assert calls == ["case-0", "closed"]
+    finally:
+        resumed.close()
+
+
+def test_shutdown_after_claim_before_activation_preserves_queued_acceptance(
+    generation, tmp_path, monkeypatch
+):
+    """An operator stop seen by the real readiness guard doesn't terminalize unstarted work."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="stop-after-claim", principal=principal())
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    captured = service.store.captured_snapshot
+
+    def stop_after_capture(*args, **kwargs):
+        """Request shutdown after the actual claim and before quota activation."""
+        snapshot = captured(*args, **kwargs)
+        worker._stop.set()
+        return snapshot
+
+    monkeypatch.setattr(service.store, "captured_snapshot", stop_after_capture)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "queued"
+        assert result.job_id == accepted.job_id
+        report = OperationStore.report(service.settings.beta_auth_db_path)
+        assert report.active_operations == 0
+        assert report.inactive_accepted_operations == 1
+        assert report.outcomes == {"accepted": 1}
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize(
+    "query,parameters",
+    [
+        (
+            "SELECT job_id FROM evaluation_jobs WHERE expires_at<=? "
+            "AND state NOT IN ('queued','running') AND result_expired=0",
+            (100,),
+        ),
+        ("SELECT job_id FROM evaluation_jobs WHERE state='running'", ()),
+        (
+            "SELECT * FROM evaluation_jobs WHERE state NOT IN ('queued','running') "
+            "AND admission_id IS NOT NULL AND admission_finalized=0 "
+            "ORDER BY finished_at, rowid LIMIT ?",
+            (100,),
+        ),
+        ("SELECT generation_id FROM evaluation_jobs WHERE result_expired=0", ()),
+    ],
+)
+def test_worker_maintenance_queries_use_indexes_instead_of_full_history(
+    tmp_path, query, parameters
+):
+    """Actual SQLite query plans bound routine polling and retained-payload maintenance."""
+    import sqlite3
+
+    store = EvaluationJobStore(tmp_path / "jobs.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        plan = connection.execute("EXPLAIN QUERY PLAN " + query, parameters).fetchall()
+    assert any("USING" in row[3] and "INDEX" in row[3] for row in plan), plan

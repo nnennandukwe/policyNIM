@@ -9,6 +9,7 @@ import json
 import logging
 import secrets
 import socket
+import sqlite3
 import sys
 import time
 from collections.abc import AsyncIterator, Callable
@@ -902,9 +903,20 @@ def _new_mcp_server(
         if settings is not None and server.jobs_enabled:
             from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 
-            if not isinstance(server.jobs, EvaluationJobWorker):
-                server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
-            server.jobs.start()
+            try:
+                if not isinstance(server.jobs, EvaluationJobWorker):
+                    server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
+                server.jobs.start()
+            except (PolicyNIMError, OSError, sqlite3.Error) as exc:
+                emit_operation_event(
+                    level=logging.ERROR,
+                    event="evaluation.worker_unavailable",
+                    phase="startup",
+                    **safe_exception_diagnostics(exc),
+                )
+                if server.jobs is not None:
+                    await _run_sync_until_complete(server.jobs.close)
+                    server.jobs = None
         try:
             yield {}
         finally:

@@ -579,3 +579,57 @@ def test_retained_report_hash_uses_original_case_json_before_new_defaults(
             ).fetchone()[0]
             == original
         )
+
+
+@pytest.mark.parametrize("failure", ["workspace", "schema"])
+def test_job_storage_startup_failure_keeps_authenticated_interactive_tools_available(
+    tmp_path, monkeypatch, failure
+):
+    """Broken evaluation storage doesn't prevent real HTTP preflight and search requests."""
+    import sqlite3
+
+    import httpx2
+    from fixtures.mcp_fixture_server import offline_services
+    from mcp.client.streamable_http import streamable_http_client
+    from test_mcp_authorization import install_issuer, oauth_settings, token_claims
+    from test_mcp_protocol import _serve_http
+
+    from policynim.storage.evaluation_jobs import EvaluationJobStore
+
+    workspace = tmp_path / "private-job-path-sentinel"
+    if failure == "workspace":
+        workspace.write_text("retained-owner-data")
+    else:
+        path = workspace / "jobs/jobs.sqlite3"
+        EvaluationJobStore(path)
+        with sqlite3.connect(path) as connection:
+            connection.execute("PRAGMA user_version=999")
+    settings = oauth_settings(tmp_path, eval_workspace_dir=workspace)
+    install_issuer(monkeypatch, settings, token_claims())
+
+    async def exercise():
+        """Connect through TCP, issuer verification and the installed MCP dispatcher."""
+        with offline_services(settings):
+            application = mcp_module._build_streamable_http_app(settings)
+            async with _serve_http(application) as origin:
+                async with httpx2.AsyncClient(
+                    headers={"Authorization": "Bearer fixture"}, trust_env=False
+                ) as http:
+                    async with Client(
+                        streamable_http_client(origin + "/mcp", http_client=http)
+                    ) as client:
+                        assert {"policy_search", "policy_preflight"} <= {
+                            tool.name for tool in (await client.list_tools()).tools
+                        }
+                        for name, arguments in (
+                            ("policy_search", {"query": "review"}),
+                            ("policy_preflight", {"task": "review"}),
+                        ):
+                            result = await client.call_tool(name, arguments)
+                            assert result.is_error is False
+                        rejected = await client.call_tool("eval_inspect", {"job_id": "missing"})
+                        assert rejected.is_error
+                        assert "private-job-path-sentinel" not in str(rejected)
+                        assert (await http.get(origin + "/healthz")).status_code == 200
+
+    asyncio.run(exercise())

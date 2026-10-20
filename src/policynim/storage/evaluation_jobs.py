@@ -135,6 +135,17 @@ class EvaluationJobStore:
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
                 {migration}
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_state
+                    ON evaluation_jobs(state,next_attempt_at,accepted_at);
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_pending_finalization
+                    ON evaluation_jobs(finished_at)
+                    WHERE state NOT IN ('queued','running')
+                        AND admission_id IS NOT NULL AND admission_finalized=0;
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_expiring_payloads
+                    ON evaluation_jobs(expires_at)
+                    WHERE state NOT IN ('queued','running') AND result_expired=0;
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_retained_generations
+                    ON evaluation_jobs(generation_id) WHERE result_expired=0;
                 PRAGMA user_version=5;
             """
             for statement in schema.split(";"):
@@ -608,9 +619,14 @@ class EvaluationJobStore:
     def defer_admission(
         self, job_id: str, worker_token: str, failure_code: str
     ) -> EvaluationJobInfo:
-        """Retry only a proven pre-provider capacity rejection within its original deadline."""
-        if failure_code not in {"server_busy", "principal_busy", "admission_busy"}:
-            raise ValueError("Only transient pre-provider admission outcomes can defer.")
+        """Retry a proven pre-provider capacity rejection or stop within its original deadline."""
+        if failure_code not in {
+            "server_busy",
+            "principal_busy",
+            "admission_busy",
+            "worker_stopped",
+        }:
+            raise ValueError("Only proven pre-provider capacity or worker stop outcomes can defer.")
         with self._transaction() as connection:
             row = self._running(connection, job_id, worker_token)
             usage = EvaluationJobUsage.model_validate_json(row["usage_json"])
