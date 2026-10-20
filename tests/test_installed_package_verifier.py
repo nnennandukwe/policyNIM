@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import subprocess
 import zipfile
@@ -145,3 +146,64 @@ def test_installed_cli_reads_utf8_output_independently_of_locale(
     monkeypatch.setattr(verifier, "installed_command", lambda: "/installed/bin/policynim")
     monkeypatch.setattr(verifier.subprocess, "run", unicode_command)
     assert chr(0x2192) in verifier.run_command(["--help"], env={"PYTHONUTF8": "1"}, cwd=tmp_path)
+
+
+def test_exported_requirement_cant_select_another_locked_version(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A multi-version lock doesn't authorize ignoring the exported environment pin."""
+    import hashlib
+
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        'version = 1\n[[package]]\nname = "runtime-dep"\nversion = "1.0"\n'
+        '[[package]]\nname = "runtime-dep"\nversion = "2.0"\n'
+    )
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("runtime-dep==2.0\n")
+    monkeypatch.setattr(
+        verifier.importlib.metadata,
+        "distributions",
+        lambda: [SimpleNamespace(metadata={"Name": "runtime_dep"}, version="1.0")],
+    )
+    digest = "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest()
+    with pytest.raises(RuntimeError, match="differs from exported requirements"):
+        verifier.check_dependencies(lock, digest, requirements)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "NVIDIA_API_KEY is missing.",
+        "Generation is unavailable.",
+        "top_k must be between 1 and 50.",
+        "top_k\n Input should be greater than or equal to 1 "
+        "[type=greater_than_equal, input_value=0]",
+    ],
+)
+def test_client_requires_argument_validation_instead_of_any_tool_error(message: str) -> None:
+    """A provider or index error can't stand in for input-validation evidence."""
+
+    async def list_tools():
+        """Expose the expected schemas independently of the rejected tool request."""
+        return SimpleNamespace(
+            tools=[
+                SimpleNamespace(
+                    name=name, input_schema={"type": "object"}, output_schema={"type": "object"}
+                )
+                for name in ["policy_search", "policy_preflight"]
+            ]
+        )
+
+    async def call_tool(name, arguments):
+        """Return an unrelated or correctly classified SDK error envelope."""
+        return SimpleNamespace(is_error=True, content=[SimpleNamespace(text=message)])
+
+    client = SimpleNamespace(
+        protocol_version="2026-07-28", list_tools=list_tools, call_tool=call_tool
+    )
+    if message.startswith("top_k"):
+        assert asyncio.run(verifier.check_client(client, "auto"))["invalid_argument_rejected"]
+    else:
+        with pytest.raises(RuntimeError, match="unrelated failure"):
+            asyncio.run(verifier.check_client(client, "auto"))

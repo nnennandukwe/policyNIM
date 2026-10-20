@@ -80,7 +80,7 @@ _STANDALONE_MISSING_INDEX_MESSAGE = (
 _EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
 _WINDOWS_PATH_TOKEN_RE = re.compile(
-    r"[A-Za-z]:[\\/](?:[^\\/\r\n\"'`<>),;]+[\\/])*[^\s\\/\r\n\"'`<>),;]+"
+    r"[A-Za-z]:[\\/](?:[^\\/\r\n\"<>|?*]+[\\/])*[^\s\\/\r\n\"<>|?*]+"
 )
 
 app = typer.Typer(
@@ -2695,7 +2695,11 @@ def _replace_local_path_prefixes(value: object, replacements: Sequence[tuple[str
     if isinstance(value, str):
         redacted = value
         for path_prefix, marker in replacements:
-            redacted = redacted.replace(path_prefix, marker)
+            if PureWindowsPath(path_prefix).is_absolute():
+                pattern = r"[\\/]".join(re.escape(part) for part in re.split(r"[\\/]", path_prefix))
+                redacted = re.sub(pattern, lambda match: marker, redacted, flags=re.IGNORECASE)
+            else:
+                redacted = redacted.replace(path_prefix, marker)
         return redacted
     if isinstance(value, list):
         return [_replace_local_path_prefixes(item, replacements) for item in value]
