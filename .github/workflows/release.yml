@@ -111,7 +111,7 @@ jobs:
               subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
               python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
               requirements = runtime / "locked-requirements.txt"
-              subprocess.run(["uv", "export", "--locked", "--python", sys.executable, "--no-dev", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
+              subprocess.run(["uv", "export", "--locked", "--python", sys.executable, "--no-dev", "--group", "verification", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
               subprocess.run(["uv", "pip", "install", "--python", str(python), "--require-hashes", "--no-deps", "-r", str(requirements)], check=True)
               subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
               subprocess.run(["uv", "pip", "check", "--python", str(python)], check=True)
@@ -306,7 +306,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Sync locked evidence dependencies
-        run: uv sync --locked --no-dev --python ${{ env.PYTHON_VERSION }}
+        run: uv sync --locked --no-dev --group verification --python ${{ env.PYTHON_VERSION }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0

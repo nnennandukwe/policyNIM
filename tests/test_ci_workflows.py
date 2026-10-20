@@ -541,3 +541,61 @@ def test_wheel_export_uses_the_running_matrix_interpreter() -> None:
     assert ast.dump(arguments[selection + 1]) == ast.dump(
         ast.parse("sys.executable", mode="eval").body
     )
+
+
+def _assert_release_verification_dependencies(workflow: dict) -> None:
+    """Keep helper dependencies in each isolated release verification environment."""
+    jobs = workflow["jobs"]
+    publication_syncs = [
+        tokens
+        for step in jobs["publish-github-release"]["steps"]
+        for tokens in _release_uv_commands(step.get("run", ""))
+        if tokens[:2] == ["uv", "sync"]
+    ]
+    assert len(publication_syncs) == 1
+    assert any(
+        publication_syncs[0][index : index + 2] == ["--group", "verification"]
+        for index in range(len(publication_syncs[0]))
+    ), "Manifest verification needs the locked verification group."
+    wheel_command = next(
+        step["run"]
+        for step in jobs["wheel-smoke"]["steps"]
+        if step["name"] == "Verify fresh wheel from locked dependencies"
+    )
+    script = wheel_command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exports = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.List)
+        and len(node.elts) >= 2
+        and isinstance(node.elts[0], ast.Constant)
+        and node.elts[0].value == "uv"
+        and isinstance(node.elts[1], ast.Constant)
+        and node.elts[1].value == "export"
+    ]
+    assert len(exports) == 1
+    arguments = [node.value if isinstance(node, ast.Constant) else None for node in exports[0].elts]
+    assert any(
+        arguments[index : index + 2] == ["--group", "verification"]
+        for index in range(len(arguments))
+    ), "Fresh wheel verification needs the locked verification group."
+
+
+def test_release_verifiers_install_locked_helper_dependencies() -> None:
+    """Runtime-only installs don't provide the packaging helpers used by release checks."""
+    _assert_release_verification_dependencies(yaml.safe_load(_read_text(RELEASE_WORKFLOW)))
+
+
+@pytest.mark.parametrize("job_name", ["wheel-smoke", "publish-github-release"])
+def test_release_verifier_guard_rejects_missing_helper_group(job_name: str) -> None:
+    """Removing helper dependencies from either release gate must block promotion."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for step in workflow["jobs"][job_name]["steps"]:
+        if "run" in step:
+            step["run"] = (
+                step["run"]
+                .replace(" --group verification", "")
+                .replace(', "--group", "verification"', "")
+            )
+    with pytest.raises(AssertionError):
+        _assert_release_verification_dependencies(workflow)
