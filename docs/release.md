@@ -105,3 +105,8 @@ After the draft release artifacts pass local smoke tests, run the manual
 `Hosted Beta Smoke` workflow only when the deployed Railway beta and hosted MCP
 secrets are available. This is a deployment promotion check, not part of the
 offline release artifact build.
+
+The fresh-wheel verifier requires `--lockfile uv.lock` and `--lock-digest sha256:<digest>`.
+CI installs exported locked dependency artifacts with required hashes before installing
+the wheel without dependency resolution. Its report records the lock digest and actual
+installed versions; bootstrap installer packages are identified separately.

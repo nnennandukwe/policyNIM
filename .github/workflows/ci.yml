@@ -108,6 +108,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import hashlib
           import os
           import subprocess
           import sys
@@ -121,12 +122,18 @@ jobs:
               runtime = Path(temporary)
               subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
               python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-              subprocess.run(["uv", "pip", "install", "--python", str(python), str(wheel)], check=True)
+              requirements = runtime / "locked-requirements.txt"
+              subprocess.run(["uv", "export", "--locked", "--no-dev", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--require-hashes", "--no-deps", "-r", str(requirements)], check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
+              subprocess.run(["uv", "pip", "check", "--python", str(python)], check=True)
               subprocess.run([
                   str(python), str(root / "scripts/verify_installed_package.py"),
                   "--wheel", str(wheel), "--bundle", str(bundle / "generation.zip"),
                   "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
                   "--revision", os.environ["GITHUB_SHA"],
+                  "--lockfile", str(root / "uv.lock"),
+                  "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
                   "--output", str(root / "package-evidence.json"),
               ], cwd=runtime, check=True)
           PY

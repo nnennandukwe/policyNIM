@@ -537,3 +537,33 @@ def test_public_case_evaluation_uses_captured_inputs_without_report_side_effects
     assert not settings.eval_workspace_dir.exists()
     with pytest.raises(PolicyNIMError, match="isn't in the captured"):
         EvalService(settings=settings).evaluate_case(suite, "absent")
+
+
+def test_refusal_only_suite_marks_recall_as_not_applicable(tmp_path: Path) -> None:
+    """A suite without expected evidence mustn't report measured zero recall."""
+    from policynim.services.eval import _aggregate_metrics, _write_eval_html_report
+
+    case = EvalCase(
+        case_id="refusal", kind="preflight", input="Unsupported", expected_insufficient_context=True
+    )
+    result = _score_preflight_case(
+        case,
+        result=PreflightResult(task=case.input, summary="Unsupported", insufficient_context=True),
+        rerank_enabled=True,
+    )
+    metrics = _aggregate_metrics([result])
+    assert metrics.passed_count == 1
+    assert metrics.expected_chunk_case_count == 0
+    assert metrics.expected_policy_case_count == 0
+    report = tmp_path / "report.html"
+    _write_eval_html_report(
+        report,
+        suite=EvalSuite(name="refusal-only", cases=[case]),
+        suite_path=tmp_path / "suite.json",
+        mode="live",
+        backend="default",
+        rerank_enabled=True,
+        metrics=metrics,
+        rows=[],
+    )
+    assert report.read_text().count("not applicable") == 2
