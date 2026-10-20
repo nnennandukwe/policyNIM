@@ -60,4 +60,5 @@ operations into separate pages so the root README can stay short.
   retained readers, and verified offline deployment bundles.
 
 - [Durable evaluation jobs](evaluation-jobs.md): accepted inputs, bounded workers, report resources and interruption recovery.
+- [Engineering topic packs and source coverage](engineering-policy-coverage.md)
 - [hosted-capacity.md](hosted-capacity.md): aggregate operational reporting, retention and synthetic HTTP capacity evidence

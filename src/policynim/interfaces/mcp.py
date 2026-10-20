@@ -1536,17 +1536,33 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
     try:
         return create_beta_auth_service(settings)
     except Exception as exc:
+        # Only owned categories can cross the startup boundary; never copy raw errors.
+        storage_code = next(
+            (
+                code
+                for code in ("auth_storage_unsafe", "auth_storage_unavailable")
+                if isinstance(exc, ConfigurationError) and str(exc).startswith(code + ":")
+            ),
+            "storage_unavailable",
+        )
+        recovery = (
+            " Inspect service ownership, permissions and file aliases."
+            if storage_code == "auth_storage_unsafe"
+            else ""
+        )
         if settings.beta_signup_enabled or not settings.mcp_bearer_tokens:
             raise ConfigurationError(
-                "Hosted beta auth initialization failed. Check "
+                f"{storage_code}: Hosted beta auth initialization failed.{recovery} Check "
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
         record_operation_storage_failure(exc, phase="beta_auth_initialization")
         LOGGER.error(
-            "Hosted beta authentication is unavailable: storage_unavailable. "
+            "Hosted beta authentication is unavailable: %s.%s "
             "Env-issued break-glass authentication "
-            "remains available, but protected operations still require healthy operation storage."
+            "remains available, but protected operations still require healthy operation storage.",
+            storage_code,
+            recovery,
         )
         return None
 

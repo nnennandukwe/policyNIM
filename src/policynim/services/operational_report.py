@@ -17,6 +17,7 @@ from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.generations import GenerationStore
 from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.settings import Settings
+from policynim.storage.auth_database import AuthDatabaseError
 from policynim.storage.evaluation_jobs import inspect_job_backlog
 from policynim.storage.index_readiness import (
     IndexReadinessReport,
@@ -30,7 +31,12 @@ from policynim.types import EmbeddingIdentity
 def inspect_operational_report(settings: Settings) -> dict[str, object]:
     """Inspect records without providers; generation validation needs writable lease metadata."""
     try:
-        report = OperationStore.report(resolve_runtime_path(settings.beta_auth_db_path))
+        report = OperationStore.report(
+            resolve_runtime_path(settings.beta_auth_db_path.parent)
+            / settings.beta_auth_db_path.name
+        )
+    except AuthDatabaseError as exc:
+        raise PolicyNIMError(str(exc) + " No database was created or changed.") from None
     except (sqlite3.Error, OSError) as exc:
         raise PolicyNIMError(
             "Operation state couldn't be read. Check the hosted state volume and database locks. "

@@ -1,0 +1,1808 @@
+{
+  "schema_version": 1,
+  "name": "engineering-source-coverage",
+  "scope": "authored_source_scenarios",
+  "evaluation_status": "not_model_evaluated",
+  "review_status": "independent_source_reviewed_not_model_evaluated",
+  "changed_policy_revisions": {
+    "TEST-FAIL-001": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+    "TEST-CONTRACT-001": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+    "ARCH-API-001": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+    "API-ERROR-001": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+    "API-PAGE-001": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+    "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+    "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+    "ARCH-JOB-001": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+    "BE-CONFIG-001": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+    "REL-TIMEOUT-001": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+    "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+    "BE-LOG-001": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+    "BE-TRACE-001": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+    "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+    "SUPPLY-BUILD-001": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+    "SUPPLY-PROVENANCE-001": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e"
+  },
+  "source_aliases": {
+    "SSDF": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
+    "SRE-TEST": "https://sre.google/sre-book/testing-reliability/",
+    "SRE-DATA": "https://sre.google/sre-book/data-integrity/",
+    "SRE-OVERLOAD": "https://sre.google/sre-book/handling-overload/",
+    "SRE-MONITOR": "https://sre.google/sre-book/monitoring-distributed-systems/",
+    "AWS-RETRY": "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter",
+    "HTTP": "https://www.rfc-editor.org/rfc/rfc9110.html",
+    "PROBLEM": "https://www.rfc-editor.org/rfc/rfc9457.html",
+    "LINK": "https://datatracker.ietf.org/doc/html/rfc8288",
+    "SEMVER": "https://semver.org/spec/v2.0.0.html",
+    "POSTGRES": "https://www.postgresql.org/docs/18/tutorial-transactions.html",
+    "TRACE": "https://www.w3.org/TR/2021/REC-trace-context-1-20211123/",
+    "OTEL-LOG": "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md",
+    "SLSA": "https://slsa.dev/spec/v1.2/verifying-artifacts",
+    "OSPS": "https://baseline.openssf.org/versions/2026-08-28",
+    "CS-LOG": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md",
+    "CS-SECRET": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md"
+  },
+  "cases": [
+    {
+      "case_id": "test-fail-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A publisher is killed before activation; restart reads the old complete state, a retry succeeds, and the report includes the tested commit.",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "FAIL-1",
+          "quote": "Exercise rejection, dependency failure, interruption, and retry through the affected runtime boundary; assert durable state and absence of forbidden effects.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "FAIL-2",
+          "quote": "Choose test types from the change risk and record failures, remediations, and the exact tested revision.",
+          "support": [
+            "SSDF:PW.8.1",
+            "SSDF:PW.8.2"
+          ]
+        },
+        {
+          "requirement_id": "FAIL-3",
+          "quote": "Verify the documented recovery action works after the injected failure before describing the workflow as recoverable.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Retain the failing trigger, expected state, actual runtime result, recovery attempt, and revision. Test doubles alone can verify component decisions; they don't establish process or deployment recovery."
+    },
+    {
+      "case_id": "test-fail-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "Only a mocked happy path passes; the change is declared crash-safe without restarting the process.",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "FAIL-1",
+          "quote": "Exercise rejection, dependency failure, interruption, and retry through the affected runtime boundary; assert durable state and absence of forbidden effects.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "FAIL-2",
+          "quote": "Choose test types from the change risk and record failures, remediations, and the exact tested revision.",
+          "support": [
+            "SSDF:PW.8.1",
+            "SSDF:PW.8.2"
+          ]
+        },
+        {
+          "requirement_id": "FAIL-3",
+          "quote": "Verify the documented recovery action works after the injected failure before describing the workflow as recoverable.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "A mocked happy path can't establish interruption recovery. FAIL-1 and FAIL-3 require the affected runtime failure and a verified recovery attempt."
+    },
+    {
+      "case_id": "test-fail-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "service-operator",
+      "input": "A service operator corrects a static help heading; execution, rejection, effects, and recovery behavior stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Changes that can reject work or interrupt an effect need evidence that recovery preserves the intended state."
+    },
+    {
+      "case_id": "test-contract-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A strict consumer accepts the new optional generation field and still rejects malformed IDs; older payloads remain readable.",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONTRACT-1",
+          "quote": "Exercise changed requests, serialized responses, errors, and persisted records through the public consumer contract.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "CONTRACT-2",
+          "quote": "Keep a named regression for a fixed defect and verify behavior at the integration boundary that exposed it.",
+          "support": [
+            "SSDF:PW.8.2",
+            "SRE-TEST:Traditional Tests"
+          ]
+        },
+        {
+          "requirement_id": "CONTRACT-3",
+          "quote": "Report unsupported platforms and skipped live checks separately from passing offline fixtures.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Use a strict consumer fixture or real supported client, the previous supported payload shape, and a rejected malformed shape. Record platform and dependency identities."
+    },
+    {
+      "case_id": "test-contract-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "The producer tests only its internal dictionary while an installed consumer rejects the new field.",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONTRACT-1",
+          "quote": "Exercise changed requests, serialized responses, errors, and persisted records through the public consumer contract.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "CONTRACT-2",
+          "quote": "Keep a named regression for a fixed defect and verify behavior at the integration boundary that exposed it.",
+          "support": [
+            "SSDF:PW.8.2",
+            "SRE-TEST:Traditional Tests"
+          ]
+        },
+        {
+          "requirement_id": "CONTRACT-3",
+          "quote": "Report unsupported platforms and skipped live checks separately from passing offline fixtures.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The installed consumer rejects the producer's changed contract. Internal dictionary tests don't verify that boundary; CONTRACT-1 and CONTRACT-2 require consumer evidence."
+    },
+    {
+      "case_id": "test-contract-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "library-maintainer",
+      "input": "A library maintainer renames a private local variable; public inputs, outputs, errors, and caller behavior stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "A producer change can pass its own tests while breaking a strict consumer."
+    },
+    {
+      "case_id": "arch-api-001-applicable",
+      "kind": "applicable",
+      "role": "api-producer",
+      "input": "A renamed response field ships in a new API version while the old supported client still passes its contract suite.",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "API-1",
+          "quote": "Classify changes against documented supported clients and cover version behavior with contract tests; test new fields against strict consumers before calling the change additive.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "API-2",
+          "quote": "Publish incompatible behavior behind a reviewed version boundary; the migration plan must name old and new versions, the owner, removal conditions, and target date. Never repurpose an existing field with new meaning within a supported version.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "API-3",
+          "quote": "For packages adopting SemVer, declare the public API and apply its compatibility rules; an HTTP API version scheme remains a separate project decision.",
+          "support": [
+            "SEMVER:1",
+            "SEMVER:7",
+            "SEMVER:8"
+          ]
+        }
+      ],
+      "rationale": "Retain old/new request and response examples, consumer contract results, changed semantics, and the deprecation plan. Field reuse and changed defaults need review."
+    },
+    {
+      "case_id": "arch-api-001-violating",
+      "kind": "violating",
+      "role": "api-producer",
+      "input": "A field keeps its name but changes from an object to a list in the same supported API version.",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "API-1",
+          "quote": "Classify changes against documented supported clients and cover version behavior with contract tests; test new fields against strict consumers before calling the change additive.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "API-2",
+          "quote": "Publish incompatible behavior behind a reviewed version boundary; the migration plan must name old and new versions, the owner, removal conditions, and target date. Never repurpose an existing field with new meaning within a supported version.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "API-3",
+          "quote": "For packages adopting SemVer, declare the public API and apply its compatibility rules; an HTTP API version scheme remains a separate project decision.",
+          "support": [
+            "SEMVER:1",
+            "SEMVER:7",
+            "SEMVER:8"
+          ]
+        }
+      ],
+      "rationale": "Changing an object field to a list breaks existing consumers. API-1 and API-2 require compatibility evidence and a supported migration for an incompatible change."
+    },
+    {
+      "case_id": "arch-api-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "api-producer",
+      "input": "An API producer refactors a private sorting helper with identical responses, errors, and compatibility behavior.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Clients need predictable field meaning, error behavior, and migration paths as an API evolves."
+    },
+    {
+      "case_id": "api-error-001-applicable",
+      "kind": "applicable",
+      "role": "api-producer",
+      "input": "An API returns a documented problem type and safe instance reference; the client handles the status and type.",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "ERROR-1",
+          "quote": "Use HTTP status semantics consistently; where problem details are adopted, keep their documented member meanings.",
+          "support": [
+            "HTTP:15",
+            "PROBLEM:3"
+          ]
+        },
+        {
+          "requirement_id": "ERROR-2",
+          "quote": "Exclude stack traces, credentials, internal paths, and sensitive request content from public problem details.",
+          "support": [
+            "PROBLEM:5"
+          ]
+        },
+        {
+          "requirement_id": "ERROR-3",
+          "quote": "Test caller recovery for validation, authorization, missing resources, overload, and dependency failure where those outcomes apply.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Capture sanitized wire responses and strict client handling, including content type and status. Document retryability without treating every server error as transient."
+    },
+    {
+      "case_id": "api-error-001-violating",
+      "kind": "violating",
+      "role": "api-producer",
+      "input": "A public error body includes a database connection string and tells callers to retry every authorization denial.",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "ERROR-1",
+          "quote": "Use HTTP status semantics consistently; where problem details are adopted, keep their documented member meanings.",
+          "support": [
+            "HTTP:15",
+            "PROBLEM:3"
+          ]
+        },
+        {
+          "requirement_id": "ERROR-2",
+          "quote": "Exclude stack traces, credentials, internal paths, and sensitive request content from public problem details.",
+          "support": [
+            "PROBLEM:5"
+          ]
+        },
+        {
+          "requirement_id": "ERROR-3",
+          "quote": "Test caller recovery for validation, authorization, missing resources, overload, and dependency failure where those outcomes apply.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The error exposes a credential-bearing connection string and treats authorization denial as transient. ERROR-2 requires safe public details; ERROR-3 requires correct caller recovery."
+    },
+    {
+      "case_id": "api-error-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "api-consumer",
+      "input": "An API consumer changes the spacing of successful scalar results in its local display; HTTP status and error handling stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "API callers need stable, safe error information they can handle without parsing internal exception text."
+    },
+    {
+      "case_id": "api-page-001-applicable",
+      "kind": "applicable",
+      "role": "api-producer",
+      "input": "A cursor is bound to the caller's tenant and query; terminal pages omit a continuation, with mutation behavior documented.",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "PAGE-1",
+          "quote": "Document ordering, continuation semantics, end-of-list behavior, and behavior under concurrent inserts or deletes.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "PAGE-2",
+          "quote": "Validate and bound page-size and continuation inputs; preserve authorization scope when using continuation tokens.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "PAGE-3",
+          "quote": "If HTTP Link headers are used, follow their relation and serialization semantics; test malformed, expired, and terminal continuations.",
+          "support": [
+            "LINK:2.1",
+            "LINK:3",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Show traversal over empty and multi-page collections plus a concurrent update. State whether snapshot consistency or duplicate-free traversal is actually guaranteed."
+    },
+    {
+      "case_id": "api-page-001-violating",
+      "kind": "violating",
+      "role": "api-producer",
+      "input": "A shared cursor exposes another tenant's next page and loops forever after the final item.",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "PAGE-1",
+          "quote": "Document ordering, continuation semantics, end-of-list behavior, and behavior under concurrent inserts or deletes.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "PAGE-2",
+          "quote": "Validate and bound page-size and continuation inputs; preserve authorization scope when using continuation tokens.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "PAGE-3",
+          "quote": "If HTTP Link headers are used, follow their relation and serialization semantics; test malformed, expired, and terminal continuations.",
+          "support": [
+            "LINK:2.1",
+            "LINK:3",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "A cursor crosses tenant ownership and doesn't terminate. PAGE-1 and PAGE-2 require the declared ownership, ordering and termination behavior."
+    },
+    {
+      "case_id": "api-page-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "api-producer",
+      "input": "An API producer adjusts an endpoint returning one scalar readiness value; it exposes no collection or traversal contract.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "A changing collection needs an explicit traversal contract so callers can detect completion and avoid unexpected duplicates or omissions."
+    },
+    {
+      "case_id": "data-migrate-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A staged backfill stores progress, survives a killed worker, and resumes without overwriting a concurrent write.",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "MIGRATE-1",
+          "quote": "Declare compatibility across the rollout, durable progress, interruption behavior, and the safe retry or forward-recovery action before migration.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "MIGRATE-2",
+          "quote": "Verify recovery from retained data with the real reader; a backup file alone isn't evidence of a working restore.",
+          "support": [
+            "SRE-DATA:Delivering a Recovery System, Rather Than a Backup System"
+          ]
+        },
+        {
+          "requirement_id": "MIGRATE-3",
+          "quote": "Identify destructive or irreversible steps, approvals, and retention/deletion obligations; don't claim rollback after information has been discarded.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Run the migration on representative old data, interrupt it, resume or restore, and verify old/new readers within the declared compatibility window."
+    },
+    {
+      "case_id": "data-migrate-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "A migration drops the only old column before old instances drain and calls an untested backup its rollback plan.",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "MIGRATE-1",
+          "quote": "Declare compatibility across the rollout, durable progress, interruption behavior, and the safe retry or forward-recovery action before migration.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "MIGRATE-2",
+          "quote": "Verify recovery from retained data with the real reader; a backup file alone isn't evidence of a working restore.",
+          "support": [
+            "SRE-DATA:Delivering a Recovery System, Rather Than a Backup System"
+          ]
+        },
+        {
+          "requirement_id": "MIGRATE-3",
+          "quote": "Identify destructive or irreversible steps, approvals, and retention/deletion obligations; don't claim rollback after information has been discarded.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Dropping the old column strands old instances, and an untested backup doesn't prove recovery. MIGRATE-1 and MIGRATE-2 require a compatible rollout and exercised recovery."
+    },
+    {
+      "case_id": "data-migrate-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "database-operator",
+      "input": "A database operator tunes a read-only dashboard query without schema, data, migration, or application-version changes.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Schema and data changes need a safe path through partial execution and mixed application versions."
+    },
+    {
+      "case_id": "data-transaction-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A debit and credit roll back together; a post-commit notification uses durable pending work and deduplication.",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRANSACTION-1",
+          "quote": "For PostgreSQL multi-step invariants, use an explicit transaction and test that a failure before commit leaves no partial visible update.",
+          "support": [
+            "POSTGRES:3.4"
+          ]
+        },
+        {
+          "requirement_id": "TRANSACTION-2",
+          "quote": "Treat external messages, files, and provider calls as separate effects unless the implementation proves a shared commit protocol.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TRANSACTION-3",
+          "quote": "Test concurrent updates, post-commit failure, and retry; report committed work accurately when cleanup or acknowledgement fails.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Record the commit operation, invariant checks, failure location, resulting durable state, and duplicate-effect handling. Keep transaction isolation assumptions explicit."
+    },
+    {
+      "case_id": "data-transaction-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "A debit commits before the credit, or a database rollback is claimed to undo a payment already sent to an external provider.",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRANSACTION-1",
+          "quote": "For PostgreSQL multi-step invariants, use an explicit transaction and test that a failure before commit leaves no partial visible update.",
+          "support": [
+            "POSTGRES:3.4"
+          ]
+        },
+        {
+          "requirement_id": "TRANSACTION-2",
+          "quote": "Treat external messages, files, and provider calls as separate effects unless the implementation proves a shared commit protocol.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TRANSACTION-3",
+          "quote": "Test concurrent updates, post-commit failure, and retry; report committed work accurately when cleanup or acknowledgement fails.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The debit and credit can commit separately, while a database rollback can't reverse a sent external payment. TRANSACTION-1 and TRANSACTION-2 require the actual effect boundary to be proved."
+    },
+    {
+      "case_id": "data-transaction-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "application-developer",
+      "input": "An application developer reformats the display of a read-only query result; no durable writes or external effects occur.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Coupled durable changes need a named commit point and an explicit treatment of effects outside the database."
+    },
+    {
+      "case_id": "arch-job-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A payment job reuses a durable operation key after worker restart and records the prior effect instead of charging again.",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "JOB-1",
+          "quote": "Use idempotent effects or durable deduplication at the effect boundary; a lost acknowledgement can occur after an effect succeeds.",
+          "support": [
+            "AWS-RETRY:Retries and backoff",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "JOB-2",
+          "quote": "Use bounded retries with backoff, declare worker concurrency limits in code or configuration, classify terminal failures, and give operators a documented retry or dead-letter action.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "JOB-3",
+          "quote": "Keep credentials out of job payloads and telemetry; preserve job correlation, emit structured success, retry, and failure events, and report progress for long operations.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Test duplicate delivery, crash after the effect before acknowledgement, exhausted retries, and an operator retry. Verify the intended side effect occurs once within the documented deduplication window."
+    },
+    {
+      "case_id": "arch-job-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "An acknowledgement timeout triggers a second charge, while poison jobs retry without a terminal state.",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "JOB-1",
+          "quote": "Use idempotent effects or durable deduplication at the effect boundary; a lost acknowledgement can occur after an effect succeeds.",
+          "support": [
+            "AWS-RETRY:Retries and backoff",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "JOB-2",
+          "quote": "Use bounded retries with backoff, declare worker concurrency limits in code or configuration, classify terminal failures, and give operators a documented retry or dead-letter action.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "JOB-3",
+          "quote": "Keep credentials out of job payloads and telemetry; preserve job correlation, emit structured success, retry, and failure events, and report progress for long operations.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The retry repeats a charge and poison work has no terminal bound. JOB-1 and JOB-2 require duplicate-effect protection and bounded retry behavior."
+    },
+    {
+      "case_id": "arch-job-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "application-developer",
+      "input": "An application developer optimizes a synchronous pure calculation with no queue delivery, acknowledgement, retry, or side effect.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Workers need bounded retries and a recovery contract when delivery or acknowledgement repeats."
+    },
+    {
+      "case_id": "be-config-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A malformed authorization issuer stops startup with the setting name; correcting it admits requests.",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONFIG-1",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface and centralize environment reads through it.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "CONFIG-2",
+          "quote": "Document precedence, safe defaults, model identity when models are used, and the restart or reload behavior for changed settings.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "CONFIG-3",
+          "quote": "Name invalid keys or shapes without printing secret values; test missing, malformed, and boundary inputs.",
+          "support": [
+            "CS-SECRET:2 General Secrets Management",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Capture startup and reload outcomes for invalid settings, sanitized errors, unchanged durable state, and a corrected retry. Required credentials mustn't leak in diagnostics."
+    },
+    {
+      "case_id": "be-config-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "An enabled service accepts requests and defers validation of its required authorization issuer until the first affected write.",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "CONFIG-1",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface and centralize environment reads through it.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "CONFIG-2",
+          "quote": "Document precedence, safe defaults, model identity when models are used, and the restart or reload behavior for changed settings.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "CONFIG-3",
+          "quote": "Name invalid keys or shapes without printing secret values; test missing, malformed, and boundary inputs.",
+          "support": [
+            "CS-SECRET:2 General Secrets Management",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "An enabled service accepts requests with an unchecked required issuer. CONFIG-1 requires startup validation and refuses startup when a required value is invalid."
+    },
+    {
+      "case_id": "be-config-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "service-operator",
+      "input": "A service operator updates an incident contact name in a static guide; runtime settings, validation, and enabled integrations stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Invalid configuration must stop affected operations before they can corrupt state or weaken authorization."
+    },
+    {
+      "case_id": "rel-timeout-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A transient read timeout retries within one deadline, then stops and releases the connection when the budget expires.",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "TIMEOUT-1",
+          "quote": "Set connect/request timeouts and an operation deadline that includes admission waits, attempts, backoff, and cleanup as supported by the client.",
+          "support": [
+            "AWS-RETRY:Timeouts",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TIMEOUT-2",
+          "quote": "Retry only classified transient failures when repeated effects are safe; bound attempts and elapsed time, with backoff and jitter.",
+          "support": [
+            "AWS-RETRY:Retries and backoff",
+            "AWS-RETRY:Jitter"
+          ]
+        },
+        {
+          "requirement_id": "TIMEOUT-3",
+          "quote": "Respect cancellation and server retry guidance within the remaining budget; stop rather than starting an attempt that can't fit the contract.",
+          "support": [
+            "HTTP:10.2.3",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Use a controlled slow dependency and fake clock where appropriate; assert attempt count, exhaustion, cancellation, released resources, and safe errors."
+    },
+    {
+      "case_id": "rel-timeout-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "Each layer retries independently forever, or cancellation is swallowed and more paid calls start.",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "TIMEOUT-1",
+          "quote": "Set connect/request timeouts and an operation deadline that includes admission waits, attempts, backoff, and cleanup as supported by the client.",
+          "support": [
+            "AWS-RETRY:Timeouts",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TIMEOUT-2",
+          "quote": "Retry only classified transient failures when repeated effects are safe; bound attempts and elapsed time, with backoff and jitter.",
+          "support": [
+            "AWS-RETRY:Retries and backoff",
+            "AWS-RETRY:Jitter"
+          ]
+        },
+        {
+          "requirement_id": "TIMEOUT-3",
+          "quote": "Respect cancellation and server retry guidance within the remaining budget; stop rather than starting an attempt that can't fit the contract.",
+          "support": [
+            "HTTP:10.2.3",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Independent endless retries multiply work after cancellation. TIMEOUT-1 and TIMEOUT-2 require a shared bounded deadline and safe retry admission."
+    },
+    {
+      "case_id": "rel-timeout-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "application-developer",
+      "input": "An application developer rearranges a pure local arithmetic calculation with no dependency call, wait, or retry.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Dependency slowness and retries consume the caller's finite time and resources."
+    },
+    {
+      "case_id": "rel-overload-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A saturated expensive-job lane rejects a new job promptly while a lightweight operation still completes.",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "OVERLOAD-1",
+          "quote": "Bound queued and running work using relevant resource costs; reject overload before allocating expensive work.",
+          "support": [
+            "SRE-OVERLOAD:The Pitfalls of \"Queries per Second\"",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "OVERLOAD-2",
+          "quote": "Define caller fairness and overload responses; avoid retry behavior that amplifies an overloaded dependency.",
+          "support": [
+            "SRE-OVERLOAD:Per-Customer Limits",
+            "SRE-OVERLOAD:Client-Side Throttling"
+          ]
+        },
+        {
+          "requirement_id": "OVERLOAD-3",
+          "quote": "Test saturation, waiting-call cancellation, resource release, and recovery after pressure falls.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Record workload mix, configured limits, wait/rejection outcomes, resource usage, and the capacity actually tested. Include another caller's progress during saturation."
+    },
+    {
+      "case_id": "rel-overload-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "Every request enters an unbounded queue and rejected clients retry immediately without limits.",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "OVERLOAD-1",
+          "quote": "Bound queued and running work using relevant resource costs; reject overload before allocating expensive work.",
+          "support": [
+            "SRE-OVERLOAD:The Pitfalls of \"Queries per Second\"",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "OVERLOAD-2",
+          "quote": "Define caller fairness and overload responses; avoid retry behavior that amplifies an overloaded dependency.",
+          "support": [
+            "SRE-OVERLOAD:Per-Customer Limits",
+            "SRE-OVERLOAD:Client-Side Throttling"
+          ]
+        },
+        {
+          "requirement_id": "OVERLOAD-3",
+          "quote": "Test saturation, waiting-call cancellation, resource release, and recovery after pressure falls.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The unbounded queue can't reject overload safely, and immediate retries amplify it. OVERLOAD-1 and OVERLOAD-2 require bounded admission and caller behavior."
+    },
+    {
+      "case_id": "rel-overload-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "service-operator",
+      "input": "A service operator changes an incident dashboard title; request admission, resource use, quotas, and degradation stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "One slow or expensive workload mustn't consume unbounded resources or prevent unrelated callers from progressing."
+    },
+    {
+      "case_id": "be-log-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A failed job logs its operation ID, failure class, and retry state while a token marker stays absent.",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "LOG-1",
+          "quote": "Exclude secrets, tokens, authorization headers, session cookies, reset links, private keys, sensitive payloads, email addresses, phone numbers, and user-provided free text by default. Any personal-data exception needs an approved purpose, access controls, and retention limit.",
+          "support": [
+            "CS-LOG:Data to exclude",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "LOG-2",
+          "quote": "Emit structured logs for service events; free-form string logs are allowed only for local development. Include service, operation, outcome, and safe actor/request identifiers when available; include trace context without copying arbitrary request bodies.",
+          "support": [
+            "OTEL-LOG:Trace Context Fields",
+            "OTEL-LOG:Field: Resource",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "LOG-3",
+          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include the operation, outcome, safe cause, and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Test success, retry, failure, and hostile payloads against captured logs. Verify a sensitive marker never appears and a failure can be followed through safe identifiers."
+    },
+    {
+      "case_id": "be-log-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "Without an approved exception, a handler records email addresses, phone numbers, and raw user-provided free text in its logs.",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "LOG-1",
+          "quote": "Exclude secrets, tokens, authorization headers, session cookies, reset links, private keys, sensitive payloads, email addresses, phone numbers, and user-provided free text by default. Any personal-data exception needs an approved purpose, access controls, and retention limit.",
+          "support": [
+            "CS-LOG:Data to exclude",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "LOG-2",
+          "quote": "Emit structured logs for service events; free-form string logs are allowed only for local development. Include service, operation, outcome, and safe actor/request identifiers when available; include trace context without copying arbitrary request bodies.",
+          "support": [
+            "OTEL-LOG:Trace Context Fields",
+            "OTEL-LOG:Field: Resource",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "LOG-3",
+          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include the operation, outcome, safe cause, and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "The handler collects personal data and raw user text without an approved exception. LOG-1 excludes those values by default; structured output doesn't make them safe."
+    },
+    {
+      "case_id": "be-log-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "application-developer",
+      "input": "An application developer changes a static page layout without adding service events or changing logged values, collection, or retention.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Operators need failure context without turning logs into a copy of private requests."
+    },
+    {
+      "case_id": "be-trace-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A queued request retains safe correlation after retry; invalid inbound context is replaced without changing caller permissions.",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRACE-1",
+          "quote": "Where W3C Trace Context is supported, validate inbound traceparent, create or continue context according to its processing rules, and propagate it to supported downstream calls.",
+          "support": [
+            "TRACE:3.2",
+            "TRACE:4"
+          ]
+        },
+        {
+          "requirement_id": "TRACE-2",
+          "quote": "Preserve safe operation correlation across unsupported protocol boundaries, asynchronous work, and retries; provide a fallback correlation identifier when trace propagation isn't available, and log TraceId/SpanId when available.",
+          "support": [
+            "OTEL-LOG:Trace Context Fields",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TRACE-3",
+          "quote": "Keep secrets and user payloads out of trace metadata; never use a caller-supplied trace ID as an authorization principal.",
+          "support": [
+            "TRACE:6",
+            "TRACE:7",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Test a cross-boundary success and failure, malformed inbound context, and unsupported downstream propagation. Show how operators locate the resulting spans and logs."
+    },
+    {
+      "case_id": "be-trace-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "Each service discards all correlation, or a bearer token is inserted into tracestate.",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "TRACE-1",
+          "quote": "Where W3C Trace Context is supported, validate inbound traceparent, create or continue context according to its processing rules, and propagate it to supported downstream calls.",
+          "support": [
+            "TRACE:3.2",
+            "TRACE:4"
+          ]
+        },
+        {
+          "requirement_id": "TRACE-2",
+          "quote": "Preserve safe operation correlation across unsupported protocol boundaries, asynchronous work, and retries; provide a fallback correlation identifier when trace propagation isn't available, and log TraceId/SpanId when available.",
+          "support": [
+            "OTEL-LOG:Trace Context Fields",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "TRACE-3",
+          "quote": "Keep secrets and user payloads out of trace metadata; never use a caller-supplied trace ID as an authorization principal.",
+          "support": [
+            "TRACE:6",
+            "TRACE:7",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Discarding correlation prevents following an operation, while putting a bearer token in trace state exposes credentials. TRACE-1 and TRACE-2 require valid safe context propagation."
+    },
+    {
+      "case_id": "be-trace-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "application-developer",
+      "input": "An application developer renames a local pure helper with no worker, dependency, request context, spans, or telemetry changes.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "A request that crosses a worker or dependency boundary needs context operators can follow through failures."
+    },
+    {
+      "case_id": "obs-readiness-001-applicable",
+      "kind": "applicable",
+      "role": "application-developer",
+      "input": "A missing index makes readiness fail safely; a validated replacement restores it without model calls.",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "READINESS-1",
+          "quote": "Observe latency, traffic, errors, and saturation where they explain the supported workload; keep label cardinality and sensitive values bounded.",
+          "support": [
+            "SRE-MONITOR:The Four Golden Signals",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "READINESS-2",
+          "quote": "Define readiness from required local capabilities and validated artifacts; keep routine public probes bounded and free of paid dependency calls.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "READINESS-3",
+          "quote": "Test healthy, unavailable, recovering, and misconfigured states through the actual probe and caller path; document operator action for actionable alerts.",
+          "support": [
+            "SRE-MONITOR:Black-Box Versus White-Box",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Retain actual probe responses, safe telemetry, and a recovery observation. A process listening on a socket doesn't establish that its required data can be served."
+    },
+    {
+      "case_id": "obs-readiness-001-violating",
+      "kind": "violating",
+      "role": "application-developer",
+      "input": "Health always returns success while searches fail, and raw customer prompts become metric labels.",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "READINESS-1",
+          "quote": "Observe latency, traffic, errors, and saturation where they explain the supported workload; keep label cardinality and sensitive values bounded.",
+          "support": [
+            "SRE-MONITOR:The Four Golden Signals",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "READINESS-2",
+          "quote": "Define readiness from required local capabilities and validated artifacts; keep routine public probes bounded and free of paid dependency calls.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "READINESS-3",
+          "quote": "Test healthy, unavailable, recovering, and misconfigured states through the actual probe and caller path; document operator action for actionable alerts.",
+          "support": [
+            "SRE-MONITOR:Black-Box Versus White-Box",
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Always-green health hides failed searches, and prompt-valued labels expose private text with unbounded cardinality. READINESS-1 and READINESS-2 require useful probes and bounded safe telemetry."
+    },
+    {
+      "case_id": "obs-readiness-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "service-operator",
+      "input": "A service operator corrects spelling in an incident guide; readiness responses, metrics, probes, and alert rules stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Traffic admission and incident response need signals tied to usable service behavior."
+    },
+    {
+      "case_id": "supply-build-001-applicable",
+      "kind": "applicable",
+      "role": "build-maintainer",
+      "input": "A clean wheel install includes selected policy packs and passes catalog inspection with locked dependencies.",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "BUILD-1",
+          "quote": "Record direct and transitive dependencies with ecosystem tooling; review updates and vulnerability/support status for the intended release.",
+          "support": [
+            "SSDF:PW.4.1",
+            "OSPS:OSPS-BR-05.01",
+            "OSPS:OSPS-DO-06.01"
+          ]
+        },
+        {
+          "requirement_id": "BUILD-2",
+          "quote": "Pin reviewed build/tool inputs and use the lock or equivalent immutable resolution; validate untrusted metadata and isolate unreviewed code from release credentials.",
+          "support": [
+            "OSPS:OSPS-BR-01.01",
+            "OSPS:OSPS-BR-01.03",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "BUILD-3",
+          "quote": "Test the packaged artifact from a clean installation and retain the source revision, dependency identities, and changed behavior.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Record locked dependency resolution, the tested artifact digest, clean-install behavior, and security-relevant release notes. A source-checkout test doesn't establish installed-resource availability."
+    },
+    {
+      "case_id": "supply-build-001-violating",
+      "kind": "violating",
+      "role": "build-maintainer",
+      "input": "A release job downloads an unpinned tool script, exposes signing credentials to unreviewed code, and tests only the checkout.",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "BUILD-1",
+          "quote": "Record direct and transitive dependencies with ecosystem tooling; review updates and vulnerability/support status for the intended release.",
+          "support": [
+            "SSDF:PW.4.1",
+            "OSPS:OSPS-BR-05.01",
+            "OSPS:OSPS-DO-06.01"
+          ]
+        },
+        {
+          "requirement_id": "BUILD-2",
+          "quote": "Pin reviewed build/tool inputs and use the lock or equivalent immutable resolution; validate untrusted metadata and isolate unreviewed code from release credentials.",
+          "support": [
+            "OSPS:OSPS-BR-01.01",
+            "OSPS:OSPS-BR-01.03",
+            "PolicyNIM decision"
+          ]
+        },
+        {
+          "requirement_id": "BUILD-3",
+          "quote": "Test the packaged artifact from a clean installation and retain the source revision, dependency identities, and changed behavior.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "An unpinned installer can change the build, unreviewed code receives signing credentials, and only checkout tests run. BUILD-1, BUILD-2 and BUILD-3 require reviewed inputs, controlled credentials and built-artifact verification."
+    },
+    {
+      "case_id": "supply-build-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "release-operator",
+      "input": "A release operator edits an unshipped meeting agenda; dependency inputs, toolchains, builds, and distributed artifacts stay unchanged.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Release inputs need a reviewed identity and a build path that can be repeated and inspected."
+    },
+    {
+      "case_id": "supply-provenance-001-applicable",
+      "kind": "applicable",
+      "role": "artifact-consumer",
+      "input": "A consumer validates the envelope and trusted builder, matches the subject digest, and rejects a modified artifact.",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "expected_outcome": "apply_guidance",
+      "expected_evidence": [
+        {
+          "requirement_id": "PROVENANCE-1",
+          "quote": "Bind released bytes to source/build identity and distribute authenticated integrity evidence appropriate to the release channel.",
+          "support": [
+            "SSDF:PS.2.1",
+            "OSPS:OSPS-BR-06.01"
+          ]
+        },
+        {
+          "requirement_id": "PROVENANCE-2",
+          "quote": "Before accepting an artifact, verify its digest, authenticated provenance, trusted builder, and expected build parameters according to the selected SLSA verification policy.",
+          "support": [
+            "SLSA:How to verify",
+            "SLSA:Forming Expectations"
+          ]
+        },
+        {
+          "requirement_id": "PROVENANCE-3",
+          "quote": "Record producer evidence and consumer verification separately; don't claim a SLSA level or compliance result from an uploaded attestation alone.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Show a successful verification plus altered artifact, untrusted signer/builder, and unexpected parameter rejection. Retain the verifier policy and exact artifact digest."
+    },
+    {
+      "case_id": "supply-provenance-001-violating",
+      "kind": "violating",
+      "role": "build-maintainer",
+      "input": "A pipeline uploads unsigned provenance and labels every download verified without running a consumer check.",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "expected_outcome": "require_changes",
+      "expected_evidence": [
+        {
+          "requirement_id": "PROVENANCE-1",
+          "quote": "Bind released bytes to source/build identity and distribute authenticated integrity evidence appropriate to the release channel.",
+          "support": [
+            "SSDF:PS.2.1",
+            "OSPS:OSPS-BR-06.01"
+          ]
+        },
+        {
+          "requirement_id": "PROVENANCE-2",
+          "quote": "Before accepting an artifact, verify its digest, authenticated provenance, trusted builder, and expected build parameters according to the selected SLSA verification policy.",
+          "support": [
+            "SLSA:How to verify",
+            "SLSA:Forming Expectations"
+          ]
+        },
+        {
+          "requirement_id": "PROVENANCE-3",
+          "quote": "Record producer evidence and consumer verification separately; don't claim a SLSA level or compliance result from an uploaded attestation alone.",
+          "support": [
+            "PolicyNIM decision"
+          ]
+        }
+      ],
+      "rationale": "Uploaded claims aren't verified provenance. PROVENANCE-1 and PROVENANCE-2 require trusted identity and a consumer check before describing downloads as verified."
+    },
+    {
+      "case_id": "supply-provenance-001-out-of-scope",
+      "kind": "out_of_scope",
+      "role": "artifact-consumer",
+      "input": "An artifact consumer reorders local bookmark labels without downloading, trusting, verifying, or executing any artifact.",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "expected_outcome": "not_applicable",
+      "expected_evidence": [],
+      "rationale": "The same applicable role changes behavior outside this policy's stated intent; this is an authored scope expectation, not an executed model verdict.",
+      "scope_evidence": "Producing provenance describes a build; a consumer still needs to verify the artifact against trusted expectations."
+    },
+    {
+      "case_id": "test-fail-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "An application developer changes publisher recovery after an interrupted activation, injects the failure through the runtime boundary, restarts the process, verifies durable state and a successful retry, and records the tested revision. The review reports these as project reliability checks without claiming SSDF mandates every general reliability case.",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "A static text correction without a runtime effect doesn't need fault injection. These are project verification rules; SSDF addresses security testing and doesn't mandate every listed general reliability case.",
+      "rationale": "Changed recovery behavior selects this policy and receives runtime failure and recovery checks. Its SSDF boundary limits framework claims even when the project verification passes."
+    },
+    {
+      "case_id": "test-contract-001-boundary",
+      "kind": "boundary",
+      "role": "library-maintainer",
+      "input": "A library maintainer changes a public serialized response by adding an optional generation field. A strict installed consumer fixture accepts the new response and previous supported payload, rejects malformed IDs, and retains the regression and dependency identities. The report labels this offline contract evidence and doesn't claim semantic retrieval or live provider quality.",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Internal refactors with unchanged public behavior can reuse existing contract tests. Synthetic fixtures don't prove semantic retrieval or live provider quality.",
+      "rationale": "Changed public serialization selects this policy and receives consumer-boundary verification. Passing synthetic contract fixtures still doesn't establish semantic retrieval or live provider quality."
+    },
+    {
+      "case_id": "arch-api-001-boundary",
+      "kind": "boundary",
+      "role": "api-producer",
+      "input": "An API producer adds an optional field; tests show old consumers ignore it and existing request/response meanings stay unchanged, so the supported API version stays the same.",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "A proven compatible optional field can keep the current API version. SemVer doesn't prescribe HTTP path versioning or a universal deprecation duration.",
+      "rationale": "A proved compatible optional field doesn't require an incompatible API-version migration."
+    },
+    {
+      "case_id": "api-error-001-boundary",
+      "kind": "boundary",
+      "role": "api-producer",
+      "input": "An API keeps its documented safe error format; status handling and caller recovery tests pass without adopting RFC 9457 problem details.",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "RFC 9457 is an optional common error format. Existing documented error formats can remain; this policy doesn't require converting every response into problem details.",
+      "rationale": "RFC 9457 is optional. Keeping another documented safe format doesn't itself violate the HTTP error contract."
+    },
+    {
+      "case_id": "api-page-001-boundary",
+      "kind": "boundary",
+      "role": "api-producer",
+      "input": "An API returns a fixed two-item in-memory enumeration, with no unbounded collection or tenant-sensitive cursor; it omits pagination.",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "RFC 8288 defines links, not a mandatory pagination algorithm. Cursor format, limits, and consistency guarantees are project choices; fixed small in-memory results can omit pagination.",
+      "rationale": "The policy explicitly allows fixed small in-memory results to omit pagination; it doesn't mandate a cursor for every response."
+    },
+    {
+      "case_id": "data-migrate-001-boundary",
+      "kind": "boundary",
+      "role": "database-operator",
+      "input": "A database operator tests a migration and recovery on the selected engine and reports its measured recovery behavior without claiming the same DDL or numeric target for other engines.",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Database DDL and transaction behavior vary by engine. Online migration patterns and recovery time targets require a workload-specific decision; no universal numeric target is prescribed.",
+      "rationale": "Engine-specific proof doesn't establish universal DDL behavior or a universal recovery-time target."
+    },
+    {
+      "case_id": "data-transaction-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A service uses an outbox with separately tested duplicate handling and compensation; it doesn't claim a database rollback reverses an external payment.",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "The PostgreSQL example doesn't establish identical guarantees for every datastore. Outboxes, compensation, and distributed transactions are design options that need their own proof.",
+      "rationale": "An outbox is an allowed design option when its own effect and recovery proof is supplied; a distributed transaction isn't universally required."
+    },
+    {
+      "case_id": "arch-job-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A repeated background task replaces the same public cache entry with identical bytes; the harmless repeat and its workload scope are explicitly documented.",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Exactly-once delivery isn't inferred from a queue setting. Deduplication scope and retention are workload decisions; an explicitly harmless repeat can be documented as such.",
+      "rationale": "A documented harmless repeat doesn't require the same deduplication mechanism as a repeated financial charge."
+    },
+    {
+      "case_id": "be-config-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "An optional integration stays explicitly disabled at startup and has no credential; it isn't activated or invoked while disabled.",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup.",
+      "rationale": "Absent optional settings don't invalidate startup while the integration remains disabled. Required settings must be validated before activation."
+    },
+    {
+      "case_id": "rel-timeout-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A service chooses its read deadline from measured dependency latency and the caller's budget; it doesn't copy an example percentile as a universal requirement.",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Timeout values follow measured latency, acceptable failure rates, and caller budgets. AWS example percentiles aren't universal requirements; non-idempotent effects need extra protection.",
+      "rationale": "The timeout follows the measured workload and caller budget. The cited article's example percentile isn't a mandatory global default."
+    },
+    {
+      "case_id": "rel-overload-001-boundary",
+      "kind": "boundary",
+      "role": "service-operator",
+      "input": "An operator reports separate expensive and cheap operation measurements and avoids certifying capacity from an aggregate request count.",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Per-customer quotas and degradation require product decisions. A request count alone doesn't certify capacity for unequal-cost operations; this policy supplies no universal throughput claim.",
+      "rationale": "Unequal-cost operations need workload evidence; a single requests-per-second count doesn't establish capacity."
+    },
+    {
+      "case_id": "be-log-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A handler stops collecting private request bodies and keeps only operation ID and failure class, instead of collecting bodies for a later redactor.",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging.",
+      "rationale": "Avoiding sensitive collection is preferred; the logging policy doesn't require recording a private value merely to redact it."
+    },
+    {
+      "case_id": "be-trace-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A child operation creates a new span ID while retaining valid parent trace identity and safe correlation fields.",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Trace and span IDs have different roles. A new child span normally gets a new span ID; preserve valid trace identity without requiring every hop to repeat the same span ID.",
+      "rationale": "A child span normally gets a new span ID. Preserving trace identity doesn't require repeating the parent's span ID."
+    },
+    {
+      "case_id": "obs-readiness-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A liveness probe reports that the process is responsive; a separate readiness probe rejects traffic when the required generation can't be read.",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Liveness, readiness, dependency diagnostics, and end-user success serve different purposes. Probe design and alert targets are project recommendations, not mandated by Google SRE.",
+      "rationale": "Liveness and readiness answer different questions. A dependency failure needn't make the liveness probe claim the process is dead."
+    },
+    {
+      "case_id": "supply-build-001-boundary",
+      "kind": "boundary",
+      "role": "build-maintainer",
+      "input": "A release records exact patch pins and platform inputs but doesn't claim bit-for-bit reproducibility until independent rebuild evidence exists.",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Exact patch pins alone don't prove bit-for-bit reproducibility. Document platform, toolchain, network inputs, and remaining nondeterminism before making that claim.",
+      "rationale": "Exact versions alone don't prove bit-for-bit reproducibility; the narrower build record is valid without that unproved claim."
+    },
+    {
+      "case_id": "supply-provenance-001-boundary",
+      "kind": "boundary",
+      "role": "artifact-consumer",
+      "input": "A consumer verifies an artifact digest and trusted provenance identity but doesn't label the builder SLSA-certified or assess an entire SSDF program.",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "SLSA levels depend on their full track requirements and trust model. This selected guidance doesn't assess a builder or certify SSDF, SLSA, or OSPS compliance.",
+      "rationale": "Selected artifact checks don't establish a complete framework level or certification; their narrower verified result can still be reported."
+    }
+  ],
+  "generation_id": "3c4e948289c6cd843b8002c83e094f1fb3eb9ce9f44d7bc88d26a07862cacb63",
+  "catalog_digest": "sha256:04a26d71f3b54eb63e41e779585177ce397767cdf89da9368de3e92d61667a26",
+  "profile_id": null,
+  "profile_digest": null,
+  "full_engineering_profile": {
+    "profile_id": "policynim.full-engineering",
+    "profile_digest": "sha256:862df46d965e63c57b010543815cfb4eb470bf60474db8c758f3af358de76159"
+  }
+}

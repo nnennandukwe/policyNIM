@@ -25,6 +25,7 @@ from policynim.services.authorization import (
     principal_identity,
 )
 from policynim.settings import Settings
+from policynim.storage.auth_database import AuthDatabaseError
 from policynim.storage.operation_store import (
     AdmissionRejection,
     OperationAdmission,
@@ -64,6 +65,8 @@ def record_operation_storage_failure(
 
 def _admission_storage_error(error: BaseException) -> str:
     """Keep ordinary bounded writer contention separate from storage outages."""
+    if isinstance(error, AuthDatabaseError):
+        return f"admission_unavailable: No operation started. {error}"
     if _is_busy(error):
         return (
             "admission_busy: No operation started. Operation state is busy; retry shortly "
@@ -181,7 +184,10 @@ class OperationAdmissionService:
         created_store: OperationStore | None = None
         try:
             if store is None:
-                created_store = OperationStore(resolve_runtime_path(settings.beta_auth_db_path))
+                created_store = OperationStore(
+                    resolve_runtime_path(settings.beta_auth_db_path.parent)
+                    / settings.beta_auth_db_path.name
+                )
                 self.store = created_store
             else:
                 self.store = store
