@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import OrderedDict
 from contextlib import closing
-from functools import lru_cache
-from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 from policynim.errors import PolicyNIMError
@@ -119,13 +119,29 @@ def read_policy_resource(
     raise PolicyResourceError("unknown_policy: This policy isn't in the selected generation.")
 
 
-@lru_cache(maxsize=8)
-def _chunk_key_lookup(index_path: str, generation_id: str) -> dict[str, str]:
-    """Cache only ID mappings for at most eight validated immutable generations."""
-    # The caller keeps its validated generation lease throughout this lookup.
-    # Content-addressed identity makes the mapping stable across activations.
-    with closing(SQLiteVecIndexStore(path=Path(index_path))) as store:
-        return {resource_key(chunk_id): chunk_id for chunk_id in store.list_chunk_ids()}
+_CHUNK_KEYS: OrderedDict[tuple[str, str], dict[str, str]] = OrderedDict()
+_CHUNK_KEYS_LOCK = Lock()
+
+
+def _chunk_key_lookup(store: SQLiteVecIndexStore, generation_id: str) -> dict[str, str]:
+    """Cache IDs only after the caller's leased index passes validation around its read."""
+    snapshot = store.generation_snapshot
+    assert snapshot is not None
+    snapshot.validate_read()
+    key = (str(store.path), generation_id)
+    with _CHUNK_KEYS_LOCK:
+        cached = _CHUNK_KEYS.get(key)
+        if cached is not None:
+            _CHUNK_KEYS.move_to_end(key)
+            return cached
+    identifiers = {resource_key(chunk_id): chunk_id for chunk_id in store.list_chunk_ids()}
+    snapshot.validate_read()
+    with _CHUNK_KEYS_LOCK:
+        _CHUNK_KEYS[key] = identifiers
+        _CHUNK_KEYS.move_to_end(key)
+        while len(_CHUNK_KEYS) > 8:
+            _CHUNK_KEYS.popitem(last=False)
+    return identifiers
 
 
 def read_chunk_resource(
@@ -142,7 +158,8 @@ def read_chunk_resource(
                 generation_snapshot=snapshot,
             )
         ) as store:
-            chunk_id = _chunk_key_lookup(str(store.path), generation_id).get(chunk_key)
+            chunk_id = _chunk_key_lookup(store, generation_id).get(chunk_key)
+            snapshot.validate_read()
             chunk = store.get_chunk(chunk_id) if chunk_id is not None else None
             if chunk is not None:
                 return {
