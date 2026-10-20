@@ -505,13 +505,14 @@ from policynim.operations import current_budget
 from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 class Evaluator:
     def __init__(self, settings):
-        pass
+        "Keep the subprocess fixture free of provider clients."
     def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+        "Persist an attempt, then hold the process at its simulated provider boundary."
         current_budget().reserve_provider_call()
         Path(sys.argv[2]).write_text("started")
         time.sleep(60)
     def close(self):
-        pass
+        "The isolated fixture owns no additional resource."
 settings = Settings(**json.loads(Path(sys.argv[1]).read_text()), _env_file=None)
 EvaluationJobWorker(EvaluationJobService(settings), evaluator_factory=Evaluator).run_once()
 """
@@ -1114,4 +1115,59 @@ def test_case_commit_fault_recovers_only_unconfirmed_provider_result(
     assert [case.case_id for case in report.completed_cases] == (
         [] if phase == "before_commit" else ["case-0"]
     )
+    assert calls == []
+
+
+def test_delayed_quarantine_retains_damaged_inputs_for_the_accepted_retention_window(
+    generation, tmp_path: Path
+) -> None:
+    """Recovery after long downtime leaves damaged artifacts available for bounded inspection."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    now = [1000.0]
+    service.store.clock = lambda: now[0]
+    accepted = service.submit(
+        suite,
+        idempotency_key="late-quarantine",
+        principal=principal(),
+        limits=EvaluationJobLimits(deadline_seconds=1, retention_seconds=60),
+    )
+    assert service.store.claim("crashed-worker") is not None
+    service.store.begin_case(accepted.job_id, "crashed-worker", "case-0")
+    service.store.save_case(
+        accepted.job_id,
+        "crashed-worker",
+        case_result(
+            service.settings.model_copy(update={"generation_id": generation_id}), suite, "case-0"
+        ),
+    )
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_jobs SET snapshot_json='{}' WHERE job_id=?", (accepted.job_id,)
+        )
+    now[0] = accepted.expires_at + 100
+    calls: list[str] = []
+    assert (
+        EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once() is None
+    )
+    failed = service.inspect(accepted.job_id, principal=principal())
+    assert failed.failure_code == "job_artifact_invalid" and not failed.result_expired
+    assert failed.expires_at == now[0] + 60
+    assert service.store.purge_expired() == 0
+    with sqlite3.connect(service.store.path) as connection:
+        assert (
+            connection.execute(
+                "SELECT snapshot_json FROM evaluation_jobs WHERE job_id=?", (accepted.job_id,)
+            ).fetchone()[0]
+            == "{}"
+        )
+        assert connection.execute("SELECT COUNT(*) FROM evaluation_job_cases").fetchone()[0] == 1
+    with pytest.raises(EvaluationJobError, match="report_unavailable"):
+        service.result(accepted.job_id, principal=principal())
+    now[0] += 61
+    assert service.store.purge_expired() == 1
+    assert service.inspect(accepted.job_id, principal=principal()).result_expired
     assert calls == []

@@ -77,6 +77,9 @@ def _generation_readiness(settings: Settings) -> tuple[IndexReadinessReport, str
             errno.EACCES,
             errno.EPERM,
             errno.EROFS,
+            errno.ENOSPC,
+            errno.EIO,
+            errno.EDQUOT,
         }
         return IndexReadinessReport(state="unreadable" if unavailable else "invalid"), None
     except OSError:

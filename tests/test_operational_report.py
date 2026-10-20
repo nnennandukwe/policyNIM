@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import sqlite3
@@ -545,12 +546,11 @@ def test_retention_backlog_is_batched_during_concurrent_admission(tmp_path: Path
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("failure_errno", [errno.EROFS, errno.ENOSPC, errno.EIO, errno.EDQUOT])
 def test_report_marks_inaccessible_lease_metadata_unreadable(
-    generation, tmp_path: Path, monkeypatch, wrapped: bool
+    generation, tmp_path: Path, monkeypatch, wrapped: bool, failure_errno: int
 ) -> None:
-    """Permission failure at the public generation boundary can't masquerade as missing data."""
-    import errno
-
+    """Storage access failure at reader admission can't masquerade as index corruption."""
     from policynim.errors import GenerationError
     from policynim.services import operational_report as module
 
@@ -559,8 +559,8 @@ def test_report_marks_inaccessible_lease_metadata_unreadable(
     settings = settings.model_copy(update={"beta_auth_db_path": store.path})
 
     def reject_lease(*args, **kwargs):
-        """Represent a read-only mount's actual OS failure at reader admission."""
-        error = PermissionError(errno.EROFS, "private-generation-path")
+        """Represent disk capacity, I/O and permission failures at reader admission."""
+        error = OSError(failure_errno, "private-generation-path")
         if wrapped:
             raise GenerationError("pin", "Reader metadata isn't writable.") from error
         raise error

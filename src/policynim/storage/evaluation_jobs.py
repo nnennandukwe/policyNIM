@@ -279,11 +279,13 @@ class EvaluationJobStore:
                 connection, row, state, failure_code=failure_code, uncertain=uncertain
             )
         except (EvaluationJobError, ValidationError, TypeError):
+            now = self.clock()
+            retention_seconds = row["expires_at"] - row["deadline_at"]
             connection.execute(
-                "UPDATE evaluation_jobs SET state='failed',finished_at=?,"
+                "UPDATE evaluation_jobs SET state='failed',finished_at=?,expires_at=?,"
                 "failure_code='job_artifact_invalid',worker_token=NULL,"
                 "report_json=NULL,report_sha256=NULL WHERE job_id=?",
-                (self.clock(), row["job_id"]),
+                (now, now + retention_seconds, row["job_id"]),
             )
             current = connection.execute(
                 "SELECT * FROM evaluation_jobs WHERE job_id=?", (row["job_id"],)
