@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from mcp.types import CallToolResult, JSONRPCError, JSONRPCResponse, ListToolsResult
+
+from policynim.types import SearchResult
 
 
 def _bounded_count(minimum: int, maximum: int) -> Callable[[str], int]:
@@ -287,9 +290,23 @@ async def _rpc(
         )
         if response.status_code != 200:
             return (time.perf_counter() - started) * 1000, f"http_{response.status_code}", 0
-        result = response.json().get("result", {})
-        if result.get("isError"):
-            payload = json.dumps(result)
+        envelope = response.json()
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("id") != index + 1
+            or ("error" in envelope and "result" in envelope)
+        ):
+            return (time.perf_counter() - started) * 1000, "invalid_rpc_response", 0
+        if "error" in envelope:
+            JSONRPCError.model_validate(envelope)
+            return (time.perf_counter() - started) * 1000, "jsonrpc_error", 0
+        result = JSONRPCResponse.model_validate(envelope).result
+        if discovery:
+            ListToolsResult.model_validate(result)
+            return (time.perf_counter() - started) * 1000, "ok", 0
+        tool_result = CallToolResult.model_validate(result)
+        if tool_result.is_error:
+            payload = tool_result.model_dump_json()
             code = next(
                 (
                     name
@@ -305,11 +322,16 @@ async def _rpc(
                 "tool_error",
             )
             return (time.perf_counter() - started) * 1000, code, 0
-        content = result.get("structuredContent")
-        if not isinstance(content, dict):
-            blocks = result.get("content", [])
-            content = json.loads(blocks[0]["text"]) if blocks else {}
-        return (time.perf_counter() - started) * 1000, "ok", len(content.get("hits", []))
+        content = tool_result.structured_content
+        if content is None:
+            blocks = tool_result.content
+            if not blocks or blocks[0].type != "text":
+                return (time.perf_counter() - started) * 1000, "invalid_rpc_response", 0
+            content = json.loads(blocks[0].text)
+        search = SearchResult.model_validate(content)
+        return (time.perf_counter() - started) * 1000, "ok", len(search.hits)
+    except ValueError:
+        return (time.perf_counter() - started) * 1000, "invalid_rpc_response", 0
     except httpx.HTTPError:
         return (time.perf_counter() - started) * 1000, "transport_failure", 0
 

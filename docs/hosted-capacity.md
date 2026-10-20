@@ -132,8 +132,10 @@ isn't durable across deployments. Set `POLICYNIM_BETA_AUTH_DB_PATH` to
 `/app/state/auth.sqlite3` on the mounted volume; beta accounts, keys and operation
 accounting share that database. Preserve its sibling `auth.sqlite3.owners/` directory
 across restarts so interrupted-operation recovery can inspect old owner leases.
-Use SQLite's online backup API for a running database and retain matching ownership
-metadata; don't copy only the main database file while writers are active.
+Quiesce admissions and drain or stop workers before preserving a matching database
+and owner-directory snapshot. Use SQLite's online backup API rather than copying only
+the main file while writers are active. A database-only emergency restore can leave
+unknown ownership; preserve those reservations for operator reconciliation.
 For durable evaluations, set `POLICYNIM_EVAL_WORKSPACE_DIR` to
 `/app/state/evals/workspace`; the job database lives under `jobs/jobs.sqlite3`.
 Back up evaluation artifacts and job state together, and verify restored job recovery
@@ -192,3 +194,8 @@ Unexpected tool/callback diagnostics retain at most eight owned package location
 (module, function and line) and four exception classes. They omit filenames,
 source lines, locals, exception messages and request/provider bodies. The innermost
 owned location helps identify a failure stage without exposing a raw traceback.
+
+The harness validates JSON-RPC version/request identity and typed MCP discovery/tool
+results before counting success. HTTP 200 protocol errors, missing results and malformed
+search payloads produce explicit error outcomes; warmup fails instead of inflating
+successful throughput. Responses and validation error text never enter the receipt.
