@@ -19,27 +19,30 @@ _SEED_DIR = Path("/app/artifacts/public-generation")
 
 def prepare_hosted_generation(settings: Settings, *, seed_dir: Path = _SEED_DIR) -> str:
     """Keep the active volume selection, or conditionally seed a genuinely absent root."""
-    checksum_path = seed_dir / "generation.sha256"
-    if not stat.S_ISREG(checksum_path.lstat().st_mode):
-        raise GenerationError("bootstrap", "The image seed checksum isn't a regular file.")
-    with checksum_path.open("rb") as handle:
-        checksum = handle.read(1025)
-    if len(checksum) > 1024 or not re.fullmatch(rb"sha256:[0-9a-f]{64}\s*", checksum):
-        raise GenerationError("bootstrap", "The image seed checksum isn't valid.")
     store = GenerationStore(
         root=settings.generations_dir.absolute(),
         embedding=EmbeddingIdentity(
             model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
         ),
     )
-    result = store.bootstrap_bundle(
-        seed_dir / "generation.zip",
-        expected_digest=checksum.decode("ascii").strip(),
-        source_settings=settings,
-        expected_seed_id=settings.generation_id,
-    )
-    for warning in result.warnings:
-        print(json.dumps({"status": "warning", "message": warning}), file=sys.stderr)
+    try:
+        store.root.lstat()
+    except FileNotFoundError:
+        checksum_path = seed_dir / "generation.sha256"
+        if not stat.S_ISREG(checksum_path.lstat().st_mode):
+            raise GenerationError("bootstrap", "The image seed checksum isn't a regular file.")
+        with checksum_path.open("rb") as handle:
+            checksum = handle.read(1025)
+        if len(checksum) > 1024 or not re.fullmatch(rb"sha256:[0-9a-f]{64}\s*", checksum):
+            raise GenerationError("bootstrap", "The image seed checksum isn't valid.")
+        result = store.bootstrap_bundle(
+            seed_dir / "generation.zip",
+            expected_digest=checksum.decode("ascii").strip(),
+            source_settings=settings,
+            expected_seed_id=settings.generation_id,
+        )
+        for warning in result.warnings:
+            print(json.dumps({"status": "warning", "message": warning}), file=sys.stderr)
     with store.pin(settings.generation_id, force_validation=True) as snapshot:
         return snapshot.generation_id
 

@@ -81,6 +81,25 @@ def test_start_preserves_explicit_operator_generation(
     assert (target.root / "active.json").read_bytes() == before
 
 
+@pytest.mark.parametrize("seed_state", ["missing", "malformed"])
+def test_valid_existing_volume_doesnt_need_image_seed(
+    hosted_seed: HostedSeed, seed_state: str
+) -> None:
+    """A valid mounted generation remains usable when the unused image seed is damaged."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, target, seed, expected = hosted_seed
+    assert prepare_hosted_generation(settings, seed_dir=seed) == expected
+    before = (target.root / "active.json").read_bytes()
+    checksum = seed / "generation.sha256"
+    if seed_state == "missing":
+        checksum.unlink()
+    else:
+        checksum.write_text("invalid", encoding="ascii")
+    assert prepare_hosted_generation(settings, seed_dir=seed) == expected
+    assert (target.root / "active.json").read_bytes() == before
+
+
 @pytest.mark.parametrize("matches_seed", [True, False])
 def test_fresh_explicit_selection_is_checked_before_activation(
     hosted_seed: HostedSeed, matches_seed: bool
