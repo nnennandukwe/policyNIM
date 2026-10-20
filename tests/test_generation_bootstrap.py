@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -79,6 +83,40 @@ def test_invalid_fresh_seed_never_creates_target(tmp_path: Path, failure: str) -
             source_settings=settings,
         )
     assert not store.root.exists()
+
+
+@pytest.mark.parametrize("failure", ["manifest", "digest", "rules", "index"])
+def test_invalid_seed_artifacts_leave_no_root_and_allow_corrected_seed(
+    tmp_path: Path, failure: str
+) -> None:
+    """Full seed validation precedes ownership, including rehashed invalid payloads."""
+    _, store, first, _ = bundles(tmp_path)
+    with zipfile.ZipFile(first[0]) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(contents["manifest.json"])
+    if failure == "manifest":
+        manifest["index_schema_version"] = "unsupported"
+    else:
+        member = "index.sqlite3" if failure == "index" else "runtime_rules.json"
+        contents[member] = b"invalid artifact"
+        if failure != "digest":
+            manifest["artifacts"][member] = "sha256:" + hashlib.sha256(contents[member]).hexdigest()
+    contents["manifest.json"] = json.dumps(manifest).encode()
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for name, data in contents.items():
+            archive.writestr(name, data)
+    invalid = tmp_path / "invalid.zip"
+    invalid.write_bytes(output.getvalue())
+    with pytest.raises(GenerationError, match="couldn't be validated"):
+        store.bootstrap_bundle(
+            invalid, expected_digest="sha256:" + hashlib.sha256(invalid.read_bytes()).hexdigest()
+        )
+    assert not store.root.exists()
+    assert (
+        store.bootstrap_bundle(first[0], expected_digest=first[1]).generation_id
+        == first[2].generation_id
+    )
 
 
 @pytest.mark.parametrize(

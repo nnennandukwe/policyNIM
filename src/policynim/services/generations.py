@@ -18,7 +18,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from pathlib import Path
-from tempfile import mkdtemp
+from tempfile import TemporaryDirectory, mkdtemp
 from threading import Lock
 from types import TracebackType
 from typing import Annotated, Literal
@@ -1759,6 +1759,13 @@ class GenerationStore:
                 contents, incoming = self._read_bundle_inputs(
                     bundle, expected_digest=expected_digest, source_settings=source_settings
                 )
+                # Validate every artifact before claiming durable recovery state. The
+                # ordinary staged transaction validates these same immutable bytes again.
+                with TemporaryDirectory(prefix="policynim-seed-validation-") as scratch:
+                    directory = Path(scratch)
+                    for name, data in contents.items():
+                        (directory / name).write_bytes(data)
+                    self._inspect(directory, expected_embedding=self.embedding)
                 if expected_seed_id is not None:
                     expected = self._selected_id(expected_seed_id, None)
                     if sha256(contents["manifest.json"]).hexdigest() != expected:
