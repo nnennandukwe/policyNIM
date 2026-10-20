@@ -161,6 +161,45 @@ class EvalService:
             suite_path=selected_path,
         )
 
+    def evaluate_case(
+        self,
+        suite: EvalSuite,
+        case_id: str,
+        *,
+        backend: EvalBackend = "default",
+        rerank_enabled: bool = True,
+    ) -> EvalCaseResult:
+        """Evaluate one captured live case against an explicitly pinned generation.
+
+        This public worker boundary never rereads suite files or writes report files.
+        The caller owns durable scheduling, case persistence and cancellation budgets.
+        """
+        if self._settings.generation_id is None:
+            raise PolicyNIMError("Case evaluation requires an explicit generation_id.")
+        captured = EvalSuite.model_validate_json(suite.model_dump_json())
+        case = next((item for item in captured.cases if item.case_id == case_id), None)
+        if case is None:
+            raise PolicyNIMError("The requested case isn't in the captured evaluation suite.")
+        with ResourceStack() as cleanup:
+            store = create_index_store(self._settings)
+            cleanup.callback(close_components, store)
+            snapshot = pinned_generation(store)
+            if snapshot is None or snapshot.generation_id != self._settings.generation_id:
+                raise PolicyNIMError("Case evaluation couldn't pin its requested generation.")
+            _validate_suite_generation(captured, snapshot)
+            results = self._run_suite_cases(
+                captured.model_copy(update={"cases": [case]}),
+                mode="live",
+                backend=backend,
+                rerank_enabled=rerank_enabled,
+                regenerate=False,
+                max_regenerations=1,
+            )
+            if len(results) != 1 or results[0].generation_id != snapshot.generation_id:
+                raise PolicyNIMError("Case result doesn't match its pinned generation.")
+            _validate_case_evidence(results, snapshot)
+            return results[0]
+
     def _run_pinned(
         self,
         *,
@@ -441,8 +480,8 @@ class EvalService:
 
         results_dir = self._workspace_path / "results"
         reports_dir = self._workspace_path / "reports"
-        results_dir.mkdir(parents=True, exist_ok=True)
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        results_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        reports_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
         result_payload = EvalModeRunResult(
             generation_id=self._settings.generation_id if mode == "live" else None,
@@ -470,14 +509,14 @@ class EvalService:
         backend_slug = f"{mode_slug}-{backend}"
         result_json_path = results_dir / f"{timestamp}-{suite_slug}-{backend_slug}.json"
         report_html_path = reports_dir / f"{timestamp}-{suite_slug}-{backend_slug}.html"
-        result_json_path.write_text(
+        _write_private_eval_file(
+            result_json_path,
             result_payload.model_copy(
                 update={
                     "result_json_path": result_json_path.as_posix(),
                     "report_html_path": report_html_path.as_posix(),
                 }
             ).model_dump_json(indent=2),
-            encoding="utf-8",
         )
 
         report_rows = _build_eval_report_rows(
@@ -514,6 +553,13 @@ class EvalService:
             report_html_path=report_html_path.as_posix(),
             case_results=case_results,
         )
+
+
+def _write_private_eval_file(path: Path, text: str) -> None:
+    """Create owner-only reports without replacing earlier evidence or following links."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        output.write(text)
 
 
 def create_eval_service(settings: Settings | None = None) -> EvalService:
@@ -626,7 +672,7 @@ def _score_search_case(
     failure_reasons.extend(
         _build_failure_reasons(
             expected_insufficient_context=case.expected_insufficient_context,
-            actual_insufficient_context=case.expected_insufficient_context,
+            actual_insufficient_context=result.insufficient_context,
             expected_ids=case.expected_policy_ids,
             matched_ids=matched_policy_ids,
             label="policy_id",
@@ -706,6 +752,21 @@ def _score_preflight_case(
         observed_policies.update(item.policy_id for item in evidence_trace.selected_policies)
         for constraint in evidence_trace.constraints:
             observed_policies.update(constraint.source_policy_ids)
+    narrative = "\n".join(
+        [
+            result.summary,
+            *result.plan_steps,
+            *result.implementation_guidance,
+            *result.review_flags,
+            *result.tests_required,
+            *(policy.rationale for policy in result.applicable_policies),
+        ]
+    )
+    observed_policies.update(
+        policy_id
+        for policy_id in case.forbidden_policy_ids
+        if re.search(r"(?<![\w-])" + re.escape(policy_id) + r"(?![\w-])", narrative)
+    )
     failure_reasons.extend(_forbidden_policy_failures(case, observed_policies))
     if result.insufficient_context and (
         result.applicable_policies
@@ -818,10 +879,18 @@ def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateM
             len(preflight_results),
         ),
         expected_chunk_recall=_average(
-            [result.metrics.expected_chunk_recall for result in search_results]
+            [
+                result.metrics.expected_chunk_recall
+                for result in total_results
+                if result.expected_chunk_ids
+            ]
         ),
         expected_policy_recall=_average(
-            [result.metrics.expected_policy_recall for result in preflight_results]
+            [
+                result.metrics.expected_policy_recall
+                for result in total_results
+                if result.expected_policy_ids
+            ]
         ),
         insufficient_context_accuracy=_average(
             [
@@ -1228,7 +1297,7 @@ def _write_eval_html_report(
             "</html>",
         ]
     )
-    path.write_text(document, encoding="utf-8")
+    _write_private_eval_file(path, document)
 
 
 def _html_key_value_table(rows: Sequence[tuple[str, object]]) -> str:

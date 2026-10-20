@@ -907,7 +907,11 @@ def eval(
         if not headless:
             service.start_ui()
             service.publish_to_ui(result)
-        typer.echo(result.model_dump_json(indent=2))
+        typer.echo(
+            result.model_dump_json(
+                indent=2, exclude={"runs": {"__all__": {"case_results", "suite_definition"}}}
+            )
+        )
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:

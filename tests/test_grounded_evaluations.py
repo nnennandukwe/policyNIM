@@ -282,21 +282,25 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
         """Exercise real SQLite with a deterministic two-dimensional query."""
 
         def embed_query(self, text):
+            """Return the controlled query vector."""
             return [1.0, 0.0]
 
         def embed_documents(self, texts):
+            """Reject unexpected corpus embedding during evaluation."""
             pytest.fail("Evaluation must not re-embed the generation")
 
     class Reranker:
         """Retain real candidates; this fixture makes no semantic ranking claim."""
 
         def rerank(self, query, candidates, *, top_k):
+            """Retain the controlled candidate order."""
             return [chunk.model_copy(update={"score": 1.0}) for chunk in candidates[:top_k]]
 
     class Compiler:
         """Require the actual retained source text with its actual chunk IDs."""
 
         def compile_policy_packet(self, request, selection_packet, context):
+            """Compile constraints from the exact supplied source chunks."""
             return GeneratedCompiledPolicyDraft(
                 required_steps=[
                     GeneratedPolicyConstraint(statement=chunk.text, citation_ids=[chunk.chunk_id])
@@ -361,3 +365,168 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
     )
     assert repeated.runs[0].result_json_path != run.result_json_path
     assert Path(run.result_json_path).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "summary",
+        "plan_steps",
+        "implementation_guidance",
+        "review_flags",
+        "tests_required",
+        "rationale",
+    ],
+)
+def test_forbidden_policy_in_generated_narrative_fails(field: str) -> None:
+    """Generated text can't evade exclusion checks by omitting structured policy fields."""
+    policy_id = "PRIVATE-EXCLUDED-001"
+    payload = {"task": "Review", "summary": "Review", "insufficient_context": True}
+    if field == "rationale":
+        payload["applicable_policies"] = [
+            {"policy_id": "ALLOWED", "title": "Allowed", "rationale": policy_id}
+        ]
+    else:
+        payload[field] = policy_id if field == "summary" else [policy_id]
+    result = _score_preflight_case(
+        EvalCase(
+            case_id="excluded-narrative",
+            kind="preflight",
+            input="Review",
+            expected_insufficient_context=True,
+            forbidden_policy_ids=[policy_id],
+        ),
+        result=PreflightResult.model_validate(payload),
+        rerank_enabled=True,
+    )
+    assert not result.passed
+    assert f"forbidden policy_id values: {policy_id}" in result.failure_reasons
+
+
+def test_mixed_suite_metrics_include_every_applicable_expectation() -> None:
+    """Search policy misses and preflight chunk misses must affect the run summary."""
+    from policynim.services.eval import _aggregate_metrics
+
+    search = _score_search_case(
+        EvalCase(
+            case_id="search-miss", kind="search", input="Review", expected_policy_ids=["MISSING"]
+        ),
+        result=SearchResult(query="Review", top_k=1),
+        rerank_enabled=True,
+    )
+    preflight = _score_preflight_case(
+        EvalCase(
+            case_id="preflight-miss",
+            kind="preflight",
+            input="Review",
+            expected_chunk_ids=["MISSING"],
+        ),
+        result=PreflightResult(task="Review", summary="Review"),
+        rerank_enabled=True,
+    )
+    metrics = _aggregate_metrics([search, preflight])
+    assert metrics.expected_policy_recall == 0.0
+    assert metrics.expected_chunk_recall == 0.0
+
+
+def test_shipped_live_expectations_match_the_shipped_catalog(installed_generation) -> None:
+    """Policy changes require an explicit reviewed fixture update in offline CI."""
+    from policynim.services.catalog import build_policy_catalog
+    from policynim.services.eval import _load_eval_suite, _validate_suite_generation
+
+    suite = _load_eval_suite(ROOT / "evals/grounded_cases.json")
+    _, generations = installed_generation
+    with generations.pin() as snapshot:
+        assert snapshot.catalog.digest == build_policy_catalog(ROOT / "policies").digest
+        _validate_suite_generation(suite, snapshot)
+    assert all(
+        case.expected_chunk_ids for case in suite.cases if not case.expected_insufficient_context
+    )
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX permissions aren't Windows ACLs")
+def test_eval_reports_are_private_even_under_a_permissive_umask(tmp_path: Path) -> None:
+    """A shared parent directory mustn't expose saved policy content to other users."""
+    import os
+    import stat
+
+    old_mask = os.umask(0)
+    try:
+        result = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "shared")).run(
+            compare_rerank=False
+        )
+    finally:
+        os.umask(old_mask)
+    run = result.runs[0]
+    assert stat.S_IMODE(Path(run.result_json_path).stat().st_mode) == 0o600
+    assert stat.S_IMODE(Path(run.report_html_path).stat().st_mode) == 0o600
+    assert stat.S_IMODE(Path(run.result_json_path).parent.stat().st_mode) == 0o700
+
+
+def test_eval_report_cannot_replace_historical_evidence(tmp_path: Path) -> None:
+    """Exclusive report creation preserves previous runs and rejects symlink targets."""
+    from policynim.services.eval import _write_private_eval_file
+
+    path = tmp_path / "report.json"
+    path.write_text("historical")
+    with pytest.raises(FileExistsError):
+        _write_private_eval_file(path, "replacement")
+    assert path.read_text() == "historical"
+
+
+def test_public_case_evaluation_requires_a_generation_before_provider_work() -> None:
+    """Durable workers can't accidentally follow a changing active generation."""
+    suite = EvalSuite(
+        name="captured", cases=[EvalCase(case_id="case", kind="search", input="Review")]
+    )
+    with pytest.raises(PolicyNIMError, match="explicit generation_id"):
+        EvalService(settings=Settings()).evaluate_case(suite, "case")
+
+
+def test_public_case_evaluation_uses_captured_inputs_without_report_side_effects(
+    installed_generation,
+    monkeypatch,
+) -> None:
+    """The worker executes only the requested captured case and validates its evidence."""
+    settings, generations = installed_generation
+    with generations.pin() as snapshot:
+        generation_id = snapshot.generation_id
+        catalog_digest = snapshot.catalog.digest
+    settings = settings.model_copy(update={"generation_id": generation_id})
+    with closing(create_index_store(settings)) as store:
+        chunk = store.list_chunks()[0]
+    suite = EvalSuite(
+        name="captured",
+        expected_catalog_digest=catalog_digest,
+        cases=[
+            EvalCase(case_id="first", kind="search", input="Original input"),
+            EvalCase(case_id="second", kind="search", input="Don't execute this case"),
+        ],
+    )
+    observed = []
+
+    def evaluate_live(self, selected, **kwargs):
+        """Represent the provider boundary and return actual held-generation coordinates."""
+        observed.extend(selected.cases)
+        return [
+            _score_search_case(
+                selected.cases[0],
+                result=SearchResult(
+                    generation_id=generation_id,
+                    query=selected.cases[0].input,
+                    top_k=1,
+                    hits=[ScoredChunk(**chunk.model_dump())],
+                ),
+                rerank_enabled=True,
+            )
+        ]
+
+    monkeypatch.setattr(EvalService, "_run_live_suite", evaluate_live)
+    result = EvalService(settings=settings).evaluate_case(suite, "first")
+    assert result.passed
+    assert result.generation_id == generation_id
+    assert [case.input for case in observed] == ["Original input"]
+    assert len(suite.cases) == 2
+    assert not settings.eval_workspace_dir.exists()
+    with pytest.raises(PolicyNIMError, match="isn't in the captured"):
+        EvalService(settings=settings).evaluate_case(suite, "absent")

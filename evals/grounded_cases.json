@@ -15,6 +15,9 @@
       "top_k": 5,
       "expected_policy_ids": [
         "ARCH-JOB-001"
+      ],
+      "expected_chunk_ids": [
+        "ARCH-JOB-001:background-job-design-rules__required-rules"
       ]
     },
     {
@@ -25,6 +28,10 @@
       "expected_policy_ids": [
         "ARCH-JOB-001",
         "SEC-SESSION-001"
+      ],
+      "expected_chunk_ids": [
+        "ARCH-JOB-001:background-job-design-rules__required-rules",
+        "SEC-SESSION-001:session-lifetime-and-token-boundaries__required-rules"
       ]
     },
     {
@@ -35,6 +42,9 @@
       "top_k": 5,
       "expected_policy_ids": [
         "MCP-AUTH-001"
+      ],
+      "expected_chunk_ids": [
+        "MCP-AUTH-001:mcp-token-audience-and-scopes__required-rules"
       ]
     },
     {

@@ -16,7 +16,7 @@ import platform
 import secrets
 import socket
 import subprocess
-import sys
+import sysconfig
 import tempfile
 import time
 import zipfile
@@ -42,7 +42,14 @@ def check_wheel(wheel: Path) -> dict[str, object]:
     require(find_source_checkout_root() is None, "Run from outside a source checkout.")
     package = Path(policynim.__file__).resolve().parent
     checked = 0
+    distribution = importlib.metadata.distribution("policynim")
     with zipfile.ZipFile(wheel) as archive:
+        for name in archive.namelist():
+            if name.endswith(".dist-info/entry_points.txt") or name.endswith(".dist-info/METADATA"):
+                require(
+                    Path(distribution.locate_file(name)).read_bytes() == archive.read(name),
+                    "Installed distribution metadata differs from the wheel.",
+                )
         for name in archive.namelist():
             if name.startswith("policynim/") and not name.endswith("/"):
                 relative = Path(name).relative_to("policynim")
@@ -60,10 +67,28 @@ def check_wheel(wheel: Path) -> dict[str, object]:
     }
 
 
-def run_cli(arguments: list[str], *, env: dict[str, str], cwd: Path) -> dict:
-    """Run the installed entry point and require its actual structured result."""
+def installed_command() -> str:
+    """Locate the console command installed by this interpreter's wheel installer."""
+    suffix = ".exe" if os.name == "nt" else ""
+    command = Path(sysconfig.get_path("scripts")) / ("policynim" + suffix)
+    require(command.is_file(), "Installed policynim console command is missing.")
+    return str(command)
+
+
+def safe_diagnostic(text: str, env: dict[str, str]) -> str:
+    """Bound diagnostics and remove credentials before writing release evidence."""
+    for key, value in env.items():
+        if value and any(
+            marker in key.upper() for marker in ("TOKEN", "SECRET", "KEY", "PASSWORD")
+        ):
+            text = text.replace(value, "<redacted>")
+    return text[-4000:]
+
+
+def run_command(arguments: list[str], *, env: dict[str, str], cwd: Path) -> str:
+    """Exercise the user's installed command and retain sanitized failure details."""
     completed = subprocess.run(
-        [sys.executable, "-m", "policynim.interfaces.cli", *arguments],
+        [installed_command(), *arguments],
         env=env,
         cwd=cwd,
         capture_output=True,
@@ -71,8 +96,17 @@ def run_cli(arguments: list[str], *, env: dict[str, str], cwd: Path) -> dict:
         timeout=90,
         check=False,
     )
-    require(completed.returncode == 0, f"Installed CLI check failed: {arguments[0]}.")
-    return json.loads(completed.stdout)
+    require(
+        completed.returncode == 0,
+        f"Installed CLI check failed: {arguments[0]} (exit {completed.returncode}). "
+        + safe_diagnostic(completed.stderr + "\n" + completed.stdout, env),
+    )
+    return completed.stdout
+
+
+def run_cli(arguments: list[str], *, env: dict[str, str], cwd: Path) -> dict:
+    """Parse the actual installed console command's structured result."""
+    return json.loads(run_command(arguments, env=env, cwd=cwd))
 
 
 async def check_client(client: Client, mode: str) -> dict[str, object]:
@@ -94,8 +128,8 @@ async def check_stdio(env: dict[str, str], cwd: Path) -> list[dict[str, object]]
     results = []
     for mode in ("auto", "legacy"):
         parameters = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "policynim.interfaces.cli", "mcp", "--transport", "stdio"],
+            command=installed_command(),
+            args=["mcp", "--transport", "stdio"],
             cwd=cwd,
             env=env,
         )
@@ -153,6 +187,11 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                 "PYTHONUTF8": "1",
             }
         )
+        require("Usage:" in run_command(["--help"], env=env, cwd=cwd), "Missing CLI help.")
+        require(
+            importlib.metadata.version("policynim") in run_command(["--version"], env=env, cwd=cwd),
+            "Console version differs.",
+        )
         source = run_cli(["policies", "validate", "--source", "--format", "json"], env=env, cwd=cwd)
         require(source["effective_count"] > 0, "Packaged source catalog is empty.")
         imported = run_cli(
@@ -202,9 +241,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         with (cwd / "server.log").open("wb") as log:
             process = subprocess.Popen(
                 [
-                    sys.executable,
-                    "-m",
-                    "policynim.interfaces.cli",
+                    installed_command(),
                     "mcp",
                     "--transport",
                     "streamable-http",
@@ -238,6 +275,10 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                         "Missing-token request accepted.",
                     )
                 report["http"] = asyncio.run(check_http(origin, token))
+            except Exception as error:
+                log.flush()
+                diagnostic = safe_diagnostic((cwd / "server.log").read_text(errors="replace"), env)
+                raise RuntimeError(f"{error}\nHTTP server diagnostics:\n{diagnostic}") from error
             finally:
                 process.terminate()
                 try:

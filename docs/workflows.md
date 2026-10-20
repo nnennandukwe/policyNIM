@@ -357,8 +357,11 @@ retrieval evidence remain separate measures.
 JSON reports retain the parsed suite definition, its canonical SHA256 digest,
 generation/catalog identity, configured provider models, and actual search/preflight
 outputs. Local reports can therefore contain task text and policy excerpts; keep
-private-profile reports in the intended local workspace. Every run uses unique
-artifact paths so repeated invocations preserve earlier evidence. Reports from an
+private-profile reports in the intended local workspace. The CLI prints metrics,
+identities and report paths without case bodies or suite inputs. New JSON and HTML
+files use exclusive creation and owner-only permissions on POSIX; Windows operators
+must restrict the workspace's inherited ACLs. Existing report files aren't replaced.
+Every run uses unique artifact paths so repeated invocations preserve earlier evidence. Reports from an
 older generation don't verify a changed generation.
 
 `--backend nemo` adds policy-conformance scoring for preflight eval cases. In

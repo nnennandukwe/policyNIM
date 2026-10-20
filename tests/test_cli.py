@@ -1183,6 +1183,8 @@ def test_eval_command_prints_json(monkeypatch) -> None:
     payload = EvalRunResult.model_validate(json.loads(result.stdout))
     assert payload.mode == "offline"
     assert payload.runs[0].metrics.case_count == 2
+    assert "case_results" not in json.loads(result.stdout)["runs"][0]
+    assert "suite_definition" not in json.loads(result.stdout)["runs"][0]
     assert "--cases" not in runner.invoke(app, ["eval", "--help"]).stdout
     assert "Phoenix" in runner.invoke(app, ["eval", "--help"]).stdout
     assert "Evidently" not in runner.invoke(app, ["eval", "--help"]).stdout
