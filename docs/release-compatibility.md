@@ -17,7 +17,8 @@ client version and observed deployment identity.
 | Windows wheel | Windows Server 2022, Python 3.11/3.12 | The same candidate passes package jobs after explicit UTF-8 decoding. |
 | Docker | `Dockerfile` and `Dockerfile.railway` | Offline build/import/startup checks pass without provider credentials. |
 
-SDK negotiation and discovery don't prove that a coding client can complete a
+SDK checks also call `policy_search` with an invalid argument and require rejection
+without provider work. These checks don't prove that a coding client can complete a
 user workflow. The package verifier's current two-tool checks cover
 `policy_search` and `policy_preflight`; #100 and #101 own the additional tools,
 versioned resources and durable-job operations. Those additions need updated
@@ -49,7 +50,8 @@ inferred from bearer-key checks or mocked introspection.
 
 The complete extra set installs together on macOS with Python 3.11.13: 259
 installed packages pass `uv pip check`, and 1,694 offline tests pass at the
-engineering candidate before its subsequent policy-text review changes.
+engineering candidate `e443de6999671e59fade05cb7e525088b80b189d`, before
+its subsequent policy-text review changes.
 This doesn't establish extra compatibility on every operating system.
 `httpx==0.27.2` and `httpx2==2.6.0` remain explicit separate distributions;
 the combined locked install passes without replacing either pin.

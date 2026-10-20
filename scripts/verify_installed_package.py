@@ -180,7 +180,9 @@ async def check_client(
         all(tool.input_schema and tool.output_schema for tool in listing.tools),
         "Missing advertised tool schemas.",
     )
-    return {"protocol": expected, "tools": names}
+    rejected = await client.call_tool("policy_search", {"query": "release smoke", "top_k": 0})
+    require(rejected.is_error is True, "Installed MCP accepted an invalid tool argument.")
+    return {"protocol": expected, "tools": names, "invalid_argument_rejected": True}
 
 
 async def check_stdio(env: dict[str, str], cwd: Path) -> list[dict[str, object]]:
