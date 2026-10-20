@@ -121,7 +121,9 @@ after content validation. Operator inspection and export always validate all byt
 Warm health probes return only the validated generation ID and chunk count when
 the pointer, artifact identities, and configured embedding space still match.
 They probe the same reader-lease admission that retrieval requires, retaining the
-selected generation during inspection, but don't clone source models. Cold probes,
+selected generation during inspection, and run a read-only SQLite readiness query.
+An unchanged artifact token can't hide current index open/query failures. These probes
+don't clone source models. Cold probes,
 changed identities, unavailable change stamps, and entries outside the bounded
 cache still use full pinned validation. There's no time-based healthy-state cache.
 Pruning deletes only validated owned objects. Changed or unknown entries remain

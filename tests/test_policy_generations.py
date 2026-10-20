@@ -3228,3 +3228,62 @@ def test_readiness_cleanup_doesnt_wait_for_another_writer(
         assert isinstance(errors[0], GenerationError)
     assert not worker.is_alive()
     assert not list((store.root / "leases").rglob("*.lock"))
+
+
+@pytest.mark.parametrize("failure", ["open", "query"])
+def test_warm_public_health_probes_sqlite_readability_and_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Unchanged artifact metadata can't hide SQLite access failures from public readiness."""
+    import errno
+    import sqlite3
+    from contextlib import closing
+
+    from starlette.testclient import TestClient
+
+    from policynim.errors import GenerationError
+    from policynim.interfaces.mcp import _build_streamable_http_app
+    from policynim.services.index_store import create_index_store
+    from policynim.services.search import SearchService
+    from policynim.storage import sqlite_vec
+    from policynim.types import SearchRequest
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    sealed_index = store.root / "objects" / first.generation_id / "index.sqlite3"
+    original_connect = sqlite_vec._connect
+    before = sealed_index.stat()
+
+    def connect(path: Path, *, read_only: bool = False):
+        """Inject open failure or actual SQLite query denial only for the selected sealed index."""
+        if path == sealed_index and failure == "open":
+            raise OSError(errno.EIO, "PRIVATE-DATABASE-FAILURE")
+        connection = original_connect(path, read_only=read_only)
+        if path == sealed_index and failure == "query":
+            connection.set_authorizer(lambda *args: sqlite3.SQLITE_DENY)
+        return connection
+
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(sqlite_vec, "_connect", connect)
+        with closing(
+            SearchService(embedder=MockEmbedder(), index_store=create_index_store(settings))
+        ) as search:
+            with pytest.raises(GenerationError):
+                search.search(SearchRequest(query="review backend policy", top_k=1))
+        response = client.get("/healthz")
+        assert response.status_code == 503
+        assert not response.json()["ready"]
+        assert "PRIVATE-DATABASE-FAILURE" not in response.text
+        after = sealed_index.stat()
+        assert (before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        monkeypatch.setattr(sqlite_vec, "_connect", original_connect)
+        recovered = client.get("/healthz")
+        assert recovered.status_code == 200
+        assert recovered.json()["generation_id"] == first.generation_id

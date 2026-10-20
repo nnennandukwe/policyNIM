@@ -847,6 +847,18 @@ class GenerationStore:
                         _VALIDATION_CACHE.move_to_end(key)
             if cached is not None:
                 result = cached.readiness
+                with closing(
+                    SQLiteVecIndexStore(
+                        path=directory / "index.sqlite3", embedding_identity=self.embedding
+                    )
+                ) as index:
+                    readiness = index.inspect_readiness()
+                if readiness.state != "ready":
+                    raise GenerationError(
+                        "read", readiness.reason + " Correct index access before retrying health."
+                    )
+                if readiness.chunk_count != result.chunk_count:
+                    raise GenerationError("read", "Generation index count changed during health.")
                 if self._artifact_token(directory) != token:
                     raise GenerationError(
                         "inspect", "Generation changed during readiness inspection."
