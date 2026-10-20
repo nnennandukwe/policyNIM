@@ -50,3 +50,22 @@ def test_artifact_identity_rejects_external_symlink(tmp_path: Path) -> None:
         pytest.skip("Symlink creation isn't permitted on this runner.")
     with pytest.raises(RuntimeError, match="symlink escapes"):
         verifier.artifact_identity(command)
+
+
+def test_artifact_identity_doesnt_confuse_newlines_with_record_boundaries(tmp_path: Path) -> None:
+    """Two owned symlink layouts can't serialize as one newline-delimited record stream."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for root in [first, second]:
+        root.mkdir()
+        (root / "policynim").write_bytes(b"launcher")
+    try:
+        (first / "a").symlink_to("policynim\nlink:b:policynim")
+        (second / "a").symlink_to("policynim")
+        (second / "b").symlink_to("policynim")
+    except OSError:
+        pytest.skip("Symlink creation isn't permitted on this runner.")
+    observed_first = verifier.artifact_identity(first / "policynim")
+    observed_second = verifier.artifact_identity(second / "policynim")
+    assert observed_first["file_count"] == observed_second["file_count"] == 1
+    assert observed_first["tree_sha256"] != observed_second["tree_sha256"]
