@@ -330,6 +330,7 @@ def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context)
         """Observe whether the rejected request starts the real worker."""
 
         def start(self) -> None:
+            """Record an actual background worker startup before inspecting rejection."""
             super().start()
             started.set()
 
@@ -337,6 +338,7 @@ def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context)
     server = MCPServer("job rejection fixture")
 
     async def run_tool(name, operation, ctx):
+        """Keep SDK dispatch while executing the real submission boundary."""
         return operation()
 
     mcp_jobs.register_evaluation_jobs(
