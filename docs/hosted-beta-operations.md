@@ -436,12 +436,16 @@ in this ledger; existing stage events report measured provider usage when suppli
 Neither accepted-operation counts nor estimated usage imply financial billing.
 
 The supported topology is one instance with its persistent writable state volume.
-Startup accounting recovery releases rows from provably dead local processes and
-marks them interrupted without refunding usage. It preserves rows owned by a live
-process, including a reused process ID. If active rows remain after an unclean
-restart, stop the service, back up the database and inspect process ownership before
-repairing only abandoned rows. Never clear active rows while their worker can run.
-PID checks aren't cross-host coordination; don't add replicas over this database.
+Each service holds a private kernel-backed owner lease alongside the database in
+`<database>.owners/`. Process exit releases that lease even when a restarted
+container reuses its PID. Startup marks accepted rows from unlocked prior owners
+interrupted without refunding usage. It preserves live owners and unknown/missing
+lease files. Back up the database and owner directory together; don't delete or
+replace lease files while the service runs. If ownership can't be proven, stop the
+service, preserve state and inspect abandoned rows before repairing them. These
+local filesystem locks aren't cross-host coordination; don't add replicas.
+Terminal writes retry SQLite lock contention for a bounded 1.5 seconds before
+reporting incomplete accounting. Active capacity stays reserved during that retry.
 
 MCP errors `server_busy` and `principal_busy` tell callers to retry after active work
 finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Database lock/open
