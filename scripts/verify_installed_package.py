@@ -212,7 +212,11 @@ async def check_client(client: Client, mode: str) -> dict[str, object]:
     require(client.protocol_version == expected, "Unexpected negotiated MCP protocol.")
     listing = await client.list_tools()
     names = sorted(tool.name for tool in listing.tools)
-    require(names == ["policy_preflight", "policy_search"], "Installed MCP tools differ.")
+    require(
+        names
+        == ["policy_compile", "policy_preflight", "policy_preflight_evidence", "policy_search"],
+        "Installed MCP tools differ.",
+    )
     require(
         all(tool.input_schema and tool.output_schema for tool in listing.tools),
         "Missing advertised tool schemas.",
