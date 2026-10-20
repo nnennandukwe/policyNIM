@@ -64,11 +64,12 @@ def _workflow_uses(path: Path) -> list[tuple[str, str, str | None]]:
 
 
 def _assert_workflow_pins(path: Path) -> None:
-    """Reject mutable refs, retaining only the exact release publisher exception."""
+    """Reject mutable action refs, including the Docker-backed publisher."""
     for action, ref, version in _workflow_uses(path):
         if action == "pypa/gh-action-pypi-publish":
             assert path.resolve() == RELEASE_WORKFLOW.resolve()
-            assert ref == "v1.14.0"
+            assert ref == "cef221092ed1bacb1cc03d23a2d87d1d172e277b"
+            assert version == "v1.14.0"
             continue
         assert re.fullmatch(r"[0-9a-f]{40}", ref), (path, action, ref)
         assert version is not None, (path, action)
@@ -177,9 +178,6 @@ def test_release_workflow_uses_pinned_actions_and_trusted_pypi_publish() -> None
 
     assert uses_lines
     for line in uses_lines:
-        if line.startswith("uses: pypa/gh-action-pypi-publish@v1.14.0"):
-            assert line.endswith("# 6733eb7d741f0b11ec6a39b58540dab7590f9b7d")
-            continue
         assert re.search(r"@[0-9a-f]{40}(?:\s+#.*)?$", line), line
     assert "id-token: write" in text
     assert "pypa/gh-action-pypi-publish@" in text
@@ -258,18 +256,38 @@ def test_fresh_wheel_install_uses_locked_hashed_dependencies() -> None:
     assert '"--requirements"' in command
 
 
+def _release_uv_commands(script: str) -> list[list[str]]:
+    """Inspect each shell command; reject wrapped uv invocations rather than guess."""
+    commands = []
+    for line in script.splitlines():
+        if not re.search(r"\buv\s+(?:sync|run)\b", line):
+            continue
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        current: list[str] = []
+        for token in [*lexer, ";"]:
+            if token and all(character in ";&|()" for character in token):
+                if current:
+                    if any(
+                        part == "uv" or re.search(r"\buv\s+(?:sync|run)\b", part)
+                        for part in current
+                    ):
+                        assert current[:1] == ["uv"], "Use direct uv commands in release gates."
+                        commands.append(current)
+                    current = []
+            else:
+                current.append(token)
+    return commands
+
+
 def _assert_locked_release_dependencies(workflow: dict) -> None:
-    """Require a locked setup step in each build job before checking no-sync commands."""
+    """Require locked setup and check flags within each executing shell command."""
     for name, groups in {"verify": ("test", "dev"), "standalone-build": ("release",)}.items():
-        commands = [
-            line.strip()
-            for step in workflow["jobs"][name]["steps"]
-            for line in step.get("run", "").splitlines()
-        ]
         syncs = [
-            shlex.split(line, comments=True)
-            for line in commands
-            if shlex.split(line, comments=True)[:2] == ["uv", "sync"]
+            tokens
+            for step in workflow["jobs"][name]["steps"]
+            for tokens in _release_uv_commands(step.get("run", ""))
+            if tokens[:2] == ["uv", "sync"]
         ]
         assert syncs, f"{name} must install from the reviewed lockfile."
         for group in groups:
@@ -282,13 +300,11 @@ def _assert_locked_release_dependencies(workflow: dict) -> None:
             )
     for job in workflow["jobs"].values():
         for step in job["steps"]:
-            for line in step.get("run", "").splitlines():
-                if line.strip().startswith("uv "):
-                    tokens = shlex.split(line, comments=True)
-                    if tokens[:2] == ["uv", "sync"]:
-                        assert "--locked" in tokens
-                    if tokens[:2] == ["uv", "run"]:
-                        assert "--no-sync" in tokens
+            for tokens in _release_uv_commands(step.get("run", "")):
+                if tokens[:2] == ["uv", "sync"]:
+                    assert "--locked" in tokens
+                if tokens[:2] == ["uv", "run"]:
+                    assert "--no-sync" in tokens
 
 
 def test_release_uses_locked_dependencies_without_implicit_resync() -> None:
@@ -354,3 +370,21 @@ def test_comment_flags_cant_satisfy_locked_setup(job: str) -> None:
             step["run"] = step["run"].replace("--locked", "") + " # --locked"
     with pytest.raises(AssertionError):
         _assert_locked_release_dependencies(workflow)
+
+
+@pytest.mark.parametrize("separator", ["&&", "||", ";", "|"])
+@pytest.mark.parametrize("command", ["uv sync --group test", "uv run pytest -q"])
+def test_chained_commands_cant_borrow_locked_flags(separator: str, command: str) -> None:
+    """Every chained invocation must carry its own lock or no-sync guarantee."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for step in workflow["jobs"]["verify"]["steps"]:
+        if step.get("run", "").startswith("uv sync"):
+            step["run"] += f" {separator} {command}"
+    with pytest.raises(AssertionError):
+        _assert_locked_release_dependencies(workflow)
+
+
+def test_shell_wrappers_cant_hide_unlocked_uv_commands() -> None:
+    """The release gate doesn't assume a quoted shell script is harmless data."""
+    with pytest.raises(AssertionError):
+        _release_uv_commands('bash -c "uv sync --group test"')

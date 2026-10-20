@@ -22,6 +22,9 @@ policynim init
 policynim ingest
 ```
 
+See the [compatibility and evidence matrix](release-compatibility.md) for exact
+SDK, protocol, Python, client, authorization and optional-extra coverage.
+
 ## Before Tagging
 
 Run the deterministic gates locally:

@@ -4578,3 +4578,38 @@ def test_invalid_provider_endpoint_does_not_echo_credentials(
     assert "input_value" not in result.stderr
     assert "Provider client must not be created" not in result.stderr
     assert "endpoint" in result.stderr.lower() or "credentials" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+def test_support_bundle_redacts_windows_config_paths_with_spaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str
+) -> None:
+    """Public missing-setup diagnostics mustn't expose an unquoted Windows directory."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    private_directory = separator.join(["D:", "Work Projects", "acme"])
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", private_directory + separator + "policynim.env")
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Work Projects" not in result.stdout
+    assert "acme" not in result.stdout
+    assert "<local-path>" in result.stdout
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+def test_support_bundle_redacts_embedded_windows_diagnostic_with_spaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str
+) -> None:
+    """Redaction can't depend on another report field repeating the same private path."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    private_directory = separator.join(["D:", "Work Projects", "acme"])
+    message = "Could not read configured index " + private_directory + separator + "index.sqlite3."
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {"status": "action_required", "message": message},
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Work Projects" not in result.stdout
+    assert "acme" not in result.stdout
+    assert "<local-path>" in result.stdout
