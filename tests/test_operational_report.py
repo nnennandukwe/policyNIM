@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from policynim.errors import PolicyNIMError
 from policynim.interfaces import cli, mcp
 from policynim.operations import emit_operation_event
+from policynim.services.operation_admission import admit_operation
 from policynim.services.operational_report import inspect_operational_report
 from policynim.settings import Settings
 from policynim.storage.operation_store import OperationStore
@@ -30,7 +31,8 @@ def test_retention_preserves_active_and_current_day_usage(tmp_path: Path) -> Non
     old = now - 40 * 86400
     accepted = []
     for index in range(3):
-        decision = store.admit(
+        decision = admit_operation(
+            store,
             principal_id=str(index),
             operation="policy_search",
             daily_limit=5,
@@ -67,7 +69,8 @@ def test_report_is_read_only_and_aggregate(tmp_path: Path) -> None:
         inspect_operational_report(settings)
     assert not missing.parent.exists()
     store = OperationStore(tmp_path / "auth.sqlite3")
-    decision = store.admit(
+    decision = admit_operation(
+        store,
         principal_id="private-user-secret",
         operation="policy_search",
         daily_limit=5,
@@ -246,7 +249,8 @@ def test_quota_schema_migration_preserves_accepted_allowance(tmp_path: Path) -> 
     store = OperationStore(path)
     assert store.usage("alice").accepted == 1
     assert (
-        store.admit(
+        admit_operation(
+            store,
             principal_id="alice",
             operation="policy_search",
             daily_limit=1,
@@ -266,7 +270,8 @@ def test_locked_retention_rolls_back_without_removing_history(tmp_path: Path) ->
     """A writer lock leaves terminal history unchanged and permits a later cleanup retry."""
     store = OperationStore(tmp_path / "auth.sqlite3")
     old = time.time() - 40 * 86400
-    accepted = store.admit(
+    accepted = admit_operation(
+        store,
         principal_id="alice",
         operation="policy_search",
         daily_limit=5,
@@ -291,7 +296,8 @@ def test_locked_retention_rolls_back_without_removing_history(tmp_path: Path) ->
 def test_reversed_wall_timestamps_arent_reported_as_zero_latency(tmp_path: Path) -> None:
     """A clock adjustment produces an unavailable sample instead of a fabricated zero."""
     store = OperationStore(tmp_path / "auth.sqlite3")
-    accepted = store.admit(
+    accepted = admit_operation(
+        store,
         principal_id="alice",
         operation="policy_search",
         daily_limit=5,
