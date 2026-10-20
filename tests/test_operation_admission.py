@@ -389,7 +389,7 @@ def test_outcome_write_failure_keeps_charge_and_blocks_principal(
         )
     usage = service.store.usage(principal_identity(_principal().issuer, "alice"))
     assert (usage.accepted, usage.active, usage.completed) == (1, 1, 0)
-    with pytest.raises(OperationAdmissionError, match="principal_busy"):
+    with pytest.raises(OperationAdmissionError, match="accounting_incomplete"):
         service.run(
             lambda: pytest.fail("Second provider started"),
             principal=_principal(),
@@ -484,7 +484,7 @@ def test_reused_pid_recovers_only_abandoned_kernel_owner(tmp_path: Path) -> None
     )
     assert current.operation_id
     replacement = OperationStore(path)
-    assert replacement.recover_interrupted() == 1
+    assert replacement.recover_interrupted() == 0  # reservation already recovered the old owner
     assert live.usage("live").active == 1
     assert live.usage("previous").interrupted == 1
     assert replacement.recover_interrupted() == 0
@@ -645,3 +645,64 @@ def test_cancellation_during_snapshot_recheck_rolls_back_reservation(tmp_path: P
     usage = service.store.usage(principal_identity(_principal().issuer, "alice"))
     assert (usage.accepted, usage.active) == (0, 0)
     service.store.close()
+
+
+def test_cached_service_recovers_separate_crashed_worker(tmp_path: Path) -> None:
+    """A long-lived HTTP admission owner reclaims a later failed CLI worker's slot."""
+    settings = _settings(tmp_path, mcp_max_concurrent_operations=1)
+    service = OperationAdmissionService(settings)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; "
+            "from policynim.storage.operation_store import OperationStore; "
+            "from policynim.services.operation_admission import admit_operation; "
+            "import sys; s=OperationStore(Path(sys.argv[1])); "
+            "admit_operation(s,principal_id='worker', operation='policy_search', "
+            "daily_limit=10, principal_limit=1, global_limit=1)",
+            str(settings.beta_auth_db_path),
+        ],
+        check=True,
+    )
+    assert (
+        service.run(
+            lambda: "done",
+            principal=_principal(),
+            operation_name="policy_search",
+            cancelled=lambda: False,
+        )
+        == "done"
+    )
+    usage = service.store.usage("worker")
+    assert (usage.accepted, usage.active, usage.interrupted) == (1, 0, 1)
+
+
+def test_terminal_failure_blocks_cached_service_after_storage_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repairing SQLite doesn't permit more work before uncertain accounting is inspected."""
+    service = OperationAdmissionService(_settings(tmp_path))
+    finish = service.store.finish
+
+    def unavailable(*args: object, **kwargs: object) -> None:
+        """Fail a terminal update after the operation has already completed."""
+        raise sqlite3.OperationalError("injected terminal failure")
+
+    monkeypatch.setattr(service.store, "finish", unavailable)
+    with pytest.raises(OperationAdmissionError, match="accounting_incomplete"):
+        service.run(
+            lambda: "done",
+            principal=_principal(),
+            operation_name="policy_search",
+            cancelled=lambda: False,
+        )
+    monkeypatch.setattr(service.store, "finish", finish)
+    with pytest.raises(OperationAdmissionError, match="accounting_incomplete"):
+        service.run(
+            lambda: pytest.fail("New provider work started after uncertain accounting"),
+            principal=_principal("bob"),
+            operation_name="policy_search",
+            cancelled=lambda: False,
+        )
+    assert service.store.usage(principal_identity(_principal().issuer, "bob")).accepted == 0

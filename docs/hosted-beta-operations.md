@@ -458,3 +458,18 @@ blind retries. The accepted row and charge stay intact; inspect and recover stat
 Keep the hosted SQLite file on the persistent volume, include it in backups, and
 monitor its size. This release doesn't establish a retention/capacity envelope;
 #103 owns measured operating limits and retention policy.
+
+Every reservation rechecks abandoned owner leases inside the same write transaction.
+A long-lived HTTP service can reclaim a slot left by a crashed CLI evaluation worker
+without waiting for HTTP restart; the interrupted outcome retains its accepted charge.
+A terminal accounting write failure pauses all new work on that admission service,
+even after SQLite becomes writable again. Inspect the uncertain operation first,
+then restart the hosted process so abandoned work can be recovered. Don't retry the
+original operation blindly, and don't delete accepted rows to regain capacity.
+
+Auth-disabled HTTP is supported only for trusted local development. It has no
+authenticated principal, so only the global worker cap applies; per-principal and
+daily allowances don't apply. Production must set `POLICYNIM_MCP_REQUIRE_AUTH=true`
+and configure credentials. A non-loopback HTTP bind with authentication disabled
+emits a startup warning with this recovery action. It doesn't create a synthetic
+identity or change the existing open development protocol.
