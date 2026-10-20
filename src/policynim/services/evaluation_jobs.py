@@ -562,7 +562,14 @@ class EvaluationJobWorker:
                     clients.close()
 
             admission = OperationAdmissionService(self.service.settings)
-            accounted_outcome = "completed"
+            accounting_cancelled = False
+
+            def observe_cancellation() -> bool:
+                """Keep the exact cancellation decision used by terminal admission accounting."""
+                nonlocal accounting_cancelled
+                accounting_cancelled = signal.is_set()
+                return accounting_cancelled
+
             try:
                 with operation_correlation():
                     emit_operation_event(
@@ -573,7 +580,7 @@ class EvaluationJobWorker:
                             run_owned,
                             principal=_principal(snapshot.authorization),
                             operation_name="eval_submit",
-                            cancelled=signal.is_set,
+                            cancelled=observe_cancellation,
                             check_ready=budget.remaining,
                         )
                     else:
@@ -582,28 +589,17 @@ class EvaluationJobWorker:
                             operation_id=job.admission_id,
                             principal=_principal(snapshot.authorization),
                             operation_name="eval_submit",
-                            cancelled=signal.is_set,
+                            cancelled=observe_cancellation,
                             check_ready=budget.remaining,
-                        )
-                        accounted_outcome = admission.finish_accepted(
-                            operation_id=job.admission_id,
-                            principal_id=job.owner_id,
-                            operation_name="eval_submit",
-                            outcome="completed",
                         )
             finally:
                 admission.store.close()
-            if accounted_outcome == "cancelled":
+            if accounting_cancelled:
                 return self.store.finish(
                     job.job_id,
                     self.worker_token,
                     "interrupted" if self._stop.is_set() else "cancelled",
                     failure_code="worker_stopped" if self._stop.is_set() else "cancelled",
-                )
-            if accounted_outcome != "completed":
-                raise OperationAdmissionError(
-                    "accounting_incomplete: The terminal job accounting outcome needs inspection. "
-                    "Preserve both databases and restart after recovery."
                 )
             return self.store.finish(job.job_id, self.worker_token, "completed")
         except Exception as exc:

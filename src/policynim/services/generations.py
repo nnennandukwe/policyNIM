@@ -27,7 +27,13 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from policynim.contracts import Embedder
-from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError, ProviderError
+from policynim.errors import (
+    ConfigurationError,
+    GenerationError,
+    MissingGenerationError,
+    PolicyNIMError,
+    ProviderError,
+)
 from policynim.ingest.chunking import chunk_policy_documents
 from policynim.operations import ResourceStack, check_budget, close_components
 from policynim.services.catalog import CatalogPack, PolicyCatalog
@@ -854,7 +860,7 @@ class GenerationStore:
                     try:
                         object_mode = (self.root / "objects" / selected).lstat().st_mode
                     except FileNotFoundError as exc:
-                        raise GenerationError(
+                        raise MissingGenerationError(
                             "pin", "The selected generation doesn't exist."
                         ) from exc
                     if not stat.S_ISDIR(object_mode):

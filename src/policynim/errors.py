@@ -57,6 +57,10 @@ class GenerationError(PolicyNIMError):
         )
 
 
+class MissingGenerationError(GenerationError):
+    """The selected generation object is absent; existing object corruption stays separate."""
+
+
 class ConfigurationError(PolicyNIMError):
     """Raised when required configuration is missing or invalid."""
 

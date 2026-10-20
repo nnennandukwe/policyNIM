@@ -1778,8 +1778,9 @@ def test_cancel_during_attempt_reservation_reports_known_unsent_work(
         worker.close()
 
 
+@pytest.mark.parametrize("prepaid", [True, False])
 def test_late_cancellation_keeps_job_and_quota_terminal_outcomes_aligned(
-    generation, tmp_path, monkeypatch
+    generation, tmp_path, monkeypatch, prepaid: bool
 ) -> None:
     """Cancellation after the last budget check wins after cleanup in both durable stores."""
     from policynim.providers.lifecycle import NVIDIAClients
@@ -1788,7 +1789,17 @@ def test_late_cancellation_keeps_job_and_quota_terminal_outcomes_aligned(
     from policynim.storage.operation_store import OperationStore
 
     service, suite, _ = job_setup(generation, tmp_path)
+    if not prepaid:
+        submit = service.store.submit
+
+        def submit_unbound_historical_job(**kwargs):
+            """Use the public store's retained pre-prepayment queued-job contract."""
+            kwargs.pop("accept_work")
+            return submit(**kwargs)
+
+        monkeypatch.setattr(service.store, "submit", submit_unbound_historical_job)
     accepted = service.submit(suite, idempotency_key="late-cancel", principal=principal())
+    assert (accepted.admission_id is not None) == prepaid
     calls: list[str] = []
 
     class Clients(NVIDIAClients):
@@ -1846,4 +1857,52 @@ def test_cancellation_after_accounting_completion_doesnt_rewrite_terminal_histor
         }
         assert calls == ["case-0", "closed"]
     finally:
+        worker.close()
+
+
+def test_completed_job_doesnt_require_an_extra_terminal_quota_transaction(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A real quota writer lock after accounting can't turn completed work into a failed job."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionService
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="post-accounting-lock", principal=principal())
+    execute = OperationAdmissionService.run_accepted
+    finish = service.store.finish
+    writer: sqlite3.Connection | None = None
+
+    def hold_writer_after_accounting(self, operation, **kwargs):
+        """Acquire an actual independent writer only after terminal accounting has committed."""
+        nonlocal writer
+        result = execute(self, operation, **kwargs)
+        writer = sqlite3.connect(service.settings.beta_auth_db_path, timeout=0.1)
+        writer.execute("BEGIN IMMEDIATE")
+        return result
+
+    def release_after_job_terminal(*args, **kwargs):
+        """Keep the quota writer locked until the real job state and report commit."""
+        nonlocal writer
+        result = finish(*args, **kwargs)
+        assert writer is not None
+        writer.rollback()
+        writer.close()
+        writer = None
+        return result
+
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", hold_writer_after_accounting)
+    monkeypatch.setattr(service.store, "finish", release_after_job_terminal)
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    try:
+        result = worker.run_once()
+        assert result is not None and result.job_id == accepted.job_id
+        assert result.state == "completed"
+        assert service.result(accepted.job_id, principal=principal()).report.state == "completed"
+    finally:
+        if writer is not None:
+            writer.rollback()
+            writer.close()
         worker.close()

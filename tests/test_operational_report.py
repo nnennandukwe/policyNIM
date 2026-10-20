@@ -849,3 +849,26 @@ def test_operator_generation_sample_uses_the_reader_admission_pointer(
     assert published and published[0] != original_id
     assert report["active_generation"] == report["served_generation"] == published[0]
     assert report["generation_selection"] == "active" and report["generation_state"] == "ready"
+
+
+@pytest.mark.parametrize(
+    ("damage", "expected"), [("absent_pin", "missing"), ("missing_artifact", "invalid")]
+)
+def test_operator_report_separates_absent_selection_from_damaged_artifacts(
+    generation, tmp_path, damage: str, expected: str
+) -> None:
+    """An absent retained object differs from corruption inside an existing sealed object."""
+    settings, generations, active_id = generation
+    selected = "f" * 64 if damage == "absent_pin" else active_id
+    if damage == "missing_artifact":
+        with generations.pin(active_id) as snapshot:
+            artifact = snapshot.index_path
+        artifact.unlink()
+    settings = settings.model_copy(
+        update={"generation_id": selected, "beta_auth_db_path": tmp_path / "operator.sqlite3"}
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == report["generation_state"] == expected
+    assert report["active_generation"] == active_id
+    assert report["served_generation"] is None and report["generation_selection"] == "pinned"

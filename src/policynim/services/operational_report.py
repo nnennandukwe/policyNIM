@@ -5,7 +5,12 @@ from __future__ import annotations
 import errno
 import sqlite3
 
-from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError
+from policynim.errors import (
+    ConfigurationError,
+    GenerationError,
+    MissingGenerationError,
+    PolicyNIMError,
+)
 from policynim.job_types import EvaluationJobError
 from policynim.operations import close_components
 from policynim.runtime_paths import resolve_runtime_path
@@ -71,6 +76,7 @@ def _generation_readiness(
 ) -> tuple[IndexReadinessReport, str | None, str | None]:
     """Validate configured retrieval while keeping its selection separate from activation."""
     root = resolve_runtime_path(settings.generations_dir)
+    active_generation: str | None = None
     try:
         if not root.exists() and not root.is_symlink():
             return IndexReadinessReport(state="missing"), None, None
@@ -85,6 +91,7 @@ def _generation_readiness(
             ) from exc
         generations = GenerationStore(root=root, embedding=embedding)
         activation = generations.read_activation()
+        active_generation = activation.active if activation is not None else None
         if activation is None and settings.generation_id is None:
             return IndexReadinessReport(state="missing"), None, None
         index_store = create_index_store(settings)
@@ -92,16 +99,17 @@ def _generation_readiness(
             snapshot = pinned_generation(index_store)
             if snapshot is not None:
                 activation = snapshot.activation
+                active_generation = activation.active if activation is not None else None
             readiness = inspect_index_readiness(index_store)
             return (
                 readiness,
-                activation.active
-                if activation is not None and readiness.state == "ready"
-                else None,
+                active_generation,
                 index_store.generation_id if readiness.state == "ready" else None,
             )
         finally:
             close_components(index_store)
+    except MissingGenerationError:
+        return IndexReadinessReport(state="missing"), active_generation, None
     except GenerationError as exc:
         cause: BaseException | None = exc
         unavailable = False
@@ -120,6 +128,10 @@ def _generation_readiness(
             }:
                 unavailable = True
             cause = cause.__cause__
-        return IndexReadinessReport(state="unreadable" if unavailable else "invalid"), None, None
+        return (
+            IndexReadinessReport(state="unreadable" if unavailable else "invalid"),
+            active_generation,
+            None,
+        )
     except OSError:
-        return IndexReadinessReport(state="unreadable"), None, None
+        return IndexReadinessReport(state="unreadable"), active_generation, None
