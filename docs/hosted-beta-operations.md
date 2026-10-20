@@ -548,7 +548,10 @@ Account and operation writers create the configured auth database at POSIX mode
 0600 before SQLite opens it. SQLite inherits that mode when it creates WAL, SHM
 and rollback-journal sidecars. Existing service-owned regular database and sidecar
 files are tightened in place; their inode and stored records aren't replaced.
-Runtime code doesn't change the process-wide umask.
+Runtime code doesn't change the process-wide umask. Existing SQLite inodes aren't
+opened through extra file descriptors during permission repair: closing those
+descriptors could release locks owned by other SQLite connections in the same
+process. New-file creation is serialized before local SQLite opens.
 
 Use an operator-controlled parent directory on the persistent volume. A database
 or sidecar that's a symlink, has multiple hard links, isn't a regular file, or

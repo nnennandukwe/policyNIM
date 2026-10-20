@@ -37,11 +37,13 @@ def observed_connect(*args, **kwargs):
     return original_connect(*args, **kwargs)
 sqlite3.connect = observed_connect
 store = AuthStore(path=path) if sys.argv[2] == 'auth' else OperationStore(path)
-print(json.dumps({'mode': stat.S_IMODE(path.stat().st_mode), 'before': observed_before_open}))
+print(json.dumps({
+    'mode': stat.S_IMODE(path.stat().st_mode), 'before': observed_before_open,
+    'parent': stat.S_IMODE(path.parent.stat().st_mode)}))
 store.close()
 """
     completed = subprocess.run(
-        [sys.executable, "-c", script, str(tmp_path / "auth.sqlite3"), kind],
+        [sys.executable, "-c", script, str(tmp_path / "nested/auth.sqlite3"), kind],
         capture_output=True,
         text=True,
         check=True,
@@ -49,6 +51,7 @@ store.close()
     observed = json.loads(completed.stdout)
     assert observed["mode"] == 0o600
     assert observed["before"] and set(observed["before"]) == {0o600}
+    assert observed["parent"] == 0o700
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits are the privacy contract.")
@@ -192,11 +195,11 @@ def test_configured_relative_database_keeps_cwd_base(
             service.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Descriptor chmod is the POSIX boundary.")
-def test_permission_failure_closes_descriptor_and_returns_safe_recovery(
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode changes are the privacy boundary.")
+def test_permission_failure_keeps_recovery_safe_without_extra_inode_handles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Failed preparation must close its file and expose no injected private message."""
+    """Permission failures must avoid extra inode handles and injected private diagnostics."""
     from policynim.storage import auth_database
 
     descriptors = []
@@ -219,7 +222,10 @@ def test_permission_failure_closes_descriptor_and_returns_safe_recovery(
 
     monkeypatch.setattr(auth_database.os, "open", observe_open)
     monkeypatch.setattr(auth_database.os, "close", observe_close)
-    monkeypatch.setattr(auth_database.os, "fchmod", refuse_chmod)
+    path = tmp_path / "auth.sqlite3"
+    path.touch(mode=0o644)
+    path.chmod(0o644)
+    monkeypatch.setattr(auth_database.os, "chmod", refuse_chmod)
     with pytest.raises(OSError, match="auth_storage_unavailable") as caught:
         AuthStore(path=tmp_path / "auth.sqlite3")
     assert descriptors == []
@@ -287,4 +293,103 @@ def test_concurrent_auth_store_reentry_retains_all_records(tmp_path: Path) -> No
         if os.name == "posix":
             assert stat.S_IMODE(path.stat().st_mode) == 0o600
     finally:
+        store.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Open-inode unlink behavior is POSIX-specific.")
+def test_last_sqlite_reader_sidecar_cleanup_doesnt_reject_another_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real final reader can remove its WAL while the next writer prepares old modes."""
+    from policynim.storage import auth_database
+
+    path = tmp_path / "auth.sqlite3"
+    AuthStore(path=path).close()
+    keeper = sqlite3.connect(path)
+    keeper.execute("SELECT * FROM accounts").fetchall()
+    wal = path.with_name(path.name + "-wal")
+    wal.chmod(0o644)
+    original_chmod = os.chmod
+    cleaned = False
+
+    def close_last_reader_before_sidecar_chmod(*args, **kwargs):
+        """Remove the actual SQLite sidecar between observation and its permission change."""
+        nonlocal cleaned
+        if Path(args[0]) == wal and not cleaned:
+            keeper.close()
+            cleaned = True
+        return original_chmod(*args, **kwargs)
+
+    monkeypatch.setattr(auth_database.os, "chmod", close_last_reader_before_sidecar_chmod)
+    try:
+        store = AuthStore(path=path)
+        assert store.list_accounts() == []
+        assert cleaned
+        store.close()
+    finally:
+        keeper.close()
+
+
+def test_beta_factory_keeps_the_safe_unsafe_file_error_code(tmp_path: Path) -> None:
+    """The service must retain the storage adapter's safe unsafe-file recovery category."""
+    from policynim.errors import ConfigurationError
+    from policynim.services.beta_auth import create_beta_auth_service
+    from policynim.settings import Settings
+
+    path = tmp_path / "auth.sqlite3"
+    path.mkdir()
+    with pytest.raises(ConfigurationError, match="^auth_storage_unsafe:"):
+        create_beta_auth_service(Settings.model_validate({"beta_auth_db_path": path}))
+
+
+def test_operator_report_rejects_configured_final_symlink_without_changing_target(
+    tmp_path: Path,
+) -> None:
+    """Read-only report configuration mustn't erase the alias check before storage sees it."""
+    from policynim.errors import PolicyNIMError
+    from policynim.services.operational_report import inspect_operational_report
+    from policynim.settings import Settings
+
+    target = tmp_path / "retained.sqlite3"
+    AuthStore(path=target).close()
+    alias = tmp_path / "auth.sqlite3"
+    try:
+        alias.symlink_to(target)
+    except OSError:
+        pytest.skip("This filesystem user lacks link creation permission.")
+    before = target.read_bytes()
+    with pytest.raises(PolicyNIMError, match="Operation state couldn't be read"):
+        inspect_operational_report(Settings.model_validate({"beta_auth_db_path": alias}))
+    assert target.read_bytes() == before
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SQLite fcntl lock ownership is POSIX-specific.")
+def test_private_preparation_doesnt_release_an_existing_sqlite_writer_lock(tmp_path: Path) -> None:
+    """Opening a public reader mustn't let another process steal this process's write lock."""
+    path = tmp_path / "auth.sqlite3"
+    store = AuthStore(path=path)
+    keeper = sqlite3.connect(path)
+    keeper.execute("BEGIN IMMEDIATE")
+    try:
+        assert store.list_accounts() == []
+        script = """
+import sqlite3,sys
+connection=sqlite3.connect(sys.argv[1],timeout=0.05)
+try:
+    connection.execute('BEGIN IMMEDIATE')
+except sqlite3.OperationalError as exc:
+    print('locked' if 'locked' in str(exc).lower() else 'other_error')
+else:
+    print('writable')
+    connection.rollback()
+finally:
+    connection.close()
+"""
+        child = subprocess.run(
+            [sys.executable, "-c", script, str(path)], capture_output=True, text=True, check=True
+        )
+        assert child.stdout.strip() == "locked"
+    finally:
+        keeper.rollback()
+        keeper.close()
         store.close()

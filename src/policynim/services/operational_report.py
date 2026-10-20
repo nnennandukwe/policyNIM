@@ -14,7 +14,10 @@ from policynim.storage.operation_store import OperationStore
 def inspect_operational_report(settings: Settings) -> dict[str, object]:
     """Inspect bounded aggregate evidence without creating state or calling providers."""
     try:
-        report = OperationStore.report(resolve_runtime_path(settings.beta_auth_db_path))
+        report = OperationStore.report(
+            resolve_runtime_path(settings.beta_auth_db_path.parent)
+            / settings.beta_auth_db_path.name
+        )
     except (sqlite3.Error, OSError) as exc:
         raise PolicyNIMError(
             "Operation state couldn't be read. Check the hosted state volume and database locks. "

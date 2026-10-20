@@ -16,6 +16,7 @@ from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import legacy_identity, principal_identity
 from policynim.settings import Settings, get_settings
 from policynim.storage import AuthStore
+from policynim.storage.auth_database import AuthDatabaseError
 from policynim.types import (
     BetaAccount,
     BetaAuditEvent,
@@ -335,6 +336,8 @@ def create_beta_auth_service(settings: Settings | None = None) -> BetaAuthServic
             path=resolve_runtime_path(active_settings.beta_auth_db_path.parent)
             / active_settings.beta_auth_db_path.name
         )
+    except AuthDatabaseError as exc:
+        raise ConfigurationError(str(exc)) from None
     except OSError:
         raise ConfigurationError(
             "auth_storage_unavailable: Private auth storage couldn't be prepared. "

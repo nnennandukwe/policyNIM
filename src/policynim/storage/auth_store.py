@@ -52,8 +52,9 @@ class AuthStore:
     """Persist hosted beta auth state in one local SQLite database."""
 
     def __init__(self, *, path: Path) -> None:
+        """Initialize retained account state beneath its configured private directory."""
         self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._initialize_schema()
 
     @property
@@ -72,7 +73,7 @@ class AuthStore:
         """Reset the backing SQLite file for deterministic test re-entry."""
         if self._path.exists():
             self._path.unlink()
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._initialize_schema()
 
     def list_accounts(self) -> list[BetaAccount]:

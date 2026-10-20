@@ -114,7 +114,7 @@ class OperationStore:
     def __init__(self, path: Path) -> None:
         """Create only operation tables, leaving legacy account tables unchanged."""
         self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._owner = OperationOwner(path)
         self._has_admitted = False
         try:

@@ -46,7 +46,7 @@ First reproduce creation under child-process umask 000, retained 0644 database/s
 
 ## Component Design
 
-The storage helper owns only descriptor validation and auth SQLite connection setup. It doesn't import services or HTTP. Existing stores retain SQL and transaction ownership. Database identity is checked around connection creation; writable parent directories require trusted deployment ownership. No new filesystem manager or protocol is introduced for the storage adapter.
+The storage helper owns only file validation and auth SQLite connection setup. It doesn't import services or HTTP. Existing stores retain SQL and transaction ownership. Fresh file descriptors close before SQLite opens; existing database and sidecar inodes are never separately opened or closed, because POSIX closes can release SQLite process locks. Validated path chmod runs within the trusted-parent boundary. A process-local preparation lock serializes fresh creation with local SQLite opens. Database identity is checked around connection creation; writable parent directories require trusted deployment ownership. No new filesystem manager or protocol is introduced for the storage adapter.
 
 ## Failure And Recovery Rules
 
