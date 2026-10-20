@@ -469,8 +469,10 @@ class AuthStore:
             ).fetchone()
             count = 0
             if exists is not None:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(operation_usage)")}
+                measure = "COALESCE(SUM(work_units), 0)" if "work_units" in columns else "COUNT(*)"
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM operation_usage "
+                    f"SELECT {measure} FROM operation_usage "
                     "WHERE principal_id = ? AND usage_date = ?",
                     (principal_id, usage_date.isoformat()),
                 ).fetchone()[0]
