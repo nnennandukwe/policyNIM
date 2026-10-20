@@ -236,11 +236,12 @@ class OperationAdmissionService:
         operation_id: str | None = None,
     ) -> _Result:
         """Bound writer contention while retaining durable acceptance across retries."""
-        for attempt in range(3):
+        attempts = 10 if phase == "finish" else 3
+        for attempt in range(attempts):
             try:
                 return action()
             except (sqlite3.Error, OSError, ValueError) as exc:
-                if _is_busy(exc) and attempt < 2:
+                if _is_busy(exc) and attempt + 1 < attempts:
                     time.sleep(0.05)
                     continue
                 record_operation_storage_failure(exc, phase=phase, operation_id=operation_id)
