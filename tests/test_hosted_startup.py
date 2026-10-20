@@ -81,6 +81,23 @@ def test_declared_mount_rejects_a_state_path_outside_it(
     assert not outside.exists()
 
 
+def test_declared_mount_rejects_parent_directory_components(
+    hosted_seed: HostedSeed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lexical mount parent can't admit state on its unmounted ancestor."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, target, seed, _ = hosted_seed
+    mount = settings.generations_dir.parent
+    mount.mkdir()
+    declared = mount / ".."
+    monkeypatch.setattr(Path, "is_mount", lambda path: path == declared)
+    configured = persistent_settings(settings).model_copy(update={"hosted_state_mount": declared})
+    with pytest.raises(GenerationError, match="isn't mounted"):
+        prepare_hosted_generation(configured, seed_dir=seed)
+    assert not target.root.exists()
+
+
 def test_declared_mount_admits_all_volume_backed_paths(
     hosted_seed: HostedSeed, monkeypatch: pytest.MonkeyPatch
 ) -> None:

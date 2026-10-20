@@ -25,6 +25,7 @@ def _require_state_mount(settings: Settings) -> None:
     try:
         if (
             not mount.is_absolute()
+            or ".." in mount.parts
             or mount.parent == mount
             or mount.is_symlink()
             or not mount.is_mount()
