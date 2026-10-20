@@ -39,8 +39,8 @@ class OperationOwner:
         self._descriptor = descriptor
         self._release = weakref.finalize(self, os.close, descriptor)
 
-    def abandoned(self, identity: str) -> bool:
-        """Prove an old owner's kernel lease is unlocked without relying on its PID."""
+    def abandoned(self, identity: str, *, remove: bool = False) -> bool:
+        """Prove a lease is unlocked and optionally remove its retired inode after verification."""
         if not re.fullmatch(r"[0-9a-f]{32}", identity):
             return False
         path = self.directory / (identity + ".lock")
@@ -49,7 +49,8 @@ class OperationOwner:
         except FileNotFoundError:
             return False
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            observed = os.fstat(descriptor)
+            if not stat.S_ISREG(observed.st_mode):
                 return False
             try:
                 _lock(descriptor)
@@ -57,9 +58,16 @@ class OperationOwner:
                 if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                     return False
                 raise
-            return True
         finally:
             os.close(descriptor)
+        if remove:
+            try:
+                current = path.stat(follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == (observed.st_dev, observed.st_ino):
+                    path.unlink()
+            except FileNotFoundError:
+                pass  # Another local cleanup already removed this retired owner.
+        return True
 
     def close(self) -> None:
         """Release this service's lease after its workers have drained."""

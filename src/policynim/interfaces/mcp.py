@@ -79,6 +79,7 @@ from policynim.services.health import log_health_failure
 from policynim.services.operation_admission import (
     OperationAdmissionError,
     OperationAdmissionService,
+    record_operation_storage_failure,
 )
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
@@ -1339,6 +1340,7 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
+        record_operation_storage_failure(exc, phase="beta_auth_initialization")
         LOGGER.error(
             "Hosted beta authentication is unavailable. Env-issued break-glass authentication "
             "remains available, but protected operations still require healthy operation storage."
