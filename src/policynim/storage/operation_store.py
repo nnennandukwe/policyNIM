@@ -152,6 +152,7 @@ class OperationStore:
         usage_date = datetime.fromtimestamp(timestamp, UTC).date().isoformat()
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._recover_interrupted(connection)
             self._prune(connection, timestamp=timestamp, retention_days=retention_days)
             credential = None
             if credential_id is not None:
@@ -262,19 +263,23 @@ class OperationStore:
         """Release abandoned local-process slots without refunding their accepted work."""
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            owners = connection.execute(
-                "SELECT DISTINCT owner_id FROM operation_usage WHERE outcome = 'accepted'"
-            ).fetchall()
-            recovered = 0
-            for (owner_id,) in owners:
-                if self._owner.abandoned(owner_id):
-                    cursor = connection.execute(
-                        "UPDATE operation_usage SET outcome = 'interrupted', finished_at = ? "
-                        "WHERE owner_id = ? AND outcome = 'accepted'",
-                        (time.time(), owner_id),
-                    )
-                    recovered += cursor.rowcount
-            return recovered
+            return self._recover_interrupted(connection)
+
+    def _recover_interrupted(self, connection: sqlite3.Connection) -> int:
+        """Reconcile unlocked owner leases inside the caller's existing write transaction."""
+        owners = connection.execute(
+            "SELECT DISTINCT owner_id FROM operation_usage WHERE outcome = 'accepted'"
+        ).fetchall()
+        recovered = 0
+        for (owner_id,) in owners:
+            if self._owner.abandoned(owner_id):
+                cursor = connection.execute(
+                    "UPDATE operation_usage SET outcome = 'interrupted', finished_at = ? "
+                    "WHERE owner_id = ? AND outcome = 'accepted'",
+                    (time.time(), owner_id),
+                )
+                recovered += cursor.rowcount
+        return recovered
 
     @staticmethod
     def _prune(connection: sqlite3.Connection, *, timestamp: float, retention_days: int) -> int:
