@@ -80,7 +80,14 @@ def test_topic_can_enter_a_custom_profile_alone(tmp_path: Path, topic: str) -> N
     assert len(resolved.roots) == 1
 
 
-@pytest.mark.parametrize("policy_id", SUITE["changed_policy_revisions"])
+def test_every_selected_engineering_policy_retains_scenario_coverage() -> None:
+    """Deleting a revision and all its cases can't silently remove a topic's coverage."""
+    required_ids = set().union(*TOPICS.values())
+    assert set(SUITE["changed_policy_revisions"]) == required_ids
+    assert {case["policy_id"] for case in SUITE["cases"]} == required_ids
+
+
+@pytest.mark.parametrize("policy_id", sorted(set().union(*TOPICS.values())))
 def test_changed_policy_has_pinned_sources_and_paired_scope_cases(policy_id: str) -> None:
     """Every changed policy names actual sources and authored positive/negative scope."""
     entry = CATALOG.show(policy_id)
