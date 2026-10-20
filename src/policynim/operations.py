@@ -6,6 +6,8 @@ import json
 import logging
 import math
 import time
+import uuid
+from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
@@ -19,6 +21,25 @@ from policynim.errors import ProviderError
 _LOG = logging.getLogger("policynim.operations")
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+
+_CORRELATION: ContextVar[str | None] = ContextVar("policynim_correlation", default=None)
+
+
+def current_correlation_id() -> str | None:
+    """Read an internally generated operation ID rather than a client-supplied label."""
+    return _CORRELATION.get()
+
+
+@contextmanager
+def operation_correlation() -> Iterator[str]:
+    """Correlate HTTP/worker/provider events without retaining request content."""
+    identity = uuid.uuid4().hex
+    token = _CORRELATION.set(identity)
+    try:
+        yield identity
+    finally:
+        _CORRELATION.reset(token)
 
 
 class OperationBudget:
@@ -98,9 +119,47 @@ def check_budget() -> None:
         current.remaining()
 
 
-def emit_operation_event(**fields: Any) -> None:
+def safe_exception_diagnostics(error: BaseException) -> dict[str, Any]:
+    """Keep bounded owned-code locations and cause classes without filenames, locals or messages."""
+    frames: deque[dict[str, str | int]] = deque(maxlen=8)
+    trace = error.__traceback__
+    while trace is not None:
+        module = trace.tb_frame.f_globals.get("__name__")
+        if isinstance(module, str) and (module == "policynim" or module.startswith("policynim.")):
+            frames.append(
+                {
+                    "module": module,
+                    "function": trace.tb_frame.f_code.co_name,
+                    "line": trace.tb_lineno,
+                }
+            )
+        trace = trace.tb_next
+    classes: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and len(classes) < 4 and id(current) not in seen:
+        seen.add(id(current))
+        classes.append(type(current).__name__)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return {
+        "exception_class": type(error).__name__,
+        "exception_chain": classes,
+        "internal_frames": list(frames),
+        "failure_location": frames[-1] if frames else None,
+    }
+
+
+def emit_operation_event(*, level: int = logging.INFO, **fields: Any) -> None:
     """Emit only internally selected metadata, never requests or upstream bodies."""
-    _LOG.info(json.dumps({"event": "provider.operation", **fields}, sort_keys=True))
+    _LOG.log(
+        level,
+        json.dumps(
+            {"event": "provider.operation", "correlation_id": current_correlation_id(), **fields},
+            sort_keys=True,
+        ),
+    )
 
 
 def bounded_stage(stage: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:

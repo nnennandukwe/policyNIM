@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from importlib.metadata import version
 from threading import Event, Lock, get_ident
+from unittest.mock import Mock
 
 import anyio
 import httpx
@@ -53,7 +54,6 @@ from policynim.types import (
     PolicyMetadata,
     PreflightRequest,
     PreflightResult,
-    RouteRequest,
     ScoredChunk,
     SearchRequest,
     SearchResult,
@@ -381,14 +381,10 @@ def test_policy_preflight_surfaces_missing_index_errors(monkeypatch) -> None:
         _call_tool("policy_preflight", {"task": "refresh token cleanup"})
 
 
-def test_policy_preflight_formats_route_validation_errors(monkeypatch) -> None:
-    class FailingPreflightService(MockPreflightService):
-        def preflight(self, request: PreflightRequest) -> PreflightResult:
-            RouteRequest(task=request.task, domain=request.domain, top_k=request.top_k)
-            raise AssertionError("expected RouteRequest validation to fail")
-
-    service = FailingPreflightService()
-    monkeypatch.setattr(mcp_module, "create_preflight_service", lambda settings: service)
+def test_policy_preflight_validates_before_allocating_service(monkeypatch) -> None:
+    """Keep malformed task validation ahead of providers and operation admission."""
+    factory = Mock(side_effect=AssertionError("Invalid task allocated a provider service"))
+    monkeypatch.setattr(mcp_module, "create_preflight_service", factory)
 
     with pytest.raises(ToolError) as exc_info:
         _call_tool("policy_preflight", {"task": "   ", "top_k": 1})
@@ -397,8 +393,8 @@ def test_policy_preflight_formats_route_validation_errors(monkeypatch) -> None:
     assert "Preflight request is invalid at task" in message
     assert "task must not be empty" in message
     assert "1 validation error" not in message
-    assert "RouteRequest" not in message
-    assert service.closed is True
+    assert "CompileRequest" not in message
+    factory.assert_not_called()
 
 
 def test_policy_search_surfaces_configuration_errors(monkeypatch) -> None:
