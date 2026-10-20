@@ -36,7 +36,9 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
             "Operation state couldn't be read. Check the hosted state volume and database locks. "
             "No database was created or changed."
         ) from exc
-    readiness, active_generation, served_generation = _generation_readiness(settings)
+    readiness, active_generation, served_generation, generation_state = _generation_readiness(
+        settings
+    )
     telemetry_reason = None
     try:
         backlog = inspect_job_backlog(
@@ -49,7 +51,7 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
     return {
         **report.model_dump(mode="json"),
         "index_state": readiness.state,
-        "generation_state": readiness.state,
+        "generation_state": generation_state,
         "index_build_id": readiness.identity.build_id if readiness.identity else None,
         "indexed_chunks": readiness.chunk_count,
         "active_generation": active_generation,
@@ -73,13 +75,11 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
 
 def _generation_readiness(
     settings: Settings,
-) -> tuple[IndexReadinessReport, str | None, str | None]:
+) -> tuple[IndexReadinessReport, str | None, str | None, str]:
     """Validate configured retrieval while keeping its selection separate from activation."""
     root = resolve_runtime_path(settings.generations_dir)
     active_generation: str | None = None
     try:
-        if not root.exists() and not root.is_symlink():
-            return IndexReadinessReport(state="missing"), None, None
         try:
             embedding = EmbeddingIdentity(
                 model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
@@ -90,10 +90,20 @@ def _generation_readiness(
                 "POLICYNIM_NVIDIA_BASE_URL without credentials, query parameters, or fragments."
             ) from exc
         generations = GenerationStore(root=root, embedding=embedding)
-        activation = generations.read_activation()
+        activation = generations.read_activation() if root.exists() or root.is_symlink() else None
         active_generation = activation.active if activation is not None else None
         if activation is None and settings.generation_id is None:
-            return IndexReadinessReport(state="missing"), None, None
+            legacy = create_index_store(settings, legacy=True)
+            try:
+                readiness = inspect_index_readiness(legacy)
+                return (
+                    readiness,
+                    None,
+                    None,
+                    "migration_required" if readiness.state == "ready" else readiness.state,
+                )
+            finally:
+                close_components(legacy)
         index_store = create_index_store(settings)
         try:
             snapshot = pinned_generation(index_store)
@@ -105,11 +115,17 @@ def _generation_readiness(
                 readiness,
                 active_generation,
                 index_store.generation_id if readiness.state == "ready" else None,
+                readiness.state,
             )
         finally:
             close_components(index_store)
     except MissingGenerationError:
-        return IndexReadinessReport(state="missing"), active_generation, None
+        state = (
+            "invalid"
+            if active_generation is not None and settings.generation_id in {None, active_generation}
+            else "missing"
+        )
+        return IndexReadinessReport(state=state), active_generation, None, state
     except GenerationError as exc:
         cause: BaseException | None = exc
         unavailable = False
@@ -132,6 +148,7 @@ def _generation_readiness(
             IndexReadinessReport(state="unreadable" if unavailable else "invalid"),
             active_generation,
             None,
+            "unreadable" if unavailable else "invalid",
         )
     except OSError:
-        return IndexReadinessReport(state="unreadable"), active_generation, None
+        return IndexReadinessReport(state="unreadable"), active_generation, None, "unreadable"

@@ -875,3 +875,44 @@ def test_operator_report_separates_absent_selection_from_damaged_artifacts(
     assert report["index_state"] == report["generation_state"] == expected
     assert report["active_generation"] == active_id
     assert report["served_generation"] is None and report["generation_selection"] == "pinned"
+
+
+def test_operator_report_retains_legacy_inventory_without_serving_it(tmp_path: Path) -> None:
+    """An unmigrated local index remains visible without claiming managed retrieval is ready."""
+    from test_policy_generations import seed_legacy
+
+    settings, _, index, _ = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "absent-managed-root",
+            "beta_auth_db_path": tmp_path / "operator.sqlite3",
+            "index_db_path": index,
+        }
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    before = index.read_bytes()
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == "ready" and report["generation_state"] == "migration_required"
+    assert report["indexed_chunks"] == 4
+    assert report["index_build_id"] is not None
+    assert report["active_generation"] is report["served_generation"] is None
+    assert index.read_bytes() == before and not settings.generations_dir.exists()
+
+
+@pytest.mark.parametrize("explicit_pin", [False, True])
+def test_operator_report_dangling_active_target_is_invalid(generation, tmp_path, explicit_pin):
+    """A pointer naming a removed sealed object represents damaged managed state."""
+    settings, generations, active_id = generation
+    with generations.pin(active_id) as snapshot:
+        directory = snapshot.directory
+    directory.rename(tmp_path / "moved-sealed-object")
+    settings = settings.model_copy(
+        update={
+            "beta_auth_db_path": tmp_path / "operator.sqlite3",
+            "generation_id": active_id if explicit_pin else None,
+        }
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == report["generation_state"] == "invalid"
+    assert report["active_generation"] == active_id and report["served_generation"] is None

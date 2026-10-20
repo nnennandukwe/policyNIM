@@ -251,6 +251,36 @@ class EvaluationJobStore:
                     "queue_full: No job was accepted. Retry after active work finishes."
                 )
 
+    def _verified_archive_digest(
+        self, connection: sqlite3.Connection, generation_id: str
+    ) -> str | None:
+        """Hash retained archive bytes in bounded reads before trusting their metadata."""
+        row = connection.execute(
+            "SELECT rowid AS archive_rowid,digest FROM evaluation_job_archives "
+            "WHERE generation_id=?",
+            (generation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        digest = hashlib.sha256()
+        with connection.blobopen(
+            "evaluation_job_archives", "archive", row["archive_rowid"], readonly=True
+        ) as archive:
+            if len(archive) > 256 * 1024 * 1024:
+                raise EvaluationJobError("archive_invalid: Preserve job storage for inspection.")
+            while chunk := archive.read(64 * 1024):
+                digest.update(chunk)
+        verified = "sha256:" + digest.hexdigest()
+        if verified != row["digest"]:
+            raise EvaluationJobError("archive_invalid: Preserve job storage for inspection.")
+        return verified
+
+    def retained_archive_digest(self, generation_id: str) -> str | None:
+        """Expose a verified reusable capture without loading its BLOB into Python memory."""
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            return self._verified_archive_digest(connection, generation_id)
+
     def submit(
         self,
         *,
@@ -258,7 +288,7 @@ class EvaluationJobStore:
         idempotency_key: str,
         request_digest: str,
         snapshot: EvaluationJobSnapshot,
-        archive: bytes,
+        archive: bytes | None,
         accept_work: Callable[[], tuple[str, int]] | None = None,
     ) -> EvaluationJobInfo:
         """Commit an accepted snapshot and its archive atomically after bounded deduplication."""
@@ -280,20 +310,21 @@ class EvaluationJobStore:
                 raise EvaluationJobError(
                     "queue_full: No job was accepted. Retry after active work finishes."
                 )
-            digest = archive_digest(archive)
-            if digest != snapshot.generation_archive_digest:
-                raise EvaluationJobError("archive_invalid: Generation capture failed validation.")
-            connection.execute(
-                "INSERT OR IGNORE INTO evaluation_job_archives VALUES (?,?,?)",
-                (snapshot.generation_id, digest, archive),
-            )
-            retained = connection.execute(
-                "SELECT digest FROM evaluation_job_archives WHERE generation_id=?",
-                (snapshot.generation_id,),
-            ).fetchone()
-            if retained[0] != digest:
+            if archive is not None:
+                digest = archive_digest(archive)
+                if digest != snapshot.generation_archive_digest:
+                    raise EvaluationJobError(
+                        "archive_invalid: Generation capture failed validation."
+                    )
+                connection.execute(
+                    "INSERT OR IGNORE INTO evaluation_job_archives VALUES (?,?,?)",
+                    (snapshot.generation_id, digest, archive),
+                )
+            retained = self._verified_archive_digest(connection, snapshot.generation_id)
+            if retained != snapshot.generation_archive_digest:
                 raise EvaluationJobError(
-                    "archive_invalid: Preserve the job database for inspection."
+                    "archive_invalid: Preserve the job database for inspection; "
+                    "retry capture if retention removed an unreferenced archive."
                 )
             admission_id, work_units = accept_work() if accept_work else (None, 1)
             now = self.clock()

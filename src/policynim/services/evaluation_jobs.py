@@ -219,10 +219,23 @@ class EvaluationJobService:
             capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
         )
         os.close(descriptor)
-        with try_exclusive_file_lock(capture_lock) as acquired:
+        global_capture_lock = self.store.path.with_suffix(".capture.lock")
+        descriptor = os.open(
+            global_capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+        )
+        os.close(descriptor)
+        with (
+            try_exclusive_file_lock(capture_lock) as acquired,
+            try_exclusive_file_lock(global_capture_lock) as global_acquired,
+        ):
             if not acquired:
                 raise EvaluationJobError(
                     "principal_busy: Another submission is capturing this principal's inputs. "
+                    "Retry later with the same idempotency key."
+                )
+            if not global_acquired:
+                raise EvaluationJobError(
+                    "server_busy: Another submission is capturing generation inputs. "
                     "Retry later with the same idempotency key."
                 )
             existing = self.store.find_submission(owner, idempotency_key, request_digest)
@@ -257,12 +270,15 @@ class EvaluationJobService:
                     )
                 finally:
                     allowance.store.close()
-                with TemporaryDirectory(
-                    prefix="job-capture-", dir=self.store.path.parent
-                ) as directory:
-                    path = Path(directory) / "generation.zip"
-                    digest = generation_store.export_bundle(path, snapshot.generation_id)
-                    archive = path.read_bytes()
+                archive: bytes | None = None
+                digest = self.store.retained_archive_digest(snapshot.generation_id)
+                if digest is None:
+                    with TemporaryDirectory(
+                        prefix="job-capture-", dir=self.store.path.parent
+                    ) as directory:
+                        path = Path(directory) / "generation.zip"
+                        digest = generation_store.export_bundle(path, snapshot.generation_id)
+                        archive = path.read_bytes()
                 captured = EvaluationJobSnapshot(
                     generation_id=snapshot.generation_id,
                     generation_archive_digest=digest,
@@ -373,9 +389,15 @@ class _CancellationSignal(Event):
 
     def is_set(self) -> bool:
         """Don't let a request continue after the persisted caller cancellation becomes visible."""
-        return (
-            super().is_set() or self.stop.is_set() or self.store.cancellation_requested(self.job_id)
-        )
+        if super().is_set() or self.stop.is_set():
+            return True
+        try:
+            return self.store.cancellation_requested(self.job_id)
+        except (sqlite3.Error, OSError) as exc:
+            raise ProviderError(
+                "Job cancellation state couldn't be read; preserve job storage for inspection.",
+                failure_class="storage_failure",
+            ) from exc
 
     def wait(self, timeout: float | None = None) -> bool:
         """Keep provider retry waits responsive to cancellation from a different process."""
@@ -647,6 +669,7 @@ class EvaluationJobWorker:
                     "cancelled": "cancelled",
                     "deadline_exhausted": "deadline_exceeded",
                     "budget_exhausted": "budget_exhausted",
+                    "storage_failure": "interrupted",
                 }
                 state = states.get(failure, "failed")
             elif isinstance(exc, (OSError, sqlite3.Error)):

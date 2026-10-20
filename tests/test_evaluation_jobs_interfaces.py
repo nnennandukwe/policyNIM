@@ -678,3 +678,54 @@ def test_concurrent_lazy_job_recovery_keeps_one_server_owned_worker(tmp_path, mo
     finally:
         for worker in created:
             worker.close()
+
+
+def test_sdk_submission_returns_accepted_handle_with_another_worker_owner(job_context) -> None:
+    """A real competing execution lease can't erase a committed submission from the caller."""
+    from mcp.server import MCPServer
+
+    from policynim.storage.file_lock import try_exclusive_file_lock
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_context
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    server = MCPServer("external job worker fixture")
+
+    async def run_tool(name, operation, ctx):
+        """Use SDK request validation and the actual durable submission boundary."""
+        return operation()
+
+    mcp_jobs.register_evaluation_jobs(
+        server, get_principal=lambda _: principal(), get_worker=lambda: worker, run_tool=run_tool
+    )
+
+    async def exercise() -> None:
+        """Repeated accepted submissions keep the same inspectable handle and one charge."""
+        async with Client(server) as client:
+            results = [
+                await client.call_tool(
+                    "eval_submit",
+                    {"suite": suite.model_dump(mode="json"), "idempotency_key": "external-owner"},
+                )
+                for _ in range(2)
+            ]
+            assert all(not result.is_error for result in results)
+            handles = [
+                EvaluationJobInfo.model_validate(result.structured_content) for result in results
+            ]
+            assert handles[0].job_id == handles[1].job_id
+            assert service.inspect(handles[0].job_id, principal=principal()).state == "queued"
+
+    try:
+        with try_exclusive_file_lock(worker.lock_path) as acquired:
+            assert acquired
+            asyncio.run(exercise())
+        assert calls == []
+        report = OperationStore.report(service.settings.beta_auth_db_path)
+        assert report.retained_rows == 1
+        completed = worker.run_once()
+        assert completed is not None and completed.state == "completed"
+        assert calls == ["case-0", "closed"]
+    finally:
+        worker.close()

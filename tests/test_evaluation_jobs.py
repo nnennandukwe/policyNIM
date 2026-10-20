@@ -780,7 +780,7 @@ def test_concurrent_submissions_deduplicate_and_keep_owner_queue_bound(
 def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
     generation, tmp_path: Path, monkeypatch
 ) -> None:
-    """A blocked capture rejects that owner's overlap while another principal can submit."""
+    """A blocked capture bounds both owner overlap and shared archive memory before charging."""
     from threading import Event, Thread, current_thread
 
     from policynim.services.generations import GenerationStore
@@ -809,12 +809,14 @@ def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
         assert entered.wait(5)
         with pytest.raises(EvaluationJobError, match="principal_busy"):
             service.submit(suite, idempotency_key="overlap", principal=principal())
-        another = service.submit(suite, idempotency_key="other", principal=principal("other"))
-        assert another.state == "queued"
+        with pytest.raises(EvaluationJobError, match="server_busy"):
+            service.submit(suite, idempotency_key="other", principal=principal("other"))
     finally:
         release.set()
         thread.join(5)
     assert not thread.is_alive() and len(accepted) == 1
+    another = service.submit(suite, idempotency_key="other", principal=principal("other"))
+    assert another.state == "queued"
     assert service.submit(suite, idempotency_key="first", principal=principal()) == accepted[0]
     from policynim.storage.operation_store import OperationStore
 
@@ -2083,3 +2085,69 @@ def test_worker_maintenance_queries_use_indexes_instead_of_full_history(
     with sqlite3.connect(store.path) as connection:
         plan = connection.execute("EXPLAIN QUERY PLAN " + query, parameters).fetchall()
     assert any("USING" in row[3] and "INDEX" in row[3] for row in plan), plan
+
+
+def test_new_job_reuses_verified_retained_archive_without_export(generation, tmp_path, monkeypatch):
+    """New keys on the same immutable generation reuse its durable bytes without recompression."""
+    from policynim.services.generations import GenerationStore
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="first-capture", principal=principal())
+
+    def unexpected_export(*args, **kwargs):
+        """Any second generation export would repeat the expensive capture work."""
+        raise AssertionError("The retained generation archive should be reused.")
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", unexpected_export)
+    repeated = service.submit(suite, idempotency_key="second-capture", principal=principal("other"))
+    assert repeated.generation_id == generation_id and repeated.state == "queued"
+
+
+def test_distinct_principals_share_one_kernel_capture_slot(generation, tmp_path, monkeypatch):
+    """Real generation capture can't multiply its large buffers across independent principals."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from policynim.services.generations import GenerationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    entered, release = Event(), Event()
+    exported: list[str] = []
+    original = GenerationStore.export_bundle
+
+    def held_export(store, destination, generation_id=None):
+        """Pause one actual export while another principal tries its public submission."""
+        exported.append(str(destination))
+        entered.set()
+        assert release.wait(5)
+        return original(store, destination, generation_id)
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", held_export)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.submit, suite, idempotency_key="one", principal=principal())
+        assert entered.wait(5)
+        try:
+            with pytest.raises(EvaluationJobError, match="server_busy"):
+                service.submit(suite, idempotency_key="two", principal=principal("other"))
+        finally:
+            release.set()
+        assert first.result(5).state == "queued"
+    assert len(exported) == 1
+
+
+def test_reused_archive_corruption_is_rejected_before_new_charge(generation, tmp_path):
+    """A matching metadata digest can't hide modified BLOB bytes on a new submission."""
+    import sqlite3
+
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="first-capture", principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_job_archives SET archive=? WHERE generation_id=?",
+            (b"corrupt-retained-archive", generation_id),
+        )
+    with pytest.raises(EvaluationJobError, match="archive_invalid"):
+        service.submit(suite, idempotency_key="next-capture", principal=principal("other"))
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 1
