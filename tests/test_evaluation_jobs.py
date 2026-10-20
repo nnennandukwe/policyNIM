@@ -667,7 +667,9 @@ def test_busy_worker_prunes_expired_payloads_before_queue_becomes_empty(
     assert service.inspect(waiting.job_id, principal=principal()).state == "queued"
 
 
-@pytest.mark.parametrize("invalid", ["blank-input", "blank-domain", "revision", "policy", "chunk"])
+@pytest.mark.parametrize(
+    "invalid", ["blank-input", "blank-domain", "revision", "policy", "chunk", "case-id"]
+)
 def test_submission_rejects_invalid_case_before_acceptance_or_quota(
     generation, tmp_path: Path, invalid: str
 ) -> None:
@@ -678,6 +680,7 @@ def test_submission_rejects_invalid_case_before_acceptance_or_quota(
 
     service, suite, _ = job_setup(generation, tmp_path)
     updates = {
+        "case-id": {"case_id": "x" * 257},
         "blank-input": {"input": "   "},
         "blank-domain": {"domain": " "},
         "policy": {
@@ -818,3 +821,35 @@ def test_job_execution_mints_fresh_correlation_for_admission_and_provider(
     with sqlite3.connect(service.settings.beta_auth_db_path) as db:
         persisted = db.execute("SELECT correlation_id FROM operation_usage").fetchone()[0]
     assert persisted == observed[0]
+
+
+def test_worker_pauses_queue_after_quota_accounting_failure(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """A new per-job admission service can't bypass this process's accounting pause."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="uncertain-accounting", principal=principal())
+    queued = service.submit(suite, idempotency_key="wait-for-recovery", principal=principal())
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+
+    def fail_accounting(*args, **kwargs):
+        """Leave an accepted quota row uncertain after the provider's completed work."""
+        raise sqlite3.OperationalError("fixture terminal accounting lock")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(OperationStore, "finish", fail_accounting)
+        failed = worker.run_once()
+    assert failed is not None and failed.failure_code == "accounting_incomplete"
+    with pytest.raises(EvaluationJobError, match="accounting_incomplete"):
+        worker.run_once()
+    with pytest.raises(EvaluationJobError, match="accounting_incomplete"):
+        worker.start()
+    assert service.inspect(queued.job_id, principal=principal()).state == "queued"
+    assert calls == ["case-0", "closed"]
+    worker.close()

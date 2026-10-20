@@ -121,6 +121,7 @@ def register_evaluation_jobs(
 
         def operation() -> dict[str, object]:
             """Accept inputs without charging duplicate submissions for provider work."""
+            worker.start()
             return worker.service.submit(
                 suite,
                 idempotency_key=idempotency_key,
@@ -131,7 +132,6 @@ def register_evaluation_jobs(
             ).model_dump(mode="json")
 
         result = await run_tool("eval_submit", operation, ctx)
-        worker.start()
         return EvaluationJobInfo.model_validate(result)
 
     @server.tool(name="eval_inspect", annotations=read_only)

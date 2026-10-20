@@ -182,6 +182,10 @@ class EvaluationJobService:
             )
         try:
             for case in suite.cases:
+                if len(case.case_id.encode("utf-8")) > 256:
+                    raise EvaluationJobError(
+                        "invalid_case_id: Limit each case ID to 256 UTF-8 bytes."
+                    )
                 CompileRequest(task=case.input, domain=case.domain, top_k=case.top_k)
         except ValidationError as exc:
             raise EvaluationJobError(
@@ -305,6 +309,7 @@ class EvaluationJobWorker:
         self.service, self.store = service, service.store
         self.evaluator_factory = evaluator_factory
         self._stop, self._lock = Event(), Lock()
+        self._admission_paused = Event()
         self._thread: Thread | None = None
         self.worker_token = uuid4().hex
         self.lock_path = self.store.path.with_suffix(".worker.lock")
@@ -316,6 +321,7 @@ class EvaluationJobWorker:
     def start(self) -> None:
         """Start an owned background worker that doesn't depend on an MCP request connection."""
         with self._lock:
+            self._require_admission_ready()
             if self._thread is not None and self._thread.is_alive():
                 return
             if self._stop.is_set():
@@ -336,7 +342,7 @@ class EvaluationJobWorker:
 
     def _loop(self) -> None:
         """Recover only after acquiring ownership and keep storage failures observable."""
-        while not self._stop.is_set():
+        while not self._stop.is_set() and not self._admission_paused.is_set():
             try:
                 result = self.run_once()
                 self.store.purge_expired()
@@ -347,9 +353,18 @@ class EvaluationJobWorker:
                 _LOG.error("Evaluation worker needs attention: %s", type(exc).__name__)
                 self._stop.wait(1)
 
+    def _require_admission_ready(self) -> None:
+        """Keep queued jobs untouched after this worker loses a confirmed accounting outcome."""
+        if self._admission_paused.is_set():
+            raise EvaluationJobError(
+                "accounting_incomplete: This worker has paused after an unconfirmed quota write. "
+                "Preserve storage, inspect accounting and restart the hosted process."
+            )
+
     @_job_storage_boundary
     def run_once(self) -> EvaluationJobInfo | None:
         """Execute at most one accepted job while holding the stable worker kernel lock."""
+        self._require_admission_ready()
         with try_exclusive_file_lock(self.lock_path) as acquired:
             if not acquired:
                 raise EvaluationJobError("worker_busy: Another worker owns this job database.")
@@ -448,6 +463,8 @@ class EvaluationJobWorker:
                 state, failure = "interrupted", "storage_failure"
             elif isinstance(exc, OperationAdmissionError):
                 state, failure = "failed", str(exc).partition(":")[0]
+                if failure == "accounting_incomplete":
+                    self._admission_paused.set()
             elif isinstance(exc, PolicyNIMError):
                 state, failure = (
                     "failed",
