@@ -31,7 +31,7 @@ Current automated coverage includes:
   Phoenix startup, deterministic span publishing, and synchronous code
   annotations
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with
-  mock-backed import-injected package modules; default CI does not import live optional
+  mock-backed import-injected package modules; default CI doesn't import live optional
   NVIDIA eval packages
 - Optional NVIDIA Eval Launcher dependency resolution through
   `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
@@ -87,7 +87,7 @@ Hosted onboarding versus Docker build-test env vars:
 - Set `NVIDIA_API_KEY` as well if you want the positive baked-index image validation
   to run instead of skip; the Docker harness passes it as a BuildKit secret, not
   as a build arg.
-- Do not rely on `-m live` to pick up Docker build checks; they use the dedicated
+- Don't rely on `-m live` to pick up Docker build checks; they use the dedicated
   `docker_live` marker.
 
 Run the hosted build and deployed-service suites manually with:
