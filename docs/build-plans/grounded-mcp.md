@@ -75,4 +75,4 @@ Resource listing exposes a current catalog entry plus immutable URI templates; c
 
 ## Verification status
 
-Dedicated SDK tests cover immutable resources, one-run evidence, authorization and invalid-request admission. Full offline suites pass on intermediate integrated heads. Supported local-review findings were fixed in code. Final review identified a carried runtime command-screening issue under #93; its owner is fixing that dependency before the PR gate. Review completion, exact-head CI and production readiness remain separate gates.
+Dedicated SDK tests cover immutable resources, one-run evidence, authorization and invalid-request admission. Full offline suites pass on intermediate integrated heads. Supported local-review findings were fixed in code. Final review identified a carried runtime command-screening issue under #93; its owner fixed it and that commit is integrated. Review completion, exact-head CI and production readiness remain separate gates.
