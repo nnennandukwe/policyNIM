@@ -152,13 +152,17 @@ class SQLiteVecIndexStore(IndexStore):
                             "The validated index contains no readable rows."
                         )
             except (sqlite3.DatabaseError, OSError) as exc:
-                if isinstance(exc, sqlite3.Error) and not is_sqlite_access_error(exc):
+                code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(code, int) and code & 0xFF in {
+                    sqlite3.SQLITE_CORRUPT,
+                    sqlite3.SQLITE_NOTADB,
+                }:
                     raise IndexCompatibilityError(
                         "The validated index is invalid or corrupt."
                     ) from exc
                 raise MissingIndexError(
-                    "The validated index couldn't be accessed. "
-                    "Check permissions, contention, and storage I/O."
+                    "The validated index couldn't be read. "
+                    "Check runtime resources and access; inspect it before retrying."
                 ) from exc
 
     def inspect_readiness(self) -> IndexReadinessReport:

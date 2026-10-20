@@ -868,8 +868,8 @@ class GenerationStore:
                 except MissingIndexError as exc:
                     raise GenerationError(
                         "read",
-                        "Generation index couldn't be accessed. "
-                        "Check permissions, contention, and storage I/O.",
+                        "Generation index couldn't be read. "
+                        "Check runtime resources and access; inspect it before retrying.",
                     ) from exc
                 if self._artifact_token(directory) != token:
                     raise GenerationError(

@@ -3245,7 +3245,9 @@ def test_readiness_cleanup_doesnt_wait_for_another_writer(
     assert not list((store.root / "leases").rglob("*.lock"))
 
 
-@pytest.mark.parametrize("failure", ["open", "query", "corrupt", "schema"])
+@pytest.mark.parametrize(
+    "failure", ["open", "query", "corrupt", "notadb", "schema", "nomem", "full", "changed_schema"]
+)
 def test_warm_public_health_probes_sqlite_readability_and_recovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
@@ -3275,11 +3277,17 @@ def test_warm_public_health_probes_sqlite_readability_and_recovers(
         """Inject open failure or actual SQLite query denial only for the selected sealed index."""
         if path == sealed_index and failure == "open":
             raise OSError(errno.EIO, "PRIVATE-DATABASE-FAILURE")
-        if path == sealed_index and failure in {"corrupt", "schema"}:
+        failures = {
+            "corrupt": sqlite3.SQLITE_CORRUPT,
+            "notadb": sqlite3.SQLITE_NOTADB,
+            "schema": sqlite3.SQLITE_ERROR,
+            "nomem": sqlite3.SQLITE_NOMEM,
+            "full": sqlite3.SQLITE_FULL,
+            "changed_schema": sqlite3.SQLITE_SCHEMA,
+        }
+        if path == sealed_index and failure in failures:
             error = sqlite3.DatabaseError("PRIVATE-DATABASE-FAILURE")
-            error.sqlite_errorcode = (
-                sqlite3.SQLITE_CORRUPT if failure == "corrupt" else sqlite3.SQLITE_ERROR
-            )
+            error.sqlite_errorcode = failures[failure]
             raise error
         connection = original_connect(path, read_only=read_only)
         if path == sealed_index and failure == "query":
@@ -3299,11 +3307,11 @@ def test_warm_public_health_probes_sqlite_readability_and_recovers(
         assert not response.json()["ready"]
         assert "PRIVATE-DATABASE-FAILURE" not in response.text
         reason = response.json()["reason"]
-        assert (
-            "invalid or corrupt" in reason
-            if failure in {"corrupt", "schema"}
-            else "access" in reason
-        )
+        if failure in {"corrupt", "notadb"}:
+            assert "invalid or corrupt" in reason
+        else:
+            assert "invalid or corrupt" not in reason
+            assert "resources" in reason and "access" in reason and "inspect" in reason
         after = sealed_index.stat()
         assert (before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (
             after.st_size,
