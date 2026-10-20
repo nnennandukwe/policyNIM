@@ -386,13 +386,22 @@ class OperationAdmissionService:
     ) -> _Result:
         """Keep execution cleanup and uncertain terminal accounting identical for both paths."""
         outcome: OperationOutcome = "failed"
+        primary_error: BaseException | None = None
         try:
             result = operation()
             outcome = "completed"
             return result
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
-            if cancelled():
-                outcome = "cancelled"
+            cancellation_error: BaseException | None = None
+            try:
+                if cancelled():
+                    outcome = "cancelled"
+            except BaseException as exc:
+                cancellation_error = exc
+                outcome = "failed"
             try:
                 self.store.finish(operation_id, outcome)
             except (sqlite3.Error, OSError) as exc:
@@ -402,6 +411,13 @@ class OperationAdmissionService:
                     "accounting_incomplete: Work was accepted and may have completed. "
                     "Don't retry blindly; ask the operator to inspect operation state."
                 ) from exc
+            if cancellation_error is not None:
+                if primary_error is not None and (
+                    isinstance(cancellation_error, Exception)
+                    or not isinstance(primary_error, Exception)
+                ):
+                    raise primary_error from cancellation_error
+                raise cancellation_error from primary_error
 
     def run(
         self,

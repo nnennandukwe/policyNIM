@@ -8,6 +8,7 @@ import math
 import random
 import time
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from types import TracebackType
@@ -24,10 +25,12 @@ from openai import (
     OpenAI,
 )
 from openai.types.chat import ChatCompletionMessageParam
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.iterables import ordered_unique
+from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL, chat_request_configuration
 from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
 from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
@@ -37,6 +40,7 @@ from policynim.types import (
     CompileRequest,
     GeneratedCompiledPolicyDraft,
     GeneratedPolicyConformanceDraft,
+    GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicyConformanceRequest,
     PolicySelectionPacket,
@@ -413,6 +417,12 @@ class NVIDIAGenerator(Generator):
             messages=messages,
             max_retries=self._max_retries,
             operation="grounded generation",
+            response_model=GeneratedPreflightDraft,
+            response_schema=(
+                _bound_generation_schema(context)
+                if self._model == NVIDIA_LIGHTNING_CHAT_MODEL
+                else None
+            ),
             parse=_parse_generation_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -505,6 +515,7 @@ class NVIDIAPolicyCompiler:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy compilation",
+            response_model=GeneratedCompiledPolicyDraft,
             parse=_parse_compiled_policy_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -597,6 +608,7 @@ class NVIDIAPolicyConformanceEvaluator:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy conformance evaluation",
+            response_model=GeneratedPolicyConformanceDraft,
             parse=lambda content: _parse_policy_conformance_draft(content, request),
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -609,6 +621,35 @@ class NVIDIAPolicyConformanceEvaluator:
             _close_client(self._client)
 
 
+def _bound_generation_schema(context: Sequence[ScoredChunk]) -> dict[str, Any]:
+    """Narrow request grammar to each retained owner's exact metadata and citation set."""
+    schema = GeneratedPreflightDraft.model_json_schema()
+    owners: dict[tuple[str, str], list[str]] = {}
+    for chunk in context:
+        ids = owners.setdefault((chunk.policy.policy_id, chunk.policy.title), [])
+        if chunk.chunk_id not in ids:
+            ids.append(chunk.chunk_id)
+    properties = schema["properties"]
+    if not owners:
+        properties["applicable_policies"]["maxItems"] = 0
+        properties["citation_ids"]["maxItems"] = 0
+        return schema
+    guidance = schema["$defs"][GeneratedPolicyGuidance.__name__]
+    variants: list[dict[str, Any]] = []
+    for (policy_id, title), ids in owners.items():
+        variant = deepcopy(guidance)
+        fields = variant["properties"]
+        fields["policy_id"]["enum"] = [policy_id]
+        fields["title"]["enum"] = [title]
+        fields["citation_ids"]["items"]["enum"] = ids
+        variants.append(variant)
+    properties["applicable_policies"]["items"] = {"anyOf": variants}
+    properties["citation_ids"]["items"]["enum"] = list(
+        dict.fromkeys(chunk.chunk_id for chunk in context)
+    )
+    return schema
+
+
 def _request_chat_completion(
     client: OpenAI | Any,
     *,
@@ -616,18 +657,33 @@ def _request_chat_completion(
     messages: list[ChatCompletionMessageParam],
     max_retries: int,
     operation: str,
+    response_model: type[BaseModel],
     parse: Callable[[str], Any],
+    response_schema: dict[str, Any] | None = None,
     timeout_seconds: float = 30.0,
     retry_initial_seconds: float = 0.5,
     retry_max_seconds: float = 8.0,
 ) -> Any:
     """Request structured chat output and sanitize provider failures."""
-    options: dict[str, Any] = {"temperature": 0, "top_p": 1}
-    if model == "nvidia/nemotron-3-super-120b-a12b":
-        options = {
-            "temperature": 1,
-            "top_p": 0.95,
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    configuration = chat_request_configuration(model)
+    options: dict[str, Any] = {
+        "temperature": configuration.temperature,
+        "top_p": configuration.top_p,
+    }
+    if configuration.enable_thinking is not None:
+        options["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": configuration.enable_thinking}
+        }
+    if configuration.output_mode == "json_schema":
+        options["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "strict": True,
+                "schema": response_schema
+                if response_schema is not None
+                else response_model.model_json_schema(),
+            },
         }
 
     def send(timeout: float) -> Any:
@@ -715,6 +771,16 @@ def _request_with_retry(
                 exc.status_code if isinstance(exc, APIStatusError) else exc.response.status_code
             )
             failure = "rate_limit" if status == 429 else "http_status"
+            if status == 404:
+                failure = "endpoint_not_found"
+                raise ProviderError(
+                    f"NVIDIA {operation} endpoint or model isn't available (HTTP 404); "
+                    "don't retry unchanged requests. "
+                    f"Verify POLICYNIM_NVIDIA_{model_setting}_MODEL and "
+                    f"POLICYNIM_NVIDIA_{endpoint_setting}, and confirm this account has "
+                    "access with a minimal request. Catalog listing alone doesn't prove access.",
+                    failure_class=failure,
+                ) from exc
             if status == 410:
                 failure = "endpoint_unavailable"
                 raise _endpoint_unavailable(operation, model_setting, endpoint_setting) from exc
@@ -1017,6 +1083,22 @@ def _build_generation_messages(
         "- Cite only by chunk_id values that appear in the provided context.\n"
         "- Do not invent new chunk IDs. A policy_id is not a citation. Copy the entire "
         "chunk_id, including any colon and section suffix, from Allowed citation_ids.\n"
+        "- For each applicable_policies item, copy policy_id and title exactly from "
+        "the retrieved context metadata. Every citation in that item must belong to "
+        "that same policy. Don't use a chunk_id as a policy_id.\n"
+        "- Include implementation details only when the task or retrieved source explicitly "
+        "supports them. Don't invent numeric limits, batch sizes, retry counts, languages, "
+        "framework APIs, endpoint names, or other technology choices. If a choice is "
+        "unspecified, leave it open for configuration or measurement; don't supply "
+        "example numbers or APIs as if they're policy requirements.\n"
+        "- Build plan_steps and implementation_guidance by concise paraphrase of the "
+        "compiled policy statements and cited source requirements. Don't expand a "
+        "requirement into an algorithm, schema, identifier, API, or platform choice "
+        "that the supplied evidence doesn't specify.\n"
+        "- Preserve each source rule's triggers, conditions, exceptions, and scope. "
+        "Don't turn a conditional requirement into an unconditional plan step or move "
+        "it to a different lifecycle event. If the task doesn't establish the trigger, "
+        "keep the requirement conditional or omit it from the plan.\n"
         "- If the evidence is insufficient, set insufficient_context to true and "
         "keep the lists empty.\n"
         "- When compiled policy constraints are provided, use them as the main "
@@ -1103,9 +1185,14 @@ def _build_policy_compiler_messages(
         "- A policy_id is not a citation. Copy the entire chunk_id, including any "
         "colon and section suffix, from Allowed citation_ids.\n"
         "- Include a constraint only when the retained evidence directly supports it.\n"
+        "- Preserve source conditions, triggers, exceptions, and scope. Don't promote "
+        "a requirement for one lifecycle event into a requirement for another event.\n"
+        "- Don't invent numeric limits, retry counts, technology choices, APIs, or "
+        "endpoints absent the explicit task or retained source. Leave unspecified "
+        "choices open instead of supplying example values.\n"
         "- If evidence is weak or unsupported, set insufficient_context to true and "
         "leave every constraint list empty.\n"
-        "- Keep constraint statements concrete and task-specific."
+        "- Keep constraint statements specific to the task."
     )
     user_prompt = (
         f"Task: {request.task}\n"
@@ -1338,18 +1425,7 @@ def _allowed_policy_conformance_chunk_ids(
     trace_chunk_ids = [
         citation_id for step in request.trace_steps for citation_id in step.citation_ids
     ]
-    return _ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+    return ordered_unique([*constraint_chunk_ids, *result_chunk_ids, *trace_chunk_ids])
 
 
 def _parse_json_object_response(content: str, *, operation: str) -> dict[str, Any]:
