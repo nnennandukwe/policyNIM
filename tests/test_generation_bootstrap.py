@@ -291,3 +291,165 @@ def test_fresh_configured_seed_identity_is_checked_before_root_creation(
         )
         assert preserved.generation_id == first[2].generation_id
         assert (store.root / "active.json").read_bytes() == pointer
+
+
+def seed_child(store, first, tmp_path: Path, *, boundary: str, name: str, pause: bool = True):
+    """Pause a real independent bootstrap process at an observable publication boundary."""
+    import subprocess
+    import sys
+    import time
+
+    ready = tmp_path / (name + "-ready")
+    release = tmp_path / (name + "-release")
+    script = '''
+import sys, time
+from pathlib import Path
+from policynim.services.generations import GenerationStore
+from policynim.types import EmbeddingIdentity
+root, bundle, digest, identity, boundary, ready, release, pause = sys.argv[1:]
+def fault(step):
+    """Hold the real store operation until the parent releases or kills this process."""
+    if step == boundary:
+        Path(ready).write_text("ready")
+        if pause == "no":
+            return
+        deadline = time.monotonic() + 30
+        while not Path(release).exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError("parent didn't release inspection")
+            time.sleep(.01)
+store = GenerationStore(
+    root=Path(root), embedding=EmbeddingIdentity.model_validate_json(identity), fault=fault
+)
+store.bootstrap_bundle(Path(bundle), expected_digest=digest)
+'''
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(store.root),
+            str(first[0]),
+            first[1],
+            store.embedding.model_dump_json(),
+            boundary,
+            str(ready),
+            str(release),
+            "yes" if pause else "no",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    deadline = time.monotonic() + 10
+    while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not ready.exists():
+        process.kill()
+        stdout, stderr = process.communicate(timeout=5)
+        pytest.fail(f"Bootstrap child didn't reach its pause: {stdout} {stderr}")
+    return process, release
+
+
+@pytest.mark.parametrize("owned", [False, True])
+def test_killed_seed_inspection_reclaims_only_owned_scratch(tmp_path: Path, owned: bool) -> None:
+    """Hard termination can't grow scratch repeatedly or authorize deleting unknown residue."""
+    _, store, first, _ = bundles(tmp_path)
+    process, _ = seed_child(
+        store,
+        first,
+        tmp_path,
+        boundary="bootstrap_seed_inspect" if owned else "bootstrap_seed_created",
+        name="killed",
+    )
+    process.kill()
+    process.communicate(timeout=5)
+    scratch = [p for p in store.root.parent.glob(".policynim-seed-*") if p.is_dir()]
+    assert len(scratch) == 1
+    assert not store.root.exists()
+    before = {path.name: path.read_bytes() for path in scratch[0].iterdir()}
+    if owned:
+        result = store.bootstrap_bundle(first[0], expected_digest=first[1])
+        assert result.generation_id == first[2].generation_id
+        assert not scratch[0].exists()
+    else:
+        for _ in range(2):
+            with pytest.raises(GenerationError):
+                store.bootstrap_bundle(first[0], expected_digest=first[1])
+            assert not store.root.exists()
+            assert before == {path.name: path.read_bytes() for path in scratch[0].iterdir()}
+        assert len([p for p in store.root.parent.glob(".policynim-seed-*") if p.is_dir()]) == 1
+
+
+def test_concurrent_seed_inspectors_preserve_live_scratch_and_selection(tmp_path: Path) -> None:
+    """A second real inspector waits for its target lock and preserves the committed winner."""
+    import time
+
+    _, store, first, _ = bundles(tmp_path)
+    first_process, release = seed_child(
+        store, first, tmp_path, boundary="bootstrap_seed_inspect", name="live"
+    )
+    second, _ = seed_child(
+        store, first, tmp_path, boundary="bootstrap_seed_lock", name="second", pause=False
+    )
+    try:
+        scratch = [p for p in store.root.parent.glob(".policynim-seed-*") if p.is_dir()]
+        before = {path.name: path.read_bytes() for path in scratch[0].iterdir()}
+        time.sleep(0.15)
+        assert second.poll() is None
+        assert before == {path.name: path.read_bytes() for path in scratch[0].iterdir()}
+        assert not store.root.exists()
+        release.write_text("continue")
+        first_output = first_process.communicate(timeout=15)
+        second_output = second.communicate(timeout=15)
+        assert first_process.returncode == 0, first_output
+        assert second.returncode == 0, second_output
+        assert store.inspect().generation_id == first[2].generation_id
+        assert not scratch[0].exists()
+    finally:
+        for process in (first_process, second):
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+
+
+def test_retry_syncs_preexisting_parent_entries_before_claiming_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory created before an interrupted sync still needs the next durability barrier."""
+    import policynim.services.generations as module
+
+    _, target, first, _ = bundles(tmp_path)
+    sync = module._sync_directory
+    required = target.root.parent.parent
+
+    def interrupted(path: Path) -> None:
+        """Fail the first ancestor-entry sync after the missing parents were created."""
+        if path == required:
+            raise OSError("injected ancestor sync failure")
+        sync(path)
+
+    monkeypatch.setattr(module, "_sync_directory", interrupted)
+    with pytest.raises(GenerationError):
+        target.bootstrap_bundle(first[0], expected_digest=first[1])
+    assert target.root.parent.is_dir()
+    assert not target.root.exists()
+    observed = []
+
+    def recorded(path: Path) -> None:
+        """Retain actual directory sync calls during a supported bootstrap retry."""
+        observed.append(path)
+        sync(path)
+
+    def fault(step: str) -> None:
+        """Require ancestor durability before the retry claims its new generation root."""
+        if step == "bootstrap_root_created":
+            assert required in observed
+
+    monkeypatch.setattr(module, "_sync_directory", recorded)
+    retry = GenerationStore(root=target.root, embedding=target.embedding, fault=fault)
+    assert (
+        retry.bootstrap_bundle(first[0], expected_digest=first[1]).generation_id
+        == first[2].generation_id
+    )
