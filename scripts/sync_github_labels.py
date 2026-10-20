@@ -105,6 +105,14 @@ def load_label_taxonomy(path: Path) -> list[dict[str, str]]:
         labels.append(_validate_label(current))
     if not labels:
         raise LabelSyncError(f"No labels found in {path}.")
+    names: set[str] = set()
+    for label in labels:
+        if label["name"] in names:
+            raise LabelSyncError(
+                f"Duplicate label name {label['name']!r}. "
+                "Remove repeated entries before previewing or applying the taxonomy."
+            )
+        names.add(label["name"])
     return labels
 
 
