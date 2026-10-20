@@ -1,0 +1,24 @@
+{
+  "scope": "Original peer assessment and raw control receipts, copied without modification. Controls don't establish the unknown CI cause or production capacity.",
+  "failed_ci": {
+    "source_sha": "9346404f4f020c9a48009feebe9434580f94a276",
+    "run_id": 39515606440,
+    "job_id": 118946910539,
+    "url": "https://github.com/nnennandukwe/policyNIM/actions/runs/39515606440/job/118946910539"
+  },
+  "source_sha": "51b116af1d625cef265a1843961ac4fd2e5cc6ba",
+  "dependency_parity": "Linux controls used the existing 107 image plus pinned tomlkit 0.14.0, not the exact failed CI or final ac9 dependency environment. Git identity was supplied from host readback.",
+  "included_sha256": {
+    "assessment.md": "ac328c6cbe931dce8e16f47deb984cd2904a880f94ffa3334988a2b142ea0305",
+    "unmodified.json": "0834f107ef1a484754e85107782430ef2bccaa419d40d49ea0610802006da423",
+    "delete.json": "23d424293f1634f882413fdf62478082f2b837cad87736019b370593f1a1c737",
+    "wal.json": "c36ec3045dbf8d892ec474962ba4925aff9215d72104a608a3b7f90431e42b37",
+    "linux-cpu-traced.json": "4069b4e9c1baaffa40fa621a95d05e97d564da69b4f4e8bdd735b977fa63c8f9",
+    "linux-slow-writer.json": "5227690cccbf6aa8609241af159c192471b170047304ceaf7ec3b7730a0d7530"
+  },
+  "external_driver_sha256": {
+    "driver.py": "3b660e7a7ba64820c40d63cb9e3fcb5123a83c444cf90a977f34b2e280e1b612",
+    "linux-driver.py": "b3d2ad1cc28e95dc446cf2d4fbfaaa64f149b11df9456ef63e4587de017d1b04"
+  },
+  "external_driver_note": "The original reproduction drivers remain with the local proof bundle; they aren't included here. Their hashes identify those retained inputs."
+}
