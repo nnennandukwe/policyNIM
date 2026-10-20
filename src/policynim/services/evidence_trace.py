@@ -67,7 +67,9 @@ def create_policy_evidence_trace_service() -> PolicyEvidenceTraceService:
 
 def compiled_policy_packet_id(compiled_packet: CompiledPolicyPacket) -> str:
     """Return a deterministic identity for a compiled policy packet."""
-    packet_payload = compiled_packet.model_dump(mode="json")
+    packet_payload = compiled_packet.model_dump(
+        mode="json", exclude={"citations": {"__all__": {"resource_uri"}}}
+    )
     if compiled_packet.generation_id is None:
         packet_payload.pop("generation_id", None)
     payload = json.dumps(

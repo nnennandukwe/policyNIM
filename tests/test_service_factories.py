@@ -85,6 +85,49 @@ import policynim.services.runtime_execution
     assert result.returncode == 0, result.stderr
 
 
+def test_storage_operates_without_service_package(tmp_path: Path) -> None:
+    """Keep repository adapters usable without generation orchestration or HTTP handlers."""
+    script = f'''
+import importlib.abc
+import sys
+from pathlib import Path
+
+sys.path.insert(0, {str(PROJECT_ROOT / "src")!r})
+
+class BlockServices(importlib.abc.MetaPathFinder):
+    """Reject imports that invert the storage-to-service dependency direction."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        """Fail immediately if a storage adapter tries to load application services."""
+        if fullname == "policynim.services" or fullname.startswith("policynim.services."):
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockServices())
+
+from policynim.storage.index_readiness import inspect_index_readiness
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+from policynim.types import EmbeddingIdentity
+
+store = SQLiteVecIndexStore(
+    path=Path({str(tmp_path / "absent.sqlite3")!r}),
+    embedding_identity=EmbeddingIdentity(model="test-model", endpoint="https://example.test/v1"),
+)
+assert inspect_index_readiness(store).state == "missing"
+store.close()
+assert "policynim.services" not in sys.modules
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_service_modules_import_without_legacy_lancedb_backend() -> None:
     """Import service modules when the transition-era LanceDB backend is absent."""
     script = f"""

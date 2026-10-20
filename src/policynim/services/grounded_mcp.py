@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import re
 from contextlib import closing
+from functools import lru_cache
+from pathlib import Path
 from uuid import uuid4
 
 from policynim.errors import PolicyNIMError
@@ -13,9 +15,9 @@ from policynim.services.authorization import AuthenticatedPrincipal, authorize_o
 from policynim.services.compiler import create_policy_compiler_service
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
 from policynim.services.generations import GenerationStore
-from policynim.services.index_store import create_index_store
 from policynim.services.preflight import create_preflight_service
 from policynim.settings import Settings
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import (
     Citation,
     CompileRequest,
@@ -77,7 +79,13 @@ def read_policy_catalog(
     """Describe the effective catalog and stable source links without provider calls."""
     if generation_id is not None:
         settings = _generation_settings(settings, generation_id)
-    with _generation_store(settings).pin(settings.generation_id) as snapshot:
+    generations = _generation_store(settings)
+    selected = (
+        generations.pin_retained(settings.generation_id)
+        if settings.generation_id is not None
+        else generations.pin()
+    )
+    with selected as snapshot:
         snapshot.validate_read()
         catalog = snapshot.indexed_catalog.model_dump(mode="json")
         catalog["resource_uri"] = f"policynim://generations/{snapshot.generation_id}/catalog"
@@ -97,7 +105,7 @@ def read_policy_resource(
     """Read one retained parsed source body by exact catalog identifier."""
     settings = _generation_settings(settings, generation_id)
     _validate_key(policy_key)
-    with _generation_store(settings).pin(generation_id) as snapshot:
+    with _generation_store(settings).pin_retained(generation_id) as snapshot:
         snapshot.validate_read()
         for document in snapshot.documents:
             if resource_key(document.metadata.policy_id) == policy_key:
@@ -111,15 +119,32 @@ def read_policy_resource(
     raise PolicyResourceError("unknown_policy: This policy isn't in the selected generation.")
 
 
+@lru_cache(maxsize=8)
+def _chunk_key_lookup(index_path: str, generation_id: str) -> dict[str, str]:
+    """Cache only ID mappings for at most eight validated immutable generations."""
+    # The caller keeps its validated generation lease throughout this lookup.
+    # Content-addressed identity makes the mapping stable across activations.
+    with closing(SQLiteVecIndexStore(path=Path(index_path))) as store:
+        return {resource_key(chunk_id): chunk_id for chunk_id in store.list_chunk_ids()}
+
+
 def read_chunk_resource(
     settings: Settings, *, generation_id: str, chunk_key: str
 ) -> dict[str, object]:
     """Read an exact indexed chunk without allowing a caller to select a filesystem path."""
     settings = _generation_settings(settings, generation_id)
     _validate_key(chunk_key)
-    with closing(create_index_store(settings)) as store:
-        for chunk in store.list_chunks():
-            if resource_key(chunk.chunk_id) == chunk_key:
+    with _generation_store(settings).pin_retained(generation_id) as snapshot:
+        with closing(
+            SQLiteVecIndexStore(
+                path=snapshot.index_path,
+                embedding_identity=snapshot.manifest.embedding,
+                generation_snapshot=snapshot,
+            )
+        ) as store:
+            chunk_id = _chunk_key_lookup(str(store.path), generation_id).get(chunk_key)
+            chunk = store.get_chunk(chunk_id) if chunk_id is not None else None
+            if chunk is not None:
                 return {
                     "generation_id": generation_id,
                     "resource_uri": chunk_resource_uri(generation_id, chunk.chunk_id),

@@ -419,3 +419,151 @@ def test_long_valid_heading_keeps_a_bounded_readable_citation_uri(generation) ->
         settings, generation_id=published.generation_id, chunk_key=resource_key(chunk.chunk_id)
     )
     assert result["chunk"] == chunk.model_dump(mode="json")
+
+
+def test_resource_presentation_links_preserve_existing_packet_fingerprints() -> None:
+    """Qodo regression: additive citation metadata can't change an unchanged compiled packet ID."""
+    import hashlib
+
+    traced = traced_fixture("a" * 64)
+    packet = traced.compiled_packet
+    legacy_payload = packet.model_dump(mode="json")
+    for citation in legacy_payload["citations"]:
+        citation.pop("resource_uri")
+    legacy_digest = hashlib.sha256(
+        json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert compiled_policy_packet_id(packet) == legacy_digest
+    linked = packet.model_copy(
+        update={
+            "citations": [
+                item.model_copy(
+                    update={"resource_uri": chunk_resource_uri("a" * 64, item.chunk_id)}
+                )
+                for item in packet.citations
+            ]
+        }
+    )
+    assert compiled_policy_packet_id(linked) == legacy_digest
+
+
+def test_chunk_reads_materialize_only_selected_evidence(generation, monkeypatch) -> None:
+    """Qodo regression: repeated citation reads use cached IDs and indexed single-row lookup."""
+    from contextlib import closing
+
+    from policynim.services.index_store import create_index_store
+    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+
+    settings, _, generation_id = generation
+    with closing(create_index_store(settings)) as store:
+        chunk = store.list_chunks()[0]
+    service_module._chunk_key_lookup.cache_clear()
+    original_ids = SQLiteVecIndexStore.list_chunk_ids
+    identifier_reads: list[int] = []
+
+    def identifiers(self):
+        """Count only cold metadata lookup without fetching corpus text."""
+        identifier_reads.append(1)
+        return original_ids(self)
+
+    def fail_full_corpus(self):
+        """Catch accidental full-corpus materialization in a resource read."""
+        pytest.fail("a chunk resource mustn't load all chunk text")
+
+    monkeypatch.setattr(SQLiteVecIndexStore, "list_chunk_ids", identifiers)
+    monkeypatch.setattr(SQLiteVecIndexStore, "list_chunks", fail_full_corpus)
+    for _ in range(2):
+        result = read_chunk_resource(
+            settings, generation_id=generation_id, chunk_key=resource_key(chunk.chunk_id)
+        )
+        assert result["chunk"] == chunk.model_dump(mode="json")
+    assert identifier_reads == [1]
+
+
+def test_compile_and_evidence_use_principal_daily_admission(
+    generation, monkeypatch, tmp_path
+) -> None:
+    """Grounded tools share the same persisted principal allowance as existing tools."""
+    from policynim.services.authorization import AuthenticatedPrincipal
+
+    settings, _, generation_id = generation
+    settings = settings.model_copy(
+        update={
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+            "mcp_principal_daily_operation_quota": 1,
+        }
+    )
+    monkeypatch.setattr(registration, "get_settings", lambda: settings)
+    calls: list[str] = []
+
+    def compile_fixture(*args, **kwargs):
+        """Record only genuinely admitted provider graph execution."""
+        calls.append("compiled")
+        return CompileResult(
+            generation_id=generation_id, packet=traced_fixture(generation_id).compiled_packet
+        )
+
+    monkeypatch.setattr(registration, "compile_policy", compile_fixture)
+    caller = AuthenticatedPrincipal(
+        issuer="https://issuer.example",
+        subject="quota-owner",
+        client_id="fixture",
+        scopes=frozenset({"policies:read", "policies:evaluate"}),
+        source="oauth",
+    )
+
+    async def exercise() -> None:
+        """Check the second expensive operation rejects before service construction."""
+        context = mcp_module._HOSTED_PRINCIPAL.set(caller)
+        try:
+            runtime = mcp_module._ToolExecutor(settings=settings)
+            server = mcp_module._register_tools(mcp_module._new_mcp_server(runtime))
+            async with Client(server) as client:
+                first = await client.call_tool("policy_compile", {"task": "review"})
+                assert not first.is_error
+                second = await client.call_tool("policy_preflight_evidence", {"task": "review"})
+                assert second.is_error
+                assert isinstance(second.content[0], TextContent)
+                assert "quota_exceeded" in second.content[0].text
+        finally:
+            mcp_module._HOSTED_PRINCIPAL.reset(context)
+        assert calls == ["compiled"]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"nvidia_embed_model": "different-embedding-model"},
+        {"nvidia_base_url": "https://changed.example/v1"},
+    ],
+)
+def test_retained_resources_use_their_sealed_embedding_identity(generation, updates) -> None:
+    """Qodo regression: retained source evidence outlives the runtime's model configuration."""
+    from contextlib import closing
+
+    from policynim.services.index_store import create_index_store
+
+    settings, _, generation_id = generation
+    original_catalog = read_policy_catalog(settings, generation_id=generation_id)
+    original_policy = read_policy_resource(
+        settings, generation_id=generation_id, policy_key=resource_key("A")
+    )
+    with closing(create_index_store(settings)) as store:
+        chunk_id = store.list_chunks()[0].chunk_id
+    original_chunk = read_chunk_resource(
+        settings, generation_id=generation_id, chunk_key=resource_key(chunk_id)
+    )
+    changed = settings.model_copy(update=updates)
+    assert read_policy_catalog(changed, generation_id=generation_id) == original_catalog
+    assert (
+        read_policy_resource(changed, generation_id=generation_id, policy_key=resource_key("A"))
+        == original_policy
+    )
+    assert (
+        read_chunk_resource(changed, generation_id=generation_id, chunk_key=resource_key(chunk_id))
+        == original_chunk
+    )
+    with pytest.raises(GenerationError):
+        create_index_store(changed)
