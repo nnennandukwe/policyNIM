@@ -10,6 +10,7 @@ import stat
 import uuid
 import weakref
 from pathlib import Path
+from typing import Literal
 
 
 class OperationOwner:
@@ -65,7 +66,7 @@ class OperationOwner:
             if not stat.S_ISREG(observed.st_mode):
                 return False
             try:
-                _lock(descriptor)
+                _lock(descriptor, shared=not remove)
             except OSError as exc:
                 if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                     return False
@@ -100,7 +101,7 @@ class OperationOwner:
             self._release()
 
 
-def _lock(descriptor: int) -> None:
+def _lock(descriptor: int, *, shared: bool = False) -> None:
     """Acquire a nonblocking process-released lock on POSIX or Windows."""
     os.lseek(descriptor, 0, os.SEEK_SET)
     if os.name == "nt":
@@ -110,4 +111,26 @@ def _lock(descriptor: int) -> None:
     else:
         import fcntl
 
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+
+
+def inspect_owner_lease(database: Path, identity: str) -> Literal["live", "abandoned", "unknown"]:
+    """Observe an existing kernel lease without creating files or changing durable state."""
+    if not re.fullmatch(r"[0-9a-f]{32}", identity):
+        return "unknown"
+    path = database.with_name(database.name + ".owners") / (identity + ".lock")
+    mode = os.O_RDWR if os.name == "nt" else os.O_RDONLY
+    try:
+        descriptor = os.open(path, mode | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return "unknown"
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return "unknown"
+        try:
+            _lock(descriptor, shared=True)
+        except OSError as exc:
+            return "live" if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK} else "unknown"
+        return "abandoned"
+    finally:
+        os.close(descriptor)
