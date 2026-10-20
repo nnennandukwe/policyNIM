@@ -18,6 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from policynim.storage.auth_database import connect_auth_database
 from policynim.storage.operation_lease import OperationOwner, inspect_owner_lease
 
 # Caller lifecycle outcome after worker drain; provider attempt results stay separate.
@@ -171,7 +172,7 @@ class OperationStore:
 
     def _connect(self) -> sqlite3.Connection:
         """Open a bounded-wait connection with explicit transaction ownership."""
-        return sqlite3.connect(self.path, timeout=0.1, isolation_level=None)
+        return connect_auth_database(self.path, timeout=0.1)
 
     def reserve(
         self,
@@ -525,8 +526,7 @@ class OperationStore:
     @staticmethod
     def report(path: Path) -> HostedOperationReport:
         """Read aggregate operational state without creating or migrating any database."""
-        uri = path.resolve().as_uri() + "?mode=ro"
-        with closing(sqlite3.connect(uri, uri=True, timeout=0.1)) as connection:
+        with closing(connect_auth_database(path, timeout=0.1, readonly=True)) as connection:
             connection.execute("BEGIN")
             if (
                 connection.execute(

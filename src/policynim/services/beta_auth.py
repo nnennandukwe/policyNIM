@@ -330,7 +330,14 @@ def _parse_json_mapping(
 def create_beta_auth_service(settings: Settings | None = None) -> BetaAuthService:
     """Build the default hosted beta auth service from application settings."""
     active_settings = settings or get_settings()
-    return BetaAuthService(
-        store=AuthStore(path=resolve_runtime_path(active_settings.beta_auth_db_path)),
-        settings=active_settings,
-    )
+    try:
+        store = AuthStore(
+            path=resolve_runtime_path(active_settings.beta_auth_db_path.parent)
+            / active_settings.beta_auth_db_path.name
+        )
+    except OSError:
+        raise ConfigurationError(
+            "auth_storage_unavailable: Private auth storage couldn't be prepared. "
+            "Preserve the database and inspect service ownership, permissions and file aliases."
+        ) from None
+    return BetaAuthService(store=store, settings=active_settings)

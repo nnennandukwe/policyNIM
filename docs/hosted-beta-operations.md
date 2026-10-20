@@ -541,3 +541,31 @@ retaining jobs that can replay their keys. A failed terminal write pauses new wo
 on that service until the operator inspects state and restarts it. Keep the quota
 database, jobs database and owner leases on the same persistent deployment volume;
 back up both databases with SQLite's online-backup API before operator recovery.
+
+### Private auth SQLite files
+
+Account and operation writers create the configured auth database at POSIX mode
+0600 before SQLite opens it. SQLite inherits that mode when it creates WAL, SHM
+and rollback-journal sidecars. Existing service-owned regular database and sidecar
+files are tightened in place; their inode and stored records aren't replaced.
+Runtime code doesn't change the process-wide umask.
+
+Use an operator-controlled parent directory on the persistent volume. A database
+or sidecar that's a symlink, has multiple hard links, isn't a regular file, or
+belongs to another POSIX user is rejected before permission changes or SQL work.
+Configured relative paths still use the command's working directory; the parent
+is resolved while the final filename stays available for alias validation.
+
+Read-only operation reports don't create or chmod auth files. They require
+already-private files and report storage unavailable for legacy broad modes until
+a writer or an operator repairs them. `auth_storage_unsafe` and
+`auth_storage_unavailable` guidance doesn't include private paths or underlying
+filesystem messages. Preserve the database and inspect ownership, aliases,
+directory access and available space before retrying as the service user. Don't
+copy a linked target, delete an existing database or change ownership blindly.
+
+This boundary assumes one service instance and trusted deployment-managed parent
+directories. It doesn't defend against a hostile process with the same operating
+system identity or replacement of operator-controlled ancestors. POSIX modes
+don't establish Windows ACL privacy; Windows deployments still need an appropriate
+private directory ACL. This is filesystem access control, not database encryption.

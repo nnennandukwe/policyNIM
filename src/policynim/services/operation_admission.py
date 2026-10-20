@@ -171,7 +171,10 @@ class OperationAdmissionService:
         created_store: OperationStore | None = None
         try:
             if store is None:
-                created_store = OperationStore(resolve_runtime_path(settings.beta_auth_db_path))
+                created_store = OperationStore(
+                    resolve_runtime_path(settings.beta_auth_db_path.parent)
+                    / settings.beta_auth_db_path.name
+                )
                 self.store = created_store
             else:
                 self.store = store

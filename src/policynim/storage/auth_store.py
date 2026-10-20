@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from policynim.errors import PolicyNIMError
+from policynim.storage.auth_database import connect_auth_database
 from policynim.types import (
     ApiKeyQuotaResult,
     BetaAccount,
@@ -329,8 +330,7 @@ class AuthStore:
 
     def recognizes_api_key(self, *, key_hash: str) -> bool:
         """Recognize issued or revoked hashes without granting access or creating a database."""
-        uri = self._path.resolve().as_uri() + "?mode=ro"
-        with closing(sqlite3.connect(uri, uri=True, timeout=0.1)) as conn:
+        with closing(connect_auth_database(self._path, timeout=0.1, readonly=True)) as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM api_keys WHERE key_hash = ? LIMIT 1", (key_hash,)
@@ -547,11 +547,16 @@ class AuthStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=30.0, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA journal_mode = WAL")
+        """Configure one private connection and close it if setup fails."""
+        connection = connect_auth_database(self._path, timeout=30.0)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 30000")
+            connection.execute("PRAGMA journal_mode = WAL")
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def _fetch_account_by_column(
