@@ -14,8 +14,10 @@ HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 WORKFLOW_FILES = (CI_WORKFLOW, HOSTED_SMOKE_WORKFLOW, RELEASE_WORKFLOW)
 USES_LINE = re.compile(
-    r"uses:\s*['\"]?(?P<action>[^@\s'\"]+)@(?P<ref>[^\s#'\"]+)['\"]?"
-    r"(?:\s+#\s*(?P<version>v[0-9][^\s#]*))?"
+    r"^\s*(?:['\"]?uses['\"]?)\s*:\s*['\"]?"
+    r"(?P<action>[^@\s'\"]+)@(?P<ref>[^\s#'\"]+)['\"]?"
+    r"(?:\s+#\s*(?P<version>v[0-9][^\s#]*))?",
+    re.MULTILINE,
 )
 NODE24_ACTION_MAJOR_COMMENTS = {
     "actions/checkout": {"v5", "v6", "v7"},
@@ -32,15 +34,25 @@ def _read_text(path: Path) -> str:
 
 
 def _workflow_uses(path: Path) -> list[tuple[str, str, str | None]]:
-    """Return action, ref, and version comment from workflow uses lines."""
-    return [
-        (
-            match.group("action"),
-            match.group("ref"),
-            match.group("version"),
-        )
-        for match in USES_LINE.finditer(_read_text(path))
-    ]
+    """Return action, ref, and version comment from workflow step uses keys."""
+    text = _read_text(path)
+    workflow = yaml.safe_load(text)
+    comments = {
+        (match.group("action"), match.group("ref")): match.group("version")
+        for match in USES_LINE.finditer(text)
+    }
+    uses: list[tuple[str, str, str | None]] = []
+    for job in workflow.get("jobs", {}).values():
+        for step in job.get("steps", []):
+            value = step.get("uses")
+            if not isinstance(value, str):
+                continue
+            action, separator, ref = value.partition("@")
+            if separator:
+                uses.append((action, ref, comments.get((action, ref))))
+            else:
+                uses.append((action, "", comments.get((action, ""))))
+    return uses
 
 
 def test_workflows_pin_node24_compatible_actions() -> None:
@@ -128,14 +140,24 @@ def test_release_workflow_runs_offline_verification_before_release_artifacts() -
 def test_release_workflow_uses_pinned_actions_and_trusted_pypi_publish() -> None:
     """Ensure release actions are pinned and PyPI publish uses OIDC, not secrets."""
     text = _read_text(RELEASE_WORKFLOW)
-    uses_lines = re.findall(r"uses: [^\n]+", text)
+    uses = _workflow_uses(RELEASE_WORKFLOW)
 
-    assert uses_lines
-    for line in uses_lines:
-        if line.startswith("uses: pypa/gh-action-pypi-publish@v1.14.0"):
-            assert line.endswith("# 6733eb7d741f0b11ec6a39b58540dab7590f9b7d")
+    assert uses
+    for action, ref, _version in uses:
+        if action == "pypa/gh-action-pypi-publish":
+            assert ref == "v1.14.0"
             continue
-        assert re.search(r"@[0-9a-f]{40}(?:\s+#.*)?$", line), line
+        assert re.fullmatch(r"[0-9a-f]{40}", ref), (action, ref)
+
+    publish_lines = re.findall(
+        r"^\s*(?:['\"]?uses['\"]?)\s*:\s*[^\n]+",
+        text,
+        re.MULTILINE,
+    )
+    publish_line = next(
+        line for line in publish_lines if "pypa/gh-action-pypi-publish@" in line
+    )
+    assert publish_line.endswith("# 6733eb7d741f0b11ec6a39b58540dab7590f9b7d")
     assert "id-token: write" in text
     assert "pypa/gh-action-pypi-publish@" in text
     assert "password:" not in text
@@ -213,12 +235,16 @@ def test_release_uses_locked_dependencies_without_implicit_resync() -> None:
 
 @pytest.mark.parametrize("reference", ["main", "v5", "abc123", "A" * 40])
 @pytest.mark.parametrize("quote", ["", "'", '"'])
+@pytest.mark.parametrize("key", ["uses", '"uses"', "uses "])
 def test_action_reference_parser_doesnt_hide_mutable_refs(
-    tmp_path: Path, reference: str, quote: str
+    tmp_path: Path, reference: str, quote: str, key: str
 ) -> None:
-    """Unpinned refs must reach the pin assertion, including quoted YAML values."""
+    """Unpinned refs must reach the pin assertion regardless of YAML spelling."""
     path = tmp_path / "workflow.yml"
-    path.write_text(f"uses: {quote}actions/checkout@{reference}{quote} # v5.0.1\n")
+    path.write_text(
+        "jobs:\n  check:\n    steps:\n"
+        f"      - {key}: {quote}actions/checkout@{reference}{quote} # v5.0.1\n"
+    )
     uses = _workflow_uses(path)
     assert uses == [("actions/checkout", reference, "v5.0.1")]
     assert re.fullmatch(r"[0-9a-f]{40}", uses[0][1]) is None
