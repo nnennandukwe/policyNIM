@@ -86,6 +86,7 @@ def check_dependencies(
         name = re.sub(r"[-_.]+", "-", package["name"]).lower()
         locked.setdefault(name, set()).add(package["version"])
     selected: set[str] = {"policynim"}
+    selected_requirements: dict[str, list[Requirement]] = {}
     require(requirements.is_file(), "Exported runtime requirements are missing.")
     requirement_bytes = requirements.read_bytes()
     for line in requirement_bytes.decode("utf-8").splitlines():
@@ -93,7 +94,9 @@ def check_dependencies(
             continue
         requirement = Requirement(line.removesuffix("\\").strip())
         if requirement.marker is None or requirement.marker.evaluate():
-            selected.add(re.sub(r"[-_.]+", "-", requirement.name).lower())
+            name = re.sub(r"[-_.]+", "-", requirement.name).lower()
+            selected.add(name)
+            selected_requirements.setdefault(name, []).append(requirement)
     versions: dict[str, str] = {}
     bootstrap: dict[str, str] = {}
     for distribution in importlib.metadata.distributions():
@@ -105,6 +108,13 @@ def check_dependencies(
         require(
             version in locked.get(name, set()),
             f"Installed dependency isn't locked: {name}=={version}.",
+        )
+        require(
+            all(
+                requirement.specifier.contains(version, prereleases=True)
+                for requirement in selected_requirements.get(name, [])
+            ),
+            f"Installed dependency differs from exported requirements: {name}=={version}.",
         )
         versions[name] = version
     require(selected <= versions.keys(), "A selected runtime dependency isn't installed.")
@@ -172,6 +182,12 @@ async def check_client(client: Client, mode: str) -> dict[str, object]:
     )
     rejected = await client.call_tool("policy_search", {"query": "release smoke", "top_k": 0})
     require(rejected.is_error is True, "Installed MCP accepted an invalid tool argument.")
+    details = "\n".join(getattr(block, "text", "") for block in rejected.content)
+    require(
+        re.search(r"\btop_k must be between 1 and [0-9]+\.", details) is not None
+        or ("top_k\n" in details and "[type=greater_than_equal," in details),
+        "Installed MCP returned an unrelated failure instead of argument validation.",
+    )
     return {"protocol": expected, "tools": names, "invalid_argument_rejected": True}
 
 
