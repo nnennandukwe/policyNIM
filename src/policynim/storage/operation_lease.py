@@ -1,0 +1,69 @@
+"""Kernel-backed process ownership for crash recovery across reused process IDs."""
+
+from __future__ import annotations
+
+import errno
+import os
+import re
+import stat
+import uuid
+import weakref
+from pathlib import Path
+
+
+class OperationOwner:
+    """Hold a unique owner lock until its service closes or its process exits."""
+
+    def __init__(self, database: Path) -> None:
+        """Create a private lock inode independent of container PID namespaces."""
+        self.directory = database.with_name(database.name + ".owners")
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.identity = uuid.uuid4().hex
+        path = self.directory / (self.identity + ".lock")
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        try:
+            os.write(descriptor, b"0")
+            _lock(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self._release = weakref.finalize(self, os.close, descriptor)
+
+    def abandoned(self, identity: str) -> bool:
+        """Prove an old owner's kernel lease is unlocked without relying on its PID."""
+        if not re.fullmatch(r"[0-9a-f]{32}", identity):
+            return False
+        path = self.directory / (identity + ".lock")
+        try:
+            descriptor = os.open(path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            return False
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return False
+            try:
+                _lock(descriptor)
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    return False
+                raise
+            return True
+        finally:
+            os.close(descriptor)
+
+    def close(self) -> None:
+        """Release this service's lease after its workers have drained."""
+        self._release()
+
+
+def _lock(descriptor: int) -> None:
+    """Acquire a nonblocking process-released lock on POSIX or Windows."""
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        getattr(msvcrt, "locking")(descriptor, getattr(msvcrt, "LK_NBLCK"), 1)
+    else:
+        import fcntl
+
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)

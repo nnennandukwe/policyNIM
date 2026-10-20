@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -143,6 +145,10 @@ def offline_services(settings: Settings) -> Iterator[list[str]]:
     """Patch only domain factories; routing, MCP, auth, and serialization stay real."""
     events: list[str] = []
     with ExitStack() as stack:
+        previous_auth_path = settings.beta_auth_db_path
+        directory = stack.enter_context(TemporaryDirectory(prefix="policynim-offline-auth-"))
+        settings.beta_auth_db_path = Path(directory) / "auth.sqlite3"
+        stack.callback(setattr, settings, "beta_auth_db_path", previous_auth_path)
         stack.enter_context(patch.object(mcp_module, "get_settings", return_value=settings))
         stack.enter_context(
             patch.object(
