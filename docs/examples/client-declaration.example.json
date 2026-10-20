@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "evidence_type": "operator_declaration",
+  "context": {
+    "client": "codex",
+    "client_version": "0.0.0",
+    "server_sdk": "mcp==2.2.0",
+    "protocol": "2026-07-28",
+    "transport": "http",
+    "auth_mode": "beta_key"
+  },
+  "sanitized": true
+}

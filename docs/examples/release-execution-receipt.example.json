@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "evidence_type": "execution_receipt",
+  "check_id": "codex-http",
+  "producer": "replace-with-actual-runner",
+  "producer_version": "0",
+  "status": "not_run",
+  "exit_code": null,
+  "observed": {},
+  "context": {
+    "client": "codex",
+    "client_version": "0.0.0",
+    "server_sdk": "mcp==2.2.0",
+    "protocol": "2026-07-28",
+    "transport": "http",
+    "auth_mode": "beta_key"
+  },
+  "cases": []
+}
