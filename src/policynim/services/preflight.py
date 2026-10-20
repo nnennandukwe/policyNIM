@@ -293,7 +293,11 @@ def _grounding_refusal_code(
         return "empty_source_context"
     citation_ids = ordered_unique(
         draft.citation_ids
-        + [i for policy in draft.applicable_policies for i in policy.citation_ids]
+        + [
+            citation_id
+            for policy in draft.applicable_policies
+            for citation_id in policy.citation_ids
+        ]
     )
     if not citation_ids:
         return "missing_citations"
@@ -303,9 +307,15 @@ def _grounding_refusal_code(
     for policy in draft.applicable_policies:
         if not policy.citation_ids:
             continue
-        if any(context_by_id[i].policy.policy_id != policy.policy_id for i in policy.citation_ids):
+        if any(
+            context_by_id[citation_id].policy.policy_id != policy.policy_id
+            for citation_id in policy.citation_ids
+        ):
             return "policy_id_mismatch"
-        if any(context_by_id[i].policy.title != policy.title for i in policy.citation_ids):
+        if any(
+            context_by_id[citation_id].policy.title != policy.title
+            for citation_id in policy.citation_ids
+        ):
             return "policy_title_mismatch"
         supported_policy = True
     return None if supported_policy else "missing_policy_guidance"
@@ -322,7 +332,11 @@ def _validate_and_materialize_result(
     context_by_id = {chunk.chunk_id: chunk for chunk in context}
     citation_ids = ordered_unique(
         draft.citation_ids
-        + [i for policy in draft.applicable_policies for i in policy.citation_ids]
+        + [
+            citation_id
+            for policy in draft.applicable_policies
+            for citation_id in policy.citation_ids
+        ]
     )
     applicable_policies = [
         PolicyGuidance(

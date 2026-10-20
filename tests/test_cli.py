@@ -2718,7 +2718,7 @@ def test_route_help_mentions_task_type_override() -> None:
     assert result.exit_code == 0
     assert "--task-type" in help_output
     assert "Discovery hits," in help_output
-    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
+    assert "selected-policy context" in " ".join(help_output.replace(chr(0x2502), " ").split())
 
 
 def test_compile_help_mentions_task_type_override() -> None:
@@ -2729,7 +2729,7 @@ def test_compile_help_mentions_task_type_override() -> None:
     assert result.exit_code == 0
     assert "--task-type" in help_output
     assert "Discovery hits," in help_output
-    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
+    assert "selected-policy context" in " ".join(help_output.replace(chr(0x2502), " ").split())
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:

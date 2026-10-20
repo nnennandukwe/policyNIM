@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     corpus_dir: Path | None = None
     profile: Path | None = None
     generations_dir: Path = Path("data/generations")
+    hosted_state_mount: Path | None = None
     generation_id: GenerationID | None = Field(default=None, exclude=True)
     index_db_path: Path = Field(
         default=Path("data/index.sqlite3"),
@@ -208,6 +209,12 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:
         """Treat empty configured corpus values as unset."""
+        return _normalize_optional_setting(value)
+
+    @field_validator("hosted_state_mount", mode="before")
+    @classmethod
+    def normalize_empty_hosted_state_mount(cls, value: Any) -> Any:
+        """Leave mount enforcement absent for explicitly ephemeral hosted runs."""
         return _normalize_optional_setting(value)
 
     @field_validator("profile", mode="before")
