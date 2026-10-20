@@ -525,3 +525,67 @@ def test_missing_auth_report_names_absence_without_preparation_advice(tmp_path: 
     assert "available space" not in message and "couldn't be prepared" not in message
     assert "missing-private-sentinel" not in message
     assert not path.parent.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar modes are the privacy contract.")
+def test_readonly_report_keeps_created_coordination_files_private(tmp_path: Path) -> None:
+    """A real read may create WAL/SHM metadata while retaining the canonical database bytes."""
+    script = """
+import hashlib, json, os, stat, sys
+from pathlib import Path
+from policynim.storage import AuthStore
+from policynim.storage.operation_store import OperationStore
+os.umask(0)
+path = Path(sys.argv[1])
+AuthStore(path=path).close()
+before = hashlib.sha256(path.read_bytes()).hexdigest()
+assert not path.with_name(path.name + '-wal').exists()
+assert not path.with_name(path.name + '-shm').exists()
+report = OperationStore.report(path)
+print(json.dumps({
+    'unchanged': before == hashlib.sha256(path.read_bytes()).hexdigest(),
+    'retained_rows': report.retained_rows,
+    'modes': {suffix: stat.S_IMODE(path.with_name(path.name + suffix).stat().st_mode)
+              for suffix in ('-wal', '-shm')}
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "auth.sqlite3")],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    observed = json.loads(completed.stdout)
+    assert observed == {
+        "unchanged": True,
+        "retained_rows": 0,
+        "modes": {"-wal": 0o600, "-shm": 0o600},
+    }
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+def test_operation_admission_preserves_unsafe_file_recovery(tmp_path: Path, suffix: str) -> None:
+    """Actual admission initialization must name unsafe aliases without exposing their target."""
+    from policynim.services.operation_admission import (
+        OperationAdmissionError,
+        OperationAdmissionService,
+    )
+    from policynim.settings import Settings
+
+    path = tmp_path / "auth.sqlite3"
+    target = tmp_path / "private-admission-sentinel"
+    target.write_bytes(b"retained-private-records")
+    alias = path.with_name(path.name + suffix)
+    try:
+        alias.symlink_to(target)
+    except (NotImplementedError, OSError):
+        pytest.skip("This platform doesn't permit symbolic links.")
+    with pytest.raises(OperationAdmissionError) as raised:
+        OperationAdmissionService(Settings(beta_auth_db_path=path))
+    message = str(raised.value)
+    assert message.startswith("admission_unavailable:")
+    assert "auth_storage_unsafe:" in message
+    assert "ownership, permissions and aliases" in message
+    assert "database locks" not in message
+    assert "private-admission-sentinel" not in message and str(tmp_path) not in message
+    assert target.read_bytes() == b"retained-private-records"

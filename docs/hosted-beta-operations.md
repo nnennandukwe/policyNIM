@@ -614,13 +614,15 @@ belongs to another POSIX user is rejected before permission changes or SQL work.
 Configured relative paths still use the command's working directory; the parent
 is resolved while the final filename stays available for alias validation.
 
-Read-only operation reports don't create or chmod auth files. Legacy broad modes
+Read-only operation reports don't create or chmod the auth database. Legacy broad modes
 or unsafe aliases return `auth_storage_unsafe` until a writer or an operator
 repairs ownership, permissions or aliases. A missing configured database returns
 `auth_storage_missing`: check `POLICYNIM_BETA_AUTH_DB_PATH` and the mounted volume,
 then initialize state through its owning service. Other preparation/access failures
 use `auth_storage_unavailable`; check directory access, permissions and available
-space. These messages don't include private paths or raw filesystem errors.
+space. A successful SQLite read can create private WAL/SHM coordination files;
+account and operation records and the main database's bytes stay unchanged.
+These messages don't include private paths or raw filesystem errors.
 Preserve existing state. Don't copy a linked target, delete an existing database
 or change ownership blindly.
 
