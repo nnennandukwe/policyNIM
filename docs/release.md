@@ -161,6 +161,16 @@ and agent state aren't package inputs. The gate compares every source-archive fi
 with these tracked inputs and checks package metadata before adding the source
 download to the manifest; missing, altered and unexpected source files block publication.
 
+Before signing or draft creation, the workflow also renders the selected version's
+reviewed CHANGELOG section with `check_release_notes.py`. After actual attestation
+verification, it runs the existing evidence collector with artifact/provenance checks.
+Expected identities come from CI and the checked-out lock/public bundle; downloaded
+receipts can't choose them. Selection and report are retained in `release-evidence/`
+outside the signed assets. A missing, failed or mismatched receipt stops draft creation.
+See [the scoped evidence guide](release-evidence.md) for its trust boundary. This gate
+doesn't establish actual coding-client, published installation, deployment or rollback
+acceptance. Those phases still need their own executed receipts.
+
 ## Signed release provenance
 
 After manifest checks, the release job signs every subject in `SHA256SUMS` using
