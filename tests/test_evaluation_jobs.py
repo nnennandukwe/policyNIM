@@ -151,7 +151,7 @@ def job_setup(generation_value, tmp_path: Path, *, cases: int = 1):
     return EvaluationJobService(settings), suite, generation_id
 
 
-def evaluator_factory(calls: list[str]):
+def evaluator_factory(calls: list[str], *, configurations: list[bool] | None = None):
     """Return an injected evaluator with real usage accounting and generation inspection."""
     from policynim.operations import current_budget
 
@@ -166,9 +166,13 @@ def evaluator_factory(calls: list[str]):
         def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
             """Reserve and measure exactly one deterministic provider attempt."""
             calls.append(case_id)
+            if configurations is not None:
+                configurations.append(rerank_enabled)
             current_budget().reserve_provider_call()
             current_budget().record_provider_usage(7)
-            return case_result(self.settings, suite, case_id)
+            return case_result(self.settings, suite, case_id).model_copy(
+                update={"rerank_enabled": rerank_enabled}
+            )
 
         def close(self):
             """Record cleanup as part of the owned active-job lifecycle."""
@@ -759,7 +763,9 @@ def test_concurrent_submissions_deduplicate_and_keep_owner_queue_bound(
         bounded = list(pool.map(submit, [f"unique-{index}" for index in range(6)]))
     assert len([item for item in bounded if item is not None]) == 1
     assert service.store.aggregate_counts() == {"queued": 2}
-    assert not service.settings.beta_auth_db_path.exists()
+    from policynim.storage.operation_store import OperationStore
+
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
 
 
 def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
@@ -801,7 +807,9 @@ def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
         thread.join(5)
     assert not thread.is_alive() and len(accepted) == 1
     assert service.submit(suite, idempotency_key="first", principal=principal()) == accepted[0]
-    assert not service.settings.beta_auth_db_path.exists()
+    from policynim.storage.operation_store import OperationStore
+
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
 
 
 def test_job_execution_mints_fresh_correlation_for_admission_and_provider(
@@ -914,14 +922,14 @@ def test_transient_pre_provider_admission_retries_without_duplicate_charge(
         raise OperationAdmissionError(code + ": Retry shortly.")
 
     with monkeypatch.context() as busy:
-        busy.setattr(OperationAdmissionService, "run", reject)
+        busy.setattr(OperationAdmissionService, "run_accepted", reject)
         deferred = worker.run_once()
     assert deferred is not None and deferred.state == "queued" and deferred.failure_code == code
     assert deferred.next_attempt_at == now[0] + 1
     assert deferred.deadline_at == accepted.deadline_at
     assert calls == [] and worker.run_once() is None
     with sqlite3.connect(service.settings.beta_auth_db_path) as db:
-        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 1
     now[0] += 2
     completed = worker.run_once()
     assert completed is not None and completed.state == "completed"
@@ -1286,3 +1294,279 @@ def test_job_store_namespace_is_stable_across_restart_and_relocation(tmp_path):
     relocated.parent.mkdir()
     shutil.copyfile(first.path, relocated)
     assert EvaluationJobStore(relocated).store_id == first.store_id
+
+
+@pytest.mark.parametrize("rerank_enabled", [True, False])
+def test_weighted_acceptance_charges_cases_once_and_queued_jobs_use_no_active_slot(
+    generation, tmp_path, rerank_enabled: bool
+):
+    """A two-case suite prepays two units, then activates one slot without another charge."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionError
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 2
+    accepted = service.submit(
+        suite, idempotency_key="two-cases", principal=principal(), rerank_enabled=rerank_enabled
+    )
+    assert accepted.work_units == 2 and accepted.admission_id is not None
+    assert (
+        service.submit(
+            suite, idempotency_key="two-cases", principal=principal(), rerank_enabled=rerank_enabled
+        )
+        == accepted
+    )
+    assert OperationStore.report(service.settings.beta_auth_db_path).active_operations == 0
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="over-budget", principal=principal())
+    assert service.store.aggregate_counts() == {"queued": 1}
+    calls: list[str] = []
+    configurations: list[bool] = []
+    worker = EvaluationJobWorker(
+        service, evaluator_factory=evaluator_factory(calls, configurations=configurations)
+    )
+    try:
+        completed = worker.run_once()
+        assert completed is not None and completed.state == "completed"
+        assert calls == ["case-0", "case-1", "closed"]
+        assert configurations == [rerank_enabled, rerank_enabled]
+        with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+            assert db.execute(
+                "SELECT COUNT(*),SUM(work_units) FROM operation_usage"
+            ).fetchone() == (1, 2)
+        assert OperationStore.report(service.settings.beta_auth_db_path).active_operations == 0
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_uncertain_job_acceptance_never_recharges_weight(generation, tmp_path, phase):
+    """Quota acceptance survives either side of the job COMMIT and same-key retry reuses it."""
+    import sqlite3
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 2
+
+    def interrupt(observed):
+        """Fail after quota accepted work, at the real queued-job transaction boundary."""
+        if observed == phase:
+            raise sqlite3.OperationalError("private-acceptance-commit-fault")
+
+    service.store.fault = interrupt
+    with pytest.raises(EvaluationJobError, match="job_storage_unavailable"):
+        service.submit(suite, idempotency_key="uncertain-weight", principal=principal())
+    service.store.fault = None
+    assert service.store.aggregate_counts() == ({} if phase == "before_commit" else {"queued": 1})
+    changed = suite.model_copy(update={"name": "different-request"})
+    from policynim.errors import PolicyNIMError
+
+    with pytest.raises(PolicyNIMError, match="acceptance_conflict|idempotency_conflict"):
+        service.submit(changed, idempotency_key="uncertain-weight", principal=principal())
+    accepted = service.submit(suite, idempotency_key="uncertain-weight", principal=principal())
+    assert accepted.work_units == 2 and accepted.admission_id is not None
+    assert service.store.aggregate_counts() == {"queued": 1}
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*),SUM(work_units) FROM operation_usage").fetchone() == (
+            1,
+            2,
+        )
+
+
+def test_cancelled_queued_job_retains_prepaid_units(generation, tmp_path):
+    """Accepted cancellation consumes its units and duplicate submission keeps that outcome."""
+    import sqlite3
+
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 2
+    accepted = service.submit(suite, idempotency_key="cancel-weight", principal=principal())
+    cancelled = service.cancel(accepted.job_id, principal=principal())
+    assert cancelled.state == "cancelled"
+    assert service.store.pending_admission_finalizations() == []
+    assert (
+        service.submit(suite, idempotency_key="cancel-weight", principal=principal()) == cancelled
+    )
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="no-refund", principal=principal())
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT outcome,work_units FROM operation_usage").fetchone() == (
+            "cancelled",
+            2,
+        )
+
+
+def test_expired_accepted_authority_blocks_execution_but_allows_terminal_accounting(
+    generation, tmp_path, monkeypatch
+):
+    """A queued token's expiry rejects providers without losing its accepted unit or outcome."""
+    import sqlite3
+    import time
+    from dataclasses import replace
+
+    from policynim.services import authorization
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    expires_at = int(time.time()) + 30
+    caller = replace(principal(), expires_at=expires_at)
+    accepted = service.submit(suite, idempotency_key="expires-in-queue", principal=caller)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        with monkeypatch.context() as expired:
+            expired.setattr(authorization.time, "time", lambda: expires_at + 1)
+            result = worker.run_once()
+        assert result is not None and result.job_id == accepted.job_id
+        assert result.state == "failed" and result.failure_code == "invalid_token"
+        assert calls == []
+        assert service.store.pending_admission_finalizations() == []
+        with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+            assert db.execute("SELECT outcome,work_units FROM operation_usage").fetchone() == (
+                "failed",
+                1,
+            )
+    finally:
+        worker.close()
+
+
+def test_process_exit_after_quota_completion_never_replays_completed_cases(generation, tmp_path):
+    """A killed job-report boundary retains paid completed work without another provider attempt."""
+    import json
+    import os
+    import sqlite3
+    import subprocess
+    import sys
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="quota-job-commit-gap", principal=principal())
+    settings_path = tmp_path / "child-settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "eval_workspace_dir": str(service.settings.eval_workspace_dir),
+                "beta_auth_db_path": str(service.settings.beta_auth_db_path),
+                "generations_dir": str(service.settings.generations_dir),
+                "nvidia_embed_model": service.settings.nvidia_embed_model,
+                "nvidia_base_url": service.settings.nvidia_base_url,
+            }
+        )
+    )
+    evidence = tmp_path / "attempts.txt"
+    script = '''
+import json, os, sys
+from pathlib import Path
+from policynim.operations import current_budget
+from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
+from policynim.settings import Settings
+from policynim.types import EvalCaseResult, EvalCaseMetrics
+class Evaluator:
+    """Persist one known completed case before the process loses its report commit."""
+    def __init__(self, settings):
+        """Keep the restored generation identity without opening a provider client."""
+        self.settings = settings
+    def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+        """Record a durable attempt and a typed result at the injected provider boundary."""
+        current_budget().reserve_provider_call()
+        with Path(sys.argv[2]).open("a") as stream:
+            stream.write("attempt\\n")
+        case = suite.cases[0]
+        return EvalCaseResult(generation_id=self.settings.generation_id, case_id=case_id,
+            kind=case.kind, input=case.input, top_k=case.top_k, rerank_enabled=rerank_enabled,
+            passed=True, expected_insufficient_context=True, actual_insufficient_context=True,
+            metrics=EvalCaseMetrics(insufficient_context_correct=True))
+    def close(self):
+        """The test evaluator holds no external resource after its completed case."""
+settings = Settings(**json.loads(Path(sys.argv[1]).read_text()), _env_file=None)
+service = EvaluationJobService(settings)
+original = service.store.finish
+def stop_before_report(job_id, token, state, **kwargs):
+    """Exit after admission completion committed, before the job report can commit."""
+    if state == "completed":
+        os._exit(91)
+    return original(job_id, token, state, **kwargs)
+service.store.finish = stop_before_report
+EvaluationJobWorker(service, evaluator_factory=Evaluator).run_once()
+'''
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(settings_path), str(evidence)],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+        },
+        capture_output=True,
+        timeout=15,
+    )
+    assert process.returncode == 91, process.stderr.decode()
+    assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT outcome,work_units FROM operation_usage").fetchone() == (
+            "completed",
+            1,
+        )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        assert worker.run_once() is None
+        report = service.result(accepted.job_id, principal=principal()).report
+        assert report.state == "interrupted"
+        assert len(report.completed_cases) == 1
+        assert report.unfinished_case_ids == [] and report.uncertain_case_id is None
+        assert report.usage.provider_attempts == 1
+        assert evidence.read_text().splitlines() == ["attempt"] and calls == []
+        assert service.store.pending_admission_finalizations() == []
+    finally:
+        worker.close()
+
+
+def test_suite_cannot_enter_queue_when_case_execution_weight_exceeds_allowance(
+    generation, tmp_path
+):
+    """Two validated executions can't be accepted under a one-unit daily allowance."""
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 1
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="too-many-executions", principal=principal())
+    assert service.store.aggregate_counts() == {}
+
+
+@pytest.mark.parametrize("stop_reason", ["cancelled", "deadline_exhausted"])
+def test_capture_cannot_charge_after_submitting_request_budget_ends(
+    generation, tmp_path, monkeypatch, stop_reason
+):
+    """Cancellation or expiry during real archive capture rejects acceptance without a charge."""
+    from threading import Event
+
+    from policynim.errors import ProviderError
+    from policynim.operations import OperationBudget, operation_scope
+    from policynim.services.generations import GenerationStore
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [0.0]
+    cancelled = Event()
+    budget = OperationBudget(30, clock=lambda: now[0], cancelled=cancelled)
+    original = GenerationStore.export_bundle
+
+    def finish_capture(*args, **kwargs):
+        """End the caller's budget only after the immutable archive is fully written."""
+        result = original(*args, **kwargs)
+        if stop_reason == "cancelled":
+            cancelled.set()
+        else:
+            now[0] = 31.0
+        return result
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", finish_capture)
+    with pytest.raises(ProviderError) as rejected, operation_scope(budget):
+        service.submit(suite, idempotency_key="expired-capture", principal=principal())
+    assert rejected.value.failure_class == stop_reason
+    assert service.store.aggregate_counts() == {}
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 0

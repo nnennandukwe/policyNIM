@@ -38,7 +38,7 @@ Out of scope: native Tasks, distributed scheduling, exact provider replay, autom
 
 ## Dependencies And Settings
 
-Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 2 (migrating the development version 1 baseline). Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
+Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 3 (migrating development versions 1 and 2). Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
 
 ## Canonical Contracts
 
@@ -58,11 +58,12 @@ One database stores accepted specs, content-addressed generation archive blobs, 
 
 ### State and commit-point model
 
-Canonical state is the SQLite job row plus its referenced archive/spec/case rows. Submission commits archive+snapshot+queued row in one SQLite transaction. That commit is the first accepted state. A submission failure before COMMIT leaves no accepted job. Worker claim commits running state before any provider activity; case completion commits the result before another case starts. Terminal report bytes and terminal job state commit together. No external provider effect is claimed atomic with SQLite.
+Canonical state is the SQLite job row plus its referenced archive/spec/case rows. Submission commits archive+snapshot+queued row in one SQLite transaction. Before publishing that job row, a separate quota transaction prepays validated case executions under a permanent owner/store/key reservation. The current interface selects one configuration, so units equal validated cases; interactive calls remain one unit. A submission failure before the job COMMIT leaves no queued job, while a committed quota reservation can remain. Same-key retry reuses that reservation without charging again; a different request digest conflicts. No cross-database atomicity is claimed. Queued reservations consume no active slot; worker activation acquires one slot without another charge. Worker claim commits running state before any provider activity; case completion commits the result before another case starts. Terminal report bytes and terminal job state commit together. No external provider effect is claimed atomic with SQLite.
 
 | Transition | Commit operation | Recovery |
 |---|---|---|
-| absent -> queued | SQLite COMMIT of archive/spec/job | Retry same idempotency key. |
+| absent -> prepaid | Idempotent quota COMMIT after full validation | Retry same owner/store/key and request digest; never recharge. |
+| prepaid -> queued | SQLite COMMIT of archive/spec/job plus reservation ID and units | Retry same idempotency key; no queued row on rollback. |
 | queued -> running | SQLite COMMIT of guarded claim | Interrupted running work never reexecutes automatically. |
 | running case -> completed case | SQLite COMMIT of typed result | Retain completed cases; don't replay uncertain case. |
 | running -> terminal | SQLite COMMIT of report+state | Read immutable report and digest. |
@@ -78,6 +79,8 @@ Canonical state is the SQLite job row plus its referenced archive/spec/case rows
 6. A running interruption preserves completed cases and reports an uncertain active case; no uncertain provider outcome is automatically repeated.
 7. A terminal state and report hash commit together; cleanup failure can't rewrite terminal success as a failed provider run.
 8. Provider attempts can't exceed the accepted limit; missing token usage remains unavailable.
+9. Validated case executions across every selected configuration determine work units before job publication; duplicates don't recharge and over-budget submissions create no queued job.
+10. Terminal quota reconciliation uses retained owner/reservation summaries even after payload quarantine or expiry; accepted cancellation and failure don't refund units.
 
 ### Fault matrix and lifecycle closure
 
@@ -85,13 +88,14 @@ Canonical state is the SQLite job row plus its referenced archive/spec/case rows
 |---|---|---|---|
 | Directory/create/connect/schema | permission or SQLite failure | No accepted job; fix owned volume and retry key | storage creation test |
 | Generation export/read/hash | missing/tampered source generation | No accepted job/provider work | capture rejection test |
-| Submission insert/COMMIT | rollback or interruption before commit | No partial accepted row/blob | transaction failpoint test |
+| Submission insert/COMMIT | interruption before/after quota or job commits | No partial job row/blob; same-key retry reuses prepaid units and rejects changed inputs | `test_uncertain_job_acceptance_never_recharges_weight` |
 | Post-submit response | disconnect | queued work stays inspectable | disconnect test |
 | Concurrent submit | same key or saturated queue | one accepted row, no over-admission | concurrent submit test |
 | Worker lock/claim | competing process | second worker doesn't execute | process worker test |
 | Before provider call | cancellation/deadline/call limit | blocked before next request | budget test |
 | During provider call | cancellation/shutdown/crash | drain when alive; retain partial/uncertain evidence after restart | cancellation/process crash tests |
 | Case result COMMIT | failure before/after commit | uncommitted response stays uncertain; committed case remains saved; neither replays | `test_case_commit_fault_recovers_only_unconfirmed_provider_result` |
+| Quota completion -> job report | actual process exit after quota completion | Running job recovers interrupted with persisted completed cases, unchanged charge and no replay | `test_process_exit_after_quota_completion_never_replays_completed_cases` |
 | Terminal report COMMIT | failure before/after commit | rollback leaves recoverable running state; committed terminal report stays terminal; saved cases remain | `test_terminal_report_commit_fault_preserves_cases_and_restart_outcome` |
 | Generation restore/hash | corrupted archive | fail without provider call; retain diagnosis | archive tamper test |
 | Retention transaction | failure before/after commit | expired payload deletion is atomic; another owner retains its report and shared archive | `test_retention_commit_fault_keeps_owner_payloads_atomic` |
@@ -120,7 +124,7 @@ Run uv run --no-sync pytest -q tests/test_evaluation_jobs.py plus affected provi
 
 ## Definition Of Done
 
-All accepted jobs survive client disconnect/restart with unchanged captured inputs. No supported competing worker executes the same job. Owner isolation, queue/call/deadline limits, cancellation, interruption and immutable report hashes pass actual boundary tests. CLI and authenticated MCP report paths match docs. Full checks and exact-head reviews pass; no unsupported distributed or Tasks claim is made.
+All accepted jobs survive client disconnect/restart with unchanged captured inputs. No supported competing worker executes the same job. Owner isolation, weighted allowance, queue/call/deadline limits, cancellation, interruption and immutable report hashes pass actual boundary tests. CLI and authenticated MCP report paths match docs. Full checks and exact-head reviews pass; no unsupported distributed or Tasks claim is made.
 
 ## Assumptions And Defaults
 

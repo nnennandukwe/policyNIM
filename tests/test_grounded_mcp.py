@@ -51,7 +51,12 @@ def generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         if key.startswith("POLICYNIM_") or key == "NVIDIA_API_KEY":
             monkeypatch.delenv(key)
     settings, identity, index, rules = seed_legacy(tmp_path)
-    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        }
+    )
     store = GenerationStore(root=settings.generations_dir, embedding=identity)
     published = store.migrate(settings, index_path=index, rules_path=rules)
     monkeypatch.setattr(registration, "get_settings", lambda: settings)

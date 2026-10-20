@@ -13,13 +13,14 @@ from functools import wraps
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock, Thread
-from typing import ParamSpec, Protocol, TypeVar
+from typing import Literal, ParamSpec, Protocol, TypeVar
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from policynim.errors import PolicyNIMError, ProviderError
 from policynim.job_types import (
+    TERMINAL_JOB_STATES,
     EvaluationJobAuthorization,
     EvaluationJobConfiguration,
     EvaluationJobError,
@@ -32,6 +33,7 @@ from policynim.job_types import (
 )
 from policynim.operations import (
     OperationBudget,
+    check_budget,
     emit_operation_event,
     operation_correlation,
     operation_scope,
@@ -250,12 +252,37 @@ class EvaluationJobService:
                     authorization=_authorization(principal),
                     limits=limits,
                 )
+
+            def accept_work() -> tuple[str, int]:
+                """Charge validated case executions once before publishing the queued job."""
+                admission = OperationAdmissionService(self.settings)
+                try:
+                    accepted = admission.accept_work(
+                        principal=principal,
+                        operation_name="eval_submit",
+                        reservation_key=payload_digest(
+                            {
+                                "namespace": "evaluation-job",
+                                "job_store_id": self.store.store_id,
+                                "owner_id": owner,
+                                "idempotency_key": idempotency_key,
+                            }
+                        ).removeprefix("sha256:"),
+                        request_digest=request_digest.removeprefix("sha256:"),
+                        work_units=len(suite.cases),
+                        check_ready=check_budget,
+                    )
+                    return accepted.operation_id, accepted.work_units
+                finally:
+                    admission.store.close()
+
             return self.store.submit(
                 owner_id=owner,
                 idempotency_key=idempotency_key,
                 request_digest=request_digest,
                 snapshot=captured,
                 archive=archive,
+                accept_work=accept_work,
             )
 
     @_job_storage_boundary
@@ -266,7 +293,34 @@ class EvaluationJobService:
     @_job_storage_boundary
     def cancel(self, job_id: str, *, principal: AuthenticatedPrincipal) -> EvaluationJobInfo:
         """Keep cancellation requests separate from drained terminal cancellation."""
-        return self.store.cancel(job_id, self._owner(principal, "eval_cancel"))
+        job = self.store.cancel(job_id, self._owner(principal, "eval_cancel"))
+        self.finalize_admission(job)
+        return job
+
+    def finalize_admission(self, job: EvaluationJobInfo) -> None:
+        """Reconcile a terminal summary without requiring expired or quarantined input claims."""
+        if job.admission_id is None or job.state not in TERMINAL_JOB_STATES:
+            return
+        admission = OperationAdmissionService(self.settings)
+        outcome: Literal["completed", "cancelled", "interrupted", "failed"] = (
+            "completed"
+            if job.state == "completed"
+            else "cancelled"
+            if job.state == "cancelled"
+            else "interrupted"
+            if job.state == "interrupted"
+            else "failed"
+        )
+        try:
+            admission.finish_accepted(
+                operation_id=job.admission_id,
+                principal_id=job.owner_id,
+                operation_name="eval_submit",
+                outcome=outcome,
+            )
+        finally:
+            admission.store.close()
+        self.store.mark_admission_finalized(job.job_id, job.admission_id)
 
     @_job_storage_boundary
     def result(
@@ -375,16 +429,25 @@ class EvaluationJobWorker:
     def run_once(self) -> EvaluationJobInfo | None:
         """Execute at most one accepted job while holding the stable worker kernel lock."""
         self.require_admission_ready()
-        with try_exclusive_file_lock(self.lock_path) as acquired:
-            if not acquired:
-                raise EvaluationJobError("worker_busy: Another worker owns this job database.")
-            self.store.recover_interrupted()
-            if self._stop.is_set():
-                return None
-            job = self.store.claim(self.worker_token)
-            if job is None or job.state != "running":
-                return job
-            return self._execute(job)
+        try:
+            with try_exclusive_file_lock(self.lock_path) as acquired:
+                if not acquired:
+                    raise EvaluationJobError("worker_busy: Another worker owns this job database.")
+                self.store.recover_interrupted()
+                for terminal in self.store.pending_admission_finalizations():
+                    self.service.finalize_admission(terminal)
+                if self._stop.is_set():
+                    return None
+                job = self.store.claim(self.worker_token)
+                if job is None:
+                    return None
+                result = self._execute(job) if job.state == "running" else job
+                self.service.finalize_admission(result)
+                return result
+        except OperationAdmissionError as exc:
+            if str(exc).partition(":")[0] == "accounting_incomplete":
+                self._admission_paused.set()
+            raise
 
     def _execute(self, job: EvaluationJobInfo) -> EvaluationJobInfo:
         """Keep input restoration, admission, provider work and cleanup in one owned lifecycle."""
@@ -450,13 +513,23 @@ class EvaluationJobWorker:
                     emit_operation_event(
                         event="evaluation.job", job_id=job.job_id, phase="admission"
                     )
-                    admission.run(
-                        run_owned,
-                        principal=_principal(snapshot.authorization),
-                        operation_name="eval_submit",
-                        cancelled=signal.is_set,
-                        check_ready=budget.remaining,
-                    )
+                    if job.admission_id is None:
+                        admission.run(
+                            run_owned,
+                            principal=_principal(snapshot.authorization),
+                            operation_name="eval_submit",
+                            cancelled=signal.is_set,
+                            check_ready=budget.remaining,
+                        )
+                    else:
+                        admission.run_accepted(
+                            run_owned,
+                            operation_id=job.admission_id,
+                            principal=_principal(snapshot.authorization),
+                            operation_name="eval_submit",
+                            cancelled=signal.is_set,
+                            check_ready=budget.remaining,
+                        )
             finally:
                 admission.store.close()
             return self.store.finish(job.job_id, self.worker_token, "completed")
