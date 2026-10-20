@@ -498,7 +498,8 @@ async def _measure(
                     ) from None
         seconds = time.perf_counter() - started
         report = await observe_state("final", attempts=3)
-        measurement_complete = report is not None
+        workload_observations = state_observations["probe"] + state_observations["intervention"]
+        measurement_complete = report is not None and workload_observations > 0
         if scenario in {"disconnect", "shutdown"}:
             measurement_complete = (
                 measurement_complete and intervention_started_with_active_work is True
@@ -529,7 +530,7 @@ async def _measure(
             "discovery_latency_ms": _percentiles(cheap_latencies),
             "health_latency_ms": _percentiles(health_latencies),
             "cheap_probe_outcomes": dict(cheap_outcomes),
-            "observed_peak_active_operations": active_peak if state_observations else None,
+            "observed_peak_active_operations": active_peak if workload_observations else None,
             "sampled_peak_server_rss_bytes": sampled_peak_rss,
             "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
             "successful_search_hit_counts": dict(

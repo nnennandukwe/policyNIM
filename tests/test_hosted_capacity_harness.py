@@ -276,3 +276,65 @@ def test_public_harness_preserves_prior_scenarios_when_final_state_is_locked(
     assert failed["state_read_failure_counts"]["final:database_busy"] == 3
     assert failed["attempted_requests"] == 1
     assert str(tmp_path) not in output.read_text()
+
+
+def test_public_harness_final_state_cant_replace_missing_workload_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful final read can't establish an observed peak when workload reads all fail."""
+    import asyncio
+    import inspect
+    import runpy
+    import sqlite3
+
+    from policynim.storage.operation_store import OperationStore
+
+    original_to_thread = asyncio.to_thread
+    original_report = OperationStore.report
+
+    def locked_report(path: Path) -> object:
+        """Exercise a real blocked read without exposing private database diagnostics."""
+        with sqlite3.connect(path, timeout=0.1) as writer:
+            writer.execute("PRAGMA journal_mode=DELETE")
+            writer.execute("BEGIN EXCLUSIVE")
+            return original_report(path)
+
+    async def fail_workload_reads(function, /, *args, **kwargs):
+        """Inject contention only in workload observations, leaving the final read available."""
+        frame = inspect.currentframe()
+        assert frame is not None and frame.f_back is not None
+        caller = frame.f_back
+        if function is original_report and caller.f_locals.get("phase") == "probe":
+            return await original_to_thread(locked_report, *args, **kwargs)
+        return await original_to_thread(function, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fail_workload_reads)
+    output = tmp_path / "missing-peak.json"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    namespace = runpy.run_path(str(script))
+    exit_code = namespace["main"]()
+    report = json.loads(output.read_text())
+    scenario = report["scenarios"][0]
+    assert scenario["successful_state_observations"].get("probe", 0) == 0
+    assert scenario["successful_state_observations"]["final"] == 1
+    assert scenario["operator_report"] is not None
+    assert scenario["observed_peak_active_operations"] is None
+    assert scenario["measurement_complete"] is False
+    assert report["measurement_complete"] is False and exit_code == 1
