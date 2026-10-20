@@ -36,10 +36,18 @@ class OperationAdmissionService:
     def __init__(self, settings: Settings, *, store: OperationStore | None = None) -> None:
         """Open hosted operation state and recover only provably dead local processes."""
         self.settings = settings
+        self.store: OperationStore
+        created_store: OperationStore | None = None
         try:
-            self.store = store or OperationStore(resolve_runtime_path(settings.beta_auth_db_path))
+            if store is None:
+                created_store = OperationStore(resolve_runtime_path(settings.beta_auth_db_path))
+                self.store = created_store
+            else:
+                self.store = store
             self.store.recover_interrupted()
         except (sqlite3.Error, OSError, ValueError) as exc:
+            if created_store is not None:
+                created_store.close()
             raise OperationAdmissionError(
                 "admission_unavailable: No operation started. Ask the operator to check "
                 "the hosted state volume and database locks, then retry."

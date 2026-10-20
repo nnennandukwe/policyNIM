@@ -534,3 +534,43 @@ def test_principal_limit_environment_names_match_runtime(monkeypatch: pytest.Mon
     settings = Settings()
     assert settings.mcp_max_concurrent_operations_per_principal == 3
     assert settings.mcp_principal_daily_operation_quota == 42
+
+
+@pytest.mark.parametrize("lock_mode", ["IMMEDIATE", "EXCLUSIVE"])
+def test_failed_construction_does_not_accumulate_owner_files(
+    tmp_path: Path, lock_mode: str
+) -> None:
+    """Repeated database outages can't grow unused lease files on the persistent volume."""
+    settings = _settings(tmp_path)
+    initial = OperationStore(settings.beta_auth_db_path)
+    initial.close()
+    directory = settings.beta_auth_db_path.with_name(settings.beta_auth_db_path.name + ".owners")
+    assert list(directory.iterdir()) == []
+    with sqlite3.connect(settings.beta_auth_db_path) as connection:
+        connection.execute("BEGIN " + lock_mode)
+        for _ in range(3):
+            with pytest.raises(OperationAdmissionError, match="admission_unavailable"):
+                OperationAdmissionService(settings)
+            assert list(directory.iterdir()) == []
+    recovered = OperationAdmissionService(settings)
+    recovered.store.close()
+    recovered.store.close()  # cleanup is idempotent
+    assert list(directory.iterdir()) == []
+
+
+def test_failed_owner_lock_removes_unused_created_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure before kernel ownership also cleans up its newly created empty lease."""
+    from policynim.storage import operation_lease
+
+    def fail_lock(descriptor: int) -> None:
+        """Inject a system lock error without leaving any admitted worker."""
+        raise OSError("injected lock failure")
+
+    monkeypatch.setattr(operation_lease, "_lock", fail_lock)
+    settings = _settings(tmp_path)
+    with pytest.raises(OperationAdmissionError, match="admission_unavailable"):
+        OperationAdmissionService(settings)
+    directory = settings.beta_auth_db_path.with_name(settings.beta_auth_db_path.name + ".owners")
+    assert list(directory.iterdir()) == []

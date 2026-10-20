@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import logging
 import os
 import re
 import stat
@@ -20,13 +21,22 @@ class OperationOwner:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.identity = uuid.uuid4().hex
         path = self.directory / (self.identity + ".lock")
+        self._path = path
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
         try:
             os.write(descriptor, b"0")
             _lock(descriptor)
         except BaseException:
-            os.close(descriptor)
+            try:
+                path.unlink()
+            except OSError:
+                logging.getLogger(__name__).warning(
+                    "Operation owner cleanup failed: storage_unavailable."
+                )
+            finally:
+                os.close(descriptor)
             raise
+        self._descriptor = descriptor
         self._release = weakref.finalize(self, os.close, descriptor)
 
     def abandoned(self, identity: str) -> bool:
@@ -53,7 +63,21 @@ class OperationOwner:
 
     def close(self) -> None:
         """Release this service's lease after its workers have drained."""
-        self._release()
+        if not self._release.alive:
+            return
+        try:
+            observed = self._path.stat(follow_symlinks=False)
+            owned = os.fstat(self._descriptor)
+            if (observed.st_dev, observed.st_ino) == (owned.st_dev, owned.st_ino):
+                self._path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "Operation owner cleanup failed: storage_unavailable."
+            )
+        finally:
+            self._release()
 
 
 def _lock(descriptor: int) -> None:
