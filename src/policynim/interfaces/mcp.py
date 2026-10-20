@@ -535,6 +535,14 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
         return "PolicyNIM configuration is invalid. Ask the operator to check the server settings."
     if isinstance(exc, ProviderError):
         messages = {
+            "endpoint_not_found": (
+                "The policy model endpoint or model isn't available (HTTP 404); don't retry "
+                "unchanged requests. Ask the operator to verify POLICYNIM_NVIDIA_CHAT_MODEL, "
+                "POLICYNIM_NVIDIA_EMBED_MODEL, POLICYNIM_NVIDIA_RERANK_MODEL, "
+                "POLICYNIM_NVIDIA_BASE_URL, and POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL, "
+                "then confirm account access with a minimal request. "
+                "Catalog listing alone doesn't prove access."
+            ),
             "endpoint_unavailable": (
                 "The policy model endpoint is unavailable (HTTP 410). Do not retry unchanged "
                 "requests. Ask the operator to verify NVIDIA model and endpoint settings "

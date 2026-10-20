@@ -24,7 +24,7 @@ from openai import (
     OpenAI,
 )
 from openai.types.chat import ChatCompletionMessageParam
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
@@ -413,6 +413,7 @@ class NVIDIAGenerator(Generator):
             messages=messages,
             max_retries=self._max_retries,
             operation="grounded generation",
+            response_model=GeneratedPreflightDraft,
             parse=_parse_generation_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -505,6 +506,7 @@ class NVIDIAPolicyCompiler:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy compilation",
+            response_model=GeneratedCompiledPolicyDraft,
             parse=_parse_compiled_policy_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -597,6 +599,7 @@ class NVIDIAPolicyConformanceEvaluator:
             messages=messages,
             max_retries=self._max_retries,
             operation="policy conformance evaluation",
+            response_model=GeneratedPolicyConformanceDraft,
             parse=lambda content: _parse_policy_conformance_draft(content, request),
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -616,6 +619,7 @@ def _request_chat_completion(
     messages: list[ChatCompletionMessageParam],
     max_retries: int,
     operation: str,
+    response_model: type[BaseModel],
     parse: Callable[[str], Any],
     timeout_seconds: float = 30.0,
     retry_initial_seconds: float = 0.5,
@@ -631,6 +635,15 @@ def _request_chat_completion(
             "temperature": 1,
             "top_p": 0.95,
             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
+    if model == "nvidia/nemotron-3.5-lightning-30b-a3b":
+        options["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "strict": True,
+                "schema": response_model.model_json_schema(),
+            },
         }
 
     def send(timeout: float) -> Any:
@@ -719,7 +732,7 @@ def _request_with_retry(
             )
             failure = "rate_limit" if status == 429 else "http_status"
             if status == 404:
-                failure = "endpoint_unavailable"
+                failure = "endpoint_not_found"
                 raise ProviderError(
                     f"NVIDIA {operation} endpoint or model isn't available (HTTP 404); "
                     "don't retry unchanged requests. "

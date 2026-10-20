@@ -14,7 +14,7 @@ from openai import OpenAI
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.providers.nvidia import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
 from policynim.settings import Settings
-from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
+from policynim.types import GeneratedPreflightDraft, PolicyMetadata, PreflightRequest, ScoredChunk
 
 NO_ENV: dict[str, Any] = {"_env_file": None}
 
@@ -98,7 +98,7 @@ def invoke(
     ("status", "failure_class", "attempts"),
     [
         (410, "endpoint_unavailable", 1),
-        (404, "endpoint_unavailable", 1),
+        (404, "endpoint_not_found", 1),
         (400, "bad_request", 1),
         (401, "auth", 1),
         (403, "auth", 1),
@@ -309,6 +309,15 @@ def test_chat_options_are_specific_to_replacement_model(model):
         assert calls[0]["temperature"] == 0
         assert calls[0]["top_p"] == 1
         assert "chat_template_kwargs" not in calls[0]
+    if model == CHAT_MODEL:
+        response_format = calls[0]["response_format"]
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["strict"] is True
+        assert (
+            response_format["json_schema"]["schema"] == GeneratedPreflightDraft.model_json_schema()
+        )
+    else:
+        assert "response_format" not in calls[0]
 
 
 def test_default_models_and_environment_overrides(monkeypatch):
