@@ -440,6 +440,8 @@ async def _measure(
         intervention: str | None = None
         drain_observation: str | None = None
         intervention_started_with_active_work: bool | None = None
+        active_work_observed_before_intervention: bool | None = None
+        intervention_probe_observed: bool | None = None
         try:
             if scenario in {"disconnect", "shutdown"}:
                 pending = asyncio.create_task(request(0))
@@ -448,8 +450,17 @@ async def _measure(
                     observed = await observe_state("intervention")
                     if observed is not None:
                         intervention_started_with_active_work = observed.active_operations > 0
+                        active_work_observed_before_intervention = bool(
+                            active_work_observed_before_intervention
+                            or intervention_started_with_active_work
+                        )
                         active_peak = max(active_peak, observed.active_operations)
-                    if intervention_started_with_active_work or pending.done():
+                    intervention_probe_observed = (
+                        cheap_outcomes["health_200"] > 0 and cheap_outcomes["ok"] > 0
+                    )
+                    if (
+                        intervention_started_with_active_work and intervention_probe_observed
+                    ) or pending.done():
                         break
                     if time.monotonic() >= deadline:
                         break
@@ -479,7 +490,7 @@ async def _measure(
                     intervention = (
                         "SIGTERM_during_active_work"
                         if intervention_started_with_active_work
-                        else "SIGTERM_before_active_work_observed"
+                        else "SIGTERM_without_active_work_at_intervention"
                     )
                     process.send_signal(signal.SIGTERM)
                     await asyncio.gather(pending, return_exceptions=True)
@@ -502,7 +513,9 @@ async def _measure(
         measurement_complete = report is not None and workload_observations > 0
         if scenario in {"disconnect", "shutdown"}:
             measurement_complete = (
-                measurement_complete and intervention_started_with_active_work is True
+                measurement_complete
+                and intervention_started_with_active_work is True
+                and intervention_probe_observed is True
             )
         if scenario == "disconnect":
             measurement_complete = (
@@ -541,6 +554,8 @@ async def _measure(
             "intervention": intervention,
             "drain_observation": drain_observation,
             "intervention_started_with_active_work": intervention_started_with_active_work,
+            "active_work_observed_before_intervention": active_work_observed_before_intervention,
+            "intervention_probe_observed": intervention_probe_observed,
             "client_concurrency": concurrency,
         }
 
