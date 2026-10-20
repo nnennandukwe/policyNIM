@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,24 @@ from policynim.settings import Settings
 
 HostedSeed = tuple[Settings, GenerationStore, Path, str]
 NO_ENV: dict[str, Any] = {"_env_file": None}
+
+
+def test_production_example_loads_persistent_runtime_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shipped environment example keeps mutable state on the mounted volume."""
+    for name in tuple(os.environ):
+        if name.startswith(("POLICYNIM_", "NVIDIA_")) or name == "PORT":
+            monkeypatch.delenv(name)
+    options: dict[str, Any] = {
+        "_env_file": Path(__file__).resolve().parents[1] / ".env.production.example"
+    }
+    settings = Settings(**options)
+    assert settings.policynim_env == "production"
+    assert settings.generations_dir == Path("/app/state/generations")
+    assert settings.eval_workspace_dir == Path("/app/state/evals/workspace")
+    assert settings.beta_auth_db_path == Path("/app/state/auth.sqlite3")
+    assert settings.runtime_evidence_db_path == Path("/app/state/runtime_evidence.sqlite3")
 
 
 @pytest.fixture
