@@ -135,6 +135,16 @@ def admit_operation(
     )
 
 
+def _validate_work_identity(work_units: int, reservation_key: str, request_digest: str) -> None:
+    """Use identical validated weights and opaque identities for preflight and acceptance."""
+    if type(work_units) is not int or work_units < 1:
+        raise ValueError("Work units must be a positive integer.")
+    if any(
+        re.fullmatch(r"[0-9a-f]{64}", value) is None for value in (reservation_key, request_digest)
+    ):
+        raise ValueError("Acceptance key and request digest must be SHA256 hex values.")
+
+
 class OperationAdmissionError(PolicyNIMError):
     """Reject work before provider execution with a stable recovery message."""
 
@@ -248,6 +258,57 @@ class OperationAdmissionService:
                 raise OperationAdmissionError(_admission_storage_error(exc)) from exc
         raise AssertionError("Storage retry loop didn't return.")
 
+    def check_work_allowance(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        operation_name: str,
+        reservation_key: str,
+        request_digest: str,
+        work_units: int,
+        check_ready: Callable[[], object] | None = None,
+    ) -> AcceptedWork | None:
+        """Reject exhausted new work cheaply; matching keyed retries keep their existing charge.
+
+        This read doesn't reserve allowance. Final atomic acceptance is still required after
+        preparation because another request can spend the available units in the meantime.
+        """
+        _validate_work_identity(work_units, reservation_key, request_digest)
+        self._require_ready(principal, operation_name, lambda: False, check_ready)
+        snapshot = self._retry_storage(
+            lambda: self.store.inspect_work_allowance(
+                principal_id=principal_identity(principal.issuer, principal.subject),
+                reservation_key=reservation_key,
+                credential_id=principal.credential_id,
+            )
+        )
+        self._require_ready(principal, operation_name, lambda: False, check_ready)
+        credential = snapshot.credential
+        if principal.source == "beta_key" and (
+            credential is None
+            or credential.account_id != int(principal.subject)
+            or credential.account_status != "active"
+            or credential.revoked_at is not None
+        ):
+            self._check_decision(OperationAdmission(rejection="invalid_token"))
+        existing = snapshot.reservation
+        if existing is not None:
+            if (existing.operation, existing.request_digest, existing.work_units) != (
+                operation_name,
+                request_digest,
+                work_units,
+            ):
+                self._check_decision(OperationAdmission(rejection="acceptance_conflict"))
+            return AcceptedWork(existing.operation_id, existing.work_units, existing.outcome)
+        daily_limit = (
+            self.settings.beta_daily_request_quota
+            if principal.source == "beta_key"
+            else self.settings.mcp_principal_daily_operation_quota
+        )
+        if snapshot.daily_work_units + work_units > daily_limit:
+            self._check_decision(OperationAdmission(rejection="quota_exceeded"))
+        return None
+
     def accept_work(
         self,
         *,
@@ -259,13 +320,7 @@ class OperationAdmissionService:
         check_ready: Callable[[], object] | None = None,
     ) -> AcceptedWork:
         """Commit idempotent weighted acceptance without acquiring an execution slot."""
-        if type(work_units) is not int or work_units < 1:
-            raise ValueError("Work units must be a positive integer.")
-        if any(
-            re.fullmatch(r"[0-9a-f]{64}", value) is None
-            for value in (reservation_key, request_digest)
-        ):
-            raise ValueError("Acceptance key and request digest must be SHA256 hex values.")
+        _validate_work_identity(work_units, reservation_key, request_digest)
 
         def accept() -> OperationAdmission:
             """Reserve against a write-locked daily allowance after checking current authority."""
