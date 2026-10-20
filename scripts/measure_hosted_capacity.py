@@ -440,6 +440,7 @@ async def _measure(
         intervention: str | None = None
         drain_observation: str | None = None
         intervention_started_with_active_work: bool | None = None
+        intervention_probe_observed: bool | None = None
         try:
             if scenario in {"disconnect", "shutdown"}:
                 pending = asyncio.create_task(request(0))
@@ -449,7 +450,12 @@ async def _measure(
                     if observed is not None:
                         intervention_started_with_active_work = observed.active_operations > 0
                         active_peak = max(active_peak, observed.active_operations)
-                    if intervention_started_with_active_work or pending.done():
+                    intervention_probe_observed = (
+                        cheap_outcomes["health_200"] > 0 and cheap_outcomes["ok"] > 0
+                    )
+                    if (
+                        intervention_started_with_active_work and intervention_probe_observed
+                    ) or pending.done():
                         break
                     if time.monotonic() >= deadline:
                         break
@@ -502,7 +508,9 @@ async def _measure(
         measurement_complete = report is not None and workload_observations > 0
         if scenario in {"disconnect", "shutdown"}:
             measurement_complete = (
-                measurement_complete and intervention_started_with_active_work is True
+                measurement_complete
+                and intervention_started_with_active_work is True
+                and intervention_probe_observed is True
             )
         if scenario == "disconnect":
             measurement_complete = (
@@ -541,6 +549,7 @@ async def _measure(
             "intervention": intervention,
             "drain_observation": drain_observation,
             "intervention_started_with_active_work": intervention_started_with_active_work,
+            "intervention_probe_observed": intervention_probe_observed,
             "client_concurrency": concurrency,
         }
 
