@@ -145,11 +145,36 @@ def safe_diagnostic(text: str, env: dict[str, str]) -> str:
 
 
 def read_diagnostic(path: Path, env: dict[str, str]) -> str:
-    """Read a bounded stderr tail before redaction and release-receipt serialization."""
+    """Redact full values across a bounded tail's boundary before selecting its output."""
+    sensitive = {
+        value.encode("utf-8", errors="replace")
+        for key, value in env.items()
+        if value and any(marker in key.upper() for marker in ("TOKEN", "SECRET", "KEY", "PASSWORD"))
+    }
+    overlap = max(map(len, sensitive), default=0)
+    if overlap > 16000:
+        return "Child diagnostics omitted: a credential exceeds the safe capture bound."
+    capture_limit = 16000 + overlap
     with path.open("rb") as stream:
         stream.seek(0, os.SEEK_END)
-        stream.seek(max(0, stream.tell() - 16000))
-        return safe_diagnostic(stream.read(16000).decode("utf-8", errors="replace"), env)
+        stream.seek(max(0, stream.tell() - capture_limit))
+        captured = stream.read(capture_limit)
+    intervals = []
+    for value in sensitive:
+        start = captured.find(value)
+        while start >= 0:
+            intervals.append((start, start + len(value)))
+            start = captured.find(value, start + 1)
+    cursor = max(0, len(captured) - 16000)
+    redacted = []
+    for start, end in sorted(intervals):
+        if end <= cursor:
+            continue
+        redacted.append(captured[cursor : max(cursor, start)])
+        redacted.append(b"<redacted>")
+        cursor = end
+    redacted.append(captured[cursor:])
+    return safe_diagnostic(b"".join(redacted).decode("utf-8", errors="replace"), env)
 
 
 def wait_for_health(
@@ -344,7 +369,12 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         report["policy_count"] = source["effective_count"]
         report["chunk_count"] = inspected["manifest"]["chunk_count"]
         evaluated = run_cli(["eval", "--headless", "--no-compare-rerank"], env=env, cwd=cwd)
-        report["synthetic_offline_cases"] = evaluated["runs"][0]["metrics"]
+        metrics = evaluated["runs"][0]["metrics"]
+        require(
+            metrics["case_count"] == 6 and metrics["overall_pass_rate"] == 1.0,
+            "Installed offline fixture requires exactly 6 passing cases.",
+        )
+        report["synthetic_offline_cases"] = metrics
         report["stdio"] = asyncio.run(check_stdio(env, cwd))
 
         with socket.socket() as probe:
