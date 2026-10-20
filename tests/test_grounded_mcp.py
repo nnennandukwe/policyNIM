@@ -530,3 +530,40 @@ def test_compile_and_evidence_use_principal_daily_admission(
         assert calls == ["compiled"]
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"nvidia_embed_model": "different-embedding-model"},
+        {"nvidia_base_url": "https://changed.example/v1"},
+    ],
+)
+def test_retained_resources_use_their_sealed_embedding_identity(generation, updates) -> None:
+    """Qodo regression: retained source evidence outlives the runtime's model configuration."""
+    from contextlib import closing
+
+    from policynim.services.index_store import create_index_store
+
+    settings, _, generation_id = generation
+    original_catalog = read_policy_catalog(settings, generation_id=generation_id)
+    original_policy = read_policy_resource(
+        settings, generation_id=generation_id, policy_key=resource_key("A")
+    )
+    with closing(create_index_store(settings)) as store:
+        chunk_id = store.list_chunks()[0].chunk_id
+    original_chunk = read_chunk_resource(
+        settings, generation_id=generation_id, chunk_key=resource_key(chunk_id)
+    )
+    changed = settings.model_copy(update=updates)
+    assert read_policy_catalog(changed, generation_id=generation_id) == original_catalog
+    assert (
+        read_policy_resource(changed, generation_id=generation_id, policy_key=resource_key("A"))
+        == original_policy
+    )
+    assert (
+        read_chunk_resource(changed, generation_id=generation_id, chunk_key=resource_key(chunk_id))
+        == original_chunk
+    )
+    with pytest.raises(GenerationError):
+        create_index_store(changed)

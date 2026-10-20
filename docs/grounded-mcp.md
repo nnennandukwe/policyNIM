@@ -13,7 +13,7 @@ PolicyNIM exposes policy search, compiled engineering constraints and preflight 
 
 The optional `top_k` accepts 1 through 20; omission uses the configured default. Expensive tool calls share the server's admission slots, operation deadline and managed NVIDIA clients. Hosted compilation and evidence need both `policies:read` and `policies:evaluate`; public policy resource reads and the review prompt need `policies:read` when hosted authentication is enabled.
 
-The evidence tool returns the same `run_id` in `result` and `evidence_trace`. `compiled_packet_id` hashes the pipeline's original compiled packet. Presentation links added to returned citations don't rerun or replace that packet. The trace and result identify the generation used during retrieval, even if a different generation becomes active before the response reaches the client.
+The evidence tool returns the same `run_id` in `result` and `evidence_trace`. `compiled_packet_id` hashes the pipeline's compiled packet while excluding optional citation links from its identity. Adding a resource link doesn't change an existing packet fingerprint or rerun generation. The trace and result identify the generation used during retrieval, even if a different generation becomes active before the response reaches the client.
 
 ## Resources
 
@@ -29,7 +29,7 @@ Generation IDs contain 64 lowercase hexadecimal characters. Policy and chunk key
 
 `policy_compile` and `policy_preflight_evidence` citations include `resource_uri` links whenever an authoritative generation exists. Read these links to inspect the exact evidence supporting the answer. Resource listing, template discovery, resource reads and prompt discovery don't invoke NVIDIA models.
 
-Historical links remain valid while the operator retains the generation. Reader leases protect reads already in progress. An unknown, invalid or purged generation fails explicitly; it never resolves to the current generation. An unknown policy or chunk fails without reading arbitrary files. Use the [generation operations guide](policy-generations.md) to inspect retention and restore retained bundles when needed.
+Historical links remain valid while the operator retains the generation, even if the runtime embedding model or endpoint changes. Read-only archival validation uses the selected generation's sealed identity; live retrieval still requires the configured identity to match. Reader leases protect reads already in progress. An unknown, invalid or purged generation fails explicitly; it never resolves to the current generation. An unknown policy or chunk fails without reading arbitrary files. Use the [generation operations guide](policy-generations.md) to inspect retention and restore retained bundles when needed.
 
 The public resource surface contains the maintained corpus only. It doesn't expose caller-specific evaluation reports, upload paths or policy-authoring operations.
 
