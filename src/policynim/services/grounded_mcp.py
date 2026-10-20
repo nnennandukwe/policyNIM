@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import re
 from contextlib import closing
+from functools import lru_cache
+from pathlib import Path
 from uuid import uuid4
 
 from policynim.errors import PolicyNIMError
@@ -16,6 +18,7 @@ from policynim.services.generations import GenerationStore
 from policynim.services.index_store import create_index_store
 from policynim.services.preflight import create_preflight_service
 from policynim.settings import Settings
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 from policynim.types import (
     Citation,
     CompileRequest,
@@ -111,6 +114,15 @@ def read_policy_resource(
     raise PolicyResourceError("unknown_policy: This policy isn't in the selected generation.")
 
 
+@lru_cache(maxsize=8)
+def _chunk_key_lookup(index_path: str, generation_id: str) -> dict[str, str]:
+    """Cache only ID mappings for at most eight validated immutable generations."""
+    # The caller keeps its validated generation lease throughout this lookup.
+    # Content-addressed identity makes the mapping stable across activations.
+    with closing(SQLiteVecIndexStore(path=Path(index_path))) as store:
+        return {resource_key(chunk_id): chunk_id for chunk_id in store.list_chunk_ids()}
+
+
 def read_chunk_resource(
     settings: Settings, *, generation_id: str, chunk_key: str
 ) -> dict[str, object]:
@@ -118,14 +130,15 @@ def read_chunk_resource(
     settings = _generation_settings(settings, generation_id)
     _validate_key(chunk_key)
     with closing(create_index_store(settings)) as store:
-        for chunk in store.list_chunks():
-            if resource_key(chunk.chunk_id) == chunk_key:
-                return {
-                    "generation_id": generation_id,
-                    "resource_uri": chunk_resource_uri(generation_id, chunk.chunk_id),
-                    "policy_uri": policy_resource_uri(generation_id, chunk.policy.policy_id),
-                    "chunk": chunk.model_dump(mode="json"),
-                }
+        chunk_id = _chunk_key_lookup(str(store.path), generation_id).get(chunk_key)
+        chunk = store.get_chunk(chunk_id) if chunk_id is not None else None
+        if chunk is not None:
+            return {
+                "generation_id": generation_id,
+                "resource_uri": chunk_resource_uri(generation_id, chunk.chunk_id),
+                "policy_uri": policy_resource_uri(generation_id, chunk.policy.policy_id),
+                "chunk": chunk.model_dump(mode="json"),
+            }
     raise PolicyResourceError("unknown_chunk: This chunk isn't in the selected generation.")
 
 
