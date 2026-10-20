@@ -551,6 +551,7 @@ class Citation(StrictModel):
     section: str
     lines: str
     chunk_id: str
+    resource_uri: str | None = None
 
 
 class SearchRequest(StrictModel):
@@ -559,6 +560,20 @@ class SearchRequest(StrictModel):
     query: str
     domain: str | None = None
     top_k: TopK = DEFAULT_TOP_K
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def validate_query(cls, value: object) -> str:
+        """Reject blank retrieval queries before provider work."""
+        return _validate_non_empty_string(value, field_name="query")
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def validate_domain(cls, value: object) -> str | None:
+        """Reject blank filters while preserving omitted filters."""
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, field_name="domain")
 
 
 class SearchResult(StrictModel):
@@ -894,6 +909,7 @@ class GeneratedPreflightDraft(StrictModel):
 class PreflightResult(StrictModel):
     """Preflight response shared by CLI and MCP."""
 
+    run_id: str | None = None
     generation_id: GenerationID | None = None
 
     task: str
@@ -1089,6 +1105,7 @@ class PolicyEvidenceTraceConformanceCheck(StrictModel):
 class PolicyEvidenceTrace(StrictModel):
     """Replay-free evidence trace for one policy-conditioned preflight run."""
 
+    run_id: str | None = None
     generation_id: GenerationID | None = None
 
     task: str
@@ -1262,6 +1279,64 @@ class EvalAggregateMetrics(StrictModel):
     conformance_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class ChatRequestConfiguration(StrictModel):
+    """Resolved sampling and output settings shared by dispatch and reporting."""
+
+    model: str
+    temperature: float
+    top_p: float
+    enable_thinking: bool | None = None
+    output_mode: Literal["default", "json_schema"] = "default"
+
+
+class ConformanceThresholds(StrictModel):
+    """Score boundaries used by the optional conformance judge."""
+
+    final_adherence: float = Field(ge=0.0, le=1.0)
+    trajectory_adherence: float = Field(ge=0.0, le=1.0)
+
+
+class EvalEffectiveConfiguration(StrictModel):
+    """Resolved run settings, without credentials or claims about provider invocation."""
+
+    provider: Literal["nvidia", "synthetic"] = "nvidia"
+    embedding_model: str | None = None
+    reranking_model: str | None = None
+    chat: ChatRequestConfiguration | None = None
+    top_k_by_case: dict[str, int]
+    rerank_enabled: bool
+    request_timeout_seconds: float | None = None
+    operation_timeout_seconds: float
+    max_retries: int | None = None
+    conformance_thresholds: ConformanceThresholds | None = None
+
+
+EvalFamilySource = Literal["pack", "domain", "unassigned"]
+
+
+class EvalFamilyCoverage(StrictModel):
+    """Executed gold cases assigned to a sealed source family."""
+
+    family: str
+    source: EvalFamilySource
+    case_ids: list[str]
+    passed_case_ids: list[str]
+    case_count: int = Field(ge=0)
+    passed_case_count: int = Field(ge=0)
+    conformance_case_count: int = Field(default=0, ge=0)
+    judged_case_count: int | None = Field(default=None, ge=0)
+    operation_counts: dict[EvalKind, int]
+
+
+class EvalSourceCoverage(StrictModel):
+    """Pinned profile and overlapping family coverage from executed expectations only."""
+
+    profile_id: str | None = None
+    profile_digest: str | None = None
+    executed_case_count: int = Field(ge=0)
+    families: list[EvalFamilyCoverage] = Field(default_factory=list)
+
+
 class EvalModeRunResult(StrictModel):
     """All eval results for one rerank mode."""
 
@@ -1271,6 +1346,8 @@ class EvalModeRunResult(StrictModel):
     catalog_digest: str | None = None
     provider_models: dict[str, str] = Field(default_factory=dict)
     provider_usage: Literal["not_performed", "unavailable"] = "not_performed"
+    effective_configuration: EvalEffectiveConfiguration | None = None
+    source_coverage: EvalSourceCoverage | None = None
 
     backend: EvalBackend = "default"
     rerank_enabled: bool

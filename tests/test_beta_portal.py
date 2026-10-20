@@ -179,8 +179,9 @@ def test_beta_portal_dashboard_shows_agent_workflow_prompts(monkeypatch) -> None
         "Use policy_search for: release installer checksum verification.",
         "cited policy lines",
         (
-            "List the PolicyNIM MCP tools and confirm policy_preflight and "
-            "policy_search are available before starting implementation."
+            "List the PolicyNIM MCP tools and confirm policy_search, policy_compile, "
+            "policy_preflight and policy_preflight_evidence are available before starting "
+            "implementation."
         ),
     ):
         assert token in dashboard.text
@@ -236,7 +237,8 @@ def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
 
     assert response.status_code == 502
     assert 'class="beta-page beta-page--landing"' in response.text
-    assert "unexpected upstream error" in response.text
+    assert "unexpected error" in response.text
+    assert "upstream" not in response.text
 
 
 def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> None:

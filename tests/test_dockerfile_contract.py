@@ -29,6 +29,11 @@ def test_container_imports_verified_bundle_without_provider_credentials(filename
     assert "POLICYNIM_GENERATIONS_DIR=/app/data/generations" in text
     assert "COPY pyproject.toml uv.lock README.md LICENSE ./" in text
     assert "uv sync --frozen" in text
+    assert (
+        "COPY --from=builder /app/artifacts/public-generation /app/artifacts/public-generation"
+        in text
+    )
+    assert 'CMD ["python", "-m", "policynim.interfaces.hosted"]' in text
 
 
 def test_checked_in_public_bundle_matches_current_sources_and_default_identity(

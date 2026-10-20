@@ -1,0 +1,74 @@
+schema_version = 1
+pack_id = "policynim.observability"
+version = "0.3.0"
+
+[[policies]]
+policy_id = "BE-LOG-001"
+path = "backend-logging-standard.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP Logging Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["Data to exclude"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OpenTelemetry stable Logs Data Model"
+url = "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md"
+revision = "3e4f2ff15933d70356cc18a9a96719b78d116233"
+sections = ["Trace Context Fields", "Field: Resource"]
+retrieved_on = 2026-10-20
+license = "Apache-2.0"
+attribution = "OpenTelemetry authors; Cloud Native Computing Foundation"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "BE-TRACE-001"
+path = "request-correlation-and-tracing-standard.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "W3C Trace Context Recommendation"
+url = "https://www.w3.org/TR/2021/REC-trace-context-1-20211123/"
+revision = "W3C Recommendation 2021-11-23"
+sections = ["3.2", "4", "6", "7"]
+retrieved_on = 2026-10-20
+license = "W3C permissive document license; source link retained"
+attribution = "W3C Distributed Tracing Working Group, 2021"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "OpenTelemetry stable Logs Data Model"
+url = "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md"
+revision = "3e4f2ff15933d70356cc18a9a96719b78d116233"
+sections = ["Trace Context Fields"]
+retrieved_on = 2026-10-20
+license = "Apache-2.0"
+attribution = "OpenTelemetry authors; Cloud Native Computing Foundation"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "OBS-READINESS-001"
+path = "metrics-and-readiness.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Google SRE: Monitoring Distributed Systems"
+url = "https://sre.google/sre-book/monitoring-distributed-systems/"
+revision = "Site Reliability Engineering, 2016, chapter 6"
+sections = ["The Four Golden Signals", "Black-Box Versus White-Box"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Rob Ewaschuk; edited by Betsy Beyer; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

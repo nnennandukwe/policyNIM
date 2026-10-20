@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from pathlib import Path
@@ -408,18 +409,21 @@ def test_release_publication_joins_checked_artifact_evidence_before_upload() -> 
     assert joined < published
     assert '--source-sha "$GITHUB_SHA"' in commands[joined]
     assert '--tag "$RELEASE_TAG"' in commands[joined]
+    assert "uv run --no-sync" in commands[joined]
+    assert any("uv sync --locked" in command for command in commands)
+    assert any("astral-sh/setup-uv@" in step.get("uses", "") for step in publication["steps"])
     wheel = "\n".join(step.get("run", "") for step in jobs["wheel-smoke"]["steps"])
     assert '"export", "--locked"' in wheel
     assert '"--require-hashes", "--no-deps"' in wheel
     assert "verify_installed_package.py" in wheel
     names = [step["name"] for step in jobs["standalone-build"]["steps"]]
     assert names.index("Archive Unix standalone bundle") < names.index(
-        "Bind standalone receipt to archive"
+        "Verify standalone generation and transports"
     )
     assert names.index("Archive Windows standalone bundle") < names.index(
-        "Bind standalone receipt to archive"
+        "Verify standalone generation and transports"
     )
-    assert names.index("Bind standalone receipt to archive") < names.index(
+    assert names.index("Verify standalone generation and transports") < names.index(
         "Retain standalone verification evidence"
     )
 
@@ -430,9 +434,11 @@ def test_standalone_upload_excludes_committed_generation_sources() -> None:
     upload = next(step for step in job["steps"] if step["name"] == "Upload standalone bundle")
     assert upload["with"]["path"] == "standalone-archives/*"
     binding = next(
-        step["run"] for step in job["steps"] if step["name"] == "Bind standalone receipt to archive"
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify standalone generation and transports"
     )
-    assert 'Path("standalone-archives").iterdir()' in binding
+    assert '(root / "standalone-archives").iterdir()' in binding
 
 
 def test_standalone_verification_requires_requested_release_version() -> None:
@@ -484,3 +490,58 @@ def test_release_python_guard_detects_removed_override() -> None:
     step["run"] = step["run"].replace(" --python ${{ matrix.python-version }}", "")
     with pytest.raises(AssertionError):
         _assert_release_source_python_selection(job)
+
+
+def test_wheel_export_uses_the_running_matrix_interpreter() -> None:
+    """Fresh wheel dependencies must use the interpreter that created their environment."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["wheel-smoke"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify fresh wheel from locked dependencies"
+    )
+    script = command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exports = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.List)
+        and len(node.elts) >= 2
+        and isinstance(node.elts[0], ast.Constant)
+        and node.elts[0].value == "uv"
+        and isinstance(node.elts[1], ast.Constant)
+        and node.elts[1].value == "export"
+    ]
+    assert len(exports) == 1
+    arguments = exports[0].elts
+    selection = next(
+        (
+            index
+            for index, node in enumerate(arguments)
+            if isinstance(node, ast.Constant) and node.value == "--python"
+        ),
+        None,
+    )
+    assert selection is not None, "uv export must override the repository's Python pin"
+    assert ast.dump(arguments[selection + 1]) == ast.dump(
+        ast.parse("sys.executable", mode="eval").body
+    )
+
+
+def test_standalone_archive_payload_runs_before_receipt_binding() -> None:
+    """The actual compressed payload must run before evidence can authorize upload."""
+    steps = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["standalone-build"]["steps"]
+    verification = next(
+        i for i, step in enumerate(steps) if "scripts/verify_standalone.py" in step.get("run", "")
+    )
+    assert (
+        next(i for i, step in enumerate(steps) if step["name"] == "Archive Unix standalone bundle")
+        < verification
+    )
+    assert (
+        next(
+            i for i, step in enumerate(steps) if step["name"] == "Archive Windows standalone bundle"
+        )
+        < verification
+    )
+    assert '"--archive"' in steps[verification]["run"]
+    assert not any(step["name"] == "Bind standalone receipt to archive" for step in steps)

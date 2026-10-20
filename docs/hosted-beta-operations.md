@@ -37,7 +37,7 @@ Hosted beta notes:
 
 - The server uses Python MCP SDK `2.2.0`, serving MCP `2026-07-28` and legacy
   clients over stateless HTTP. Beta API keys remain the authorization mechanism;
-  the SDK upgrade does not introduce standards-based MCP OAuth.
+  the SDK upgrade doesn't introduce standards-based MCP OAuth.
 - Set `POLICYNIM_MCP_PUBLIC_BASE_URL` to the deployed origin so MCP Host and
   Origin checks allow the public endpoint. Reverse proxies must preserve an
   allowed Host header; clients without an Origin header remain supported.
@@ -49,11 +49,11 @@ Hosted beta notes:
 - A server process admits one key-regeneration request per account at a time.
   An overlapping request receives HTTP `409`; wait for the first request and
   refresh `/beta` before trying again. Later deliberate rotations still revoke
-  the previous key. This guard does not coordinate independent server processes.
+  the previous key. This guard doesn't coordinate independent server processes.
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret
-- `POLICYNIM_TOKEN` is a client-side shell variable only. It is not a
+- `POLICYNIM_TOKEN` is a client-side shell variable only. It isn't a
   PolicyNIM app setting
 - `POLICYNIM_MCP_BEARER_TOKENS` is optional and reserved for operator
   break-glass access on `/mcp`
@@ -110,7 +110,7 @@ GitHub Actions smoke:
   because NVIDIA embeddings, reranking, or grounded generation is temporarily
   unavailable
 - for transient timeout, connection, rate-limit, or server errors, retry after a short delay
-- HTTP 410 is classified as `endpoint_unavailable` and is not retried; verify
+- HTTP 410 is classified as `endpoint_unavailable` and isn't retried; verify
   the operation's model and endpoint configuration against the current NVIDIA
   catalog and follow [provider recovery](hosted-provider-recovery.md)
 - if the failure persists, the operator should inspect hosted MCP logs for
@@ -125,8 +125,8 @@ GitHub Actions smoke:
 
 ### Service Unavailable
 
-- if the hosted MCP URL does not respond, or `/healthz` returns `503`, the
-  hosted service or baked local index is not ready yet
+- if the hosted MCP URL doesn't respond, or `/healthz` returns `503`, the
+  hosted service or baked local index isn't ready yet
 - retry after the service becomes healthy. If you operate the service, check the
   Railway deploy state and `/healthz` first
 - if `/healthz` includes `Local index readiness could not be inspected`, use the
@@ -154,7 +154,30 @@ then validate and activate source text, catalog, SQLite vectors, runtime rules,
 model identity, and notices without model credentials. Changed policy sources
 require an explicitly refreshed bundle; a stale artifact fails the build.
 
-The runtime reads `/app/data/generations` through `POLICYNIM_GENERATIONS_DIR`.
+The image defaults to `/app/data/generations`. Hosted deployments must mount
+`/app/state` and set `POLICYNIM_GENERATIONS_DIR=/app/state/generations` so retained
+objects and their active pointer survive redeploys. The container startup validates
+the existing selected generation, or imports the trusted image seed once when the
+target root is absent. It never activates a new image seed over existing state.
+Persistent deployments also set `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`.
+The hosted entrypoint refuses an unmounted path or generation, authentication,
+evaluation, or runtime-evidence paths outside that volume before creating state.
+This startup check doesn't establish cross-redeploy durability; verify that
+separately. Leaving the setting absent permits an ephemeral image test.
+An unowned, incomplete, incompatible, or damaged root blocks startup and remains
+available for operator recovery. Restart doesn't rebuild or call providers.
+
+Policy updates need an explicit, reviewed `generation import` or `generation
+activate` operation against the mounted root. Inspect the active ID first, retain
+its objects, and follow [generation rollback](policy-generations.md). Changing an
+application image alone keeps the previous policy selection. A newer application
+can therefore serve an intentionally retained older policy generation.
+
+An interrupted first import can leave an owned root without an active pointer.
+Preserve that root, inspect it, and explicitly import the verified seed before
+restarting. Startup won't infer that an existing directory is disposable.
+
+The runtime selects storage through `POLICYNIM_GENERATIONS_DIR`.
 Health and MCP discovery work without an NVIDIA key. Live search and preflight
 still require runtime `NVIDIA_API_KEY`. Each request retains its selected generation
 until cleanup; a new activation affects subsequent requests.
@@ -163,6 +186,12 @@ Example hosted run:
 
 ```bash
 docker run --rm -p 8000:8000 \
+  --mount type=volume,source=policynim-state,target=/app/state \
+  -e POLICYNIM_GENERATIONS_DIR=/app/state/generations \
+  -e POLICYNIM_HOSTED_STATE_MOUNT=/app/state \
+  -e POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3 \
+  -e POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace \
+  -e POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3 \
   -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
   -e POLICYNIM_MCP_REQUIRE_AUTH=true \
   -e POLICYNIM_MCP_BEARER_TOKENS=token-a \
@@ -224,12 +253,16 @@ Recommended beta setup:
    - `POLICYNIM_MCP_HOST=0.0.0.0`
 4. Deploy once so the service becomes healthy on `/healthz`.
 5. Generate a Railway public domain for that service.
-6. Mount one Railway volume at `/app/state` for the hosted auth SQLite database.
+6. Mount one Railway volume at `/app/state` for auth, generations, and job state.
 7. Set these runtime variables and redeploy:
    - `POLICYNIM_MCP_REQUIRE_AUTH=true`
    - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
    - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
    - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
+   - `POLICYNIM_GENERATIONS_DIR=/app/state/generations`
+   - `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`
+   - `POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace`
+   - `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3`
    - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`
@@ -268,7 +301,8 @@ Important hosted behavior:
 - `/mcp` returns:
   - `401 {"error":"Unauthorized."}` for missing, invalid, or revoked bearer tokens
   - `403 {"error":"Account suspended."}` for suspended self-serve accounts
-  - `429 {"error":"Quota exceeded."}` when the UTC-day request quota is exhausted
+  - MCP tool error `quota_exceeded` when reserved-work-unit allowance is exhausted;
+    discovery remains usable, and the tool message gives the UTC reset time
 - hosted MCP logs emit one JSON object per line for auth rejects and tool calls,
   including `auth_result`, `tool_name`, `latency_ms`, and
   `upstream_failure_class`
@@ -305,7 +339,7 @@ uv run policynim beta-admin audit-log --event-type api_key_rotated --limit 10
 
 The audit log output is JSON, newest-first, and redacts secret-bearing detail
 keys. It may show API key prefixes because those are stored as recovery metadata;
-it must not expose full API keys, bearer tokens, or key hashes.
+it mustn't expose full API keys, bearer tokens, or key hashes.
 
 Optional checks stay explicitly opt-in:
 
@@ -378,3 +412,188 @@ They don't include task text, policy text, credentials, response bodies, or exce
 messages. Token counts describe responses that supplied usage; they aren't a bill
 or proof that failed attempts were free. Stage events and attempt events are separate
 measurements and shouldn't be added together as total latency.
+
+
+## Principal operation limits
+
+Hosted authentication doesn't consume work-unit allowance. Interactive expensive
+work (search, preflight, compile and preflight evidence) reserves one unit when its
+admission transaction commits, before providers start. Durable evaluation work
+reserves its validated case/configuration weight before the job is queued; worker
+activation doesn't reserve another unit. Later provider failure, cancellation or
+process loss keeps the accepted charge. A rejected new acceptance adds no charge.
+Cancellation/deadline checks run again with the write-locked acceptance snapshot.
+Queued activation also rechecks authority, cancellation, deadline and active caps:
+rejection starts no provider and adds no units, while the prior reservation stays
+charged. Cancelling or expiring an already accepted queued job doesn't refund it.
+Initialization, discovery, public health, resources and job polling aren't expensive
+operations. Resources, review prompts, job inspection, results and cancellation
+reserve no units. Returning an existing durable submission reserves no additional
+units. Their local worker concurrency remains bounded. Durable evaluation integration
+is tracked in [#101](https://github.com/nnennandukwe/policyNIM/issues/101).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` | `10` | Global active work, held until worker cleanup finishes |
+| `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS_PER_PRINCIPAL` | `2` | Active work per authenticated issuer/subject |
+| `POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA` | `500` | Reserved work units per OAuth/operator principal per UTC day |
+| `POLICYNIM_BETA_DAILY_REQUEST_QUOTA` | `500` | Reserved work units per beta account per UTC day; historical name retained |
+| `POLICYNIM_BETA_AUTH_DB_PATH` | `data/runtime/auth.sqlite3` | Durable hosted account and operation state, including OAuth-only usage |
+
+All numeric limits must be positive. Settings retain constructor, environment and
+configured dotenv/default precedence. OAuth principal identity uses issuer plus
+subject, so switching clients doesn't reset usage. Beta identity uses the account,
+so key rotation doesn't reset it. Operator key replacement creates a new principal;
+operators must rotate keys deliberately and keep their aggregate provider budget.
+The portal's `reserved work units` count and remaining allowance sum the weights
+in operation rows. Interactive expensive operations reserve one unit each. A durable
+evaluation submission reserves one unit per validated case execution and selected
+configuration before it's queued. One job still counts as one accepted operation
+and uses one active slot while executing; provider attempts and token usage are
+separate measurements. Historical operation rows migrate to one unit each. Historical HTTP authentication counters remain preserved separately
+and aren't represented as provider work. This migration starts accepted-work usage
+from zero; it doesn't rewrite audit history.
+
+The service serializes key/account revalidation, daily quota and global/principal
+active limits with SQLite `BEGIN IMMEDIATE`. Authentication alone grants no future
+admission: key rotation, revocation and suspension are checked again at admission.
+No token or raw task/policy content is stored in operation rows. Rows contain a
+hashed principal identifier, random operation ID, operation name, timestamps, local
+process ID and outcome. Outcomes are completed, failed, cancelled or interrupted;
+accepted interactive rows remain active until cleanup. Queued evaluation reservations
+aren't active; their slot is acquired separately when the worker starts. Provider token usage remains `unknown`
+in this ledger; existing stage events report measured provider usage when supplied.
+Neither accepted-operation counts nor estimated usage imply financial billing.
+
+The supported topology is one instance with its persistent writable state volume.
+Each service holds a private kernel-backed owner lease alongside the database in
+`<database>.owners/`. Process exit releases that lease even when a restarted
+container reuses its PID. Startup marks accepted rows from unlocked prior owners
+interrupted without refunding usage. It preserves live owners and unknown/missing
+lease files. Back up the database and owner directory together; don't delete or
+replace lease files while the service runs. If ownership can't be proven, stop the
+service, preserve state and inspect abandoned rows before repairing them. These
+local filesystem locks aren't cross-host coordination; don't add replicas.
+Terminal writes retry SQLite lock contention for a bounded 1.5 seconds before
+reporting incomplete accounting. Active capacity stays reserved during that retry.
+
+MCP errors `server_busy` and `principal_busy` tell callers to retry after active work
+finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Brief database
+contention returns `admission_busy`; other storage failures return
+`admission_unavailable` before providers start. Check the volume and writer locks
+before retrying. If recording a terminal outcome fails after accepted
+work, `accounting_incomplete` warns that work may have completed and advises against
+blind retries. The accepted row and charge stay intact; inspect and recover state.
+Keep the hosted SQLite file on the persistent volume, include it in backups, and
+monitor its size. This release doesn't establish a retention/capacity envelope;
+#103 owns measured operating limits and retention policy.
+
+Every reservation rechecks abandoned owner leases inside the same write transaction.
+A long-lived HTTP service can reclaim a slot left by a crashed CLI evaluation worker
+without waiting for HTTP restart; the interrupted outcome retains its accepted charge.
+A terminal accounting write failure pauses all new work on that admission service,
+even after SQLite becomes writable again. Inspect the uncertain operation first,
+then restart the hosted process so abandoned work can be recovered. Don't retry the
+original operation blindly, and don't delete accepted rows to regain capacity.
+
+Auth-disabled HTTP is supported only for trusted local development. It has no
+authenticated principal, so only the global worker cap applies; per-principal and
+daily allowances don't apply. Production must set `POLICYNIM_MCP_REQUIRE_AUTH=true`
+and configure credentials. A non-loopback HTTP bind with authentication disabled
+emits a startup warning with this recovery action. It doesn't create a synthetic
+identity or change the existing open development protocol.
+
+Break-glass credentials recover an identity-service outage; they don't bypass
+operation admission. If the shared state volume or quota database is unavailable,
+discovery can authenticate while protected work returns `admission_unavailable`
+without starting providers. Repair operation storage before retrying work.
+A `cancelled` ledger outcome records caller cancellation before worker drain
+finished. Provider work may already have completed and incurred usage. The public
+async adapter drains cleanup and propagates cancellation instead of returning that
+result; provider success and caller completion aren't interchangeable outcomes.
+
+Routine SQLite writer contention retries reservation at most three times, with
+100 ms SQLite waits and 50 ms between retries. The worker rechecks authority and
+its cancellation/deadline before each attempt. Exhaustion returns `admission_busy`
+with short retry guidance and no accepted charge; other storage errors remain
+`admission_unavailable`. Terminal writes retain their separate bounded retry policy.
+`operation.storage_failure` events include phase, exception class, SQLite/OS error
+codes and an opaque operation ID for uncertain terminal writes. They omit error
+messages, paths, credentials, principal labels and raw inputs.
+
+After committed recovery and admission, lease cleanup inspects at most 100 files.
+It removes an unlocked retired owner only when no accepted database row references
+it. Live owners, unresolved accepted work and unknown ownership stay preserved.
+Cleanup failures defer housekeeping with a fixed error class; they don't refund
+accepted usage or hide an accounting failure. The portal and admission service use
+the same canonical legacy identity fields and hash implementation.
+
+Owner leases are locked before their final names are published atomically. A process
+that dies before publication can leave a temporary alias; bounded housekeeping removes
+only matching aliases older than one hour. This prevents pruning from racing worker
+startup. Quiesce admissions and drain or stop workers before taking a matching database
+and owner-directory backup. A database-only emergency restore can leave unknown owners;
+keep those reservations until an operator reconciles them.
+
+### Durable weighted evaluation acceptance
+
+`OperationAdmissionService.accept_work` commits the validated weight against the
+principal's UTC-day allowance. The job store invokes it after its duplicate,
+capacity and archive checks, before inserting the job row. These databases commit
+separately: if quota acceptance commits and job insertion fails, the acceptance
+remains charged and inactive. Retrying the same opaque key and request digest
+reuses its operation ID without charging again. Changed input under that key is
+rejected. An over-budget acceptance creates no queued job. The jobs store's stable
+identity namespaces keys across workspaces that share a quota database.
+
+`run_accepted` rechecks current authority, credentials, deadline and active limits,
+then acquires one execution slot without another daily charge. Cancellation,
+provider failure and process loss don't refund accepted units. A terminal acceptance
+can't execute again. Job recovery preserves completed case checkpoints and marks
+interrupted work for inspection; it doesn't blindly repeat provider requests.
+Internal terminal reconciliation uses the job's bound owner and operation identity,
+so expired or revoked credentials don't prevent accounting cleanup. Live execution
+can't be finalized by queued-job cleanup.
+
+The operation report keeps logical row counts, `reserved_work_units`,
+`inactive_accepted_operations` and observed active slots separate. Inactive acceptance
+isn't proof of a queued job: an interrupted submission can leave a reservation
+before job insertion. Actual queue depth comes from the jobs database.
+Reserved units include all
+retained accepted work, including terminal outcomes; they aren't provider-call or
+billing totals. The daily usage view sums only the current UTC day's units. The
+persisted latency sample measures acceptance through terminal accounting, including
+queue time for evaluation jobs.
+
+Keyed evaluation acceptance rows are permanent idempotency tombstones, matching
+the jobs store's permanent submission keys. The configured operation retention
+window still prunes unkeyed terminal interactive rows; it doesn't prune these
+keyed records or reset their historical charges. Operators must provision and
+monitor the persistent volume accordingly. Never delete quota tombstones while
+retaining jobs that can replay their keys. A failed terminal write pauses new work
+on that service until the operator inspects state and restarts it. Keep the quota
+database, jobs database and owner leases on the same persistent deployment volume;
+back up both databases with SQLite's online-backup API before operator recovery.
+
+## Persistent-state upgrades
+
+### Weighted-ledger upgrade and rollback boundary
+
+Before upgrading, drain hosted work and stop every writer, then take SQLite online
+backups of the quota/auth database and jobs database. Keep both databases and their
+owner-lease directories on the persistent state volume.
+
+After the service accepts weighted evaluation work, only deploy versions that
+understand `work_units`, `active_slot` and keyed acceptance records. Older quota
+writers count logical operations as units and treat inactive acceptance as active
+work. Running them against this ledger can undercount reserved units or mark
+queued reservations interrupted. Don't mix those versions or roll back to them.
+This change migrates forward; it doesn't provide a downgrade migration.
+
+Preserve keyed quota and job idempotency tombstones together. A submission can
+commit its quota reservation before its job row; retry the original key and request
+digest to reconcile that gap without another charge. Accepted cancellation,
+failure and interruption don't refund reserved units. If terminal accounting fails,
+inspect retained state before restarting paused workers; don't delete reservations
+to make a retry succeed.
+

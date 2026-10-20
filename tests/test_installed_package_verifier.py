@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import subprocess
+import threading
 import zipfile
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +18,42 @@ spec = importlib.util.spec_from_file_location("installed_package_verifier", SCRI
 assert spec is not None and spec.loader is not None
 verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
+
+
+def test_unready_http_retains_bounded_redacted_health_reason() -> None:
+    """An actual503 response explains startup failure without leaking known credentials."""
+
+    class UnreadyHandler(BaseHTTPRequestHandler):
+        """Serve a deterministic readiness failure through a real HTTP socket."""
+
+        def do_GET(self) -> None:
+            """Return the public readiness reason and a redaction witness."""
+            self.send_response(503)
+            self.end_headers()
+            self.wfile.write(b'{"ready":false,"reason":"missing-generation private-health-token"}')
+
+        def log_message(self, format: str, *args: object) -> None:
+            """Keep local fixture request logging out of the test output."""
+
+    with HTTPServer(("127.0.0.1", 0), UnreadyHandler) as server:
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
+        try:
+            with verifier.httpx2.Client(timeout=1, trust_env=False) as client:
+                with pytest.raises(RuntimeError) as failure:
+                    verifier.wait_for_health(
+                        client,
+                        SimpleNamespace(poll=lambda: None),
+                        f"http://127.0.0.1:{server.server_port}",
+                        {"TEST_TOKEN": "private-health-token"},
+                        timeout=0.01,
+                    )
+            message = str(failure.value)
+            assert "HTTP503" in message.replace(" ", "") and "missing-generation" in message
+            assert "private-health-token" not in message and len(message) < 4500
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
 
 
 def test_console_command_failure_reports_cause_without_credentials(
@@ -191,7 +229,12 @@ def test_client_requires_argument_validation_instead_of_any_tool_error(message: 
                 SimpleNamespace(
                     name=name, input_schema={"type": "object"}, output_schema={"type": "object"}
                 )
-                for name in ["policy_search", "policy_preflight"]
+                for name in [
+                    "policy_compile",
+                    "policy_preflight",
+                    "policy_preflight_evidence",
+                    "policy_search",
+                ]
             ]
         )
 

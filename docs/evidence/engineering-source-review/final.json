@@ -1,0 +1,71 @@
+{
+  "review_status": "scope_reviewed_no_supported_outcome_findings",
+  "source_revision": "ecf3f1bebaf38529150ca1bef94d345280759b96",
+  "scenario_sha256": "sha256:8e9a0591a7d29043907518e7621a9654f1f935b36583dfd03ad656101ffe5a0b",
+  "semantic_payload_sha256": "sha256:361c8ae44b0ebfa1c7b16a8be9a72d76a2b7fba8086cd4a1b63e937ce8510e9e",
+  "prior_source_revision": "a65a3006b437d1d4a0b2b6b939d23d4fb1d1c87c",
+  "prior_full_review_receipt": "/tmp/policynim-129-independent-review.json",
+  "prior_full_review_receipt_sha256": "sha256:5f9edbc9d411a85c1f540d3453de28819f8838021cb3bc08d90554cdd692bb74",
+  "comparison": {
+    "case_count": 64,
+    "unchanged_judgments": 64,
+    "role_clarifications": 5,
+    "only_role_values_changed": true,
+    "policy_revisions_rechecked": 16,
+    "all_other_suite_values_unchanged": true
+  },
+  "bounded_source_reread": [
+    {
+      "case_id": "supply-provenance-001-applicable",
+      "before": "build-maintainer",
+      "after": "artifact-consumer",
+      "policy_source": "policies/supply-chain/provenance-and-verification.md",
+      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "new_role_is_applicable": true,
+      "judgment_unchanged": true,
+      "independent_source_assessment": "The artifact consumer verifies envelope, trusted builder and subject identity and rejects altered bytes; that matches the policy's consumer verification example and PROVENANCE-2."
+    },
+    {
+      "case_id": "test-contract-001-boundary",
+      "before": "application-developer",
+      "after": "library-maintainer",
+      "policy_source": "policies/testing/public-boundary-contracts.md",
+      "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+      "new_role_is_applicable": true,
+      "judgment_unchanged": true,
+      "independent_source_assessment": "The library maintainer changes a private helper while public behavior and passing consumer tests stay unchanged; the policy explicitly allows existing contract tests for that boundary."
+    },
+    {
+      "case_id": "data-migrate-001-boundary",
+      "before": "application-developer",
+      "after": "database-operator",
+      "policy_source": "policies/data/migration-recovery.md",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "new_role_is_applicable": true,
+      "judgment_unchanged": true,
+      "independent_source_assessment": "The database operator reports selected-engine migration and recovery evidence without generalizing DDL or numerical recovery targets; that follows the stated engine-specific boundary."
+    },
+    {
+      "case_id": "rel-overload-001-boundary",
+      "before": "application-developer",
+      "after": "service-operator",
+      "policy_source": "policies/reliability/admission-and-backpressure.md",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "new_role_is_applicable": true,
+      "judgment_unchanged": true,
+      "independent_source_assessment": "The service operator separates expensive and cheap work measurements and avoids an aggregate-count capacity claim; that follows the stated unequal-cost boundary."
+    },
+    {
+      "case_id": "supply-provenance-001-boundary",
+      "before": "build-maintainer",
+      "after": "artifact-consumer",
+      "policy_source": "policies/supply-chain/provenance-and-verification.md",
+      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "new_role_is_applicable": true,
+      "judgment_unchanged": true,
+      "independent_source_assessment": "The artifact consumer verifies identity while declining a certification or whole-program claim; that follows the policy's explicit framework-assessment boundary."
+    }
+  ],
+  "supported_findings": [],
+  "scope": "This binds the earlier independent review of 64 authored expectations to the final payload and rechecks five role clarifications against the same policy sources. It doesn't measure model quality, live retrieval, runtime compliance, external framework compliance, or release readiness. No generated answers were used as an oracle."
+}

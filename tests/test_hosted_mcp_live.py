@@ -85,7 +85,12 @@ def test_hosted_mcp_lists_tools_live() -> None:
             result = await session.list_tools()
             return {tool.name for tool in result.tools}
 
-    assert asyncio.run(run()) == {"policy_preflight", "policy_search"}
+    assert asyncio.run(run()) == {
+        "policy_search",
+        "policy_compile",
+        "policy_preflight",
+        "policy_preflight_evidence",
+    }
 
 
 def test_hosted_policy_search_live() -> None:

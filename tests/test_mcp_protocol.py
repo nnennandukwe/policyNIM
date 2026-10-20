@@ -114,7 +114,12 @@ async def _exercise_client(client: Client, mode: str) -> None:
 
     listing = await client.list_tools()
     tools = {tool.name: tool for tool in listing.tools}
-    assert set(tools) == {"policy_search", "policy_preflight"}
+    assert set(tools) == {
+        "policy_search",
+        "policy_preflight",
+        "policy_compile",
+        "policy_preflight_evidence",
+    }
     for tool in tools.values():
         assert tool.description and tool.description.strip()
         assert tool.annotations is not None
@@ -222,8 +227,9 @@ def test_http_protocol_round_trip_preserves_wire_contract(mode: str) -> None:
 
     async def run() -> None:
         """Run an authenticated SDK client against a real ephemeral localhost listener."""
-        with offline_services(_settings()) as events:
-            app = mcp_module._build_streamable_http_app(_settings())
+        settings = _settings()
+        with offline_services(settings) as events:
+            app = mcp_module._build_streamable_http_app(settings)
             async with _serve_http(app) as origin:
                 async with httpx2.AsyncClient(
                     headers={"Authorization": f"Bearer {_TOKEN}"},
@@ -274,8 +280,9 @@ def test_http_auth_and_origin_guards_apply_to_real_mcp_paths(path: str) -> None:
 
     async def run() -> None:
         """Probe authentication and host trust without allowing hostile redirects."""
-        with offline_services(_settings()) as events:
-            app = mcp_module._build_streamable_http_app(_settings())
+        settings = _settings()
+        with offline_services(settings) as events:
+            app = mcp_module._build_streamable_http_app(settings)
             async with _serve_http(app) as origin:
                 async with httpx2.AsyncClient(timeout=5, trust_env=False) as client:
                     health = await client.get(f"{origin}/healthz")

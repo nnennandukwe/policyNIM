@@ -51,7 +51,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
   commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
   `preflight`, `eval`, `mcp`, `mcp-config`, `mcp-smoke`, `support-bundle`,
   `beta-admin`, `runtime`, and `evidence`.
-- MCP tools for `policy_preflight` and `policy_search`.
+- MCP tools for `policy_search`, `policy_compile`, `policy_preflight` and
+  `policy_preflight_evidence`, with versioned policy resources and a review prompt.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
 
@@ -60,6 +61,8 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` to bound expensive tool calls per server
 (default `10`). Excess calls receive a retry-later error. See the
 [MCP workflow](docs/workflows.md) for transport and public-origin configuration.
+See [grounded MCP guidance](docs/grounded-mcp.md) for tool schemas, evidence and
+immutable resource links.
 
 The maintained source baseline includes application-security and MCP trust guidance
 with pinned references, role boundaries, and authored scenarios. See the
@@ -230,9 +233,11 @@ uv run policynim preflight --task "Implement a refresh-token cleanup background 
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
 templates, runtime settings, optional NVIDIA eval and Guardrails extras, and
-contributor quality gates. The launcher path is installable in-project with
-`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`;
-the internal Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
+contributor quality gates. Optional evaluation adapters use
+`uv sync --locked --extra nvidia-eval --group test --group dev`;
+the internal Guardrails output-rail wrapper uses
+`uv sync --locked --extra nvidia-guardrails`. The separate upstream launcher
+setup is described in [installation profiles](docs/runtime-install-profiles.md).
 
 If you are using an installed copy instead of a source checkout, run
 `policynim init` once first so PolicyNIM can write the standalone config file
@@ -287,3 +292,7 @@ Current limitations are intentional:
 
 See [docs/limitations.md](docs/limitations.md) for the full list and future
 expansion areas.
+
+Install the optional Phoenix UI command in a separate tool environment; see
+[installation profiles](docs/runtime-install-profiles.md).
+`policynim eval --headless` needs no Phoenix server.

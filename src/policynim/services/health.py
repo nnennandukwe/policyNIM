@@ -8,13 +8,14 @@ from pathlib import Path
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError, GenerationError, IndexCompatibilityError
-from policynim.operations import ResourceStack, close_components
+from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_runtime_path
-from policynim.services.index_store import create_index_store, pinned_generation
+from policynim.services.generations import GenerationStore
+from policynim.services.index_store import pinned_generation
 from policynim.settings import Settings, get_settings
 from policynim.storage.index_readiness import inspect_index_readiness
 from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
-from policynim.types import HealthCheckResult
+from policynim.types import EmbeddingIdentity, HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class RuntimeHealthService:
         table_name: str,
         mcp_url: str | None,
     ) -> None:
-        """Borrow an injected store or open a fresh owned generation for each default check."""
+        """Borrow an injected store or inspect validated generation metadata for default checks."""
         if (index_store is None) == (settings is None):
             raise ValueError("Provide one injected store or settings for generation health.")
         self._settings = settings.model_copy(deep=True) if settings is not None else None
@@ -41,31 +42,42 @@ class RuntimeHealthService:
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
         try:
-            with ResourceStack() as cleanup:
-                store = self._index_store
-                if self._settings is not None:
-                    store = create_index_store(self._settings)
-                    cleanup.callback(close_components, store)
-                assert store is not None
-                readiness = inspect_index_readiness(store)
-                if readiness.state == "missing":
-                    return self._not_ready(f"Local index table {self._table_name!r} doesn't exist.")
-                if readiness.state == "empty":
-                    return self._not_ready(
-                        f"Local index table {self._table_name!r} contains no rows."
-                    )
-                if readiness.state != "ready":
-                    return self._not_ready(readiness.reason)
-                snapshot = pinned_generation(store)
+            if self._settings is not None:
+                generations = GenerationStore(
+                    root=resolve_runtime_path(self._settings.generations_dir),
+                    embedding=EmbeddingIdentity(
+                        model=self._settings.nvidia_embed_model,
+                        endpoint=self._settings.nvidia_base_url,
+                    ),
+                )
+                generation = generations.readiness(self._settings.generation_id)
                 return HealthCheckResult(
                     status="ok",
                     ready=True,
                     table_name=self._table_name,
-                    row_count=readiness.chunk_count or 0,
+                    row_count=generation.chunk_count,
                     mcp_url=self._mcp_url,
-                    reason=None,
-                    generation_id=snapshot.generation_id if snapshot else None,
+                    generation_id=generation.generation_id,
                 )
+            store = self._index_store
+            assert store is not None
+            readiness = inspect_index_readiness(store)
+            if readiness.state == "missing":
+                return self._not_ready(f"Local index table {self._table_name!r} doesn't exist.")
+            if readiness.state == "empty":
+                return self._not_ready(f"Local index table {self._table_name!r} contains no rows.")
+            if readiness.state != "ready":
+                return self._not_ready(readiness.reason)
+            snapshot = pinned_generation(store)
+            return HealthCheckResult(
+                status="ok",
+                ready=True,
+                table_name=self._table_name,
+                row_count=readiness.chunk_count or 0,
+                mcp_url=self._mcp_url,
+                reason=None,
+                generation_id=snapshot.generation_id if snapshot else None,
+            )
         except GenerationError as exc:
             return self._not_ready(str(exc))
         except IndexCompatibilityError:
@@ -88,7 +100,7 @@ class RuntimeHealthService:
 
 
 def create_runtime_health_service(settings: Settings | None = None) -> RuntimeHealthService:
-    """Defer reader pinning until each health check so servers don't retain startup generations."""
+    """Inspect current generation metadata per check without retaining a startup reader."""
     active_settings = (settings or get_settings()).model_copy(deep=True)
     return RuntimeHealthService(
         settings=active_settings,
@@ -139,9 +151,10 @@ def _check_hosted_runtime_health(
 
 
 def _derive_mcp_url(settings: Settings) -> str | None:
+    """Return the optional public MCP route included in readiness responses."""
     if settings.mcp_public_base_url is None:
         return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+    return public_route_url(settings.mcp_public_base_url, "/mcp")
 
 
 def format_health_failure_reason(exc: Exception) -> str:

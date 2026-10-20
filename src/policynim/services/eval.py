@@ -10,7 +10,7 @@ import re
 import socket
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -20,6 +20,7 @@ from uuid import uuid4
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.ingest import chunk_policy_documents
+from policynim.nvidia_models import chat_request_configuration
 from policynim.operations import ResourceStack, check_budget, close_components, operation_scope
 from policynim.runtime_paths import (
     resolve_eval_suite_path,
@@ -27,7 +28,7 @@ from policynim.runtime_paths import (
     resolve_runtime_path,
 )
 from policynim.services.compiler import PolicyCompilerService
-from policynim.services.conformance import PolicyConformanceService
+from policynim.services.conformance import PolicyConformanceService, conformance_thresholds
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
 from policynim.services.generations import GenerationSnapshot
 from policynim.services.index_store import create_index_store, pinned_generation
@@ -46,9 +47,13 @@ from policynim.types import (
     EvalCaseMetrics,
     EvalCaseResult,
     EvalComparisonDelta,
+    EvalEffectiveConfiguration,
     EvalExecutionMode,
+    EvalFamilyCoverage,
+    EvalFamilySource,
     EvalModeRunResult,
     EvalRunResult,
+    EvalSourceCoverage,
     EvalSuite,
     GeneratedCompiledPolicyDraft,
     GeneratedPolicyConformanceDraft,
@@ -75,7 +80,7 @@ from policynim.types import (
 
 _PROJECT_NAME = "PolicyNIM Eval"
 _SAFE_SUITE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_DEFAULT_UI_START_TIMEOUT_SECONDS = 5.0
+_DEFAULT_UI_START_TIMEOUT_SECONDS = 30.0
 _UI_START_POLL_INTERVAL_SECONDS = 0.1
 
 
@@ -305,6 +310,13 @@ class EvalService:
                     stderr=subprocess.STDOUT,
                     env=env,
                 )
+        except FileNotFoundError as exc:
+            raise PolicyNIMError(
+                "Phoenix UI command wasn't found. Install its separate environment with "
+                "`uv tool install --python 3.11 arize-phoenix==20.23.0` and make its "
+                "bin directory available on PATH, or run evaluations with --headless. "
+                f"See {log_path.as_posix()} for details."
+            ) from exc
         except OSError as exc:
             raise PolicyNIMError(
                 f"Could not start Phoenix UI. See {log_path.as_posix()} for details."
@@ -489,6 +501,10 @@ class EvalService:
             catalog_digest=snapshot.catalog.digest if snapshot else None,
             suite_definition=suite,
             provider_usage="unavailable" if mode == "live" else "not_performed",
+            effective_configuration=_effective_configuration(
+                self._settings, case_results, rerank_enabled, mode=mode
+            ),
+            source_coverage=_source_coverage(suite, case_results, snapshot),
             provider_models=(
                 {
                     "embedding": self._settings.nvidia_embed_model,
@@ -539,6 +555,8 @@ class EvalService:
             metrics=metrics,
             rows=report_rows,
             generation_id=result_payload.generation_id,
+            effective_configuration=result_payload.effective_configuration,
+            source_coverage=result_payload.source_coverage,
         )
 
         return EvalModeRunResult(
@@ -547,6 +565,8 @@ class EvalService:
             catalog_digest=result_payload.catalog_digest,
             provider_models=result_payload.provider_models,
             provider_usage=result_payload.provider_usage,
+            effective_configuration=result_payload.effective_configuration,
+            source_coverage=result_payload.source_coverage,
             generation_id=result_payload.generation_id,
             backend=backend,
             rerank_enabled=rerank_enabled,
@@ -555,6 +575,122 @@ class EvalService:
             report_html_path=report_html_path.as_posix(),
             case_results=case_results,
         )
+
+
+def _case_conformance_results(case: EvalCaseResult) -> Iterator[PolicyConformanceResult]:
+    """Retain judged attempts even when the final regeneration result lacks a judgment."""
+    if case.conformance_result is not None:
+        yield case.conformance_result
+    if case.regeneration_result is not None:
+        for attempt in case.regeneration_result.attempts:
+            if attempt.conformance_result is not None:
+                yield attempt.conformance_result
+
+
+def _effective_configuration(
+    settings: Settings,
+    cases: Sequence[EvalCaseResult],
+    rerank_enabled: bool,
+    *,
+    mode: EvalExecutionMode,
+) -> EvalEffectiveConfiguration:
+    """Record resolved settings with the same sampling and thresholds used by dispatch."""
+    judged = any(
+        metric.name in {"final_adherence", "trajectory_adherence"}
+        for case in cases
+        for conformance in _case_conformance_results(case)
+        for metric in conformance.metrics
+    )
+    live = mode == "live"
+    return EvalEffectiveConfiguration(
+        provider="nvidia" if live else "synthetic",
+        embedding_model=settings.nvidia_embed_model if live else None,
+        reranking_model=settings.nvidia_rerank_model if live and rerank_enabled else None,
+        chat=chat_request_configuration(settings.nvidia_chat_model) if live else None,
+        top_k_by_case={case.case_id: case.top_k for case in cases},
+        rerank_enabled=rerank_enabled,
+        request_timeout_seconds=settings.nvidia_timeout_seconds if live else None,
+        operation_timeout_seconds=settings.operation_timeout_seconds,
+        max_retries=settings.nvidia_max_retries if live else None,
+        conformance_thresholds=conformance_thresholds() if judged else None,
+    )
+
+
+def _source_family(policy: PolicyMetadata) -> tuple[str, EvalFamilySource]:
+    """Use declared pinned pack provenance, falling back explicitly to the source domain."""
+    pack_id = policy.provenance.pack_id if policy.provenance is not None else None
+    return (pack_id, "pack") if pack_id else (policy.domain, "domain")
+
+
+def _source_coverage(
+    suite: EvalSuite, results: Sequence[EvalCaseResult], snapshot: GenerationSnapshot | None
+) -> EvalSourceCoverage:
+    """Assign only executed gold expectations to families from the held source generation."""
+    policies = (
+        {
+            entry.policy.policy_id: entry.policy
+            for entry in snapshot.catalog.policies
+            if entry.state == "active"
+        }
+        if snapshot is not None
+        else {}
+    )
+    chunk_owners = (
+        {
+            chunk.chunk_id: chunk.policy.policy_id
+            for chunk in chunk_policy_documents(snapshot.documents)
+        }
+        if snapshot is not None
+        else {}
+    )
+    gold = {case.case_id: case for case in suite.cases}
+    families: dict[tuple[str, EvalFamilySource], list[EvalCaseResult]] = {
+        _source_family(policy): [] for policy in policies.values()
+    }
+    for result in results:
+        expected = gold.get(result.case_id)
+        selected = set(expected.expected_policy_ids) if expected is not None else set()
+        if expected is not None:
+            selected.update(
+                chunk_owners[cid] for cid in expected.expected_chunk_ids if cid in chunk_owners
+            )
+        assignments: set[tuple[str, EvalFamilySource]] = set()
+        for policy_id in selected:
+            policy = policies.get(policy_id)
+            if policy is None:
+                continue
+            assignments.add(_source_family(policy))
+        if not assignments:
+            assignments.add(("unassigned", "unassigned"))
+        for assignment in sorted(assignments):
+            families.setdefault(assignment, []).append(result)
+    return EvalSourceCoverage(
+        profile_id=snapshot.catalog.profile_id if snapshot is not None else None,
+        profile_digest=snapshot.catalog.profile_digest if snapshot is not None else None,
+        executed_case_count=len(results),
+        families=[
+            EvalFamilyCoverage(
+                family=family,
+                source=source,
+                case_ids=[case.case_id for case in cases],
+                passed_case_ids=[case.case_id for case in cases if case.passed],
+                case_count=len(cases),
+                passed_case_count=sum(case.passed for case in cases),
+                conformance_case_count=sum(
+                    case.kind == "preflight" and case.conformance_result is not None
+                    for case in cases
+                ),
+                judged_case_count=sum(
+                    any(True for _ in _case_conformance_results(case)) for case in cases
+                ),
+                operation_counts={
+                    kind: sum(case.kind == kind for case in cases)
+                    for kind in ("search", "preflight")
+                },
+            )
+            for (family, source), cases in sorted(families.items())
+        ],
+    )
 
 
 def _write_private_eval_file(path: Path, text: str) -> None:
@@ -1248,6 +1384,8 @@ def _write_eval_html_report(
     metrics: EvalAggregateMetrics,
     rows: Sequence[dict[str, object]],
     generation_id: GenerationID | None = None,
+    effective_configuration: EvalEffectiveConfiguration | None = None,
+    source_coverage: EvalSourceCoverage | None = None,
 ) -> None:
     """Write an inspectable report with the selected generation in its summary."""
     summary_rows: list[tuple[str, object]] = [
@@ -1255,6 +1393,16 @@ def _write_eval_html_report(
         ("Suite path", suite_path.as_posix()),
         ("Mode", mode),
         ("Policy generation", generation_id or "none (offline fixtures)"),
+        (
+            "Effective request configuration",
+            effective_configuration.model_dump_json()
+            if effective_configuration is not None
+            else "not performed",
+        ),
+        (
+            "Executed source coverage",
+            source_coverage.model_dump_json() if source_coverage is not None else "unavailable",
+        ),
         ("Backend", backend),
         ("Rerank mode", "rerank-on" if rerank_enabled else "rerank-off"),
         ("Case count", metrics.case_count),
@@ -1384,10 +1532,86 @@ def _publish_eval_result_to_phoenix(result: EvalRunResult, *, endpoint: str) -> 
     for run in result.runs:
         spans = cast(Any, _build_phoenix_spans(result, run))
         if spans:
-            client.spans.log_spans(project_identifier=_PROJECT_NAME, spans=spans)
+            _publish_phoenix_spans(client, spans)
         annotations = cast(Any, _build_phoenix_span_annotations(result, run))
         if annotations:
+            _publish_phoenix_annotations(client, annotations)
+
+
+def _publish_phoenix_spans(client: Any, spans: Sequence[dict[str, Any]]) -> None:
+    """Resume publication only when existing spans match this report's content."""
+    from phoenix.client.exceptions import SpanCreationError
+
+    identifiers = [span["context"]["span_id"] for span in spans]
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("Phoenix report span identifiers must be unique.")
+    for offset in range(0, len(spans), 64):
+        pending = {span["context"]["span_id"]: span for span in spans[offset : offset + 64]}
+        while pending:
+            try:
+                client.spans.log_spans(
+                    project_identifier=_PROJECT_NAME, spans=list(pending.values())
+                )
+                break
+            except SpanCreationError as exc:
+                if exc.total_invalid or exc.invalid_spans or exc.total_queued:
+                    raise
+                duplicate_ids = {row["span_id"] for row in exc.duplicate_spans}
+                if (
+                    not duplicate_ids
+                    or len(duplicate_ids) != exc.total_duplicates
+                    or exc.total_received != len(pending)
+                    or not duplicate_ids <= pending.keys()
+                    or any(
+                        row["trace_id"] != pending[row["span_id"]]["context"]["trace_id"]
+                        for row in exc.duplicate_spans
+                    )
+                ):
+                    raise
+                existing = client.spans.get_spans(
+                    project_identifier=_PROJECT_NAME,
+                    trace_ids=[
+                        pending[identifier]["context"]["trace_id"] for identifier in duplicate_ids
+                    ],
+                    limit=len(duplicate_ids),
+                )
+                observed = {row["context"]["span_id"]: row for row in existing}
+                fields = (
+                    "name",
+                    "context",
+                    "span_kind",
+                    "status_code",
+                    "status_message",
+                    "attributes",
+                )
+                if any(
+                    identifier not in observed
+                    or any(
+                        observed[identifier].get(field) != pending[identifier][field]
+                        for field in fields
+                    )
+                    or observed[identifier].get("parent_id") is not None
+                    or bool(observed[identifier].get("events"))
+                    for identifier in duplicate_ids
+                ):
+                    raise
+                for identifier in duplicate_ids:
+                    del pending[identifier]
+
+
+def _publish_phoenix_annotations(client: Any, annotations: Any) -> None:
+    """Wait briefly for queued spans before writing synchronous annotations."""
+    from httpx import HTTPStatusError
+
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
             client.spans.log_span_annotations(span_annotations=annotations, sync=True)
+            return
+        except HTTPStatusError as exc:
+            if exc.response.status_code != 404 or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
 
 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
@@ -1793,6 +2017,21 @@ class _OfflineIndexStore(IndexStore):
 
     def count(self) -> int:
         return sum(len(chunks) for chunks in self._candidates_by_query.values())
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
 
     def list_chunks(self) -> list[Any]:
         unique_chunks: dict[str, ScoredChunk] = {}

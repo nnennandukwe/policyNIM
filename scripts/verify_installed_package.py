@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx2
 from mcp import Client
-from mcp.client.stdio import StdioServerParameters
+from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from packaging.requirements import Requirement
 
@@ -144,6 +144,64 @@ def safe_diagnostic(text: str, env: dict[str, str]) -> str:
     return text[-4000:]
 
 
+def read_diagnostic(path: Path, env: dict[str, str]) -> str:
+    """Redact full values across a bounded tail's boundary before selecting its output."""
+    sensitive = {
+        value.encode("utf-8", errors="replace")
+        for key, value in env.items()
+        if value and any(marker in key.upper() for marker in ("TOKEN", "SECRET", "KEY", "PASSWORD"))
+    }
+    overlap = max(map(len, sensitive), default=0)
+    if overlap > 16000:
+        return "Child diagnostics omitted: a credential exceeds the safe capture bound."
+    capture_limit = 16000 + overlap
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - capture_limit))
+        captured = stream.read(capture_limit)
+    intervals = []
+    for value in sensitive:
+        start = captured.find(value)
+        while start >= 0:
+            intervals.append((start, start + len(value)))
+            start = captured.find(value, start + 1)
+    cursor = max(0, len(captured) - 16000)
+    redacted = []
+    for start, end in sorted(intervals):
+        if end <= cursor:
+            continue
+        redacted.append(captured[cursor : max(cursor, start)])
+        redacted.append(b"<redacted>")
+        cursor = end
+    redacted.append(captured[cursor:])
+    return safe_diagnostic(b"".join(redacted).decode("utf-8", errors="replace"), env)
+
+
+def wait_for_health(
+    client: httpx2.Client,
+    process: subprocess.Popen,
+    origin: str,
+    env: dict[str, str],
+    *,
+    timeout: float = 45,
+) -> httpx2.Response:
+    """Keep the latest bounded readiness reason when startup exits or times out."""
+    deadline = time.monotonic() + timeout
+    last_health = "No health response was observed."
+    while True:
+        require(process.poll() is None, "HTTP server exited. Last health: " + last_health)
+        try:
+            health = client.get(origin + "/healthz")
+        except httpx2.TransportError:
+            health = None
+        if health is not None:
+            if health.status_code == 200:
+                return health
+            last_health = f"HTTP {health.status_code}: " + safe_diagnostic(health.text, env)
+        require(time.monotonic() < deadline, "HTTP startup timed out. Last health: " + last_health)
+        time.sleep(0.1)
+
+
 def run_command(
     arguments: list[str], *, env: dict[str, str], cwd: Path, command: str | None = None
 ) -> str:
@@ -179,7 +237,11 @@ async def check_client(client: Client, mode: str) -> dict[str, object]:
     require(client.protocol_version == expected, "Unexpected negotiated MCP protocol.")
     listing = await client.list_tools()
     names = sorted(tool.name for tool in listing.tools)
-    require(names == ["policy_preflight", "policy_search"], "Installed MCP tools differ.")
+    require(
+        names
+        == ["policy_compile", "policy_preflight", "policy_preflight_evidence", "policy_search"],
+        "Installed MCP tools differ.",
+    )
     require(
         all(tool.input_schema and tool.output_schema for tool in listing.tools),
         "Missing advertised tool schemas.",
@@ -207,9 +269,19 @@ async def check_stdio(
             cwd=cwd,
             env=env,
         )
-        async with asyncio.timeout(45):
-            async with Client(parameters, mode=mode, read_timeout_seconds=20) as client:
-                results.append(await check_client(client, mode))
+        log_path = cwd / ("stdio-" + mode + ".log")
+        with log_path.open("w", encoding="utf-8") as log:
+            try:
+                async with asyncio.timeout(45):
+                    transport = stdio_client(parameters, errlog=log)
+                    async with Client(transport, mode=mode, read_timeout_seconds=20) as client:
+                        results.append(await check_client(client, mode))
+            except Exception as error:
+                log.flush()
+                raise RuntimeError(
+                    f"Installed stdio {mode} failed: {safe_diagnostic(str(error), env)}\n"
+                    + read_diagnostic(log_path, env)
+                ) from error
     return results
 
 
@@ -240,6 +312,8 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         "sdk_version": importlib.metadata.version("mcp"),
         "provider_calls": "not performed",
         "coding_client_ui": "not tested",
+        "authentication_scope": "beta_operator_key",
+        "external_oauth_e2e": "not_run",
     }
     env = {
         key: value
@@ -250,8 +324,12 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         cwd = Path(temporary)
         config = cwd / "empty.env"
         config.write_text("")
+        child_home = cwd / "home"
+        child_home.mkdir()
         env.update(
             {
+                "HOME": str(child_home),
+                "USERPROFILE": str(child_home),
                 "POLICYNIM_CONFIG_FILE": str(config),
                 "POLICYNIM_GENERATIONS_DIR": str(cwd / "generations"),
                 "POLICYNIM_EVAL_WORKSPACE_DIR": str(cwd / "evaluations"),
@@ -297,7 +375,12 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         report["policy_count"] = source["effective_count"]
         report["chunk_count"] = inspected["manifest"]["chunk_count"]
         evaluated = run_cli(["eval", "--headless", "--no-compare-rerank"], env=env, cwd=cwd)
-        report["synthetic_offline_cases"] = evaluated["runs"][0]["metrics"]
+        metrics = evaluated["runs"][0]["metrics"]
+        require(
+            metrics["case_count"] == 6 and metrics["overall_pass_rate"] == 1.0,
+            "Installed offline fixture requires exactly 6 passing cases.",
+        )
+        report["synthetic_offline_cases"] = metrics
         report["stdio"] = asyncio.run(check_stdio(env, cwd))
 
         with socket.socket() as probe:
@@ -328,20 +411,8 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                 stderr=log,
             )
             try:
-                deadline = time.monotonic() + 45
                 with httpx2.Client(timeout=2, trust_env=False) as client:
-                    while True:
-                        require(
-                            process.poll() is None, "Installed HTTP server exited during startup."
-                        )
-                        try:
-                            health = client.get(origin + "/healthz")
-                        except httpx2.TransportError:
-                            health = None
-                        if health is not None and health.status_code == 200:
-                            break
-                        require(time.monotonic() < deadline, "Installed HTTP startup timed out.")
-                        time.sleep(0.1)
+                    health = wait_for_health(client, process, origin, env)
                     require(
                         health.json()["generation_id"] == report["generation_id"],
                         "HTTP generation drift.",
@@ -353,9 +424,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
                 report["http"] = asyncio.run(check_http(origin, token))
             except Exception as error:
                 log.flush()
-                diagnostic = safe_diagnostic(
-                    (cwd / "server.log").read_text(encoding="utf-8", errors="replace"), env
-                )
+                diagnostic = read_diagnostic(cwd / "server.log", env)
                 raise RuntimeError(f"{error}\nHTTP server diagnostics:\n{diagnostic}") from error
             finally:
                 process.terminate()

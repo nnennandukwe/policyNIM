@@ -174,15 +174,8 @@ The `nvidia-eval` extra pins `nemo-evaluator==0.2.5`,
 those packages lazily, so offline CI and the default local workflow do not need
 them.
 
-NeMo Evaluator Launcher is available as a second project extra:
-
-```bash
-uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev
-```
-
-The `nvidia-eval-launcher` extra pins `nemo-evaluator-launcher==0.2.4` and
-`nvidia-nat[eval]==1.6.0`. The project keeps `httpx==0.27.2` because that is the
-compatible launcher stack version; default CI does not sync this extra.
+The optional NeMo launcher runs in a separate tool environment. See
+[installation profiles](runtime-install-profiles.md).
 
 ## Optional NVIDIA Guardrails Package
 
@@ -208,7 +201,7 @@ The default example configs use:
 - reranking:
   [`nvidia/llama-nemotron-rerank-vl-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2-infer)
 - grounded generation:
-  [`nvidia/nemotron-3-super-120b-a12b`](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/build)
+  [`nvidia/nemotron-3.5-lightning-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b/build)
 
 See [provider recovery](hosted-provider-recovery.md) before switching an existing
 installation to a different embedding model. Index identity must match even

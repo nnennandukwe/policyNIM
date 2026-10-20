@@ -2,6 +2,7 @@
 
 This page preserves the #107 repair evidence and its earlier standalone workflow.
 For current deployment and migration, use [complete policy generations](policy-generations.md).
+For the later chat-model HTTP 404 repair, use [chat availability recovery](chat-availability-recovery.md).
 Image builds now import a verified bundle, and startup never ingests. The historical
 commands below describe the earlier implementation; they aren't current deployment instructions.
 
@@ -21,7 +22,7 @@ ingestion subsequently succeeded with the existing staging credential. See
 [PR #108](https://github.com/nnennandukwe/policyNIM/pull/108) for revision-bound
 build, inventory, health, and tool acceptance evidence.
 
-| Operation | Default model | Official request contract |
+| Operation | Default model at the #107 repair | Official request contract |
 | --- | --- | --- |
 | Embedding | `nvidia/nemotron-3-embed-1b` | [Reference](https://docs.api.nvidia.com/nim/re/reference/nvidia-nemotron-3-embed-1b-infer): `/v1/embeddings`, `input_type=passage` or `query`, `encoding_format=float`, `truncate=NONE`. |
 | Reranking | `nvidia/llama-nemotron-rerank-vl-1b-v2` | [Reference](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2-infer): `/v1/retrieval/{model}/reranking`, text query and passages, `truncate=END`. |

@@ -32,6 +32,7 @@ from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
+from policynim.nvidia_models import DEFAULT_NVIDIA_CHAT_MODEL
 from policynim.types import DEFAULT_TOP_K, GenerationID, TopK, normalize_provider_endpoint
 
 
@@ -74,6 +75,7 @@ class Settings(BaseSettings):
     corpus_dir: Path | None = None
     profile: Path | None = None
     generations_dir: Path = Path("data/generations")
+    hosted_state_mount: Path | None = None
     generation_id: GenerationID | None = Field(default=None, exclude=True)
     index_db_path: Path = Field(
         default=Path("data/index.sqlite3"),
@@ -85,7 +87,7 @@ class Settings(BaseSettings):
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
-    nvidia_chat_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    nvidia_chat_model: str = DEFAULT_NVIDIA_CHAT_MODEL
     nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
     nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
@@ -105,6 +107,9 @@ class Settings(BaseSettings):
         ),
     ] = 8000
     mcp_max_concurrent_operations: Annotated[int, Field(ge=1)] = 10
+    mcp_max_concurrent_operations_per_principal: Annotated[int, Field(ge=1)] = 2
+    mcp_operation_retention_days: Annotated[int, Field(ge=1, le=365)] = 30
+    mcp_principal_daily_operation_quota: Annotated[int, Field(ge=1)] = 500
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None
@@ -204,6 +209,12 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:
         """Treat empty configured corpus values as unset."""
+        return _normalize_optional_setting(value)
+
+    @field_validator("hosted_state_mount", mode="before")
+    @classmethod
+    def normalize_empty_hosted_state_mount(cls, value: Any) -> Any:
+        """Leave mount enforcement absent for explicitly ephemeral hosted runs."""
         return _normalize_optional_setting(value)
 
     @field_validator("profile", mode="before")

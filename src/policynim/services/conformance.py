@@ -7,9 +7,11 @@ from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import PolicyConformanceEvaluator
+from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.types import (
     CompiledPolicyConstraint,
+    ConformanceThresholds,
     EvalBackend,
     GeneratedPolicyConformanceDraft,
     PolicyConformanceMetric,
@@ -17,8 +19,10 @@ from policynim.types import (
     PolicyConformanceResult,
 )
 
-_FINAL_ADHERENCE_THRESHOLD = 0.75
-_TRAJECTORY_ADHERENCE_THRESHOLD = 0.75
+
+def conformance_thresholds() -> ConformanceThresholds:
+    """Return the fixed acceptance boundaries shared by scoring and report metadata."""
+    return ConformanceThresholds(final_adherence=0.75, trajectory_adherence=0.75)
 
 
 class PolicyConformanceService:
@@ -212,7 +216,7 @@ def _forbidden_pattern_metric(
 def _citation_support_metric(
     request: PolicyConformanceRequest,
 ) -> PolicyConformanceMetric:
-    expected_chunk_ids = _ordered_unique(
+    expected_chunk_ids = ordered_unique(
         [
             citation_id
             for constraints in (
@@ -226,7 +230,7 @@ def _citation_support_metric(
             for citation_id in constraint.citation_ids
         ]
     )
-    actual_chunk_ids = _ordered_unique([citation.chunk_id for citation in request.result.citations])
+    actual_chunk_ids = ordered_unique([citation.chunk_id for citation in request.result.citations])
     if not expected_chunk_ids:
         return PolicyConformanceMetric(
             name="citation_support",
@@ -261,8 +265,9 @@ def _citation_support_metric(
 def _judge_metrics(
     draft: GeneratedPolicyConformanceDraft,
 ) -> list[PolicyConformanceMetric]:
+    thresholds = conformance_thresholds()
     final_failure_reasons = list(draft.failure_reasons)
-    final_passed = draft.final_adherence_score >= _FINAL_ADHERENCE_THRESHOLD
+    final_passed = draft.final_adherence_score >= thresholds.final_adherence
     if not final_passed and not final_failure_reasons:
         final_failure_reasons.append(
             f"final adherence score below threshold: {draft.final_adherence_score:.2f}"
@@ -277,7 +282,7 @@ def _judge_metrics(
         )
     ]
     if draft.trajectory_adherence_score is not None:
-        trajectory_passed = draft.trajectory_adherence_score >= _TRAJECTORY_ADHERENCE_THRESHOLD
+        trajectory_passed = draft.trajectory_adherence_score >= thresholds.trajectory_adherence
         trajectory_failure_reasons = []
         if not trajectory_passed:
             trajectory_failure_reasons.append(
@@ -304,17 +309,6 @@ def _contains_statement(statement: str, texts: Sequence[str]) -> bool:
 
 def _normalize_for_matching(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def _average(values: Sequence[float]) -> float:
