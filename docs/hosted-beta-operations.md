@@ -154,7 +154,30 @@ then validate and activate source text, catalog, SQLite vectors, runtime rules,
 model identity, and notices without model credentials. Changed policy sources
 require an explicitly refreshed bundle; a stale artifact fails the build.
 
-The runtime reads `/app/data/generations` through `POLICYNIM_GENERATIONS_DIR`.
+The image defaults to `/app/data/generations`. Hosted deployments must mount
+`/app/state` and set `POLICYNIM_GENERATIONS_DIR=/app/state/generations` so retained
+objects and their active pointer survive redeploys. The container startup validates
+the existing selected generation, or imports the trusted image seed once when the
+target root is absent. It never activates a new image seed over existing state.
+Persistent deployments also set `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`.
+The hosted entrypoint refuses an unmounted path or generation, authentication,
+evaluation, or runtime-evidence paths outside that volume before creating state.
+This startup check doesn't establish cross-redeploy durability; verify that
+separately. Leaving the setting absent permits an ephemeral image test.
+An unowned, incomplete, incompatible, or damaged root blocks startup and remains
+available for operator recovery. Restart doesn't rebuild or call providers.
+
+Policy updates need an explicit, reviewed `generation import` or `generation
+activate` operation against the mounted root. Inspect the active ID first, retain
+its objects, and follow [generation rollback](policy-generations.md). Changing an
+application image alone keeps the previous policy selection. A newer application
+can therefore serve an intentionally retained older policy generation.
+
+An interrupted first import can leave an owned root without an active pointer.
+Preserve that root, inspect it, and explicitly import the verified seed before
+restarting. Startup won't infer that an existing directory is disposable.
+
+The runtime selects storage through `POLICYNIM_GENERATIONS_DIR`.
 Health and MCP discovery work without an NVIDIA key. Live search and preflight
 still require runtime `NVIDIA_API_KEY`. Each request retains its selected generation
 until cleanup; a new activation affects subsequent requests.
@@ -163,6 +186,12 @@ Example hosted run:
 
 ```bash
 docker run --rm -p 8000:8000 \
+  --mount type=volume,source=policynim-state,target=/app/state \
+  -e POLICYNIM_GENERATIONS_DIR=/app/state/generations \
+  -e POLICYNIM_HOSTED_STATE_MOUNT=/app/state \
+  -e POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3 \
+  -e POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace \
+  -e POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3 \
   -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
   -e POLICYNIM_MCP_REQUIRE_AUTH=true \
   -e POLICYNIM_MCP_BEARER_TOKENS=token-a \
@@ -224,12 +253,16 @@ Recommended beta setup:
    - `POLICYNIM_MCP_HOST=0.0.0.0`
 4. Deploy once so the service becomes healthy on `/healthz`.
 5. Generate a Railway public domain for that service.
-6. Mount one Railway volume at `/app/state` for the hosted auth SQLite database.
+6. Mount one Railway volume at `/app/state` for auth, generations, and job state.
 7. Set these runtime variables and redeploy:
    - `POLICYNIM_MCP_REQUIRE_AUTH=true`
    - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
    - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
    - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
+   - `POLICYNIM_GENERATIONS_DIR=/app/state/generations`
+   - `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`
+   - `POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace`
+   - `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3`
    - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`
@@ -541,3 +574,26 @@ retaining jobs that can replay their keys. A failed terminal write pauses new wo
 on that service until the operator inspects state and restarts it. Keep the quota
 database, jobs database and owner leases on the same persistent deployment volume;
 back up both databases with SQLite's online-backup API before operator recovery.
+
+## Persistent-state upgrades
+
+### Weighted-ledger upgrade and rollback boundary
+
+Before upgrading, drain hosted work and stop every writer, then take SQLite online
+backups of the quota/auth database and jobs database. Keep both databases and their
+owner-lease directories on the persistent state volume.
+
+After the service accepts weighted evaluation work, only deploy versions that
+understand `work_units`, `active_slot` and keyed acceptance records. Older quota
+writers count logical operations as units and treat inactive acceptance as active
+work. Running them against this ledger can undercount reserved units or mark
+queued reservations interrupted. Don't mix those versions or roll back to them.
+This change migrates forward; it doesn't provide a downgrade migration.
+
+Preserve keyed quota and job idempotency tombstones together. A submission can
+commit its quota reservation before its job row; retry the original key and request
+digest to reconcile that gap without another charge. Accepted cancellation,
+failure and interruption don't refund reserved units. If terminal accounting fails,
+inspect retained state before restarting paused workers; don't delete reservations
+to make a retry succeed.
+

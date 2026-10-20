@@ -75,7 +75,7 @@ jobs:
         run: uv sync --locked --group test --group dev
 
       - name: Verify Windows profile readers and writers offline
-        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py tests/test_policy_generations.py tests/test_generation_cli.py tests/test_generation_recovery_boundaries.py tests/test_generation_recovery_followups.py tests/test_operation_owner_cleanup.py
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py tests/test_policy_generations.py tests/test_generation_bootstrap.py tests/test_generation_cli.py tests/test_generation_recovery_boundaries.py tests/test_generation_recovery_followups.py tests/test_operation_owner_cleanup.py
 
       - name: Verify grounded evaluation and Windows diagnostics
         run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_grounded_evaluations.py tests/test_windows_diagnostics.py
