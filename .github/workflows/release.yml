@@ -355,6 +355,9 @@ jobs:
           - RELEASE_MANIFEST.json and SHA256SUMS for source-bound asset verification
           EOF
 
+      - name: Check release tag source
+        run: python scripts/verify_release_tag.py --tag "$RELEASE_TAG" --revision "$GITHUB_SHA"
+
       - name: Generate release asset attestations
         id: provenance
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
@@ -383,6 +386,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python scripts/verify_release_tag.py --tag "$RELEASE_TAG" --revision "$GITHUB_SHA"
           gh release create "$RELEASE_TAG" \
             --draft \
             --target "$GITHUB_SHA" \

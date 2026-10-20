@@ -86,6 +86,11 @@ SQLite vector extension; generation import must succeed before the archive ships
 
 ## GitHub Release
 
+Before signing and publishing, the workflow checks the remote release tag against
+the artifact source commit. An existing lightweight or annotated tag must resolve
+to that commit. A missing tag can be created at the verified source; an unavailable
+remote or mismatched existing tag blocks publication. The gate never moves tags.
+
 Create and push a version tag from the commit you want to release:
 
 ```bash

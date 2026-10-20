@@ -479,6 +479,9 @@ def test_release_attests_and_verifies_every_asset_before_publication() -> None:
         step for step in job["steps"] if step["name"] == "Generate release asset attestations"
     )
     assert attest["with"]["subject-checksums"] == "release-assets/SHA256SUMS"
+    assert names.index("Check release tag source") < names.index(
+        "Generate release asset attestations"
+    )
 
 
 def _assert_release_source_python_selection(job: dict) -> None:
