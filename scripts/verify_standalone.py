@@ -48,7 +48,10 @@ def artifact_identity(command: Path) -> dict[str, object]:
         elif path.is_dir():
             record = ["directory", relative, stat.S_IMODE(path.stat().st_mode)]
         else:
-            continue
+            raise RuntimeError(
+                "Standalone artifact contains a special file. Rebuild with regular files, "
+                "directories and contained symlinks."
+            )
         digest.update(
             json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
         )
@@ -77,6 +80,8 @@ def _verify_command(args: argparse.Namespace) -> dict[str, object]:
         "dependency_lock": lock_digest,
         "provider_calls": "not performed",
         "coding_client_ui": "not tested",
+        "authentication_scope": "beta_operator_key",
+        "external_oauth_e2e": "not_run",
     }
     env = {
         key: value
@@ -87,8 +92,12 @@ def _verify_command(args: argparse.Namespace) -> dict[str, object]:
         cwd = Path(temporary)
         configuration = cwd / "empty.env"
         configuration.write_text("", encoding="utf-8")
+        child_home = cwd / "home"
+        child_home.mkdir()
         env.update(
             {
+                "HOME": str(child_home),
+                "USERPROFILE": str(child_home),
                 "POLICYNIM_CONFIG_FILE": str(configuration),
                 "POLICYNIM_GENERATIONS_DIR": str(cwd / "generations"),
                 "POLICYNIM_EVAL_WORKSPACE_DIR": str(cwd / "evaluations"),

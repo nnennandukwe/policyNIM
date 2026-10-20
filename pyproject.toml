@@ -20,11 +20,11 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-  "anyio==4.9.0",
-  "arize-phoenix==13.21.0",
+  "anyio==4.14.2",
+  "arize-phoenix-client==2.3.1",
   "arize-phoenix-evals==2.12.0",
   "httpx==0.27.2",
-  "httpx2==2.6.0",
+  "httpx2==2.12.0",
   "itsdangerous==2.2.0",
   "jinja2==3.1.6",
   "markdown-it-py==4.0.0",
@@ -33,9 +33,9 @@ dependencies = [
   "pandas==2.2.3",
   "platformdirs==4.5.0",
   "pydantic==2.12.5",
-  "pydantic-settings==2.13.1",
+  "pydantic-settings==2.14.2",
   "sqlite-vec==0.1.9",
-  "starlette==0.52.1",
+  "starlette==1.3.1",
   # Preserve TOML 1.0 output for Python 3.11/3.12 tomllib readers.
   "tomlkit==0.14.0",
   "typer==0.24.1",
@@ -54,10 +54,6 @@ nvidia-eval = [
   "nemo-evaluator==0.2.5",
   "nvidia-nat-eval==1.6.0",
   "nvidia-simple-evals==26.3",
-]
-nvidia-eval-launcher = [
-  "nemo-evaluator-launcher==0.2.4",
-  "nvidia-nat[eval]==1.6.0",
 ]
 
 [project.scripts]
@@ -78,6 +74,9 @@ packages = ["src/policynim"]
 "evals" = "policynim/evals"
 
 [dependency-groups]
+verification = [
+  "packaging==26.3",
+]
 test = [
   "jsonschema==4.26.0",
   "pytest==8.3.4",

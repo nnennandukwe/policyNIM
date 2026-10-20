@@ -1,10 +1,16 @@
 {
   "name": "grounded-policy-baseline",
-  "expected_catalog_digest": "sha256:f1cab5b2383bbcf16fa11c1a11ab5e1e493637cbba9cfaefbe7acb22968b3c15",
+  "expected_catalog_digest": "sha256:04a26d71f3b54eb63e41e779585177ce397767cdf89da9368de3e92d61667a26",
   "expected_policy_revisions": {
-    "ARCH-JOB-001": "sha256:ed380c577ba87ff6eb2b1cda707324b5eaf75b1df96bd1066ccb7378459ef90b",
+    "ARCH-JOB-001": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
     "SEC-SESSION-001": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
-    "MCP-AUTH-001": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15"
+    "MCP-AUTH-001": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15",
+    "TEST-FAIL-001": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+    "API-ERROR-001": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+    "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+    "REL-TIMEOUT-001": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+    "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+    "SUPPLY-PROVENANCE-001": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e"
   },
   "cases": [
     {
@@ -17,7 +23,7 @@
         "ARCH-JOB-001"
       ],
       "expected_chunk_ids": [
-        "ARCH-JOB-001:background-job-design-rules__required-rules"
+        "ARCH-JOB-001:background-jobs-and-duplicate-effects__required-rules"
       ]
     },
     {
@@ -30,7 +36,7 @@
         "SEC-SESSION-001"
       ],
       "expected_chunk_ids": [
-        "ARCH-JOB-001:background-job-design-rules__required-rules",
+        "ARCH-JOB-001:background-jobs-and-duplicate-effects__required-rules",
         "SEC-SESSION-001:session-lifetime-and-token-boundaries__required-rules"
       ]
     },
@@ -54,6 +60,84 @@
       "domain": "video-processing",
       "top_k": 5,
       "expected_insufficient_context": true
+    },
+    {
+      "case_id": "search-test-fail-001",
+      "kind": "search",
+      "input": "A publisher is killed before activation; restart reads the old complete state, a retry succeeds, and the report includes the tested commit.",
+      "domain": "testing",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "expected_chunk_ids": [
+        "TEST-FAIL-001:failure-and-recovery-verification__required-rules"
+      ]
+    },
+    {
+      "case_id": "search-api-error-001",
+      "kind": "search",
+      "input": "An API returns a documented problem type and safe instance reference; the client handles the status and type.",
+      "domain": "api",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "expected_chunk_ids": [
+        "API-ERROR-001:http-error-contracts__required-rules"
+      ]
+    },
+    {
+      "case_id": "search-data-migrate-001",
+      "kind": "search",
+      "input": "A staged backfill stores progress, survives a killed worker, and resumes without overwriting a concurrent write.",
+      "domain": "data",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "expected_chunk_ids": [
+        "DATA-MIGRATE-001:data-migration-and-recovery__required-rules"
+      ]
+    },
+    {
+      "case_id": "search-rel-timeout-001",
+      "kind": "search",
+      "input": "A transient read timeout retries within one deadline, then stops and releases the connection when the budget expires.",
+      "domain": "reliability",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "expected_chunk_ids": [
+        "REL-TIMEOUT-001:deadlines-and-bounded-retries__required-rules"
+      ]
+    },
+    {
+      "case_id": "search-obs-readiness-001",
+      "kind": "search",
+      "input": "A missing index makes readiness fail safely; a validated replacement restores it without model calls.",
+      "domain": "observability",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "expected_chunk_ids": [
+        "OBS-READINESS-001:operational-signals-and-readiness__required-rules"
+      ]
+    },
+    {
+      "case_id": "search-supply-provenance-001",
+      "kind": "search",
+      "input": "A consumer validates the envelope and trusted builder, matches the subject digest, and rejects a modified artifact.",
+      "domain": "supply-chain",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "expected_chunk_ids": [
+        "SUPPLY-PROVENANCE-001:release-provenance-and-consumer-verification__required-rules"
+      ]
     }
   ]
 }

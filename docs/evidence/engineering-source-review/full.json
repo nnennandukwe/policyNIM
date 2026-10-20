@@ -1,0 +1,710 @@
+{
+  "source_revision": "a65a3006b437d1d4a0b2b6b939d23d4fb1d1c87c",
+  "scenario_sha256": "sha256:beb95912666466f54e533fc658660f8ae8982544db7e0e8c4567d6df870d74f3",
+  "policy_revisions": {
+    "TEST-FAIL-001": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
+    "TEST-CONTRACT-001": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+    "ARCH-API-001": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+    "API-ERROR-001": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+    "API-PAGE-001": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+    "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+    "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+    "ARCH-JOB-001": "sha256:de8ebeb9faf9632e34222717a9dda0f58d51b722ccd03f155295f564245904d0",
+    "BE-CONFIG-001": "sha256:9ad7629a978c3c9057e63036b3d2eedaaa95c1fa4fc8db2455bfef60b67ae015",
+    "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+    "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+    "BE-LOG-001": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
+    "BE-TRACE-001": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
+    "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+    "SUPPLY-BUILD-001": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
+    "SUPPLY-PROVENANCE-001": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39"
+  },
+  "case_count": 64,
+  "policy_count": 16,
+  "required_rule_quotes_checked": 96,
+  "checks": [
+    {
+      "case_id": "test-fail-001-applicable",
+      "policy_id": "TEST-FAIL-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A killed publisher, old complete state, retry and tested revision fit failure/recovery guidance."
+    },
+    {
+      "case_id": "test-fail-001-violating",
+      "policy_id": "TEST-FAIL-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A mocked happy path alone can't support the stated crash-safety claim under FAIL-1 and FAIL-3."
+    },
+    {
+      "case_id": "test-fail-001-out-of-scope",
+      "policy_id": "TEST-FAIL-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The service operator changes static help while all runtime effects and recovery remain unchanged."
+    },
+    {
+      "case_id": "test-contract-001-applicable",
+      "policy_id": "TEST-CONTRACT-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The strict consumer, malformed-ID rejection and older payload readback exercise the public contract."
+    },
+    {
+      "case_id": "test-contract-001-violating",
+      "policy_id": "TEST-CONTRACT-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "An installed consumer rejection despite internal dictionary tests violates the consumer boundary rule."
+    },
+    {
+      "case_id": "test-contract-001-out-of-scope",
+      "policy_id": "TEST-CONTRACT-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Renaming a private variable leaves the public contract unchanged."
+    },
+    {
+      "case_id": "arch-api-001-applicable",
+      "policy_id": "ARCH-API-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A renamed field behind a new version with old-client proof fits the version-boundary guidance."
+    },
+    {
+      "case_id": "arch-api-001-violating",
+      "policy_id": "ARCH-API-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Changing an existing field from object to list within its supported version changes its meaning incompatibly."
+    },
+    {
+      "case_id": "arch-api-001-out-of-scope",
+      "policy_id": "ARCH-API-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The private sorting change leaves responses, errors and compatibility unchanged."
+    },
+    {
+      "case_id": "api-error-001-applicable",
+      "policy_id": "API-ERROR-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A documented problem type and safe instance fit the adopted error contract."
+    },
+    {
+      "case_id": "api-error-001-violating",
+      "policy_id": "API-ERROR-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A connection string in public errors and indiscriminate authorization retries violate safe caller recovery."
+    },
+    {
+      "case_id": "api-error-001-out-of-scope",
+      "policy_id": "API-ERROR-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Local successful-result spacing leaves HTTP statuses and error handling unchanged."
+    },
+    {
+      "case_id": "api-page-001-applicable",
+      "policy_id": "API-PAGE-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Tenant/query-bound cursors, terminal continuation behavior and mutation documentation fit traversal guidance."
+    },
+    {
+      "case_id": "api-page-001-violating",
+      "policy_id": "API-PAGE-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Cross-tenant continuation and a terminal loop violate authorization and completion expectations."
+    },
+    {
+      "case_id": "api-page-001-out-of-scope",
+      "policy_id": "API-PAGE-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A scalar readiness value has no collection or traversal contract."
+    },
+    {
+      "case_id": "data-migrate-001-applicable",
+      "policy_id": "DATA-MIGRATE-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Durable backfill progress, interruption recovery and preserved concurrent writes fit migration guidance."
+    },
+    {
+      "case_id": "data-migrate-001-violating",
+      "policy_id": "DATA-MIGRATE-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Dropping the only old column before draining old readers and an untested restore break rollout/recovery requirements."
+    },
+    {
+      "case_id": "data-migrate-001-out-of-scope",
+      "policy_id": "DATA-MIGRATE-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Read-only dashboard tuning leaves schema, stored data and application versions unchanged."
+    },
+    {
+      "case_id": "data-transaction-001-applicable",
+      "policy_id": "DATA-TRANSACTION-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Coupled durable updates and separately handled notification effects fit the named commit/effect guidance."
+    },
+    {
+      "case_id": "data-transaction-001-violating",
+      "policy_id": "DATA-TRANSACTION-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The stated partial transfer or rollback-of-external-payment claim requires changes; the quoted PostgreSQL rule retains its condition."
+    },
+    {
+      "case_id": "data-transaction-001-out-of-scope",
+      "policy_id": "DATA-TRANSACTION-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Read-only display changes create no coupled durable changes or external effects."
+    },
+    {
+      "case_id": "arch-job-001-applicable",
+      "policy_id": "ARCH-JOB-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A durable effect key after restart prevents a duplicate charge after acknowledgement loss."
+    },
+    {
+      "case_id": "arch-job-001-violating",
+      "policy_id": "ARCH-JOB-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A repeated charge and poison jobs without terminal bounds violate duplicate-effect and retry rules."
+    },
+    {
+      "case_id": "arch-job-001-out-of-scope",
+      "policy_id": "ARCH-JOB-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A synchronous pure calculation has no queue delivery, retry or external effect."
+    },
+    {
+      "case_id": "be-config-001-applicable",
+      "policy_id": "BE-CONFIG-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The malformed required issuer stops startup and a corrected retry works without printing its value."
+    },
+    {
+      "case_id": "be-config-001-violating",
+      "policy_id": "BE-CONFIG-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "An enabled service defers required authorization validation past startup, violating CONFIG-1."
+    },
+    {
+      "case_id": "be-config-001-out-of-scope",
+      "policy_id": "BE-CONFIG-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A static contact-name edit changes no runtime configuration or integration activation."
+    },
+    {
+      "case_id": "rel-timeout-001-applicable",
+      "policy_id": "REL-TIMEOUT-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A classified transient read retry remains within one deadline and releases its connection at exhaustion."
+    },
+    {
+      "case_id": "rel-timeout-001-violating",
+      "policy_id": "REL-TIMEOUT-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Unbounded layered retries or swallowed cancellation with new paid calls violate time and cancellation bounds."
+    },
+    {
+      "case_id": "rel-timeout-001-out-of-scope",
+      "policy_id": "REL-TIMEOUT-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Pure local arithmetic has no dependency, wait or retry budget."
+    },
+    {
+      "case_id": "rel-overload-001-applicable",
+      "policy_id": "REL-OVERLOAD-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Expensive-lane rejection with cheap-call progress fits bounded admission and fairness."
+    },
+    {
+      "case_id": "rel-overload-001-violating",
+      "policy_id": "REL-OVERLOAD-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Unbounded queueing and immediate unlimited retries violate overload limits and amplification guidance."
+    },
+    {
+      "case_id": "rel-overload-001-out-of-scope",
+      "policy_id": "REL-OVERLOAD-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The dashboard-title edit leaves admission, costs, quotas and degradation unchanged."
+    },
+    {
+      "case_id": "be-log-001-applicable",
+      "policy_id": "BE-LOG-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Safe operation/failure/retry identifiers with an absent token marker fit the logging guidance."
+    },
+    {
+      "case_id": "be-log-001-violating",
+      "policy_id": "BE-LOG-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Personal contact details and free text without an approved exception violate LOG-1 explicitly."
+    },
+    {
+      "case_id": "be-log-001-out-of-scope",
+      "policy_id": "BE-LOG-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A page-layout edit changes no service events or logged collection/retention."
+    },
+    {
+      "case_id": "be-trace-001-applicable",
+      "policy_id": "BE-TRACE-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Cross-queue retry correlation and replacing invalid inbound context without changing permissions fit the rules."
+    },
+    {
+      "case_id": "be-trace-001-violating",
+      "policy_id": "BE-TRACE-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Discarded correlation or a bearer token in trace metadata violates safe trace/correlation rules."
+    },
+    {
+      "case_id": "be-trace-001-out-of-scope",
+      "policy_id": "BE-TRACE-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A pure local helper rename leaves all cross-boundary context and telemetry unchanged."
+    },
+    {
+      "case_id": "obs-readiness-001-applicable",
+      "policy_id": "OBS-READINESS-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A missing index rejects readiness and verified replacement recovers without paid calls."
+    },
+    {
+      "case_id": "obs-readiness-001-violating",
+      "policy_id": "OBS-READINESS-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Success despite unusable search plus private prompts in metric labels requires changes under readiness and safe-signal rules."
+    },
+    {
+      "case_id": "obs-readiness-001-out-of-scope",
+      "policy_id": "OBS-READINESS-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Incident-guide spelling changes no probes, metrics, readiness or alerts."
+    },
+    {
+      "case_id": "supply-build-001-applicable",
+      "policy_id": "SUPPLY-BUILD-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A clean installed wheel with policy resources and locked dependencies fits packaged-artifact guidance."
+    },
+    {
+      "case_id": "supply-build-001-violating",
+      "policy_id": "SUPPLY-BUILD-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "An unpinned tool with credentials exposed to unreviewed code and checkout-only testing violates BUILD-2/3."
+    },
+    {
+      "case_id": "supply-build-001-out-of-scope",
+      "policy_id": "SUPPLY-BUILD-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "An unshipped agenda changes no dependency, toolchain, build or distributed artifact."
+    },
+    {
+      "case_id": "supply-provenance-001-applicable",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "kind": "applicable",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Envelope/builder verification, matching subject bytes and modified-artifact rejection fit consumer guidance."
+    },
+    {
+      "case_id": "supply-provenance-001-violating",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "kind": "violating",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Unsigned producer metadata and blanket verified labels without consumer checking violate provenance expectations."
+    },
+    {
+      "case_id": "supply-provenance-001-out-of-scope",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "kind": "out_of_scope",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Bookmark-label editing involves no artifact download, trust or verification."
+    },
+    {
+      "case_id": "test-fail-001-boundary",
+      "policy_id": "TEST-FAIL-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A comment-only change falls within the explicit static-text exception."
+    },
+    {
+      "case_id": "test-contract-001-boundary",
+      "policy_id": "TEST-CONTRACT-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The private helper refactor can reuse passing existing consumer tests under the stated exception."
+    },
+    {
+      "case_id": "arch-api-001-boundary",
+      "policy_id": "ARCH-API-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The optional field has old-consumer compatibility proof; the policy permits retaining the version."
+    },
+    {
+      "case_id": "api-error-001-boundary",
+      "policy_id": "API-ERROR-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The policy permits an existing documented safe format without requiring RFC9457 adoption."
+    },
+    {
+      "case_id": "api-page-001-boundary",
+      "policy_id": "API-PAGE-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The explicit fixed-small-in-memory exception permits omitting pagination."
+    },
+    {
+      "case_id": "data-migrate-001-boundary",
+      "policy_id": "DATA-MIGRATE-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The selected-engine recovery evidence avoids extending DDL behavior or a numeric target across engines."
+    },
+    {
+      "case_id": "data-transaction-001-boundary",
+      "policy_id": "DATA-TRANSACTION-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Separately tested outbox/compensation avoids claiming that database rollback reverses external payment."
+    },
+    {
+      "case_id": "arch-job-001-boundary",
+      "policy_id": "ARCH-JOB-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Identical public-cache replacement is explicitly documented as harmless within the policy boundary."
+    },
+    {
+      "case_id": "be-config-001-boundary",
+      "policy_id": "BE-CONFIG-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The integration is explicitly disabled and never invoked, matching the optional-settings boundary."
+    },
+    {
+      "case_id": "rel-timeout-001-boundary",
+      "policy_id": "REL-TIMEOUT-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A measured caller-budget deadline avoids treating AWS example percentiles as universal requirements."
+    },
+    {
+      "case_id": "rel-overload-001-boundary",
+      "policy_id": "REL-OVERLOAD-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Separate workload-cost measurements avoid an unsupported universal capacity claim from request counts."
+    },
+    {
+      "case_id": "be-log-001-boundary",
+      "policy_id": "BE-LOG-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Avoiding private-body collection is the explicit preferred boundary, without claiming JSON alone is safe."
+    },
+    {
+      "case_id": "be-trace-001-boundary",
+      "policy_id": "BE-TRACE-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "A new child span ID with valid retained trace identity matches the documented trace/span boundary."
+    },
+    {
+      "case_id": "obs-readiness-001-boundary",
+      "policy_id": "OBS-READINESS-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "Separate liveness and capability-based readiness match their stated different purposes."
+    },
+    {
+      "case_id": "supply-build-001-boundary",
+      "policy_id": "SUPPLY-BUILD-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The case withholds bit-for-bit claims despite exact pins, matching the reproducibility boundary."
+    },
+    {
+      "case_id": "supply-provenance-001-boundary",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "kind": "boundary",
+      "role_is_applicable": true,
+      "revision_matches_raw_source": true,
+      "evidence_matches_actual_policy": true,
+      "semantic_assessment": "supported_by_current_policy",
+      "manual_source_basis": "The consumer avoids certification and whole-framework claims outside this selected policy scope."
+    }
+  ],
+  "review_status": "scope_reviewed_no_supported_outcome_findings",
+  "reviewer": "grounded_mcp_jobs separate-agent source assessment",
+  "review_method": "Read every scenario input and expected category against the actual policy intent, applicability, required rule conditions and boundary text; independently verify raw policy digests and exact quoted evidence. Generated answers weren't read or used as an oracle.",
+  "supported_findings": [],
+  "clarity_notes": [
+    {
+      "case_id": "test-contract-001-boundary",
+      "note": "The structured role remains applicable, while the input names another allowed actor. Clarify whether role describes the reviewer or subject; no expected-outcome change is required.",
+      "input_actor_role": "library-maintainer",
+      "structured_role": "application-developer"
+    },
+    {
+      "case_id": "data-migrate-001-boundary",
+      "note": "The structured role remains applicable, while the input names another allowed actor. Clarify whether role describes the reviewer or subject; no expected-outcome change is required.",
+      "input_actor_role": "database-operator",
+      "structured_role": "application-developer"
+    },
+    {
+      "case_id": "rel-overload-001-boundary",
+      "note": "The structured role remains applicable, while the input names another allowed actor. Clarify whether role describes the reviewer or subject; no expected-outcome change is required.",
+      "input_actor_role": "service-operator",
+      "structured_role": "application-developer"
+    },
+    {
+      "case_id": "supply-provenance-001-applicable",
+      "note": "The structured role remains applicable, while the input names another allowed actor. Clarify whether role describes the reviewer or subject; no expected-outcome change is required.",
+      "input_actor_role": "artifact-consumer",
+      "structured_role": "build-maintainer"
+    },
+    {
+      "case_id": "supply-provenance-001-boundary",
+      "note": "The structured role remains applicable, while the input names another allowed actor. Clarify whether role describes the reviewer or subject; no expected-outcome change is required.",
+      "input_actor_role": "artifact-consumer",
+      "structured_role": "build-maintainer"
+    }
+  ],
+  "limitations": [
+    "This is an authored-fixture source-alignment review, not model execution, retrieval accuracy, live quality or runtime compliance proof.",
+    "All referenced rules remain project policy text; this review doesn't independently audit each external standard or certify a framework.",
+    "Applicable means the guidance fits the scenario; it isn't evidence that every requirement was implemented or tested.",
+    "Role/actor clarity notes are nonblocking because both stated roles belong to the relevant policy applicability."
+  ],
+  "repository_clean_after_review": true
+}
