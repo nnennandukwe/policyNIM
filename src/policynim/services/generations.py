@@ -387,8 +387,12 @@ class GenerationStore:
             self._fault(name)
 
     @contextmanager
-    def _locked(self, *, initialize: bool = False) -> Iterator[None]:
+    def _locked(
+        self, *, initialize: bool = False, expected_root_identity: tuple[int, int] | None = None
+    ) -> Iterator[None]:
         """Verify root ownership and serialize supported readers, publishers and retention."""
+        if expected_root_identity is not None:
+            self._require_root_identity(expected_root_identity)
         if self.root.is_symlink():
             raise GenerationError("open", "The selected generation root can't be a symlink.")
         if initialize:
@@ -420,6 +424,8 @@ class GenerationStore:
         if not owner.exists() and not initialize:
             raise GenerationError("open", "The directory isn't an owned generation store.")
         with exclusive_file_lock(self.root / ".publish.lock", on_wait=check_budget):
+            if expected_root_identity is not None:
+                self._require_root_identity(expected_root_identity)
             if not owner.exists():
                 interrupted: list[tuple[Path, tuple[int, int], bytes]] = []
                 for entry in self.root.iterdir():
@@ -465,14 +471,25 @@ class GenerationStore:
             yield
 
     @contextmanager
-    def _writer(self, *, initialize: bool = False) -> Iterator[None]:
+    def _writer(
+        self, *, initialize: bool = False, expected_root_identity: tuple[int, int] | None = None
+    ) -> Iterator[None]:
         """Serialize preparation and retention while allowing readers during provider I/O."""
-        with self._locked(initialize=initialize):
+        with self._locked(initialize=initialize, expected_root_identity=expected_root_identity):
             pass
         with exclusive_file_lock(self.root / ".writer.lock", on_wait=check_budget):
-            with self._locked():
+            with self._locked(expected_root_identity=expected_root_identity):
                 self._pointer()
             yield
+
+    def _require_root_identity(self, expected: tuple[int, int]) -> None:
+        """Restrict fresh-root initialization to the directory this invocation created."""
+        try:
+            observed = self.root.lstat()
+        except OSError as exc:
+            raise GenerationError("bootstrap", "Fresh generation-root identity changed.") from exc
+        if not stat.S_ISDIR(observed.st_mode) or (observed.st_dev, observed.st_ino) != expected:
+            raise GenerationError("bootstrap", "Fresh generation-root identity changed.")
 
     def _pointer(self) -> GenerationPointer | None:
         """Read the sole canonical activation record without inferring missing state."""
@@ -1519,10 +1536,10 @@ class GenerationStore:
                 raise
             return expected_digest
 
-    def import_bundle(
-        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
-    ) -> PublicationResult:
-        """Import verified bytes offline; optionally require current packaged sources to match."""
+    def _read_bundle_inputs(
+        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None
+    ) -> tuple[dict[str, bytes], SourceSnapshot | None]:
+        """Verify one archive and optional packaged source agreement before publication."""
         try:
             raw = _read_regular(bundle, max_bytes=256 * 1024 * 1024)
             if digest_bytes(raw) != expected_digest:
@@ -1575,6 +1592,17 @@ class GenerationStore:
                     "Publish an updated bundle explicitly before building this application.",
                 )
 
+        return contents, incoming
+
+    def _publish_bundle_inputs(
+        self,
+        contents: dict[str, bytes],
+        *,
+        source_settings: Settings | None,
+        incoming: SourceSnapshot | None,
+    ) -> PublicationResult:
+        """Publish already checked bytes through the shared staged activation transaction."""
+
         def prepare(stage: Path) -> GenerationSnapshot:
             """Prepare and validate all artifact bytes before entering the common commit point."""
             for name in sorted(_FILES):
@@ -1582,11 +1610,92 @@ class GenerationStore:
             self._step("staging_validate")
             return self._inspect(stage, expected_embedding=self.embedding, staging=True)
 
+        if source_settings is not None:
+            assert incoming is not None
+            self._require_fresh_sources(incoming, source_settings)
+        return self._publish_stage(prepare)
+
+    def import_bundle(
+        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
+    ) -> PublicationResult:
+        """Import verified bytes offline; optionally require current packaged sources to match."""
+        contents, incoming = self._read_bundle_inputs(
+            bundle, expected_digest=expected_digest, source_settings=source_settings
+        )
+
         def publish() -> PublicationResult:
-            """Recheck source-match inputs after any writer wait before installing the bundle."""
-            if source_settings is not None:
-                assert incoming is not None
-                self._require_fresh_sources(incoming, source_settings)
-            return self._publish_stage(prepare)
+            """Recheck source agreement after writer admission and activate the explicit import."""
+            return self._publish_bundle_inputs(
+                contents, source_settings=source_settings, incoming=incoming
+            )
 
         return self._execute(publish)
+
+    def bootstrap_bundle(
+        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
+    ) -> PublicationResult:
+        """Seed an absent root once or preserve a validated existing active selection."""
+        fresh_identity: tuple[int, int] | None = None
+        contents: dict[str, bytes] | None = None
+        incoming: SourceSnapshot | None = None
+        result: PublicationResult | None = None
+        try:
+            try:
+                self.root.lstat()
+            except FileNotFoundError:
+                contents, incoming = self._read_bundle_inputs(
+                    bundle, expected_digest=expected_digest, source_settings=source_settings
+                )
+                missing: list[Path] = []
+                ancestor = self.root.parent
+                while not ancestor.exists():
+                    missing.append(ancestor)
+                    ancestor = ancestor.parent
+                self.root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                try:
+                    self.root.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass  # Another supported initializer owns the existing-root path.
+                else:
+                    observed = self.root.lstat()
+                    fresh_identity = observed.st_dev, observed.st_ino
+                    self._step("bootstrap_root_created")
+                    for directory in [self.root, *missing]:
+                        _sync_directory(directory.parent)
+            self._step("bootstrap_before_writer")
+            with self._writer(
+                initialize=fresh_identity is not None, expected_root_identity=fresh_identity
+            ):
+                pointer = self._pointer()
+                if pointer is not None:
+                    selected = self.inspect(pointer.active)
+                    result = PublicationResult(
+                        generation_id=selected.generation_id,
+                        manifest=selected.manifest,
+                        previous_generation_id=pointer.previous,
+                    )
+                elif fresh_identity is None:
+                    raise GenerationError(
+                        "bootstrap",
+                        "An existing generation root has no active selection; "
+                        "preserve it and recover explicitly.",
+                    )
+                else:
+                    assert contents is not None
+                    result = self._publish_bundle_inputs(
+                        contents, source_settings=source_settings, incoming=incoming
+                    )
+            return result
+        except Exception as exc:
+            if result is not None:
+                result.warnings.append(
+                    "Generation selected; bootstrap writer cleanup needs inspection."
+                )
+                return result
+            if isinstance(exc, PolicyNIMError):
+                raise
+            raise GenerationError(
+                "bootstrap",
+                "Generation bootstrap didn't complete; preserve existing state "
+                "and inspect it before explicit recovery.",
+            ) from exc
