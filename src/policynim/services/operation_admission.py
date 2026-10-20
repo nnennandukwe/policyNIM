@@ -228,7 +228,13 @@ class OperationAdmissionService:
             raise OperationAdmissionError(decision.rejection + ": " + messages[decision.rejection])
         return decision
 
-    def _retry_storage(self, action: Callable[[], _Result]) -> _Result:
+    def _retry_storage(
+        self,
+        action: Callable[[], _Result],
+        *,
+        phase: Literal["reservation", "finish"] = "reservation",
+        operation_id: str | None = None,
+    ) -> _Result:
         """Bound writer contention while retaining durable acceptance across retries."""
         for attempt in range(3):
             try:
@@ -237,7 +243,7 @@ class OperationAdmissionService:
                 if _is_busy(exc) and attempt < 2:
                     time.sleep(0.05)
                     continue
-                record_operation_storage_failure(exc, phase="reservation")
+                record_operation_storage_failure(exc, phase=phase, operation_id=operation_id)
                 raise OperationAdmissionError(_admission_storage_error(exc)) from exc
         raise AssertionError("Storage retry loop didn't return.")
 
@@ -354,7 +360,9 @@ class OperationAdmissionService:
                     principal_id=principal_id,
                     operation=operation_name,
                     outcome=outcome,
-                )
+                ),
+                phase="finish",
+                operation_id=operation_id,
             )
         except OperationAdmissionError as exc:
             self._accounting_incomplete.set()
