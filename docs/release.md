@@ -43,6 +43,23 @@ python -m venv /tmp/policynim-wheel-smoke
 /tmp/policynim-wheel-smoke/bin/policynim --version
 ```
 
+The `package-offline` CI job verifies fresh wheel installations on Linux and
+Windows with Python 3.11 and 3.12. It creates each environment outside the source
+checkout, compares installed package bytes to the wheel, validates packaged policy
+sources, imports the checksum-pinned public generation with source matching, and
+checks the served catalog identity. It also runs the original synthetic offline
+evaluation and actual stdio/HTTP discovery for MCP protocols `2026-07-28` and
+`2025-11-25`, including rejection of unauthenticated HTTP requests.
+
+To repeat these checks, use the fresh environment's Python from a directory
+outside this repository to run `scripts/verify_installed_package.py`. Supply the
+absolute wheel and public bundle paths with `--wheel` and `--bundle`, the trusted
+contents of `artifacts/public-generation/generation.sha256` with `--bundle-digest`,
+the source commit with `--revision`, and an output JSON path with `--output`.
+The verifier refuses an installation resolved back to a source checkout. It never
+calls model providers; protocol discovery doesn't establish live retrieval quality
+or Codex/Claude UI interoperability. Retain those acceptance results separately.
+
 ## GitHub Release
 
 Create and push a version tag from the commit you want to release:

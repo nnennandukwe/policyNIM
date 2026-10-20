@@ -15,20 +15,28 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
+from uuid import uuid4
 
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
+from policynim.ingest import chunk_policy_documents
 from policynim.operations import ResourceStack, check_budget, close_components, operation_scope
-from policynim.runtime_paths import resolve_eval_suite_path, resolve_runtime_path
+from policynim.runtime_paths import (
+    resolve_eval_suite_path,
+    resolve_grounded_eval_suite_path,
+    resolve_runtime_path,
+)
 from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import create_policy_evidence_trace_service
+from policynim.services.generations import GenerationSnapshot
 from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.services.preflight import PreflightService
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
 from policynim.types import (
+    Citation,
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
     CompileRequest,
@@ -104,12 +112,22 @@ class EvalService:
         compare_rerank: bool = True,
         regenerate: bool = False,
         max_regenerations: int = 1,
+        suite_path: Path | None = None,
     ) -> EvalRunResult:
         """Run the requested eval suite and persist the resulting reports."""
         if regenerate and backend == "default":
             raise ValueError("eval --regenerate requires backend nemo, nemo_evaluator, or nat.")
         if max_regenerations < 1 or max_regenerations > 3:
             raise ValueError("max_regenerations must be between 1 and 3.")
+        if suite_path is not None and mode != "live":
+            raise PolicyNIMError(
+                "Custom suites require --mode live. Offline evaluation uses synthetic fixtures "
+                "and cannot establish quality for a selected policy generation."
+            )
+        selected_path = suite_path or (
+            resolve_grounded_eval_suite_path() if mode == "live" else resolve_eval_suite_path()
+        )
+        suite = _load_eval_suite(selected_path)
         if mode == "live":
             with ResourceStack() as cleanup:
                 store = create_index_store(self._settings)
@@ -117,6 +135,7 @@ class EvalService:
                 snapshot = pinned_generation(store)
                 if snapshot is None:
                     raise PolicyNIMError("Live evaluation requires a verified policy generation.")
+                _validate_suite_generation(suite, snapshot)
                 worker = EvalService(
                     settings=self._settings.model_copy(
                         update={"generation_id": snapshot.generation_id}, deep=True
@@ -128,6 +147,9 @@ class EvalService:
                     compare_rerank=compare_rerank,
                     regenerate=regenerate,
                     max_regenerations=max_regenerations,
+                    suite=suite,
+                    suite_path=selected_path,
+                    snapshot=snapshot,
                 )
         return self._run_pinned(
             mode=mode,
@@ -135,6 +157,8 @@ class EvalService:
             compare_rerank=compare_rerank,
             regenerate=regenerate,
             max_regenerations=max_regenerations,
+            suite=suite,
+            suite_path=selected_path,
         )
 
     def _run_pinned(
@@ -145,10 +169,11 @@ class EvalService:
         compare_rerank: bool,
         regenerate: bool,
         max_regenerations: int,
+        suite: EvalSuite,
+        suite_path: Path,
+        snapshot: GenerationSnapshot | None = None,
     ) -> EvalRunResult:
         """Keep the job's selected generation across every mode, case, and report."""
-        suite_path = resolve_eval_suite_path()
-        suite = _load_eval_suite(suite_path)
         rerank_modes = [True, False] if compare_rerank else [True]
 
         mode_results: list[EvalModeRunResult] = []
@@ -165,6 +190,8 @@ class EvalService:
                 case.generation_id != self._settings.generation_id for case in case_results
             ):
                 raise PolicyNIMError("Live eval results don't match the job's pinned generation.")
+            if snapshot is not None:
+                _validate_case_evidence(case_results, snapshot)
             mode_results.append(
                 self._persist_mode_run(
                     suite=suite,
@@ -173,6 +200,7 @@ class EvalService:
                     backend=backend,
                     rerank_enabled=rerank_enabled,
                     case_results=case_results,
+                    snapshot=snapshot,
                 )
             )
 
@@ -183,6 +211,7 @@ class EvalService:
         )
         return EvalRunResult(
             generation_id=self._settings.generation_id if mode == "live" else None,
+            suite_digest=_suite_digest(suite),
             mode=mode,
             backend=backend,
             suite_name=suite.name,
@@ -402,10 +431,11 @@ class EvalService:
         backend: EvalBackend,
         rerank_enabled: bool,
         case_results: list[EvalCaseResult],
+        snapshot: GenerationSnapshot | None = None,
     ) -> EvalModeRunResult:
         """Persist one mode with the job generation and actual case results."""
         metrics = _aggregate_metrics(case_results)
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex
         mode_slug = "rerank-on" if rerank_enabled else "rerank-off"
         suite_slug = _suite_name_slug(suite.name)
 
@@ -416,6 +446,20 @@ class EvalService:
 
         result_payload = EvalModeRunResult(
             generation_id=self._settings.generation_id if mode == "live" else None,
+            suite_digest=_suite_digest(suite),
+            catalog_digest=snapshot.catalog.digest if snapshot else None,
+            suite_definition=suite,
+            provider_models=(
+                {
+                    "embedding": self._settings.nvidia_embed_model,
+                    "reranking": self._settings.nvidia_rerank_model
+                    if rerank_enabled
+                    else "disabled",
+                    "generation": self._settings.nvidia_chat_model,
+                }
+                if mode == "live"
+                else {}
+            ),
             backend=backend,
             rerank_enabled=rerank_enabled,
             metrics=metrics,
@@ -458,6 +502,10 @@ class EvalService:
         )
 
         return EvalModeRunResult(
+            suite_digest=result_payload.suite_digest,
+            suite_definition=result_payload.suite_definition,
+            catalog_digest=result_payload.catalog_digest,
+            provider_models=result_payload.provider_models,
             generation_id=result_payload.generation_id,
             backend=backend,
             rerank_enabled=rerank_enabled,
@@ -573,6 +621,20 @@ def _score_search_case(
         matched_ids=matched_chunk_ids,
         label="chunk_id",
     )
+    actual_policy_ids = list(dict.fromkeys(hit.policy.policy_id for hit in result.hits))
+    matched_policy_ids = [value for value in case.expected_policy_ids if value in actual_policy_ids]
+    failure_reasons.extend(
+        _build_failure_reasons(
+            expected_insufficient_context=case.expected_insufficient_context,
+            actual_insufficient_context=case.expected_insufficient_context,
+            expected_ids=case.expected_policy_ids,
+            matched_ids=matched_policy_ids,
+            label="policy_id",
+        )
+    )
+    failure_reasons.extend(_forbidden_policy_failures(case, actual_policy_ids))
+    if result.insufficient_context and result.hits:
+        failure_reasons.append("insufficient-context search exposed grounded hits")
     return EvalCaseResult(
         generation_id=result.generation_id,
         case_id=case.case_id,
@@ -588,12 +650,15 @@ def _score_search_case(
         expected_chunk_ids=case.expected_chunk_ids,
         actual_chunk_ids=actual_chunk_ids,
         matched_chunk_ids=matched_chunk_ids,
-        expected_policy_ids=[],
-        actual_policy_ids=[],
-        matched_policy_ids=[],
+        expected_policy_ids=case.expected_policy_ids,
+        actual_policy_ids=actual_policy_ids,
+        matched_policy_ids=matched_policy_ids,
+        forbidden_policy_ids=case.forbidden_policy_ids,
+        actual_citations=[_eval_citation(hit) for hit in result.hits],
+        search_result=result,
         metrics=EvalCaseMetrics(
             expected_chunk_recall=chunk_recall,
-            expected_policy_recall=1.0,
+            expected_policy_recall=_recall(len(matched_policy_ids), len(case.expected_policy_ids)),
             insufficient_context_correct=(
                 case.expected_insufficient_context == result.insufficient_context
             ),
@@ -632,6 +697,27 @@ def _score_preflight_case(
         matched_ids=matched_policy_ids,
         label="policy_id",
     )
+    missing_chunks = [value for value in case.expected_chunk_ids if value not in matched_chunk_ids]
+    if missing_chunks:
+        failure_reasons.append("missing expected chunk_id values: " + ", ".join(missing_chunks))
+    observed_policies = set(actual_policy_ids) | {item.policy_id for item in result.citations}
+    if evidence_trace is not None:
+        observed_policies.update(item.policy_id for item in evidence_trace.chunks)
+        observed_policies.update(item.policy_id for item in evidence_trace.selected_policies)
+        for constraint in evidence_trace.constraints:
+            observed_policies.update(constraint.source_policy_ids)
+    failure_reasons.extend(_forbidden_policy_failures(case, observed_policies))
+    if result.insufficient_context and (
+        result.applicable_policies
+        or result.citations
+        or result.plan_steps
+        or result.implementation_guidance
+        or result.review_flags
+        or result.tests_required
+    ):
+        failure_reasons.append("insufficient-context preflight exposed implementation guidance")
+    if not result.insufficient_context and not result.citations:
+        failure_reasons.append("grounded preflight has no citations")
     if conformance_result is not None and not conformance_result.passed:
         failure_reasons.append(
             "policy conformance failed: "
@@ -659,6 +745,9 @@ def _score_preflight_case(
         expected_policy_ids=case.expected_policy_ids,
         actual_policy_ids=actual_policy_ids,
         matched_policy_ids=matched_policy_ids,
+        forbidden_policy_ids=case.forbidden_policy_ids,
+        actual_citations=result.citations,
+        preflight_result=result,
         actual_summary=result.summary,
         conformance_result=conformance_result,
         evidence_trace=evidence_trace,
@@ -811,10 +900,107 @@ def _recall(matched_count: int, expected_count: int) -> float:
 
 
 def _load_eval_suite(path: Path) -> EvalSuite:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        return EvalSuite(name=path.stem, cases=[EvalCase.model_validate(item) for item in payload])
-    return EvalSuite.model_validate(payload)
+    """Capture one reviewed fixture definition before any provider allocation."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            return EvalSuite(
+                name=path.stem, cases=[EvalCase.model_validate(item) for item in payload]
+            )
+        return EvalSuite.model_validate(payload)
+    except (OSError, ValueError) as exc:
+        raise PolicyNIMError(
+            "Evaluation suite could not be read or validated. Check its JSON, unique case IDs, "
+            "revision digests, and consistent expected/forbidden evidence."
+        ) from exc
+
+
+def _suite_digest(suite: EvalSuite) -> str:
+    """Bind the parsed expectations, including defaults, rather than mutable file paths."""
+    return "sha256:" + hashlib.sha256(suite.model_dump_json().encode("utf-8")).hexdigest()
+
+
+def _eval_citation(chunk: PolicyChunk) -> Citation:
+    """Retain all public citation coordinates for independent generation validation."""
+    return Citation(
+        policy_id=chunk.policy.policy_id,
+        title=chunk.policy.title,
+        path=chunk.path,
+        section=chunk.section,
+        lines=chunk.lines,
+        chunk_id=chunk.chunk_id,
+    )
+
+
+def _forbidden_policy_failures(case: EvalCase, observed: Sequence[str] | set[str]) -> list[str]:
+    """A forbidden policy in retrieval, compilation, or output is a failing expectation."""
+    unexpected = sorted(set(case.forbidden_policy_ids) & set(observed))
+    return ["forbidden policy_id values: " + ", ".join(unexpected)] if unexpected else []
+
+
+def _validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
+    """Reject stale or impossible custom fixtures before constructing provider services."""
+    if suite.expected_catalog_digest is None and not suite.expected_policy_revisions:
+        raise PolicyNIMError(
+            "Custom suites must pin a catalog digest or expected policy revisions."
+        )
+    if suite.expected_catalog_digest is not None:
+        if suite.expected_catalog_digest != snapshot.catalog.digest:
+            raise PolicyNIMError(
+                "Evaluation suite catalog digest doesn't match the pinned generation."
+            )
+    policies = {entry.policy.policy_id: entry for entry in snapshot.catalog.policies}
+    chunks = {chunk.chunk_id for chunk in chunk_policy_documents(snapshot.documents)}
+    for policy_id, expected in suite.expected_policy_revisions.items():
+        entry = policies.get(policy_id)
+        provenance = entry.policy.provenance if entry else None
+        if provenance is None or provenance.content_digest != expected:
+            raise PolicyNIMError("Evaluation suite policy revision doesn't match the generation.")
+    for case in suite.cases:
+        if (
+            any(
+                policy_id not in policies or policies[policy_id].state != "active"
+                for policy_id in case.expected_policy_ids
+            )
+            or not set(case.expected_chunk_ids) <= chunks
+        ):
+            raise PolicyNIMError(
+                "Evaluation suite expects evidence absent from the effective generation."
+            )
+        if not set(case.forbidden_policy_ids) <= policies.keys():
+            raise PolicyNIMError("Evaluation suite names an unknown forbidden policy.")
+
+
+def _validate_case_evidence(
+    results: Sequence[EvalCaseResult], snapshot: GenerationSnapshot
+) -> None:
+    """Check returned source coordinates against the held generation, independently of providers."""
+    expected = {
+        chunk.chunk_id: _eval_citation(chunk)
+        for chunk in chunk_policy_documents(snapshot.documents)
+    }
+    for result in results:
+        failures = list(result.failure_reasons)
+        for citation in result.actual_citations:
+            if expected.get(citation.chunk_id) != citation:
+                failures.append(
+                    "citation doesn't match the pinned generation: " + citation.chunk_id
+                )
+        if result.evidence_trace is not None:
+            trace = result.evidence_trace
+            if trace.generation_id != snapshot.generation_id:
+                failures.append("evidence trace generation doesn't match the pinned generation")
+            for chunk in trace.chunks:
+                citation = Citation(
+                    **chunk.model_dump(exclude={"text", "score", "policy_title", "domain"}),
+                    title=chunk.policy_title,
+                )
+                if expected.get(chunk.chunk_id) != citation:
+                    failures.append(
+                        "trace chunk doesn't match the pinned generation: " + chunk.chunk_id
+                    )
+        result.failure_reasons = list(dict.fromkeys(failures))
+        result.passed = not result.failure_reasons
 
 
 def _suite_name_slug(name: str) -> str:

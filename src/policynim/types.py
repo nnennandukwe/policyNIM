@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -1168,13 +1169,38 @@ class EvalCase(StrictModel):
     expected_insufficient_context: bool = False
     expected_chunk_ids: list[str] = Field(default_factory=list)
     expected_policy_ids: list[str] = Field(default_factory=list)
+    forbidden_policy_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_expectations(self) -> EvalCase:
+        """Reject contradictory fixtures before evaluation can start provider work."""
+        if set(self.expected_policy_ids) & set(self.forbidden_policy_ids):
+            raise ValueError("A policy cannot be both expected and forbidden.")
+        if self.expected_insufficient_context and (
+            self.expected_policy_ids or self.expected_chunk_ids
+        ):
+            raise ValueError("Insufficient-context cases cannot require grounded output evidence.")
+        return self
 
 
 class EvalSuite(StrictModel):
     """Named bundle of eval cases."""
 
     name: str
-    cases: list[EvalCase] = Field(default_factory=list)
+    cases: list[EvalCase] = Field(min_length=1)
+    expected_catalog_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    expected_policy_revisions: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_cases(self) -> EvalSuite:
+        """Keep case identity unambiguous and revision pins explicit."""
+        ids = [case.case_id for case in self.cases]
+        if any(not value.strip() for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("Evaluation case IDs must be nonempty and unique.")
+        for digest in self.expected_policy_revisions.values():
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise ValueError("Expected policy revisions must be SHA256 digests.")
+        return self
 
 
 class EvalCaseMetrics(StrictModel):
@@ -1208,6 +1234,10 @@ class EvalCaseResult(StrictModel):
     expected_policy_ids: list[str] = Field(default_factory=list)
     actual_policy_ids: list[str] = Field(default_factory=list)
     matched_policy_ids: list[str] = Field(default_factory=list)
+    forbidden_policy_ids: list[str] = Field(default_factory=list)
+    actual_citations: list[Citation] = Field(default_factory=list)
+    search_result: SearchResult | None = None
+    preflight_result: PreflightResult | None = None
     actual_summary: str | None = None
     conformance_result: PolicyConformanceResult | None = None
     evidence_trace: PolicyEvidenceTrace | None = None
@@ -1240,6 +1270,10 @@ class EvalModeRunResult(StrictModel):
     """All eval results for one rerank mode."""
 
     generation_id: GenerationID | None = None
+    suite_digest: str | None = None
+    suite_definition: EvalSuite | None = None
+    catalog_digest: str | None = None
+    provider_models: dict[str, str] = Field(default_factory=dict)
 
     backend: EvalBackend = "default"
     rerank_enabled: bool
@@ -1265,6 +1299,7 @@ class EvalRunResult(StrictModel):
     """Top-level eval command result."""
 
     generation_id: GenerationID | None = None
+    suite_digest: str | None = None
 
     mode: EvalExecutionMode
     backend: EvalBackend = "default"

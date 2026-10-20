@@ -1,0 +1,49 @@
+{
+  "name": "grounded-policy-baseline",
+  "expected_catalog_digest": "sha256:f1cab5b2383bbcf16fa11c1a11ab5e1e493637cbba9cfaefbe7acb22968b3c15",
+  "expected_policy_revisions": {
+    "ARCH-JOB-001": "sha256:ed380c577ba87ff6eb2b1cda707324b5eaf75b1df96bd1066ccb7378459ef90b",
+    "SEC-SESSION-001": "sha256:259d0d334f96c12c21f13db9aac7b0078826aa8eb063d9f9ef26d04b7ab1072d",
+    "MCP-AUTH-001": "sha256:732c6618ebb8b6de2376e10e3e7f6a8bb9bb0e98d76e47335a66b88fdd03de15"
+  },
+  "cases": [
+    {
+      "case_id": "search-background-job",
+      "kind": "search",
+      "input": "background job idempotency bounded batch cleanup retries",
+      "domain": "architecture",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ]
+    },
+    {
+      "case_id": "preflight-refresh-cleanup",
+      "kind": "preflight",
+      "input": "Implement a refresh-token cleanup background job with bounded batches, cancellation and safe logging",
+      "top_k": 8,
+      "expected_policy_ids": [
+        "ARCH-JOB-001",
+        "SEC-SESSION-001"
+      ]
+    },
+    {
+      "case_id": "search-mcp-scopes",
+      "kind": "search",
+      "input": "MCP resource server reject access tokens with wrong audience or insufficient scopes",
+      "domain": "security",
+      "top_k": 5,
+      "expected_policy_ids": [
+        "MCP-AUTH-001"
+      ]
+    },
+    {
+      "case_id": "preflight-unsupported-domain",
+      "kind": "preflight",
+      "input": "Design GPU video transcoding kernel scheduling",
+      "domain": "video-processing",
+      "top_k": 5,
+      "expected_insufficient_context": true
+    }
+  ]
+}

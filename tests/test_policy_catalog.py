@@ -15,11 +15,12 @@ from policynim.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
-def clean_catalog_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def clean_catalog_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Prevent cached settings and personal credentials from entering source-only tests."""
     for key in list(os.environ):
         if key.startswith("POLICYNIM_") or key == "NVIDIA_API_KEY":
             monkeypatch.delenv(key)
+    monkeypatch.setenv("POLICYNIM_GENERATIONS_DIR", str(tmp_path / "isolated-generations"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
