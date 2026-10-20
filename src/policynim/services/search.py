@@ -7,9 +7,12 @@ from types import TracebackType
 from policynim.contracts import Embedder, IndexStore, Reranker
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
+from policynim.services.index_store import (
+    create_index_store,
+    pinned_generation,
+    require_index_ready,
+)
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
-from policynim.storage.index_readiness import require_index_ready
 from policynim.types import SearchRequest, SearchResult
 
 _DEFAULT_RERANK_CANDIDATE_POOL = 15
@@ -30,6 +33,8 @@ class SearchService:
         self._operation_timeout_seconds = operation_timeout_seconds
         self._embedder = embedder
         self._index_store = index_store
+        snapshot = pinned_generation(index_store)
+        self._generation_id = snapshot.generation_id if snapshot else None
         self._reranker = reranker
 
     def __enter__(self) -> SearchService:
@@ -45,7 +50,7 @@ class SearchService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        close_components(self._embedder, self._reranker)
+        close_components(self._embedder, self._reranker, self._index_store)
 
     @bounded_stage("search")
     def search(
@@ -71,6 +76,7 @@ class SearchService:
                 top_k=request.top_k,
                 hits=[],
                 insufficient_context=True,
+                generation_id=self._generation_id,
             )
 
         hits = dense_candidates[: request.top_k]
@@ -84,20 +90,27 @@ class SearchService:
             top_k=request.top_k,
             hits=hits[: request.top_k],
             insufficient_context=not hits,
+            generation_id=self._generation_id,
         )
 
 
 def create_search_service(settings: Settings | None = None) -> SearchService:
     """Build the default search service from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     index_store = create_index_store(active_settings)
-    embedder, reranker = _create_default_search_components(active_settings)
-    return SearchService(
-        embedder=embedder,
-        index_store=index_store,
-        reranker=reranker,
-        operation_timeout_seconds=active_settings.operation_timeout_seconds,
-    )
+    embedder: Embedder | None = None
+    reranker: Reranker | None = None
+    try:
+        embedder, reranker = _create_default_search_components(active_settings)
+        return SearchService(
+            embedder=embedder,
+            index_store=index_store,
+            reranker=reranker,
+            operation_timeout_seconds=active_settings.operation_timeout_seconds,
+        )
+    except BaseException as error:
+        close_components(embedder, reranker, index_store, primary_error=error)
+        raise
 
 
 def _create_default_search_components(settings: Settings) -> tuple[Embedder, Reranker]:

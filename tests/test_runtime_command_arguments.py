@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from test_index_identity import chunk, settings_for
+from test_index_identity import settings_for
+from test_ingest_service import MockEmbedder
+from test_policy_profiles import write_pack
 from typer.testing import CliRunner
 
 from policynim.interfaces import cli
+from policynim.services.generations import GenerationStore
 from policynim.settings import Settings
-from policynim.storage import RuntimeEvidenceStore, create_index_store
+from policynim.storage import RuntimeEvidenceStore
 from policynim.types import (
-    CompiledRuntimeRule,
-    RuntimeRulesArtifact,
+    EmbeddingIdentity,
     ShellCommandActionRequest,
     ShellCommandExecutionRequest,
 )
@@ -30,11 +34,17 @@ def runtime_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Setting
     """Prepare real runtime dependencies without calling a provider."""
     settings = settings_for(
         tmp_path / "index.sqlite3",
+        corpus_dir=write_pack(tmp_path / "policies", "test.argv", ["A"]),
+        generations_dir=tmp_path / "generations",
         runtime_rules_artifact_path=tmp_path / "rules.json",
         runtime_evidence_db_path=tmp_path / "evidence.sqlite3",
     )
-    create_index_store(settings).replace([chunk()])
-    settings.runtime_rules_artifact_path.write_text(RuntimeRulesArtifact().model_dump_json())
+    GenerationStore(
+        root=settings.generations_dir,
+        embedding=EmbeddingIdentity(
+            model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
+        ),
+    ).build(settings, MockEmbedder())
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     return settings
 
@@ -92,27 +102,24 @@ def test_runtime_decision_matches_unmodified_arguments(
 ) -> None:
     """A rule matching the original padded argument must block the child process."""
     command = _command("  restricted  ")
-    rule = CompiledRuntimeRule(
-        policy_id="P",
-        title="Block this exact command",
-        domain="security",
-        source_path="policies/p.md",
-        start_line=1,
-        end_line=1,
-        action="shell_command",
-        effect="block",
-        reason="This exact command needs a policy change.",
-        command_regexes=["^" + re.escape(shlex.join(command)) + "$"],
+    assert runtime_settings.corpus_dir is not None
+    source = runtime_settings.corpus_dir / "A.md"
+    source.write_text(
+        source.read_text().replace('"^A$"', "^" + re.escape(shlex.join(command)) + "$")
     )
-    runtime_settings.runtime_rules_artifact_path.write_text(
-        RuntimeRulesArtifact(rules=[rule]).model_dump_json()
-    )
+    published = GenerationStore(
+        root=runtime_settings.generations_dir,
+        embedding=EmbeddingIdentity(
+            model=runtime_settings.nvidia_embed_model, endpoint=runtime_settings.nvidia_base_url
+        ),
+    ).build(runtime_settings, MockEmbedder())
     runner = CliRunner()
     decided = runner.invoke(
         cli.app, ["runtime", "decide", "--input", "-"], input=_payload(tmp_path, command)
     )
     assert decided.exit_code == 0, decided.output
     assert json.loads(decided.stdout)["decision"] == "block"
+    assert json.loads(decided.stdout)["generation_id"] == published.generation_id
     executed = runner.invoke(
         cli.app, ["runtime", "execute", "--input", "-"], input=_payload(tmp_path, command)
     )
@@ -131,6 +138,8 @@ def test_runtime_decision_matches_unmodified_arguments(
     [
         ([], "at least 1 item"),
         ([""], "executable must not be empty"),
+        (["   "], "executable must not be empty"),
+        (["\t\n"], "executable must not be empty"),
         (["bad\x00executable"], "NUL"),
         (_command("bad\x00argument"), "NUL"),
     ],
@@ -182,6 +191,46 @@ def test_shell_models_preserve_argument_contents(
     assert model.model_validate_json(request.model_dump_json()).command == command
     with pytest.raises(ValidationError):
         model.model_validate_json(_payload(Path.cwd(), []))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires the POSIX rm command.")
+@pytest.mark.parametrize("blank_operand", ["", " ", "\t", "\n"])
+def test_empty_operands_cant_bypass_destructive_command_screening(
+    runtime_settings: Settings, tmp_path: Path, blank_operand: str
+) -> None:
+    """Screen blank-operand variants while preserving the exact execution request."""
+    target = tmp_path / "owned-target.txt"
+    target.write_text("Owned test data.")
+    command = ["rm", blank_operand, "-rf", target.name]
+    # Prove the actual command can remove its target despite reporting an
+    # missing-operand error; the test owns every affected path.
+    subprocess.run(command, cwd=tmp_path, capture_output=True, check=False, timeout=10)
+    assert not target.exists()
+    target.write_text("Owned test data.")
+
+    assert runtime_settings.corpus_dir is not None
+    source = runtime_settings.corpus_dir / "A.md"
+    source.write_text(source.read_text().replace('"^A$"', '"^rm -rf"'))
+    GenerationStore(
+        root=runtime_settings.generations_dir,
+        embedding=EmbeddingIdentity(
+            model=runtime_settings.nvidia_embed_model, endpoint=runtime_settings.nvidia_base_url
+        ),
+    ).build(runtime_settings, MockEmbedder())
+    result = CliRunner().invoke(
+        cli.app, ["runtime", "execute", "--input", "-"], input=_payload(tmp_path, command)
+    )
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["execution_outcome"] == "blocked"
+    assert target.read_text() == "Owned test data."
+    events = RuntimeEvidenceStore(
+        path=runtime_settings.runtime_evidence_db_path
+    ).list_session_events("argv-check")
+    assert [event.event_kind for event in events] == ["decision", "blocked"]
+    assert all(
+        isinstance(event.request, ShellCommandExecutionRequest) and event.request.command == command
+        for event in events
+    )
 
 
 def test_evidence_report_reads_legacy_nul_decision(

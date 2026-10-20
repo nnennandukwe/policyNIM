@@ -91,6 +91,23 @@ class PolicyConformanceEvaluator(Protocol):
         ...
 
 
+class GenerationLease(Protocol):
+    """The reader identity and lifetime owned by an immutable index adapter."""
+
+    @property
+    def generation_id(self) -> str:
+        """Identify the retained generation without storage knowing its source/service models."""
+        ...
+
+    def close(self) -> None:
+        """Release the retained generation once its index reader closes."""
+        ...
+
+    def validate_read(self) -> None:
+        """Reject observed artifact changes before an owned index operation proceeds."""
+        ...
+
+
 class IndexStore(Protocol):
     """Stores and searches policy chunks."""
 

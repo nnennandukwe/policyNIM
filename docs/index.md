@@ -51,4 +51,6 @@ operations into separate pages so the root README can stay short.
 
 - [policy-profiles.md](policy-profiles.md): compose pinned local packs, inspect decisions, and review updates offline
 
+- [Complete policy generations](policy-generations.md): atomic activation, migration, rollback,
+  retained readers, and verified offline deployment bundles.
 - [hosted-capacity.md](hosted-capacity.md): aggregate operational reporting, retention and synthetic HTTP capacity evidence

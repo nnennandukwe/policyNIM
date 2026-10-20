@@ -383,18 +383,21 @@ def test_report_closes_owned_index_after_inspection(
     """Release a generation-capable index handle on success and inspection failure."""
     from unittest.mock import Mock
 
-    from policynim.services import operational_report
+    from policynim.services import inventory
     from policynim.storage.index_readiness import IndexReadinessReport
 
     store = OperationStore(tmp_path / "auth.sqlite3")
     settings = Settings().model_copy(update={"beta_auth_db_path": store.path})
-    index = Mock()
-    monkeypatch.setattr(operational_report, "create_index_store", lambda settings: index)
+    index = Mock(path=tmp_path / "index.sqlite3")
+    monkeypatch.setattr(inventory, "create_index_store", lambda settings: index)
+    monkeypatch.setattr(
+        inventory, "pinned_generation", lambda index: SimpleNamespace(generation_id="a" * 64)
+    )
     inspect = Mock(
         side_effect=RuntimeError("inspection failed") if inspection_fails else None,
         return_value=IndexReadinessReport(state="missing"),
     )
-    monkeypatch.setattr(operational_report, "inspect_index_readiness", inspect)
+    monkeypatch.setattr(inventory, "inspect_index_readiness", inspect)
     if inspection_fails:
         with pytest.raises(RuntimeError, match="inspection failed"):
             inspect_operational_report(settings)
@@ -557,3 +560,39 @@ def test_readonly_report_separates_live_crashed_and_unknown_ownership(tmp_path: 
     report = OperationStore.report(path)
     assert report.active_operations == report.unreconciled_operations == 0
     assert report.unknown_owner_operations == report.reserved_operations == 1
+
+
+@pytest.mark.parametrize("corrupt_pointer", [False, True])
+def test_operational_report_inspects_managed_generation_without_legacy_fallback(
+    tmp_path: Path, corrupt_pointer: bool
+) -> None:
+    """Report the selected generation and refuse to call a corrupt selection ready."""
+    from test_policy_generations import seed_legacy
+
+    from policynim.services.generations import GenerationStore
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        }
+    )
+    generation_store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    published = generation_store.migrate(settings, index_path=index, rules_path=rules)
+    operation_store = OperationStore(settings.beta_auth_db_path)
+    operation_store.close()
+    pointer = settings.generations_dir / "active.json"
+    if corrupt_pointer:
+        pointer.write_bytes(b"invalid-pointer")
+    before = pointer.read_bytes()
+    report = inspect_operational_report(settings)
+    assert pointer.read_bytes() == before
+    if corrupt_pointer:
+        assert report["generation_state"] == report["index_state"] == "invalid"
+        assert report["active_generation"] is None
+    else:
+        assert report["generation_state"] == report["index_state"] == "ready"
+        assert report["active_generation"] == published.generation_id
+        assert isinstance(report["indexed_chunks"], int) and report["indexed_chunks"] > 0
+    assert not list((settings.generations_dir / "leases").rglob("*.lock"))

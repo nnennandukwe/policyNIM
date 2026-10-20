@@ -435,6 +435,7 @@ def test_run_server_uses_stdio_transport_and_runtime_host_port(monkeypatch) -> N
 
 
 def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
+    """Verify run server uses streamable http transport."""
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -466,11 +467,12 @@ def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
     mcp_module.run_server("streamable-http")
 
     assert captured["probe"] == ("127.0.0.1", 8010)
-    assert captured["ready"] is True
+    assert captured["ready"] is False
     assert captured["run"] == {"host": "127.0.0.1", "port": 8010, "log_level": "info"}
 
 
 def test_run_server_requires_ready_index_for_hosted_http(monkeypatch) -> None:
+    """Verify run server requires ready index for hosted http."""
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -508,7 +510,7 @@ def test_run_server_requires_ready_index_for_hosted_http(monkeypatch) -> None:
     mcp_module.run_server("streamable-http")
 
     assert captured["probe"] == ("127.0.0.1", 8010)
-    assert captured["ready"] is True
+    assert captured["ready"] is False
     assert captured["run"] == {"host": "127.0.0.1", "port": 8010, "log_level": "info"}
 
 

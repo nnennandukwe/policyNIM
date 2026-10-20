@@ -28,9 +28,13 @@ private upload endpoint or mutation tool.
 
    ```bash
    export POLICYNIM_PROFILE="$PWD/team-profile.toml"
-   policynim policies list --format json
-   policynim inventory --format json
+   policynim profile preview "$POLICYNIM_PROFILE" --format json
+   policynim policies list --source --format json
    ```
+
+   These commands inspect the selected editable profile. Default catalog commands
+   and `inventory` still describe the active generation until a reviewed ingest
+   publishes the new selection.
 
    Leave `POLICYNIM_CORPUS_DIR` unset when selecting a profile. Without a profile,
    that setting keeps its existing behavior: the directory replaces the bundled
@@ -103,9 +107,9 @@ Unsupported Markdown frontmatter such as `enabled` doesn't disable a policy.
    require a new diff. Update changes source pins only; it doesn't activate or
    rebuild an index. Operator notes and decision formatting are preserved. Keep
    your decisions and comments in valid TOML; the updater edits parsed pin fields.
-5. Preview again, then build into new index/rules destinations through the normal
-   ingestion workflow. The existing ingestion destination guards still apply.
-   Atomic whole-generation publication and rollback are tracked in #93.
+5. Preview again, then run `policynim ingest` to build and atomically activate a
+   complete generation. Previous readers retain their selected snapshot. See
+   [generation operations](policy-generations.md) for rollback and retention.
 
 Pack paths can point outside the profile directory when explicitly selected, but
 manifest member paths must stay inside their pack. Symlink escape, remote schemes,

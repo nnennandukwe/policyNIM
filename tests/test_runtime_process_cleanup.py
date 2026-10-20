@@ -10,14 +10,13 @@ import time
 from pathlib import Path
 
 import pytest
-from test_index_identity import chunk, settings_for
 from typer.testing import CliRunner
 
 from policynim.interfaces import cli
 from policynim.services.runtime_execution import create_runtime_execution_service
 from policynim.settings import Settings
-from policynim.storage import RuntimeEvidenceStore, create_index_store
-from policynim.types import RuntimeRulesArtifact, ShellCommandActionRequest
+from policynim.storage import RuntimeEvidenceStore
+from policynim.types import ShellCommandActionRequest
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX process-group cleanup")
 
@@ -25,14 +24,21 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX process-group 
 @pytest.fixture
 def runtime_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     """Prepare a real compatible index and empty runtime rules without a provider."""
-    settings = settings_for(
-        tmp_path / "index.sqlite3",
-        runtime_rules_artifact_path=tmp_path / "rules.json",
-        runtime_evidence_db_path=tmp_path / "evidence.sqlite3",
-        runtime_shell_timeout_seconds=1.0,
+    from test_policy_generations import seed_legacy
+
+    from policynim.services.generations import GenerationStore
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "runtime_evidence_db_path": tmp_path / "evidence.sqlite3",
+            "runtime_shell_timeout_seconds": 1.0,
+        }
     )
-    create_index_store(settings).replace([chunk()])
-    settings.runtime_rules_artifact_path.write_text(RuntimeRulesArtifact().model_dump_json())
+    GenerationStore(root=settings.generations_dir, embedding=identity).migrate(
+        settings, index_path=index, rules_path=rules
+    )
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     return settings
 

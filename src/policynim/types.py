@@ -13,6 +13,7 @@ MIN_TOP_K = 1
 MAX_TOP_K = 20
 DEFAULT_TOP_K = 5
 TopK = Annotated[int, Field(ge=MIN_TOP_K, le=MAX_TOP_K)]
+GenerationID = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 TaskType = Literal[
     "bug_fix",
     "refactor",
@@ -290,7 +291,7 @@ class ShellCommandActionRequest(RuntimeActionRequestBase):
     @classmethod
     def validate_command(cls, value: list[str]) -> list[str]:
         """Validate executable and argument boundaries without changing their contents."""
-        if not value[0]:
+        if not value[0].strip():
             raise ValueError("command executable must not be empty.")
         for index, item in enumerate(value):
             if "\x00" in item:
@@ -335,6 +336,8 @@ RuntimeActionRequest = Annotated[
 
 class RuntimeDecisionResult(StrictModel):
     """Read-only runtime decision output with matched rule evidence."""
+
+    generation_id: GenerationID | None = None
 
     request: RuntimeActionRequest
     decision: RuntimeDecision
@@ -418,6 +421,7 @@ RuntimeExecutionMetadata = (
 class RuntimeExecutionResult(StrictModel):
     """Top-level result for one runtime execution attempt."""
 
+    generation_id: GenerationID | None = None
     execution_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     request: RuntimeExecutionRequest
@@ -435,6 +439,7 @@ class RuntimeExecutionResult(StrictModel):
 class RuntimeExecutionEvidenceRecord(StrictModel):
     """One immutable persisted runtime execution evidence event."""
 
+    generation_id: GenerationID | None = None
     event_id: str = Field(min_length=1)
     execution_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
@@ -455,6 +460,7 @@ class RuntimeExecutionEvidenceRecord(StrictModel):
 class RuntimeEvidenceExecutionSummary(StrictModel):
     """Compact summary for one execution inside a reported evidence session."""
 
+    generation_id: GenerationID | None = None
     execution_id: str = Field(min_length=1)
     action_kind: RuntimeActionKind
     task: str = Field(min_length=1)
@@ -576,6 +582,7 @@ class SearchResult(StrictModel):
     top_k: int
     hits: list[ScoredChunk] = Field(default_factory=list)
     insufficient_context: bool = False
+    generation_id: GenerationID | None = None
 
 
 class RouteRequest(StrictModel):
@@ -634,6 +641,7 @@ class SelectedPolicy(StrictModel):
 class PolicySelectionPacket(StrictModel):
     """Inspection-friendly packet emitted by task-aware policy routing."""
 
+    generation_id: GenerationID | None = None
     task: str
     domain: str | None = None
     top_k: int
@@ -646,6 +654,8 @@ class PolicySelectionPacket(StrictModel):
 
 class RouteResult(StrictModel):
     """Internal route result with packet JSON and generator-ready context."""
+
+    generation_id: GenerationID | None = None
 
     packet: PolicySelectionPacket
     retained_context: list[ScoredChunk] = Field(default_factory=list)
@@ -703,6 +713,8 @@ class CompiledPolicyConstraint(StrictModel):
 class CompiledPolicyPacket(StrictModel):
     """Citation-backed policy constraints for planning and generation."""
 
+    generation_id: GenerationID | None = None
+
     task: str
     domain: str | None = None
     top_k: int
@@ -722,12 +734,18 @@ class CompiledPolicyPacket(StrictModel):
 class CompileResult(StrictModel):
     """Internal compile result with packet JSON and generator-ready context."""
 
+    generation_id: GenerationID | None = None
+
     packet: CompiledPolicyPacket
     retained_context: list[ScoredChunk] = Field(default_factory=list)
 
 
 class IngestResult(StrictModel):
     """Summary of one completed ingest run."""
+
+    generation_id: GenerationID | None = None
+    previous_generation_id: GenerationID | None = None
+    warnings: list[str] = Field(default_factory=list)
 
     corpus_path: str
     profile_path: str | None = None
@@ -743,6 +761,8 @@ class IngestResult(StrictModel):
 
 class HealthCheckResult(StrictModel):
     """Hosted runtime health payload for HTTP readiness checks."""
+
+    generation_id: GenerationID | None = None
 
     status: Literal["ok", "error"]
     ready: bool
@@ -886,6 +906,8 @@ class GeneratedPreflightDraft(StrictModel):
 
 class PreflightResult(StrictModel):
     """Preflight response shared by CLI and MCP."""
+
+    generation_id: GenerationID | None = None
 
     task: str
     domain: str | None = None
@@ -1080,6 +1102,8 @@ class PolicyEvidenceTraceConformanceCheck(StrictModel):
 class PolicyEvidenceTrace(StrictModel):
     """Replay-free evidence trace for one policy-conditioned preflight run."""
 
+    generation_id: GenerationID | None = None
+
     task: str
     domain: str | None = None
     top_k: int
@@ -1129,6 +1153,8 @@ class PreflightRegenerationRequest(StrictModel):
 class PreflightRegenerationResult(StrictModel):
     """Typed result for a bounded policy-backed regeneration loop."""
 
+    generation_id: GenerationID | None = None
+
     request: PreflightRegenerationRequest
     passed: bool
     stop_reason: RegenerationStopReason
@@ -1171,6 +1197,8 @@ class EvalCaseMetrics(StrictModel):
 
 class EvalCaseResult(StrictModel):
     """Scored result for one eval case under a specific rerank mode."""
+
+    generation_id: GenerationID | None = None
 
     case_id: str
     kind: EvalKind
@@ -1219,6 +1247,8 @@ class EvalAggregateMetrics(StrictModel):
 class EvalModeRunResult(StrictModel):
     """All eval results for one rerank mode."""
 
+    generation_id: GenerationID | None = None
+
     backend: EvalBackend = "default"
     rerank_enabled: bool
     metrics: EvalAggregateMetrics
@@ -1241,6 +1271,8 @@ class EvalComparisonDelta(StrictModel):
 
 class EvalRunResult(StrictModel):
     """Top-level eval command result."""
+
+    generation_id: GenerationID | None = None
 
     mode: EvalExecutionMode
     backend: EvalBackend = "default"

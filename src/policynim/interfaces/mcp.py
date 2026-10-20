@@ -46,6 +46,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
     ConfigurationError,
+    GenerationError,
     IndexCompatibilityError,
     InvalidPolicyDocumentError,
     MissingIndexError,
@@ -90,7 +91,7 @@ from policynim.services.operation_admission import (
     record_operation_storage_failure,
 )
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
+from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
 from policynim.types import (
     MAX_TOP_K,
     MIN_TOP_K,
@@ -610,6 +611,13 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
     if isinstance(exc, OperationAdmissionError):
         return str(exc)
+    if isinstance(exc, GenerationError):
+        return (
+            "The selected policy generation is unavailable or couldn't be validated. "
+            "Ask the operator to preserve existing data and run `policynim generation inspect`. "
+            "Import a verified bundle or explicitly migrate the standalone index and rules "
+            "when no managed generation exists. Don't retry unchanged requests."
+        )
     if isinstance(exc, IndexCompatibilityError):
         return (
             "The policy index is incompatible or incomplete. Ask the operator to preserve "
@@ -1023,7 +1031,7 @@ def _register_beta_routes(
 
 def _register_health_route(server: MCPServer, settings: Settings) -> None:
     """Register a public readiness endpoint for hosted HTTP runtimes."""
-    table_name = create_index_store(settings).table_name
+    table_name = POLICY_CHUNKS_TABLE
     try:
         health_service = create_runtime_health_service(settings)
         fallback_reason = "Local index readiness could not be inspected."
@@ -1761,7 +1769,7 @@ def run_server(transport: str = "stdio") -> None:
     if transport == "streamable-http":
         _configure_hosted_logger()
         _ensure_streamable_http_port_available(settings.mcp_host, settings.mcp_port)
-        ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
+        ensure_hosted_runtime_ready(settings)
         app = _build_streamable_http_app(settings)
         try:
             _run_streamable_http_app(app, host=settings.mcp_host, port=settings.mcp_port)
