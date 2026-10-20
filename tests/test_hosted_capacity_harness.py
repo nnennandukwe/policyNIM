@@ -44,6 +44,9 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert report["live_nvidia_calls"] == 0
     assert report["production_capacity_verified"] is False
     scenarios = {item["scenario"]: item for item in report["scenarios"]}
+    assert scenarios["disconnect"]["drain_observation"] == "terminal_outcome_observed"
+    assert scenarios["disconnect"]["intervention_started_with_active_work"] is True
+    assert scenarios["shutdown"]["intervention_started_with_active_work"] is True
     assert scenarios["baseline"]["outcomes"] == {"ok": 12}
     assert scenarios["baseline"]["successful_search_hit_counts"] == {"5": 12}
     assert scenarios["saturation"]["outcomes"].get("server_busy", 0) >= 1

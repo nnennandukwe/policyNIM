@@ -74,7 +74,9 @@ class HostedOperationReport(BaseModel):
     latency_sample_count: int
     latency_sample_limit: int = 1000
     latency_clock: Literal["persisted_utc_wall_timestamps"] = "persisted_utc_wall_timestamps"
-    latency_window: Literal["most_recent_terminal_operations"] = "most_recent_terminal_operations"
+    latency_window: Literal["most_recent_timed_terminal_operations"] = (
+        "most_recent_timed_terminal_operations"
+    )
     latency_p50_ms: float | None = None
     latency_p95_ms: float | None = None
     latency_p99_ms: float | None = None
@@ -286,8 +288,9 @@ class OperationStore:
             raise ValueError("Operation retention must be at least one day.")
         today = datetime.fromtimestamp(timestamp, UTC).date().isoformat()
         cursor = connection.execute(
-            "DELETE FROM operation_usage WHERE outcome != 'accepted' "
-            "AND finished_at < ? AND usage_date < ?",
+            "DELETE FROM operation_usage WHERE operation_id IN ("
+            "SELECT operation_id FROM operation_usage WHERE outcome != 'accepted' "
+            "AND finished_at < ? AND usage_date < ? ORDER BY finished_at LIMIT 1000)",
             (timestamp - retention_days * 86400, today),
         )
         return cursor.rowcount
@@ -308,6 +311,15 @@ class OperationStore:
         uri = path.resolve().as_uri() + "?mode=ro"
         with closing(sqlite3.connect(uri, uri=True, timeout=0.1)) as connection:
             connection.execute("BEGIN")
+            if (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_usage'"
+                ).fetchone()
+                is None
+            ):
+                return HostedOperationReport(
+                    retained_rows=0, active_operations=0, outcomes={}, latency_sample_count=0
+                )
             outcomes = dict(
                 connection.execute(
                     "SELECT outcome, COUNT(*) FROM operation_usage GROUP BY outcome"
@@ -317,7 +329,8 @@ class OperationStore:
                 row[0]
                 for row in connection.execute(
                     "SELECT (finished_at - started_at) * 1000 FROM operation_usage "
-                    "WHERE finished_at >= started_at ORDER BY finished_at DESC LIMIT 1000"
+                    "WHERE outcome IN ('completed', 'failed', 'cancelled') "
+                    "AND finished_at >= started_at ORDER BY finished_at DESC LIMIT 1000"
                 ).fetchall()
             )
 

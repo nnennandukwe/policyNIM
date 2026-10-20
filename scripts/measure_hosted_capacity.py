@@ -358,17 +358,41 @@ async def _measure(
 
         started = time.perf_counter()
         intervention: str | None = None
+        drain_observation: str | None = None
+        intervention_started_with_active_work: bool | None = None
         try:
             if scenario in {"disconnect", "shutdown"}:
                 pending = asyncio.create_task(request(0))
-                await asyncio.sleep(max(0.02, config["delay"] / 4))
+                deadline = time.monotonic() + 5.0
+                while True:
+                    observed = OperationStore.report(root / "auth.sqlite3")
+                    intervention_started_with_active_work = observed.active_operations > 0
+                    active_peak = max(active_peak, observed.active_operations)
+                    if intervention_started_with_active_work or pending.done():
+                        break
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0.01)
                 if scenario == "disconnect":
                     pending.cancel()
                     intervention = "client_task_cancelled"
                     await asyncio.gather(pending, return_exceptions=True)
-                    await asyncio.sleep(config["delay"] + 0.15)
+                    deadline = time.monotonic() + 10.0
+                    while True:
+                        observed = OperationStore.report(root / "auth.sqlite3")
+                        if observed.active_operations == 0:
+                            drain_observation = "terminal_outcome_observed"
+                            break
+                        if time.monotonic() >= deadline:
+                            drain_observation = "deadline_expired_with_active_work"
+                            break
+                        await asyncio.sleep(0.02)
                 else:
-                    intervention = "SIGTERM_during_active_work"
+                    intervention = (
+                        "SIGTERM_during_active_work"
+                        if intervention_started_with_active_work
+                        else "SIGTERM_before_active_work_observed"
+                    )
                     process.send_signal(signal.SIGTERM)
                     await asyncio.gather(pending, return_exceptions=True)
             else:
@@ -409,6 +433,8 @@ async def _measure(
             "operator_report": report.model_dump(mode="json"),
             "warmup_operations": 1,
             "intervention": intervention,
+            "drain_observation": drain_observation,
+            "intervention_started_with_active_work": intervention_started_with_active_work,
             "client_concurrency": concurrency,
         }
 
