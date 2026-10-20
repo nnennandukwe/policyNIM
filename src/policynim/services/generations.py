@@ -1632,7 +1632,12 @@ class GenerationStore:
         return self._execute(publish)
 
     def bootstrap_bundle(
-        self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
+        self,
+        bundle: Path,
+        *,
+        expected_digest: str,
+        source_settings: Settings | None = None,
+        expected_seed_id: str | None = None,
     ) -> PublicationResult:
         """Seed once or preserve selection within service-controlled roots and parent paths.
 
@@ -1650,6 +1655,14 @@ class GenerationStore:
                 contents, incoming = self._read_bundle_inputs(
                     bundle, expected_digest=expected_digest, source_settings=source_settings
                 )
+                if expected_seed_id is not None:
+                    expected = self._selected_id(expected_seed_id, None)
+                    if sha256(contents["manifest.json"]).hexdigest() != expected:
+                        raise GenerationError(
+                            "bootstrap",
+                            "Seed generation doesn't match the configured selection; "
+                            "choose a matching trusted seed before initializing this root.",
+                        )
                 missing: list[Path] = []
                 ancestor = self.root.parent
                 while not ancestor.exists():
