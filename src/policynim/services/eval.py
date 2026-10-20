@@ -17,6 +17,8 @@ from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
 
+import httpx
+
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.ingest import chunk_policy_documents
@@ -1353,9 +1355,12 @@ def _publish_eval_result_to_phoenix(result: EvalRunResult, *, endpoint: str) -> 
 
 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
+    """Create a missing project only after the pinned client confirms HTTP 404."""
     try:
         client.projects.get(project_name=project_name)
-    except Exception:
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
         client.projects.create(name=project_name)
 
 
