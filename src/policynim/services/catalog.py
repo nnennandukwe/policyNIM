@@ -66,7 +66,8 @@ class PolicyCatalog(StrictModel):
             if entry.policy.policy_id == policy_id:
                 return entry
         raise InvalidPolicyDocumentError(
-            f"Policy ID {policy_id!r} isn't in the source catalog. Run `policynim policies list`."
+            f"Policy ID {policy_id!r} isn't in the {self.scope} catalog. "
+            f"Run `policynim policies list{' --source' if self.scope == 'source' else ''}`."
         )
 
 

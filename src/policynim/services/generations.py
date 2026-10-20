@@ -583,24 +583,31 @@ class GenerationStore:
 
     def pin_retained(self, generation_id: str) -> GenerationSnapshot:
         """Read explicit historical source evidence against its sealed embedding identity."""
-        selected = self._selected_id(generation_id, None)
-        with self._locked():
-            directory = self.root / "objects" / selected
-            self._artifact_token(directory)
-            try:
-                manifest_bytes = _read_regular(directory / "manifest.json")
-                if sha256(manifest_bytes).hexdigest() != selected:
-                    raise ValueError("Generation content ID mismatch.")
-                manifest = GenerationManifest.model_validate_json(manifest_bytes)
-            except (ValueError, OSError) as exc:
-                raise GenerationError(
-                    "read", "Retained generation identity couldn't be validated."
-                ) from exc
-        # The ordinary reader still proves every artifact against this sealed
-        # identity and acquires its lease before returning any source evidence.
-        return GenerationStore(root=self.root, embedding=manifest.embedding, fault=self._fault).pin(
-            selected
-        )
+        try:
+            selected = self._selected_id(generation_id, None)
+            with self._locked():
+                directory = self.root / "objects" / selected
+                self._artifact_token(directory)
+                try:
+                    manifest_bytes = _read_regular(directory / "manifest.json")
+                    if sha256(manifest_bytes).hexdigest() != selected:
+                        raise ValueError("Generation content ID mismatch.")
+                    manifest = GenerationManifest.model_validate_json(manifest_bytes)
+                except (ValueError, OSError) as exc:
+                    raise GenerationError(
+                        "read", "Retained generation identity couldn't be validated."
+                    ) from exc
+            # The ordinary reader still proves every artifact against this sealed
+            # identity and acquires its lease before returning any source evidence.
+            return GenerationStore(
+                root=self.root, embedding=manifest.embedding, fault=self._fault
+            ).pin(selected)
+        except OSError as exc:
+            raise GenerationError(
+                "pin",
+                "Reader admission couldn't access generation locks or leases. "
+                "Check filesystem permissions and available storage before retrying.",
+            ) from exc
 
     def _selected_id(self, generation_id: str | None, pointer: GenerationPointer | None) -> str:
         """Validate an explicit or active ID before using it as a local artifact name."""
@@ -746,55 +753,66 @@ class GenerationStore:
         self, generation_id: str | None = None, *, force_validation: bool = False
     ) -> GenerationSnapshot:
         """Register a lease atomically, then validate outside the short publication lock."""
-        with ResourceStack() as cleanup:
-            with self._locked():
-                pointer = self._pointer()
-                selected = self._selected_id(generation_id, pointer)
-                try:
-                    object_mode = (self.root / "objects" / selected).lstat().st_mode
-                except FileNotFoundError as exc:
-                    raise GenerationError("pin", "The selected generation doesn't exist.") from exc
-                if not stat.S_ISDIR(object_mode):
-                    raise GenerationError(
-                        "pin", "The selected generation isn't a regular directory."
-                    )
-                directory = self.root / "leases" / selected
-                if directory.is_symlink():
-                    raise GenerationError("pin", "The reader lease directory can't be a symlink.")
-                try:
-                    directory.mkdir(mode=0o700)
-                except FileExistsError:
-                    if not directory.is_dir():
-                        raise GenerationError("pin", "The reader lease directory isn't valid.")
-                else:
-                    created = directory.lstat()
-                    cleanup.callback(
-                        self._remove_failed_lease_directory,
-                        directory,
-                        (created.st_dev, created.st_ino),
-                    )
-                lease_path = directory / (uuid4().hex + ".lock")
-                descriptor = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(descriptor, "wb") as handle:
-                    observed = os.fstat(handle.fileno())
-                    identity = observed.st_dev, observed.st_ino
-                    cleanup.callback(_remove_reader_marker, lease_path, identity)
-                lease = exclusive_file_lock(lease_path)
-                lease.__enter__()
-                cleanup.callback(lease.__exit__, None, None, None)
-                observed = lease_path.lstat()
-                if (observed.st_dev, observed.st_ino) != identity:
-                    raise GenerationError("pin", "Reader lease identity changed.")
-            snapshot = self._reader_snapshot(selected, force=force_validation)
-            check_budget()
-            snapshot.activation = pointer
-            snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
-                lease,
-                lease_path,
-                identity,
-            )
-            cleanup.pop_all()
-            return snapshot
+        try:
+            with ResourceStack() as cleanup:
+                with self._locked():
+                    pointer = self._pointer()
+                    selected = self._selected_id(generation_id, pointer)
+                    try:
+                        object_mode = (self.root / "objects" / selected).lstat().st_mode
+                    except FileNotFoundError as exc:
+                        raise GenerationError(
+                            "pin", "The selected generation doesn't exist."
+                        ) from exc
+                    if not stat.S_ISDIR(object_mode):
+                        raise GenerationError(
+                            "pin", "The selected generation isn't a regular directory."
+                        )
+                    directory = self.root / "leases" / selected
+                    if directory.is_symlink():
+                        raise GenerationError(
+                            "pin", "The reader lease directory can't be a symlink."
+                        )
+                    try:
+                        directory.mkdir(mode=0o700)
+                    except FileExistsError:
+                        if not directory.is_dir():
+                            raise GenerationError("pin", "The reader lease directory isn't valid.")
+                    else:
+                        created = directory.lstat()
+                        cleanup.callback(
+                            self._remove_failed_lease_directory,
+                            directory,
+                            (created.st_dev, created.st_ino),
+                        )
+                    lease_path = directory / (uuid4().hex + ".lock")
+                    descriptor = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(descriptor, "wb") as handle:
+                        observed = os.fstat(handle.fileno())
+                        identity = observed.st_dev, observed.st_ino
+                        cleanup.callback(_remove_reader_marker, lease_path, identity)
+                    lease = exclusive_file_lock(lease_path)
+                    lease.__enter__()
+                    cleanup.callback(lease.__exit__, None, None, None)
+                    observed = lease_path.lstat()
+                    if (observed.st_dev, observed.st_ino) != identity:
+                        raise GenerationError("pin", "Reader lease identity changed.")
+                snapshot = self._reader_snapshot(selected, force=force_validation)
+                check_budget()
+                snapshot.activation = pointer
+                snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
+                    lease,
+                    lease_path,
+                    identity,
+                )
+                cleanup.pop_all()
+                return snapshot
+        except OSError as exc:
+            raise GenerationError(
+                "pin",
+                "Reader admission couldn't access generation locks or leases. "
+                "Check filesystem permissions and available storage before retrying.",
+            ) from exc
 
     def _execute(self, operation: Callable[[], PublicationResult]) -> PublicationResult:
         """Preserve a committed result if publisher cleanup fails after activation."""
