@@ -19,12 +19,14 @@ from test_policy_profiles import write_pack
 from policynim.errors import ProviderError
 from policynim.nvidia_models import chat_request_configuration
 from policynim.providers.nvidia import NVIDIAPolicyConformanceEvaluator
+from policynim.services.compiler import PolicyCompilerService
 from policynim.services.conformance import PolicyConformanceService, conformance_thresholds
 from policynim.services.eval import EvalService
 from policynim.services.generations import GenerationStore
 from policynim.services.index_store import create_index_store
 from policynim.services.preflight import PreflightService
 from policynim.services.profiles import initialize_profile
+from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings
 from policynim.types import (
@@ -102,6 +104,20 @@ class ControlledChat:
         )
 
 
+class InsufficientRetryChat(ControlledChat):
+    """Retain an earlier judged attempt before refusing a later regeneration attempt."""
+
+    def generate_preflight(
+        self, request: PreflightRequest, context: Sequence[ScoredChunk], **kwargs: object
+    ) -> GeneratedPreflightDraft:
+        """Return insufficient context only after the real service supplies retry context."""
+        if kwargs.get("regeneration_context") is not None:
+            return GeneratedPreflightDraft(
+                summary="Sources are insufficient.", insufficient_context=True
+            )
+        return super().generate_preflight(request, context, **kwargs)
+
+
 class ControlledJudge:
     """Supply known scores solely to verify threshold and report propagation."""
 
@@ -132,11 +148,13 @@ class Ranker:
 
 
 @pytest.mark.parametrize("profile_enabled", [True, False])
-@pytest.mark.parametrize("with_conformance", [True, False])
+@pytest.mark.parametrize("evaluation_kind", ["search", "conformance", "regeneration_insufficient"])
 def test_public_run_records_pinned_gold_coverage_and_sanitized_effective_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile_enabled: bool, with_conformance: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile_enabled: bool, evaluation_kind: str
 ) -> None:
     """Real generation and evaluator paths persist actual executed gold coverage in both modes."""
+    with_conformance = evaluation_kind != "search"
+    regenerate = evaluation_kind == "regeneration_insufficient"
     first = write_pack(tmp_path / "sources" / "first", "public.first", ["A", "B"])
     second = write_pack(tmp_path / "sources" / "second", "team.second", ["C", "D"])
     unused = write_pack(tmp_path / "sources" / "unused", "team.unused", ["E"])
@@ -224,6 +242,24 @@ def test_public_run_records_pinned_gold_coverage_and_sanitized_effective_config(
             generator=ControlledChat() if with_conformance else NoChat(),
         )
 
+    def regeneration_factory(
+        active: Settings, *, backend: str, rerank_enabled: bool
+    ) -> PolicyRegenerationService:
+        """Run actual regeneration over sealed chunks and controlled judged/insufficient outputs."""
+        return PolicyRegenerationService(
+            compiler_service=PolicyCompilerService(
+                embedder=MockEmbedder(),
+                index_store=create_index_store(active),
+                reranker=Ranker(),
+                compiler=ControlledChat(),
+            ),
+            generator=InsufficientRetryChat(),
+            conformance_service=PolicyConformanceService(evaluator=ControlledJudge()),
+        )
+
+    monkeypatch.setattr(
+        "policynim.services.eval._create_live_regeneration_service", regeneration_factory
+    )
     monkeypatch.setattr("policynim.services.eval._create_live_search_service", search_factory)
     monkeypatch.setattr("policynim.services.eval._create_live_preflight_service", preflight_factory)
     monkeypatch.setattr(
@@ -234,6 +270,7 @@ def test_public_run_records_pinned_gold_coverage_and_sanitized_effective_config(
         mode="live",
         suite_path=suite_path,
         backend="nemo" if with_conformance else "default",
+        regenerate=regenerate,
     )
     assert report.generation_id == publication.generation_id
     assert len(report.runs) == 2
@@ -246,12 +283,21 @@ def test_public_run_records_pinned_gold_coverage_and_sanitized_effective_config(
         assert config.top_k_by_case == expected_top_k
         assert config.embedding_model == "test-embed"
         assert config.reranking_model == ("test-rerank" if run.rerank_enabled else None)
+        assert config.chat is not None
         assert config.chat.model == settings.nvidia_chat_model
         assert (config.chat.temperature, config.chat.top_p, config.chat.enable_thinking) == (
             0,
             1,
             False,
         )
+        if regenerate:
+            retried = next(case for case in run.case_results if case.case_id == "preflight")
+            assert retried.conformance_result is None
+            assert retried.regeneration_result is not None
+            assert len(retried.regeneration_result.attempts) == 2
+            assert retried.regeneration_result.attempts[0].conformance_result is not None
+            assert retried.regeneration_result.attempts[1].conformance_result is None
+            assert retried.actual_insufficient_context
         if with_conformance:
             assert config.conformance_thresholds == conformance_thresholds()
         else:
@@ -419,3 +465,39 @@ def test_historical_run_readability_preserves_case_serialization_hashes() -> Non
         case.case_id: hashlib.sha256(case.model_dump_json().encode()).hexdigest()
         for case in historical.case_results
     } == fixture["case_json_sha256"]
+
+
+@pytest.mark.parametrize("backend", ["default", "nemo"])
+def test_actual_offline_reports_capture_synthetic_settings_and_only_executed_thresholds(
+    tmp_path: Path, backend
+) -> None:
+    """Actual fixture scoring never labels configured NVIDIA settings as synthetic model usage."""
+    no_env: dict[str, Any] = {"_env_file": None}
+    settings = Settings(
+        **no_env,
+        eval_workspace_dir=tmp_path / "reports",
+        nvidia_api_key="PRIVATE-KEY-SENTINEL",
+        nvidia_chat_model="UNUSED-MODEL-SENTINEL",
+        operation_timeout_seconds=37,
+    )
+    report = EvalService(settings=settings).run(
+        mode="offline", backend=backend, compare_rerank=False
+    )
+    run = report.runs[0]
+    configuration = run.effective_configuration
+    assert configuration is not None
+    assert configuration.provider == "synthetic"
+    assert configuration.chat is None and configuration.embedding_model is None
+    assert configuration.reranking_model is None
+    assert configuration.request_timeout_seconds is None and configuration.max_retries is None
+    assert configuration.operation_timeout_seconds == 37
+    assert configuration.top_k_by_case == {case.case_id: case.top_k for case in run.case_results}
+    assert configuration.conformance_thresholds == (
+        conformance_thresholds() if backend == "nemo" else None
+    )
+    assert run.provider_usage == "not_performed" and run.provider_models == {}
+    persisted = EvalModeRunResult.model_validate_json(Path(run.result_json_path).read_text())
+    assert persisted.effective_configuration == configuration
+    output = Path(run.report_html_path).read_text() + Path(run.result_json_path).read_text()
+    assert "PRIVATE-KEY-SENTINEL" not in output and "UNUSED-MODEL-SENTINEL" not in output
+    assert configuration.model_dump_json() in html.unescape(output)

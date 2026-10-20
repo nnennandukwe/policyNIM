@@ -1286,15 +1286,15 @@ class ConformanceThresholds(StrictModel):
 class EvalEffectiveConfiguration(StrictModel):
     """Resolved run settings, without credentials or claims about provider invocation."""
 
-    provider: Literal["nvidia"] = "nvidia"
-    embedding_model: str
+    provider: Literal["nvidia", "synthetic"] = "nvidia"
+    embedding_model: str | None = None
     reranking_model: str | None = None
-    chat: ChatRequestConfiguration
+    chat: ChatRequestConfiguration | None = None
     top_k_by_case: dict[str, int]
     rerank_enabled: bool
-    request_timeout_seconds: float
+    request_timeout_seconds: float | None = None
     operation_timeout_seconds: float
-    max_retries: int
+    max_retries: int | None = None
     conformance_thresholds: ConformanceThresholds | None = None
 
 

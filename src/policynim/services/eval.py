@@ -10,7 +10,7 @@ import re
 import socket
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -494,10 +494,8 @@ class EvalService:
             catalog_digest=snapshot.catalog.digest if snapshot else None,
             suite_definition=suite,
             provider_usage="unavailable" if mode == "live" else "not_performed",
-            effective_configuration=(
-                _effective_configuration(self._settings, case_results, rerank_enabled)
-                if mode == "live"
-                else None
+            effective_configuration=_effective_configuration(
+                self._settings, case_results, rerank_enabled, mode=mode
             ),
             source_coverage=_source_coverage(suite, case_results, snapshot),
             provider_models=(
@@ -572,25 +570,41 @@ class EvalService:
         )
 
 
+def _case_conformance_results(case: EvalCaseResult) -> Iterator[PolicyConformanceResult]:
+    """Retain judged attempts even when the final regeneration result lacks a judgment."""
+    if case.conformance_result is not None:
+        yield case.conformance_result
+    if case.regeneration_result is not None:
+        for attempt in case.regeneration_result.attempts:
+            if attempt.conformance_result is not None:
+                yield attempt.conformance_result
+
+
 def _effective_configuration(
-    settings: Settings, cases: Sequence[EvalCaseResult], rerank_enabled: bool
+    settings: Settings,
+    cases: Sequence[EvalCaseResult],
+    rerank_enabled: bool,
+    *,
+    mode: EvalExecutionMode,
 ) -> EvalEffectiveConfiguration:
     """Record resolved settings with the same sampling and thresholds used by dispatch."""
     judged = any(
         metric.name in {"final_adherence", "trajectory_adherence"}
         for case in cases
-        if case.conformance_result is not None
-        for metric in case.conformance_result.metrics
+        for conformance in _case_conformance_results(case)
+        for metric in conformance.metrics
     )
+    live = mode == "live"
     return EvalEffectiveConfiguration(
-        embedding_model=settings.nvidia_embed_model,
-        reranking_model=settings.nvidia_rerank_model if rerank_enabled else None,
-        chat=chat_request_configuration(settings.nvidia_chat_model),
+        provider="nvidia" if live else "synthetic",
+        embedding_model=settings.nvidia_embed_model if live else None,
+        reranking_model=settings.nvidia_rerank_model if live and rerank_enabled else None,
+        chat=chat_request_configuration(settings.nvidia_chat_model) if live else None,
         top_k_by_case={case.case_id: case.top_k for case in cases},
         rerank_enabled=rerank_enabled,
-        request_timeout_seconds=settings.nvidia_timeout_seconds,
+        request_timeout_seconds=settings.nvidia_timeout_seconds if live else None,
         operation_timeout_seconds=settings.operation_timeout_seconds,
-        max_retries=settings.nvidia_max_retries,
+        max_retries=settings.nvidia_max_retries if live else None,
         conformance_thresholds=conformance_thresholds() if judged else None,
     )
 
@@ -655,7 +669,9 @@ def _source_coverage(
                 passed_case_ids=[case.case_id for case in cases if case.passed],
                 case_count=len(cases),
                 passed_case_count=sum(case.passed for case in cases),
-                conformance_case_count=sum(case.conformance_result is not None for case in cases),
+                conformance_case_count=sum(
+                    any(True for _ in _case_conformance_results(case)) for case in cases
+                ),
                 operation_counts={
                     kind: sum(case.kind == kind for case in cases)
                     for kind in ("search", "preflight")
