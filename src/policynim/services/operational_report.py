@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from policynim.errors import GenerationError, PolicyNIMError
-from policynim.providers.lifecycle import close_components
+from policynim.operations import close_components
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.generations import GenerationStore
 from policynim.services.index_store import create_index_store

@@ -434,3 +434,30 @@ def test_report_closes_generation_adapter_after_success_or_failed_inspection(
     finally:
         operations.close()
     assert closed == [True]
+
+
+@pytest.mark.parametrize("inspection_fails", [False, True])
+def test_report_closes_owned_index_after_inspection(
+    generation, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inspection_fails: bool
+) -> None:
+    """Release a generation-capable index handle on success and inspection failure."""
+    from unittest.mock import Mock
+
+    from policynim.services import operational_report
+    from policynim.storage.index_readiness import IndexReadinessReport
+
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    settings = generation[0].model_copy(update={"beta_auth_db_path": store.path})
+    index = Mock()
+    monkeypatch.setattr(operational_report, "create_index_store", lambda settings: index)
+    inspect = Mock(
+        side_effect=RuntimeError("inspection failed") if inspection_fails else None,
+        return_value=IndexReadinessReport(state="missing"),
+    )
+    monkeypatch.setattr(operational_report, "inspect_index_readiness", inspect)
+    if inspection_fails:
+        with pytest.raises(RuntimeError, match="inspection failed"):
+            inspect_operational_report(settings)
+    else:
+        assert inspect_operational_report(settings)["index_state"] == "missing"
+    index.close.assert_called_once_with()

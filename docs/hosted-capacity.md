@@ -124,6 +124,19 @@ during intentional shutdown are identified separately from normal operation resu
 ## Operating limits and recovery
 
 Keep one replica. Configure per-principal active/daily limits before opening access.
+Mount persistent storage before enabling hosted usage. Container filesystem state
+isn't durable across deployments. Set `POLICYNIM_BETA_AUTH_DB_PATH` to
+`/app/state/auth.sqlite3` on the mounted volume; beta accounts, keys and operation
+accounting share that database. Preserve its sibling `auth.sqlite3.owners/` directory
+across restarts so interrupted-operation recovery can inspect old owner leases.
+Use SQLite's online backup API for a running database and retain matching ownership
+metadata; don't copy only the main database file while writers are active.
+For durable evaluations, set `POLICYNIM_EVAL_WORKSPACE_DIR` to
+`/app/state/evals/workspace`; the job database lives under `jobs/jobs.sqlite3`.
+Back up evaluation artifacts and job state together, and verify restored job recovery
+before reopening access. The retention setting removes eligible terminal operation
+rows inside the auth database; it doesn't relocate files or provide volume durability.
+
 Start with the documented global cap of ten and per-principal cap of two; these
 protect admission and don't establish an end-to-end latency promise. For overload,
 wait for active work to drain before retrying. For `admission_unavailable`, inspect
