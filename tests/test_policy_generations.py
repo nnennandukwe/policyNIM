@@ -2989,6 +2989,7 @@ def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
 
     from policynim.interfaces.mcp import _build_streamable_http_app
     from policynim.services import generations
+    from policynim.storage import sqlite_vec
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
@@ -3002,6 +3003,8 @@ def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
     original_copy, original_open = generations.deepcopy, os.open
     clones: list[str] = []
     lease_opens: list[str] = []
+    statements: list[str] = []
+    original_connect = sqlite_vec._connect
 
     def copy(value, memo=None):
         """Observe whole snapshot clones without changing the real ownership behavior."""
@@ -3015,16 +3018,28 @@ def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
             lease_opens.append(str(path))
         return original_open(path, flags, mode, dir_fd=dir_fd)
 
+    def connect(path: Path, *, read_only: bool = False):
+        """Observe actual SQLite statements issued by warm public health requests."""
+        connection = original_connect(path, read_only=read_only)
+        connection.set_trace_callback(statements.append)
+        return connection
+
     with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
         assert client.get("/healthz").status_code == 200
         monkeypatch.setattr(generations, "deepcopy", copy)
         monkeypatch.setattr(os, "open", open_file)
+        monkeypatch.setattr(sqlite_vec, "_connect", connect)
         for _ in range(3):
             response = client.get("/healthz")
             assert response.status_code == 200
             assert response.json()["generation_id"] == first.generation_id
         assert clones == []
         assert lease_opens
+        queries = [statement.upper() for statement in statements]
+        assert any("LIMIT 1" in query for query in queries)
+        assert not any(
+            "COUNT(" in query or " JOIN " in query or "PROVENANCE:" in query for query in queries
+        )
         artifact = store.root / "objects" / first.generation_id / "runtime_rules.json"
         artifact.write_bytes(artifact.read_bytes() + b"tampered")
         assert client.get("/healthz").status_code == 503
@@ -3230,7 +3245,9 @@ def test_readiness_cleanup_doesnt_wait_for_another_writer(
     assert not list((store.root / "leases").rglob("*.lock"))
 
 
-@pytest.mark.parametrize("failure", ["open", "query"])
+@pytest.mark.parametrize(
+    "failure", ["open", "query", "corrupt", "notadb", "schema", "nomem", "full", "changed_schema"]
+)
 def test_warm_public_health_probes_sqlite_readability_and_recovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
@@ -3260,6 +3277,18 @@ def test_warm_public_health_probes_sqlite_readability_and_recovers(
         """Inject open failure or actual SQLite query denial only for the selected sealed index."""
         if path == sealed_index and failure == "open":
             raise OSError(errno.EIO, "PRIVATE-DATABASE-FAILURE")
+        failures = {
+            "corrupt": sqlite3.SQLITE_CORRUPT,
+            "notadb": sqlite3.SQLITE_NOTADB,
+            "schema": sqlite3.SQLITE_ERROR,
+            "nomem": sqlite3.SQLITE_NOMEM,
+            "full": sqlite3.SQLITE_FULL,
+            "changed_schema": sqlite3.SQLITE_SCHEMA,
+        }
+        if path == sealed_index and failure in failures:
+            error = sqlite3.DatabaseError("PRIVATE-DATABASE-FAILURE")
+            error.sqlite_errorcode = failures[failure]
+            raise error
         connection = original_connect(path, read_only=read_only)
         if path == sealed_index and failure == "query":
             connection.set_authorizer(lambda *args: sqlite3.SQLITE_DENY)
@@ -3277,6 +3306,12 @@ def test_warm_public_health_probes_sqlite_readability_and_recovers(
         assert response.status_code == 503
         assert not response.json()["ready"]
         assert "PRIVATE-DATABASE-FAILURE" not in response.text
+        reason = response.json()["reason"]
+        if failure in {"corrupt", "notadb"}:
+            assert "invalid or corrupt" in reason
+        else:
+            assert "invalid or corrupt" not in reason
+            assert "resources" in reason and "access" in reason and "inspect" in reason
         after = sealed_index.stat()
         assert (before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (
             after.st_size,
