@@ -614,13 +614,15 @@ belongs to another POSIX user is rejected before permission changes or SQL work.
 Configured relative paths still use the command's working directory; the parent
 is resolved while the final filename stays available for alias validation.
 
-Read-only operation reports don't create or chmod auth files. They require
-already-private files and report storage unavailable for legacy broad modes until
-a writer or an operator repairs them. `auth_storage_unsafe` and
-`auth_storage_unavailable` guidance doesn't include private paths or underlying
-filesystem messages. Preserve the database and inspect ownership, aliases,
-directory access and available space before retrying as the service user. Don't
-copy a linked target, delete an existing database or change ownership blindly.
+Read-only operation reports don't create or chmod auth files. Legacy broad modes
+or unsafe aliases return `auth_storage_unsafe` until a writer or an operator
+repairs ownership, permissions or aliases. A missing configured database returns
+`auth_storage_missing`: check `POLICYNIM_BETA_AUTH_DB_PATH` and the mounted volume,
+then initialize state through its owning service. Other preparation/access failures
+use `auth_storage_unavailable`; check directory access, permissions and available
+space. These messages don't include private paths or raw filesystem errors.
+Preserve existing state. Don't copy a linked target, delete an existing database
+or change ownership blindly.
 
 This boundary assumes one service instance and trusted deployment-managed parent
 directories. It doesn't defend against a hostile process with the same operating

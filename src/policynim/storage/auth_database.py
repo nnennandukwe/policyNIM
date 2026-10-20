@@ -18,16 +18,30 @@ _UNAVAILABLE = (
     "auth_storage_unavailable: Private auth storage couldn't be prepared. "
     "Preserve the database and check directory ownership, permissions and available space."
 )
+_MISSING = (
+    "auth_storage_missing: The configured auth database wasn't found. "
+    "Check POLICYNIM_BETA_AUTH_DB_PATH and the mounted state volume. "
+    "Initialize state through its owning service; this read-only inspection won't create it."
+)
 _PREPARATION_LOCK = RLock()
 
 
 class AuthDatabaseError(OSError):
     """Expose only an owned safe file-category message to application services."""
 
-    def __init__(self, code: Literal["auth_storage_unsafe", "auth_storage_unavailable"]) -> None:
-        """Keep unsafe aliases separate from an unavailable private filesystem."""
+    def __init__(
+        self,
+        code: Literal["auth_storage_unsafe", "auth_storage_unavailable", "auth_storage_missing"],
+    ) -> None:
+        """Keep missing state, unsafe aliases and filesystem availability separate."""
         self.code = code
-        super().__init__(_UNSAFE if code == "auth_storage_unsafe" else _UNAVAILABLE)
+        super().__init__(
+            _UNSAFE
+            if code == "auth_storage_unsafe"
+            else _MISSING
+            if code == "auth_storage_missing"
+            else _UNAVAILABLE
+        )
 
 
 def _validate_file(observed: os.stat_result) -> None:
@@ -121,7 +135,9 @@ def connect_auth_database(
                 for suffix in ("-wal", "-shm", "-journal"):
                     _prepare_file(path.with_name(path.name + suffix), create=False)
             if observed is None:
-                raise AuthDatabaseError("auth_storage_unavailable")
+                raise AuthDatabaseError(
+                    "auth_storage_missing" if readonly else "auth_storage_unavailable"
+                )
         except AuthDatabaseError:
             raise
         except OSError:

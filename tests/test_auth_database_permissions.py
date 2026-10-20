@@ -507,3 +507,21 @@ def test_retired_zero_link_sidecar_observation_doesnt_reject_live_database(
     finally:
         keeper.close()
         os.close(descriptor)
+
+
+def test_missing_auth_report_names_absence_without_preparation_advice(tmp_path: Path) -> None:
+    """A read-only missing path gives initialization guidance without blaming disk space."""
+    from policynim.errors import PolicyNIMError
+    from policynim.services.operational_report import inspect_operational_report
+    from policynim.settings import Settings
+
+    path = tmp_path / "missing-private-sentinel" / "auth.sqlite3"
+    with pytest.raises(PolicyNIMError) as caught:
+        inspect_operational_report(Settings.model_validate({"beta_auth_db_path": path}))
+    message = str(caught.value)
+    assert message.startswith("auth_storage_missing:")
+    assert "database wasn't found" in message
+    assert "POLICYNIM_BETA_AUTH_DB_PATH" in message
+    assert "available space" not in message and "couldn't be prepared" not in message
+    assert "missing-private-sentinel" not in message
+    assert not path.parent.exists()
