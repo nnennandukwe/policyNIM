@@ -30,6 +30,7 @@ from policynim.contracts import Embedder
 from policynim.errors import (
     ConfigurationError,
     GenerationError,
+    IndexCompatibilityError,
     MissingIndexError,
     PolicyNIMError,
     ProviderError,
@@ -860,10 +861,15 @@ class GenerationStore:
                         )
                     ) as index:
                         index.probe_readability()
+                except IndexCompatibilityError as exc:
+                    raise GenerationError(
+                        "read", "Generation index is invalid or corrupt."
+                    ) from exc
                 except MissingIndexError as exc:
                     raise GenerationError(
                         "read",
-                        "Generation index couldn't be read. Correct access and retry health.",
+                        "Generation index couldn't be accessed. "
+                        "Check permissions, contention, and storage I/O.",
                     ) from exc
                 if self._artifact_token(directory) != token:
                     raise GenerationError(

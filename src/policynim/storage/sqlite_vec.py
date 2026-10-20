@@ -148,10 +148,17 @@ class SQLiteVecIndexStore(IndexStore):
                         conn.execute(f"SELECT rowid FROM {_CHUNKS_TABLE} LIMIT 1").fetchone()
                         is None
                     ):
-                        raise MissingIndexError("The validated index contains no readable rows.")
+                        raise IndexCompatibilityError(
+                            "The validated index contains no readable rows."
+                        )
             except (sqlite3.DatabaseError, OSError) as exc:
+                if isinstance(exc, sqlite3.Error) and not is_sqlite_access_error(exc):
+                    raise IndexCompatibilityError(
+                        "The validated index is invalid or corrupt."
+                    ) from exc
                 raise MissingIndexError(
-                    "The validated index couldn't be read. Correct access before retrying."
+                    "The validated index couldn't be accessed. "
+                    "Check permissions, contention, and storage I/O."
                 ) from exc
 
     def inspect_readiness(self) -> IndexReadinessReport:
