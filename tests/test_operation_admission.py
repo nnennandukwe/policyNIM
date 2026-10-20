@@ -24,6 +24,7 @@ from policynim.services.beta_auth import BetaAuthService
 from policynim.services.operation_admission import (
     OperationAdmissionError,
     OperationAdmissionService,
+    admit_operation,
     principal_identity,
 )
 from policynim.settings import Settings
@@ -60,7 +61,8 @@ def test_concurrent_daily_boundary_is_atomic_across_connections(tmp_path: Path) 
     def attempt(index: int) -> bool:
         """Use independent connections and finish admitted work without refunding."""
         store = stores[index % len(stores)]
-        result = store.admit(
+        result = admit_operation(
+            store,
             principal_id="alice",
             operation="policy_search",
             daily_limit=7,
@@ -85,7 +87,8 @@ def test_principal_and_global_active_limits_are_independent(tmp_path: Path) -> N
 
     def admit(subject: str):
         """Apply a shared two-slot cap and a one-slot principal limit."""
-        return store.admit(
+        return admit_operation(
+            store,
             principal_id=subject,
             operation="policy_search",
             daily_limit=10,
@@ -111,7 +114,8 @@ def test_utc_day_rollover_keeps_active_slots(tmp_path: Path) -> None:
     store = OperationStore(tmp_path / "operations.sqlite3")
     before = datetime(2026, 10, 20, 23, 59, tzinfo=UTC).timestamp()
     after = datetime(2026, 10, 21, 0, 1, tzinfo=UTC).timestamp()
-    first = store.admit(
+    first = admit_operation(
+        store,
         principal_id="alice",
         operation="policy_search",
         daily_limit=1,
@@ -121,7 +125,8 @@ def test_utc_day_rollover_keeps_active_slots(tmp_path: Path) -> None:
     )
     assert first.operation_id
     assert (
-        store.admit(
+        admit_operation(
+            store,
             principal_id="alice",
             operation="policy_search",
             daily_limit=1,
@@ -132,7 +137,8 @@ def test_utc_day_rollover_keeps_active_slots(tmp_path: Path) -> None:
         == "principal_busy"
     )
     store.finish(first.operation_id, "completed")
-    assert store.admit(
+    assert admit_operation(
+        store,
         principal_id="alice",
         operation="policy_search",
         daily_limit=1,
@@ -294,8 +300,9 @@ def test_dead_process_recovery_retains_accepted_work(tmp_path: Path) -> None:
             "-c",
             "from pathlib import Path; "
             "from policynim.storage.operation_store import OperationStore; "
+            "from policynim.services.operation_admission import admit_operation; "
             "import sys; s=OperationStore(Path(sys.argv[1])); "
-            "s.admit(principal_id='alice', operation='policy_search', "
+            "admit_operation(s,principal_id='alice', operation='policy_search', "
             "daily_limit=10, principal_limit=1, global_limit=1)",
             str(path),
         ],
@@ -455,8 +462,9 @@ def test_reused_pid_recovers_only_abandoned_kernel_owner(tmp_path: Path) -> None
             "-c",
             "from pathlib import Path; "
             "from policynim.storage.operation_store import OperationStore; "
+            "from policynim.services.operation_admission import admit_operation; "
             "import sys; s=OperationStore(Path(sys.argv[1])); "
-            "s.admit(principal_id='previous', operation='policy_search', "
+            "admit_operation(s,principal_id='previous', operation='policy_search', "
             "daily_limit=10, principal_limit=2, global_limit=10)",
             str(path),
         ],
@@ -466,7 +474,8 @@ def test_reused_pid_recovers_only_abandoned_kernel_owner(tmp_path: Path) -> None
     with sqlite3.connect(path) as connection:
         connection.execute("UPDATE operation_usage SET process_id = ?", (os.getpid(),))
     live = OperationStore(path)
-    current = live.admit(
+    current = admit_operation(
+        live,
         principal_id="live",
         operation="policy_search",
         daily_limit=10,
@@ -487,7 +496,8 @@ def test_reused_pid_recovers_only_abandoned_kernel_owner(tmp_path: Path) -> None
 def test_transient_finish_lock_retries_without_stranding_capacity(tmp_path: Path) -> None:
     """A writer lock longer than admission's timeout doesn't strand completed work."""
     store = OperationStore(tmp_path / "operations.sqlite3")
-    accepted = store.admit(
+    accepted = admit_operation(
+        store,
         principal_id="alice",
         operation="policy_search",
         daily_limit=5,
@@ -506,7 +516,8 @@ def test_transient_finish_lock_retries_without_stranding_capacity(tmp_path: Path
         pending.result(timeout=3)
     usage = store.usage("alice")
     assert (usage.accepted, usage.active, usage.completed) == (1, 0, 1)
-    assert store.admit(
+    assert admit_operation(
+        store,
         principal_id="alice",
         operation="policy_search",
         daily_limit=5,
@@ -534,3 +545,103 @@ def test_principal_limit_environment_names_match_runtime(monkeypatch: pytest.Mon
     settings = Settings()
     assert settings.mcp_max_concurrent_operations_per_principal == 3
     assert settings.mcp_principal_daily_operation_quota == 42
+
+
+@pytest.mark.parametrize("lock_mode", ["IMMEDIATE", "EXCLUSIVE"])
+def test_failed_construction_does_not_accumulate_owner_files(
+    tmp_path: Path, lock_mode: str
+) -> None:
+    """Repeated database outages can't grow unused lease files on the persistent volume."""
+    settings = _settings(tmp_path)
+    initial = OperationStore(settings.beta_auth_db_path)
+    initial.close()
+    directory = settings.beta_auth_db_path.with_name(settings.beta_auth_db_path.name + ".owners")
+    assert list(directory.iterdir()) == []
+    with sqlite3.connect(settings.beta_auth_db_path) as connection:
+        connection.execute("BEGIN " + lock_mode)
+        for _ in range(3):
+            with pytest.raises(OperationAdmissionError, match="admission_unavailable"):
+                OperationAdmissionService(settings)
+            assert list(directory.iterdir()) == []
+    recovered = OperationAdmissionService(settings)
+    recovered.store.close()
+    recovered.store.close()  # cleanup is idempotent
+    assert list(directory.iterdir()) == []
+
+
+def test_failed_owner_lock_removes_unused_created_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure before kernel ownership also cleans up its newly created empty lease."""
+    from policynim.storage import operation_lease
+
+    def fail_lock(descriptor: int) -> None:
+        """Inject a system lock error without leaving any admitted worker."""
+        raise OSError("injected lock failure")
+
+    monkeypatch.setattr(operation_lease, "_lock", fail_lock)
+    settings = _settings(tmp_path)
+    with pytest.raises(OperationAdmissionError, match="admission_unavailable"):
+        OperationAdmissionService(settings)
+    directory = settings.beta_auth_db_path.with_name(settings.beta_auth_db_path.name + ".owners")
+    assert list(directory.iterdir()) == []
+
+
+def test_cancellation_before_worker_start_never_charges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A queued worker cancelled before dispatch can't reserve accepted-operation allowance."""
+    from policynim.errors import ProviderError
+    from policynim.interfaces import mcp as mcp_module
+
+    original = mcp_module._run_sync_until_complete
+
+    async def cancel_before_dispatch(operation, *, limiter=None, on_cancel=None):
+        """Deliver the real cancellation signal before the worker receives its callable."""
+        if on_cancel is not None:
+            on_cancel()
+        return await original(operation, limiter=limiter)
+
+    monkeypatch.setattr(mcp_module, "_run_sync_until_complete", cancel_before_dispatch)
+    settings = _settings(tmp_path)
+
+    async def scenario() -> None:
+        """Exercise the actual executor admission path after a queued cancellation signal."""
+        executor = _ToolExecutor(settings=settings)
+        try:
+            with pytest.raises(ProviderError, match="cancelled"):
+                await executor.run(
+                    lambda: pytest.fail("Provider started"),
+                    principal=_principal(),
+                    operation_name="policy_search",
+                )
+            assert not settings.beta_auth_db_path.exists()
+        finally:
+            await executor.close()
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_during_snapshot_recheck_rolls_back_reservation(tmp_path: Path) -> None:
+    """A cancellation that arrives while entering the writer transaction leaves no charge."""
+    from policynim.errors import ProviderError
+
+    service = OperationAdmissionService(_settings(tmp_path))
+    checks = 0
+
+    def cancelled() -> bool:
+        """Change authority after the outer check but before transaction policy acceptance."""
+        nonlocal checks
+        checks += 1
+        return checks > 1
+
+    with pytest.raises(ProviderError, match="cancelled before admission"):
+        service.run(
+            lambda: pytest.fail("Provider started"),
+            principal=_principal(),
+            operation_name="policy_search",
+            cancelled=cancelled,
+        )
+    usage = service.store.usage(principal_identity(_principal().issuer, "alice"))
+    assert (usage.accepted, usage.active) == (0, 0)
+    service.store.close()
