@@ -2352,7 +2352,13 @@ def test_quickstart_defaults_to_hosted_mcp_without_requiring_setup(
         in (agent_workflows[1]["prompt"])
     )
     assert "cited policy lines" in agent_workflows[1]["prompt"]
-    assert "policy_preflight and policy_search" in agent_workflows[2]["prompt"]
+    for name in (
+        "policy_search",
+        "policy_compile",
+        "policy_preflight",
+        "policy_preflight_evidence",
+    ):
+        assert name in agent_workflows[2]["prompt"]
     assert "before starting implementation" in agent_workflows[2]["prompt"]
 
 
