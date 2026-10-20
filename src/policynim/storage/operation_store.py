@@ -69,6 +69,15 @@ class OperationStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._owner = OperationOwner(path)
+        self._has_admitted = False
+        try:
+            self._initialize_schema()
+        except BaseException:
+            self._owner.close()
+            raise
+
+    def _initialize_schema(self) -> None:
+        """Initialize operation tables without leaving unused owner files on storage failure."""
         with closing(self._connect()) as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS operation_usage (
@@ -166,6 +175,7 @@ class OperationStore:
                     correlation_id,
                 ),
             )
+            self._has_admitted = True
             return OperationAdmission(operation_id=operation_id)
 
     def finish(self, operation_id: str, outcome: OperationOutcome) -> None:
@@ -192,6 +202,9 @@ class OperationStore:
 
     def close(self) -> None:
         """Release process ownership only after every accepted worker has drained."""
+        if not self._has_admitted:
+            self._owner.close()
+            return
         with closing(self._connect()) as connection:
             active = connection.execute(
                 "SELECT COUNT(*) FROM operation_usage WHERE owner_id = ? AND outcome = 'accepted'",
