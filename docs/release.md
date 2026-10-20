@@ -64,9 +64,12 @@ Also supply `--lockfile /absolute/path/to/checkout/uv.lock`,
 `--lock-digest sha256:<digest>`, and `--requirements` with the absolute path to the
 exported runtime requirements used for installation. Relative paths resolve from
 the working directory where you launch the verifier, not from its script directory.
-CI exports with `uv export --locked --no-dev --no-emit-project`, installs those
+CI exports with
+`uv export --locked --no-dev --group verification --no-emit-project`, installs those
 artifacts with required hashes, and installs the wheel without dependency resolution.
-The report records the lock digest, requirements digest and actual installed versions.
+The `verification` group supplies the verifier's locked `packaging` parser; include
+it in the export for manual fresh-environment checks too. The report records the
+lock digest, requirements digest and actual installed versions.
 Bootstrap installer packages are recorded separately when they weren't selected
 for the runtime installation.
 The verifier refuses an installation resolved back to a source checkout. It never

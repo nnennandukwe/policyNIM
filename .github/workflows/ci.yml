@@ -123,7 +123,7 @@ jobs:
               subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
               python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
               requirements = runtime / "locked-requirements.txt"
-              subprocess.run(["uv", "export", "--locked", "--no-dev", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
+              subprocess.run(["uv", "export", "--locked", "--no-dev", "--group", "verification", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
               subprocess.run(["uv", "pip", "install", "--python", str(python), "--require-hashes", "--no-deps", "-r", str(requirements)], check=True)
               subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
               subprocess.run(["uv", "pip", "check", "--python", str(python)], check=True)
