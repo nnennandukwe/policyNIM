@@ -104,7 +104,7 @@ OSPS: OpenSSF OSPS Baseline 2026.08.28
 URL: https://baseline.openssf.org/versions/2026-08-28
 Revision: 2026.08.28
 Attribution: OSPS Baseline contributors; a Series of LF Projects, LLC
-Source terms: CC-BY-4.0
+Source terms: Apache-2.0; repository LICENSE at fb138f9140a7dd5a5f6b4edff43599ae05759c68
 Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
 
 CS-LOG: OWASP Logging Cheat Sheet

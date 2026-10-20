@@ -620,7 +620,7 @@ url = "https://baseline.openssf.org/versions/2026-08-28"
 revision = "2026.08.28"
 sections = ["OSPS-BR-01.01", "OSPS-BR-01.03", "OSPS-BR-04.01", "OSPS-BR-05.01", "OSPS-BR-06.01", "OSPS-DO-06.01"]
 retrieved_on = 2026-10-20
-license = "CC-BY-4.0"
+license = "Apache-2.0"
 attribution = "OSPS Baseline contributors; a Series of LF Projects, LLC"
 change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
 
@@ -647,7 +647,7 @@ url = "https://baseline.openssf.org/versions/2026-08-28"
 revision = "2026.08.28"
 sections = ["OSPS-BR-01.01", "OSPS-BR-01.03", "OSPS-BR-04.01", "OSPS-BR-05.01", "OSPS-BR-06.01", "OSPS-DO-06.01"]
 retrieved_on = 2026-10-20
-license = "CC-BY-4.0"
+license = "Apache-2.0"
 attribution = "OSPS Baseline contributors; a Series of LF Projects, LLC"
 change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
 
