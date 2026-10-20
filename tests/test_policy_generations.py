@@ -2979,10 +2979,10 @@ def test_publication_syncs_object_membership_before_pointer_commit(
 
 
 @pytest.mark.parametrize("snapshot_cache", [False, True])
-def test_warm_public_health_avoids_corpus_clones_and_reader_leases(
+def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snapshot_cache: bool
 ) -> None:
-    """Unchanged public probes reuse validated metadata without copying corpus or opening leases."""
+    """Unchanged probes avoid corpus copies while checking the real reader-admission path."""
     import os
 
     from starlette.testclient import TestClient
@@ -3024,7 +3024,7 @@ def test_warm_public_health_avoids_corpus_clones_and_reader_leases(
             assert response.status_code == 200
             assert response.json()["generation_id"] == first.generation_id
         assert clones == []
-        assert lease_opens == []
+        assert lease_opens
         artifact = store.root / "objects" / first.generation_id / "runtime_rules.json"
         artifact.write_bytes(artifact.read_bytes() + b"tampered")
         assert client.get("/healthz").status_code == 503
@@ -3050,3 +3050,75 @@ def test_health_revalidates_when_change_stamps_are_unavailable(
         artifact = store.root / "objects" / active.generation_id / "runtime_rules.json"
         artifact.write_bytes(artifact.read_bytes() + b"tampered")
         assert client.get("/healthz").status_code == 503
+
+
+def test_warm_health_refuses_failed_reader_lease_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached valid generation can't hide storage failure that blocks every new search reader."""
+    import errno
+    import os
+
+    from starlette.testclient import TestClient
+
+    from policynim.errors import GenerationError
+    from policynim.interfaces.mcp import _build_streamable_http_app
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_open = os.open
+
+    def exhausted(path, flags, mode=0o777, *, dir_fd=None):
+        """Inject ENOSPC only at the real filesystem reader-lease creation boundary."""
+        if str(store.root / "leases") in str(path) and flags & os.O_CREAT:
+            raise OSError(errno.ENOSPC, "private storage payload")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(os, "open", exhausted)
+        response = client.get("/healthz")
+        assert response.status_code == 503
+        assert "private storage payload" not in response.text
+        with pytest.raises(GenerationError):
+            store.pin()
+
+
+def test_readiness_retains_selected_generation_during_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cold health keeps its selected object while real supported writers rotate and prune."""
+    from contextlib import contextmanager
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    original_locked = store._locked
+    rotate = True
+    published: list[str] = []
+
+    @contextmanager
+    def locked(**kwargs):
+        """Rotate twice immediately after the health selection/admission lock is released."""
+        nonlocal rotate
+        with original_locked(**kwargs):
+            yield
+        if rotate:
+            rotate = False
+            other = GenerationStore(root=store.root, embedding=identity)
+            assert settings.corpus_dir is not None
+            member = settings.corpus_dir / "A.md"
+            for revision in ("second", "third"):
+                member.write_text(member.read_text() + f"\nReviewed {revision} revision.\n")
+                published.append(other.build(settings, MockEmbedder()).generation_id)
+            other.prune(keep_recent=0)
+
+    monkeypatch.setattr(store, "_locked", locked)
+    result = store.readiness()
+    assert result.generation_id == first.generation_id
+    assert len(published) == 2
+    assert store.inspect().generation_id == published[-1]
+    store.prune(keep_recent=0)
+    assert not (store.root / "objects" / first.generation_id).exists()

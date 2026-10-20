@@ -292,6 +292,28 @@ def _file_change_stamp(path: Path, observed: os.stat_result) -> int | None:
         return None
 
 
+@dataclass
+class _ReaderAdmission:
+    """One atomically selected reader lease with explicit ownership transfer."""
+
+    selected: str
+    activation: GenerationPointer | None
+    lease: AbstractContextManager[None]
+    path: Path
+    identity: tuple[int, int]
+    cleanup: ResourceStack
+
+    def transfer_to(self, snapshot: GenerationSnapshot) -> None:
+        """Give the full reader its lease while temporary health probes retain scoped cleanup."""
+        snapshot.activation = self.activation
+        snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
+            self.lease,
+            self.path,
+            self.identity,
+        )
+        self.cleanup.pop_all()
+
+
 @dataclass(frozen=True)
 class _CachedGeneration:
     """One verified immutable object identity; cache entries never own reader handles."""
@@ -788,9 +810,9 @@ class GenerationStore:
             LOGGER.warning("Failed reader's lease-directory ownership needs inspection.")
 
     def readiness(self, generation_id: str | None = None) -> GenerationReadiness:
-        """Reuse unchanged validated health metadata without cloning corpus or leasing readers."""
-        with self._locked():
-            selected = self._selected_id(generation_id, self._pointer())
+        """Probe reader admission and reuse unchanged health metadata without cloning corpus."""
+        with self._reader_admission(generation_id) as admission:
+            selected = admission.selected
             directory = self.root / "objects" / selected
             token = self._artifact_token(directory)
             key = (str(directory.absolute()), selected, self.embedding.model_dump_json())
@@ -807,14 +829,15 @@ class GenerationStore:
                     raise GenerationError(
                         "inspect", "Generation changed during readiness inspection."
                     )
+                check_budget()
                 return result
-        with self.pin(selected) as snapshot:
+            snapshot = self._reader_snapshot(selected, force=False)
+            check_budget()
             return GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count)
 
-    def pin(
-        self, generation_id: str | None = None, *, force_validation: bool = False
-    ) -> GenerationSnapshot:
-        """Register a lease atomically, then validate outside the short publication lock."""
+    @contextmanager
+    def _reader_admission(self, generation_id: str | None) -> Iterator[_ReaderAdmission]:
+        """Select and lease one object atomically before validation or metadata inspection."""
         try:
             with ResourceStack() as cleanup:
                 with self._locked():
@@ -859,22 +882,23 @@ class GenerationStore:
                     observed = lease_path.lstat()
                     if (observed.st_dev, observed.st_ino) != identity:
                         raise GenerationError("pin", "Reader lease identity changed.")
-                snapshot = self._reader_snapshot(selected, force=force_validation)
-                check_budget()
-                snapshot.activation = pointer
-                snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
-                    lease,
-                    lease_path,
-                    identity,
-                )
-                cleanup.pop_all()
-                return snapshot
+                yield _ReaderAdmission(selected, pointer, lease, lease_path, identity, cleanup)
         except OSError as exc:
             raise GenerationError(
                 "pin",
                 "Reader admission couldn't access generation locks or leases. "
                 "Check filesystem permissions and available storage before retrying.",
             ) from exc
+
+    def pin(
+        self, generation_id: str | None = None, *, force_validation: bool = False
+    ) -> GenerationSnapshot:
+        """Register a lease atomically, then validate outside the short publication lock."""
+        with self._reader_admission(generation_id) as admission:
+            snapshot = self._reader_snapshot(admission.selected, force=force_validation)
+            check_budget()
+            admission.transfer_to(snapshot)
+            return snapshot
 
     def _execute(
         self, operation: Callable[[], PublicationResult], *, initialize: bool = True

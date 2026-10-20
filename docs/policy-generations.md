@@ -120,7 +120,8 @@ content instead of weakening the identity check. A restored stamp is accepted on
 after content validation. Operator inspection and export always validate all bytes.
 Warm health probes return only the validated generation ID and chunk count when
 the pointer, artifact identities, and configured embedding space still match.
-They don't clone source models or open filesystem reader leases. Cold probes,
+They probe the same reader-lease admission that retrieval requires, retaining the
+selected generation during inspection, but don't clone source models. Cold probes,
 changed identities, unavailable change stamps, and entries outside the bounded
 cache still use full pinned validation. There's no time-based healthy-state cache.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
