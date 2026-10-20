@@ -273,7 +273,7 @@ def _validate_and_materialize_result(
 
     citation_ids = _ordered_unique(
         draft.citation_ids
-        or [
+        + [
             citation_id
             for policy in draft.applicable_policies
             for citation_id in policy.citation_ids

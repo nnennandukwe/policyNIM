@@ -114,3 +114,45 @@ def test_compiled_packet_can_add_other_policy_citations_without_forging_guidance
     assert not result.insufficient_context
     assert {citation.chunk_id for citation in result.citations} == {"BACKEND-1", "SECURITY-1"}
     assert result.applicable_policies[0].citation_ids == ["BACKEND-1"]
+
+
+def test_preflight_materializes_every_valid_guidance_reference() -> None:
+    """Per-policy references must resolve even when the generator omits them globally."""
+    chunks = [
+        make_chunk(chunk_id="BACKEND-1", policy_id="BACKEND-LOG-001", domain="backend", score=0.99),
+        make_chunk(
+            chunk_id="SECURITY-1", policy_id="SECURITY-TOKEN-001", domain="security", score=0.98
+        ),
+    ]
+    generator = MockGenerator(
+        GeneratedPreflightDraft(
+            summary="Apply logging and token handling.",
+            applicable_policies=[
+                GeneratedPolicyGuidance(
+                    policy_id=chunk.policy.policy_id,
+                    title=chunk.policy.title,
+                    rationale="Apply the cited requirement.",
+                    citation_ids=[chunk.chunk_id],
+                )
+                for chunk in chunks
+            ],
+            citation_ids=["BACKEND-1"],
+        )
+    )
+    with PreflightService(
+        embedder=MockEmbedder(),
+        index_store=MockIndexStore(chunks),
+        reranker=MockReranker(),
+        generator=generator,
+        compiler=MockPolicyCompiler(),
+    ) as service:
+        result = service.preflight(PreflightRequest(task="backend guidance", top_k=2))
+    assert not result.insufficient_context
+    by_id = {citation.chunk_id: citation for citation in result.citations}
+    assert list(by_id) == ["BACKEND-1", "SECURITY-1"]
+    for item in result.applicable_policies:
+        for citation_id in item.citation_ids:
+            assert (by_id[citation_id].policy_id, by_id[citation_id].title) == (
+                item.policy_id,
+                item.title,
+            )
