@@ -301,13 +301,15 @@ def test_chat_options_are_specific_to_replacement_model(model):
         0
     ]
     assert json.loads(allowed_ids) == [candidate().chunk_id]
-    if model in {CHAT_MODEL, PREVIOUS_CHAT_MODEL}:
+    if model == PREVIOUS_CHAT_MODEL:
         assert calls[0]["temperature"] == 1
         assert calls[0]["top_p"] == 0.95
-        assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
     else:
         assert calls[0]["temperature"] == 0
         assert calls[0]["top_p"] == 1
+    if model in {CHAT_MODEL, PREVIOUS_CHAT_MODEL}:
+        assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    else:
         assert "chat_template_kwargs" not in calls[0]
     if model == CHAT_MODEL:
         response_format = calls[0]["response_format"]

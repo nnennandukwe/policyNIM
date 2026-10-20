@@ -2,11 +2,14 @@
 
 PolicyNIM defaults to `nvidia/nemotron-3.5-lightning-30b-a3b` for policy
 compilation, grounded guidance, and policy-conformance evaluation. Its shared
-chat adapter sends temperature `1`, top-p `0.95`,
+chat adapter sends temperature `0`, top-p `1`,
 `chat_template_kwargs.enable_thinking=false`, and the corresponding Pydantic
 model's JSON schema through `response_format.type=json_schema`. NVIDIA's
 [request example](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b/build)
-documents the sampling settings and thinking option. PolicyNIM disables thinking
+documents the thinking option. NVIDIA's
+[structured-output example](https://docs.nvidia.com/nim/large-language-models/2.0.10/get-started/advanced/get-started-nemotron-3.5-lightning.html#structured-json-output)
+uses temperature `0`; PolicyNIM uses that setting for source-derived responses.
+PolicyNIM disables thinking
 so these paths can parse and validate the final JSON content. NVIDIA also
 [documents schema-guided generation](https://docs.nvidia.com/nim/large-language-models/1.15.0/structured-generation.html).
 The hosted endpoint accepted the schema request, and local Pydantic validation

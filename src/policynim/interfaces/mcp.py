@@ -624,7 +624,11 @@ def _register_tools(
         *,
         ctx: Context,
     ) -> PreflightResult:
-        """Get citation-backed policy guidance, review flags and tests for a coding task."""
+        """Get citation-backed policy guidance, review flags and tests for a coding task.
+
+        Recommendations are generated advice. Review their cited source before applying
+        implementation details; they aren't independently verified policy facts.
+        """
         principal = get_principal("policy_preflight")
         result = await _run_logged_tool(
             "policy_preflight",

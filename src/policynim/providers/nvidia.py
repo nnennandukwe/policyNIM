@@ -638,6 +638,8 @@ def _request_chat_completion(
             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         }
     if model == NVIDIA_LIGHTNING_CHAT_MODEL:
+        options["temperature"] = 0
+        options["top_p"] = 1
         options["response_format"] = {
             "type": "json_schema",
             "json_schema": {
@@ -1044,6 +1046,22 @@ def _build_generation_messages(
         "- Cite only by chunk_id values that appear in the provided context.\n"
         "- Do not invent new chunk IDs. A policy_id is not a citation. Copy the entire "
         "chunk_id, including any colon and section suffix, from Allowed citation_ids.\n"
+        "- For each applicable_policies item, copy policy_id and title exactly from "
+        "the retrieved context metadata. Every citation in that item must belong to "
+        "that same policy. Don't use a chunk_id as a policy_id.\n"
+        "- Include implementation details only when the task or retrieved source explicitly "
+        "supports them. Don't invent numeric limits, batch sizes, retry counts, languages, "
+        "framework APIs, endpoint names, or other technology choices. If a choice is "
+        "unspecified, leave it open for configuration or measurement; don't supply "
+        "example numbers or APIs as if they're policy requirements.\n"
+        "- Build plan_steps and implementation_guidance by concise paraphrase of the "
+        "compiled policy statements and cited source requirements. Don't expand a "
+        "requirement into an algorithm, schema, identifier, API, or platform choice "
+        "that the supplied evidence doesn't specify.\n"
+        "- Preserve each source rule's triggers, conditions, exceptions, and scope. "
+        "Don't turn a conditional requirement into an unconditional plan step or move "
+        "it to a different lifecycle event. If the task doesn't establish the trigger, "
+        "keep the requirement conditional or omit it from the plan.\n"
         "- If the evidence is insufficient, set insufficient_context to true and "
         "keep the lists empty.\n"
         "- When compiled policy constraints are provided, use them as the main "
@@ -1130,9 +1148,14 @@ def _build_policy_compiler_messages(
         "- A policy_id is not a citation. Copy the entire chunk_id, including any "
         "colon and section suffix, from Allowed citation_ids.\n"
         "- Include a constraint only when the retained evidence directly supports it.\n"
+        "- Preserve source conditions, triggers, exceptions, and scope. Don't promote "
+        "a requirement for one lifecycle event into a requirement for another event.\n"
+        "- Don't invent numeric limits, retry counts, technology choices, APIs, or "
+        "endpoints absent the explicit task or retained source. Leave unspecified "
+        "choices open instead of supplying example values.\n"
         "- If evidence is weak or unsupported, set insufficient_context to true and "
         "leave every constraint list empty.\n"
-        "- Keep constraint statements concrete and task-specific."
+        "- Keep constraint statements specific to the task."
     )
     user_prompt = (
         f"Task: {request.task}\n"

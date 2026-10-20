@@ -291,6 +291,12 @@ def _validate_and_materialize_result(
             continue
         if any(citation_id not in context_by_id for citation_id in policy_citation_ids):
             return None
+        if any(
+            context_by_id[citation_id].policy.policy_id != policy.policy_id
+            or context_by_id[citation_id].policy.title != policy.title
+            for citation_id in policy_citation_ids
+        ):
+            return None
         applicable_policies.append(
             PolicyGuidance(
                 policy_id=policy.policy_id,
