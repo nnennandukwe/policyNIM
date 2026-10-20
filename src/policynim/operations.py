@@ -98,9 +98,9 @@ def check_budget() -> None:
         current.remaining()
 
 
-def emit_operation_event(**fields: Any) -> None:
+def emit_operation_event(*, level: int = logging.INFO, **fields: Any) -> None:
     """Emit only internally selected metadata, never requests or upstream bodies."""
-    _LOG.info(json.dumps({"event": "provider.operation", **fields}, sort_keys=True))
+    _LOG.log(level, json.dumps({"event": "provider.operation", **fields}, sort_keys=True))
 
 
 def bounded_stage(stage: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:

@@ -215,6 +215,12 @@ def test_discovery_scope_challenges_and_principal_propagation(
         assert rpc(client, "tools/list", token=None).status_code == 401
         assert client.get("/healthz").status_code == 503  # no index; no auth requirement
     denied.assert_not_called()
+    from policynim.services.operation_admission import principal_identity
+    from policynim.storage.operation_store import OperationStore
+
+    usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
+    assert usage.accepted == 1  # only search, never metadata/discovery/scope rejections
+    assert usage.completed == 1
     assert len(principals) == 1
     principal = principals[0]
     assert principal is not None
@@ -1003,7 +1009,7 @@ def test_introspection_total_deadline_and_recovery(tmp_path: Path) -> None:
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("rejection", ["suspended", "quota", "revoked"])
+@pytest.mark.parametrize("rejection", ["suspended", "revoked"])
 def test_known_local_key_denials_never_reach_the_issuer(tmp_path: Path, rejection: str) -> None:
     """Distinguish a rejected issued key from an unrecognized opaque issuer token."""
     settings = oauth_settings(
@@ -1111,3 +1117,190 @@ def test_partial_http_body_times_out_and_releases_auth_admission(
                 assert (await client.post("/mcp", json=message, headers=headers)).status_code == 200
 
     asyncio.run(exercise())
+
+
+def test_quota_exhaustion_keeps_http_discovery_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real HTTP flow charges search once while discovery and rejected work stay free."""
+    from policynim.services.operation_admission import principal_identity
+    from policynim.storage.operation_store import OperationStore
+
+    settings = oauth_settings(tmp_path, mcp_principal_daily_operation_quota=1)
+    install_issuer(monkeypatch, settings, token_claims())
+    calls: list[str] = []
+
+    def search(**arguments: object) -> dict[str, object]:
+        """Stand in only for accepted service/provider work."""
+        calls.append(str(arguments["query"]))
+        return SearchResult(query=str(arguments["query"]), top_k=5, hits=[]).model_dump(mode="json")
+
+    monkeypatch.setattr(mcp_module, "_run_policy_search", search)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        for _ in range(3):
+            assert rpc(client, "tools/list").status_code == 200
+        first = rpc(
+            client, "tools/call", {"name": "policy_search", "arguments": {"query": "first"}}
+        )
+        assert first.status_code == 200 and not first.json()["result"]["isError"]
+        denied = rpc(
+            client, "tools/call", {"name": "policy_search", "arguments": {"query": "second"}}
+        )
+        assert denied.status_code == 200 and denied.json()["result"]["isError"]
+        assert "00:00 UTC" in str(denied.json())
+        assert rpc(client, "tools/list").status_code == 200
+    assert calls == ["first"]
+    usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
+    assert (usage.accepted, usage.completed) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"task": ""},
+        {"task": "  "},
+        {"task": "valid", "domain": ""},
+        {"task": "valid", "domain": "  "},
+    ],
+)
+def test_invalid_preflight_keeps_daily_allowance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arguments: dict[str, object]
+) -> None:
+    """Reject malformed input through HTTP before providers or accepted-operation usage."""
+    from policynim.services.operation_admission import principal_identity
+    from policynim.storage.operation_store import OperationStore
+    from policynim.types import PreflightResult
+
+    settings = oauth_settings(tmp_path, mcp_principal_daily_operation_quota=1)
+    install_issuer(monkeypatch, settings, token_claims())
+    calls: list[str] = []
+
+    def preflight(**values: object) -> dict[str, object]:
+        """Capture only work that passes the real MCP input and allowance checks."""
+        calls.append(str(values["task"]))
+        return PreflightResult(task=str(values["task"]), summary="fixture").model_dump(mode="json")
+
+    monkeypatch.setattr(mcp_module, "_run_policy_preflight", preflight)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        denied = rpc(client, "tools/call", {"name": "policy_preflight", "arguments": arguments})
+        assert denied.status_code == 200 and denied.json()["result"]["isError"]
+        assert calls == []
+        accepted = rpc(
+            client, "tools/call", {"name": "policy_preflight", "arguments": {"task": "valid"}}
+        )
+        assert accepted.status_code == 200 and not accepted.json()["result"]["isError"]
+    assert calls == ["valid"]
+    usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
+    assert (usage.accepted, usage.completed) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"query": ""},
+        {"query": "  "},
+        {"query": "valid", "domain": ""},
+        {"query": "valid", "domain": "  "},
+    ],
+)
+def test_invalid_search_keeps_daily_allowance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arguments: dict[str, object]
+) -> None:
+    """Reject blank search input before spending a caller's last allowance."""
+    from policynim.services.operation_admission import principal_identity
+    from policynim.storage.operation_store import OperationStore
+
+    settings = oauth_settings(tmp_path, mcp_principal_daily_operation_quota=1)
+    install_issuer(monkeypatch, settings, token_claims())
+    calls: list[str] = []
+
+    def search(**values: object) -> dict[str, object]:
+        """Capture accepted retrieval work after the public input check."""
+        calls.append(str(values["query"]))
+        return SearchResult(query=str(values["query"]), top_k=5, hits=[]).model_dump(mode="json")
+
+    monkeypatch.setattr(mcp_module, "_run_policy_search", search)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        denied = rpc(client, "tools/call", {"name": "policy_search", "arguments": arguments})
+        assert denied.status_code == 200 and denied.json()["result"]["isError"]
+        assert calls == []
+        accepted = rpc(
+            client, "tools/call", {"name": "policy_search", "arguments": {"query": "valid"}}
+        )
+        assert accepted.status_code == 200 and not accepted.json()["result"]["isError"]
+    assert calls == ["valid"]
+    usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
+    assert (usage.accepted, usage.completed) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "host, warns",
+    [
+        ("127.0.0.1", False),
+        ("localhost", False),
+        ("::1", False),
+        ("0.0.0.0", True),
+        ("::", True),
+        ("policy.internal", True),
+    ],
+)
+def test_unprotected_public_bind_warns_without_inventing_principal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, warns: bool
+) -> None:
+    """Keep open HTTP compatible while diagnosing unsupported production configuration."""
+    warning = Mock()
+    monkeypatch.setattr(mcp_module.LOGGER, "warning", warning)
+    settings = Settings().model_copy(
+        update={
+            "mcp_host": host,
+            "mcp_require_auth": False,
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        }
+    )
+    mcp_module._build_streamable_http_app(settings)
+    assert warning.called is warns
+    if warns:
+        assert "POLICYNIM_MCP_REQUIRE_AUTH=true" in warning.call_args.args[0]
+        assert "principal and daily quotas" in warning.call_args.args[0]
+    assert not settings.beta_auth_db_path.exists()
+
+
+def test_break_glass_identity_fallback_doesnt_bypass_unavailable_accounting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identity recovery still fails closed for work when durable quota state is unavailable."""
+    blocked = tmp_path / "unavailable-state"
+    blocked.write_text("fixture file blocks database creation")
+    settings = Settings().model_copy(
+        update={
+            "mcp_require_auth": True,
+            "mcp_bearer_tokens": ["operator-fixture"],
+            "mcp_public_base_url": "https://policy.example",
+            "beta_auth_db_path": blocked / "auth.sqlite3",
+        }
+    )
+    provider = Mock(side_effect=AssertionError("Storage outage started provider work"))
+    monkeypatch.setattr(mcp_module, "_run_policy_search", provider)
+    diagnostic = Mock()
+    monkeypatch.setattr(mcp_module.LOGGER, "error", diagnostic)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        assert rpc(client, "tools/list", token="operator-fixture").status_code == 200
+        response = rpc(
+            client,
+            "tools/call",
+            {"name": "policy_search", "arguments": {"query": "fixture"}},
+            token="operator-fixture",
+        )
+        assert response.status_code == 200 and response.json()["result"]["isError"]
+        assert "admission_unavailable" in str(response.json())
+    provider.assert_not_called()
+    assert "healthy operation storage" in diagnostic.call_args.args[0]
+    assert str(blocked) not in diagnostic.call_args.args[0]

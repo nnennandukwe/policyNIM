@@ -455,6 +455,27 @@ class AuthStore:
             )
         return _usage_snapshot(usage_date=usage_date, request_count=next_count, quota=quota), True
 
+    def get_operation_usage_snapshot(
+        self,
+        *,
+        principal_id: str,
+        usage_date: date,
+        quota: int,
+    ) -> BetaUsageSnapshot:
+        """Read accepted work separately from historical HTTP-authentication counters."""
+        with closing(self._connect()) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_usage'"
+            ).fetchone()
+            count = 0
+            if exists is not None:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM operation_usage "
+                    "WHERE principal_id = ? AND usage_date = ?",
+                    (principal_id, usage_date.isoformat()),
+                ).fetchone()[0]
+        return _usage_snapshot(usage_date=usage_date, request_count=count, quota=quota)
+
     def get_usage_snapshot(
         self,
         *,
