@@ -234,7 +234,11 @@ def _assert_locked_release_dependencies(workflow: dict) -> None:
             for step in workflow["jobs"][name]["steps"]
             for line in step.get("run", "").splitlines()
         ]
-        syncs = [shlex.split(line) for line in commands if shlex.split(line)[:2] == ["uv", "sync"]]
+        syncs = [
+            shlex.split(line, comments=True)
+            for line in commands
+            if shlex.split(line, comments=True)[:2] == ["uv", "sync"]
+        ]
         assert syncs, f"{name} must install from the reviewed lockfile."
         for group in groups:
             assert any(
@@ -247,10 +251,12 @@ def _assert_locked_release_dependencies(workflow: dict) -> None:
     for job in workflow["jobs"].values():
         for step in job["steps"]:
             for line in step.get("run", "").splitlines():
-                if "uv sync" in line:
-                    assert "--locked" in line
-                if "uv run" in line:
-                    assert "--no-sync" in line
+                if line.strip().startswith("uv "):
+                    tokens = shlex.split(line, comments=True)
+                    if tokens[:2] == ["uv", "sync"]:
+                        assert "--locked" in tokens
+                    if tokens[:2] == ["uv", "run"]:
+                        assert "--no-sync" in tokens
 
 
 def test_release_uses_locked_dependencies_without_implicit_resync() -> None:
@@ -303,5 +309,16 @@ def test_replacing_locked_setup_with_unlocked_install_fails(job: str) -> None:
     for step in workflow["jobs"][job]["steps"]:
         if step.get("run", "").startswith("uv sync"):
             step["run"] = "python -m pip install ."
+    with pytest.raises(AssertionError):
+        _assert_locked_release_dependencies(workflow)
+
+
+@pytest.mark.parametrize("job", ["verify", "standalone-build"])
+def test_comment_flags_cant_satisfy_locked_setup(job: str) -> None:
+    """A shell comment can't turn an unlocked command into a passing locked gate."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for step in workflow["jobs"][job]["steps"]:
+        if step.get("run", "").startswith("uv sync"):
+            step["run"] = step["run"].replace("--locked", "") + " # --locked"
     with pytest.raises(AssertionError):
         _assert_locked_release_dependencies(workflow)
