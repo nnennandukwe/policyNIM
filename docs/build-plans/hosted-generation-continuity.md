@@ -73,3 +73,5 @@ initialize once, restart on it, keep an alternate valid selection across restart
 and reject a damaged pointer with networking disabled. Later Railway readback must
 verify the mounted path, generation identity, historical resource, and retained
 job behavior across redeploy. Until then, hosted durability isn't established.
+
+Startup diagnostics must identify settings, generation storage, and process execution separately. Invalid settings fail before storage inspection; report only known setting field names, never rejected values or validator payloads. Preserve bounded safe generation diagnostics after settings load succeeds.

@@ -286,8 +286,36 @@ def test_entrypoint_failure_is_nonzero_and_redacts_private_details(
     assert hosted.main() == 1
     error = capsys.readouterr().err
     assert "private-secret-sentinel" not in error
-    assert "generation inspect" in error
+    assert json.loads(error)["phase"] == "settings"
+    assert "environment permissions" in error
     assert json.loads(error)["status"] == "error"
+
+
+def test_invalid_settings_stop_before_storage_with_safe_field_names(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Actual validation failures identify configuration fields without input values."""
+    from policynim.interfaces import hosted
+
+    def invalid_settings() -> Settings:
+        """Load a private invalid timeout through the actual settings validator."""
+        options: dict[str, Any] = {
+            "nvidia_timeout_seconds": "private-invalid-sentinel",
+            "_env_file": None,
+        }
+        return Settings(**options)
+
+    monkeypatch.setattr(hosted, "get_settings", invalid_settings)
+    monkeypatch.setattr(
+        hosted, "prepare_hosted_generation", lambda *args: pytest.fail("Storage mustn't start")
+    )
+    monkeypatch.setattr(hosted.os, "execvp", lambda *args: pytest.fail("MCP mustn't start"))
+    assert hosted.main() == 1
+    error = json.loads(capsys.readouterr().err)
+    assert error["phase"] == "settings"
+    assert error["invalid_settings"] == ["nvidia_timeout_seconds"]
+    assert "private-invalid-sentinel" not in json.dumps(error)
+    assert "generation inspect" not in error["message"]
 
 
 @pytest.mark.parametrize(

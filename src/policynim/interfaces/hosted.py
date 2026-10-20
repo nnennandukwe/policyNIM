@@ -9,6 +9,8 @@ import stat
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from policynim.errors import GenerationError, PolicyNIMError
 from policynim.services.generations import GenerationStore
 from policynim.settings import Settings, get_settings
@@ -87,29 +89,46 @@ def prepare_hosted_generation(settings: Settings, *, seed_dir: Path = _SEED_DIR)
 
 def main() -> int:
     """Validate durable state and replace this process so MCP receives signals directly."""
-    phase = "generation_storage"
+    phase = "settings"
     try:
-        prepare_hosted_generation(get_settings())
+        settings = get_settings()
+        phase = "generation_storage"
+        prepare_hosted_generation(settings)
         phase = "process_exec"
         os.execvp("policynim", ["policynim", "mcp", "--transport", "streamable-http"])
     except (PolicyNIMError, OSError, ValueError) as error:
-        failure = {
-            "status": "error",
-            "phase": phase,
-            "message": (
+        messages = {
+            "settings": (
+                "Hosted settings couldn't be loaded. Check the configuration fields and "
+                "environment permissions before restarting."
+            ),
+            "generation_storage": (
                 "Hosted startup couldn't validate or seed generation storage. "
                 "Existing state is preserved. Check the volume, configuration, and "
                 "image seed; run `policynim generation inspect`. For an interrupted "
                 "first import, preserve the root and explicitly import a verified "
                 "bundle before restarting."
-            )
-            if phase == "generation_storage"
-            else (
+            ),
+            "process_exec": (
                 "Hosted MCP couldn't start after generation validation. "
                 "The committed generation is preserved. Check the installed "
                 "policynim command and executable permissions before restarting."
             ),
         }
+        failure: dict[str, object] = {
+            "status": "error",
+            "phase": phase,
+            "message": messages[phase],
+        }
+        if isinstance(error, ValidationError):
+            fields = set()
+            for detail in error.errors(include_input=False, include_context=False):
+                location = detail["loc"]
+                if location and isinstance(location[0], str):
+                    field = location[0].lower().removeprefix("policynim_")
+                    if field in Settings.model_fields:
+                        fields.add(field)
+            failure["invalid_settings"] = sorted(fields)[:32]
         if isinstance(error, GenerationError):
             failure["generation_phase"] = error.phase
             failure["message"] = str(error)[:2048]
