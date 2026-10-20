@@ -27,10 +27,11 @@ policynim ingest
 Run the deterministic gates locally:
 
 ```bash
+uv sync --locked --group test --group dev
 uv lock --check
-uv run ruff check .
-uv run pyright
-uv run pytest -q -m "not live and not docker_live"
+uv run --no-sync ruff check .
+uv run --no-sync pyright
+uv run --no-sync pytest -q -m "not live and not docker_live"
 uv build --out-dir dist
 ```
 
@@ -105,3 +106,10 @@ After the draft release artifacts pass local smoke tests, run the manual
 `Hosted Beta Smoke` workflow only when the deployed Railway beta and hosted MCP
 secrets are available. This is a deployment promotion check, not part of the
 offline release artifact build.
+
+The fresh-wheel verifier requires `--lockfile uv.lock` and `--lock-digest sha256:<digest>`,
+plus `--requirements` pointing to the exported runtime requirements used for installation.
+CI installs exported locked dependency artifacts with required hashes before installing
+the wheel without dependency resolution. Its report records the lock digest and actual
+installed versions and the requirements digest. Bootstrap installer packages are identified
+separately when they weren't selected for the runtime installation.

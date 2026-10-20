@@ -869,6 +869,10 @@ def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateM
     )
     return EvalAggregateMetrics(
         case_count=len(total_results),
+        expected_chunk_case_count=sum(bool(result.expected_chunk_ids) for result in total_results),
+        expected_policy_case_count=sum(
+            bool(result.expected_policy_ids) for result in total_results
+        ),
         passed_count=passed_count,
         search_case_count=len(search_results),
         search_passed_count=sum(result.passed for result in search_results),
@@ -1204,6 +1208,8 @@ def _build_eval_report_rows(
             "search_passed_count": metrics.search_passed_count,
             "preflight_case_count": metrics.preflight_case_count,
             "preflight_passed_count": metrics.preflight_passed_count,
+            "expected_chunk_case_count_run": metrics.expected_chunk_case_count,
+            "expected_policy_case_count_run": metrics.expected_policy_case_count,
             "expected_policy_recall_run": metrics.expected_policy_recall,
             "expected_chunk_recall_run": metrics.expected_chunk_recall,
             "insufficient_context_accuracy_run": metrics.insufficient_context_accuracy,
@@ -1241,8 +1247,20 @@ def _write_eval_html_report(
         ("Overall pass rate", _format_metric(metrics.overall_pass_rate)),
         ("Search pass rate", _format_metric(metrics.search_pass_rate)),
         ("Preflight pass rate", _format_metric(metrics.preflight_pass_rate)),
-        ("Expected chunk recall", _format_metric(metrics.expected_chunk_recall)),
-        ("Expected policy recall", _format_metric(metrics.expected_policy_recall)),
+        ("Chunk expectation cases", metrics.expected_chunk_case_count),
+        ("Policy expectation cases", metrics.expected_policy_case_count),
+        (
+            "Expected chunk recall",
+            _format_metric(metrics.expected_chunk_recall)
+            if metrics.expected_chunk_case_count
+            else "not applicable",
+        ),
+        (
+            "Expected policy recall",
+            _format_metric(metrics.expected_policy_recall)
+            if metrics.expected_policy_case_count
+            else "not applicable",
+        ),
         (
             "Insufficient context accuracy",
             _format_metric(metrics.insufficient_context_accuracy),

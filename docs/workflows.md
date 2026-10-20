@@ -361,7 +361,9 @@ universal prompt-injection resistance or live model adherence.
 JSON reports retain the parsed suite definition, its canonical SHA256 digest,
 generation/catalog identity, configured provider models, and actual search/preflight
 outputs. Provider usage is marked unavailable for live runs because this adapter
-doesn't collect it, and not performed for synthetic offline runs; no cost is inferred. Local reports can therefore contain task text and policy excerpts; keep
+doesn't aggregate it, and not performed for synthetic offline runs; no cost is inferred.
+Recall applicability counts identify cases with declared expected policy/chunk IDs;
+HTML shows not applicable when a suite has no such expectations. Local reports can therefore contain task text and policy excerpts; keep
 private-profile reports in the intended local workspace. The CLI prints metrics,
 identities and report paths without case bodies or suite inputs. New JSON and HTML
 files use exclusive creation and owner-only permissions on POSIX; Windows operators

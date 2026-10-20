@@ -72,3 +72,58 @@ def test_altered_entry_point_metadata_fails_wheel_comparison(monkeypatch, tmp_pa
     )
     with pytest.raises(RuntimeError, match="metadata differs"):
         verifier.check_wheel(wheel)
+
+
+def test_dependency_lock_digest_cant_be_substituted(tmp_path: Path) -> None:
+    """A report can't attach a claimed digest to different lockfile bytes."""
+    lock = tmp_path / "uv.lock"
+    lock.write_text("version = 1\npackage = []\n")
+    with pytest.raises(RuntimeError, match="digest differs"):
+        verifier.check_dependencies(lock, "sha256:" + "0" * 64, tmp_path / "requirements.txt")
+
+
+def test_unreviewed_installed_version_fails_lock_verification(monkeypatch, tmp_path: Path) -> None:
+    """Fresh-install evidence rejects dependency drift even if the wheel version matches."""
+    import hashlib
+
+    lock = tmp_path / "uv.lock"
+    lock.write_text('version = 1\n[[package]]\nname = "runtime-dep"\nversion = "1.0"\n')
+    monkeypatch.setattr(
+        verifier.importlib.metadata,
+        "distributions",
+        lambda: [SimpleNamespace(metadata={"Name": "runtime_dep"}, version="2.0")],
+    )
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("runtime-dep==1.0\n")
+    digest = "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest()
+    with pytest.raises(RuntimeError, match="runtime-dep==2.0"):
+        verifier.check_dependencies(lock, digest, requirements)
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_bootstrap_pip_uses_runtime_selection(monkeypatch, tmp_path: Path, selected: bool) -> None:
+    """Optional lock entries can't constrain an unselected bundled installer."""
+    import hashlib
+
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        'version = 1\n[[package]]\nname = "pip"\nversion = "26.0.1"\n'
+        '[[package]]\nname = "policynim"\nversion = "0.1.0"\n'
+    )
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("pip==26.0.1\n" if selected else "# base runtime\n")
+    monkeypatch.setattr(
+        verifier.importlib.metadata,
+        "distributions",
+        lambda: [
+            SimpleNamespace(metadata={"Name": "pip"}, version="24.0"),
+            SimpleNamespace(metadata={"Name": "policynim"}, version="0.1.0"),
+        ],
+    )
+    digest = "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest()
+    if selected:
+        with pytest.raises(RuntimeError, match="pip==24.0"):
+            verifier.check_dependencies(lock, digest, requirements)
+    else:
+        report = verifier.check_dependencies(lock, digest, requirements)
+        assert report["bootstrap_versions"] == {"pip": "24.0"}
