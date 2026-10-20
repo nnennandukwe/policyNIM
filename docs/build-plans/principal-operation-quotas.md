@@ -40,7 +40,7 @@ Public seams are admission service, beta authentication/portal and MCP executor.
 
 ## Component Design
 
-Storage receives typed identity/limit values, never HTTP objects. Service owns scope validation and maps storage rejection to sanitized caller guidance. Executor owns the active worker and finishes the persisted outcome only after provider cleanup. SQLite COMMIT of an accepted row is the charge point. Rows transition accepted -> completed/failed/cancelled; process loss releases a private kernel-backed owner lease and startup recovers its accepted rows to interrupted. Recovery never refunds accepted work.
+Storage returns a typed accounting/credential snapshot under its write lock; the service owns authority and quota decisions before storage reserves the row. No HTTP objects enter storage. Service owns scope validation and maps storage rejection to sanitized caller guidance. Executor owns the active worker and finishes the persisted outcome only after provider cleanup. SQLite COMMIT of an accepted row is the charge point. Rows transition accepted -> completed/failed/cancelled; process loss releases a private kernel-backed owner lease and startup recovers its accepted rows to interrupted. Recovery never refunds accepted work.
 
 ## Failure And Recovery Rules
 

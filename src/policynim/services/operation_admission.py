@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import TypeVar
 
-from policynim.errors import PolicyNIMError
+from policynim.errors import PolicyNIMError, ProviderError
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import (
     AuthenticatedPrincipal,
@@ -16,7 +16,13 @@ from policynim.services.authorization import (
     authorize_operation,
 )
 from policynim.settings import Settings
-from policynim.storage.operation_store import OperationOutcome, OperationStore
+from policynim.storage.operation_store import (
+    AdmissionRejection,
+    OperationAdmission,
+    OperationOutcome,
+    OperationSnapshot,
+    OperationStore,
+)
 
 _Result = TypeVar("_Result")
 
@@ -24,6 +30,52 @@ _Result = TypeVar("_Result")
 def principal_identity(issuer: str, subject: str) -> str:
     """Keep one user's allowance stable across clients and key rotation."""
     return hashlib.sha256(json.dumps([issuer, subject]).encode()).hexdigest()
+
+
+def admit_operation(
+    store: OperationStore,
+    *,
+    principal_id: str,
+    operation: str,
+    daily_limit: int,
+    principal_limit: int,
+    global_limit: int,
+    beta_account_id: int | None = None,
+    credential_id: str | None = None,
+    now: float | None = None,
+    before_accept: Callable[[], None] | None = None,
+) -> OperationAdmission:
+    """Apply service-owned admission policy to a snapshot protected by the store's transaction."""
+    if min(daily_limit, principal_limit, global_limit) < 1:
+        raise ValueError("Admission limits must be positive.")
+
+    def decide(snapshot: OperationSnapshot) -> AdmissionRejection | None:
+        """Recheck authority/cancellation before applying limits to locked persisted facts."""
+        if before_accept is not None:
+            before_accept()
+        credential = snapshot.credential
+        if beta_account_id is not None and (
+            credential is None
+            or credential.account_id != beta_account_id
+            or credential.account_status != "active"
+            or credential.revoked_at is not None
+        ):
+            return "invalid_token"
+        if snapshot.active >= global_limit:
+            return "server_busy"
+        if snapshot.principal_active >= principal_limit:
+            return "principal_busy"
+        if snapshot.daily_accepted >= daily_limit:
+            return "quota_exceeded"
+        return None
+
+    return store.reserve(
+        principal_id=principal_id,
+        operation=operation,
+        decide=decide,
+        credential_id=credential_id,
+        now=now,
+    )
 
 
 class OperationAdmissionError(PolicyNIMError):
@@ -60,11 +112,24 @@ class OperationAdmissionService:
         principal: AuthenticatedPrincipal,
         operation_name: str,
         cancelled: Callable[[], bool],
+        check_ready: Callable[[], object] | None = None,
     ) -> _Result:
         """Charge admitted work once and retain its terminal outcome after cleanup."""
-        authorize_operation(principal, operation_name)
+
+        def require_ready() -> None:
+            """Reject authority withdrawn or cancellation/deadline reached before reservation."""
+            authorize_operation(principal, operation_name)
+            if cancelled():
+                raise ProviderError(
+                    "Operation cancelled before admission.", failure_class="cancelled"
+                )
+            if check_ready is not None:
+                check_ready()
+
+        require_ready()
         try:
-            decision = self.store.admit(
+            decision = admit_operation(
+                self.store,
                 principal_id=principal_identity(principal.issuer, principal.subject),
                 operation=operation_name,
                 daily_limit=(
@@ -76,6 +141,7 @@ class OperationAdmissionService:
                 global_limit=self.settings.mcp_max_concurrent_operations,
                 beta_account_id=int(principal.subject) if principal.source == "beta_key" else None,
                 credential_id=principal.credential_id,
+                before_accept=require_ready,
             )
         except (sqlite3.Error, OSError, ValueError) as exc:
             raise OperationAdmissionError(
