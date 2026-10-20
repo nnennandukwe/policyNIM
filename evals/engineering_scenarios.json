@@ -578,7 +578,7 @@
           ]
         }
       ],
-      "rationale": "Dropping the old column strands old instances, and an untested backup doesn't prove recovery. MIGRATE-1 and MIGRATE-3 require a compatible rollout and exercised recovery."
+      "rationale": "Dropping the old column strands old instances, and an untested backup doesn't prove recovery. MIGRATE-1 and MIGRATE-2 require a compatible rollout and exercised recovery."
     },
     {
       "case_id": "data-migrate-001-out-of-scope",
@@ -1042,7 +1042,7 @@
           ]
         }
       ],
-      "rationale": "The unbounded queue can't reject overload safely, and immediate retries amplify it. OVERLOAD-1 and OVERLOAD-3 require bounded admission and caller behavior."
+      "rationale": "The unbounded queue can't reject overload safely, and immediate retries amplify it. OVERLOAD-1 and OVERLOAD-2 require bounded admission and caller behavior."
     },
     {
       "case_id": "rel-overload-001-out-of-scope",
