@@ -86,7 +86,7 @@ _EXPECTED_MCP_TOOLS = (
 )
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
 _WINDOWS_PATH_TOKEN_RE = re.compile(
-    r"[A-Za-z]:[\\/](?:[^\\/\r\n\"<>|?*]+[\\/])*[^\s\\/\r\n\"<>|?*]+"
+    r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
 )
 
 app = typer.Typer(
@@ -2681,7 +2681,13 @@ def _support_bundle_token_is_absolute_path(value: str) -> bool:
         return False
     if value.startswith("/") and not value.startswith("//"):
         return len(Path(value).parts) >= 3
-    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"\\", "/"}
+    return (
+        len(value) >= 3
+        and value[0].isalpha()
+        and value[1] == ":"
+        and value[2] in {"\\", "/"}
+        and ":" not in value[3:]
+    )
 
 
 def _support_bundle_redaction_prefix(path_text: str) -> str | None:

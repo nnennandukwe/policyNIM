@@ -4639,3 +4639,46 @@ def test_support_bundle_redacts_embedded_windows_diagnostic_with_spaces(
     assert "Work Projects" not in result.stdout
     assert "acme" not in result.stdout
     assert "<local-path>" in result.stdout
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+@pytest.mark.parametrize("prefix", ["Index ", ""])
+def test_support_bundle_preserves_diagnostics_between_two_windows_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str, prefix: str
+) -> None:
+    """Separate drive roots can't absorb the failure reason between private paths."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    first = separator.join(["C:", "PrivateData", "x.db"])
+    second = separator.join(["C:", "PrivateConfig", "y"])
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {
+            "status": "action_required",
+            "message": prefix + first + " missing; config at " + second,
+        },
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    message = json.loads(result.stdout)["doctor"]["message"]
+    assert "missing; config at" in message
+    assert "PrivateData" not in message and "PrivateConfig" not in message
+
+
+def test_support_bundle_keeps_ambiguous_windows_directory_names_private(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """File-like words and apparent prose can still belong to a real directory name."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    path = r"C:\Client.env see docs\setup\index.sqlite3"
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {
+            "status": "action_required",
+            "message": "Failed " + path,
+        },
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Client.env see docs" not in json.loads(result.stdout)["doctor"]["message"]
