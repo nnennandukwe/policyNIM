@@ -702,3 +702,37 @@ def test_acceptance_failures_have_static_safe_telemetry_codes(code: str) -> None
     from policynim.interfaces.mcp import _failure_class_from_error
 
     assert _failure_class_from_error(OperationAdmissionError(code + ": private-task-token")) == code
+
+
+def test_terminal_reconciliation_recovers_from_bounded_writer_contention(tmp_path: Path) -> None:
+    """Queued cleanup uses the same finish retry budget before pausing uncertain accounting."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    admission = service(tmp_path)
+    accepted = accept(admission)
+    entered = Event()
+
+    def reconcile() -> str:
+        """Try a durable terminal write while a separate SQLite writer owns the transaction."""
+        entered.set()
+        return admission.finish_accepted(
+            operation_id=accepted.operation_id,
+            principal_id=principal_identity(principal().issuer, "alice"),
+            operation_name="policy_search",
+            outcome="cancelled",
+        )
+
+    with (
+        sqlite3.connect(admission.store.path) as writer,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        writer.execute("BEGIN IMMEDIATE")
+        pending = executor.submit(reconcile)
+        assert entered.wait(2)
+        time.sleep(0.65)
+        writer.commit()
+        assert pending.result(timeout=3) == "cancelled"
+    assert accept(admission, "after-lock", units=1).work_units == 1
+    admission.store.close()
