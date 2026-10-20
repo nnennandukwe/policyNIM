@@ -72,5 +72,6 @@ COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 COPY --from=builder /app/README.md /app/README.md
 COPY --from=builder /app/LICENSE /app/LICENSE
 COPY --from=builder /app/data/generations /app/data/generations
+COPY --from=builder /app/artifacts/public-generation /app/artifacts/public-generation
 
-CMD ["policynim", "mcp", "--transport", "streamable-http"]
+CMD ["python", "-m", "policynim.interfaces.hosted"]
