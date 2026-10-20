@@ -86,6 +86,18 @@ than guessing state. Paid builds reject damaged active state before provider
 construction. Neither activate nor rollback creates a missing root or adopts an
 unowned directory when the recovery request is refused.
 
+If an owned store has no activation pointer but retains a complete orphan, inspect
+it explicitly, then require the missing-pointer state when activating it:
+
+```bash
+policynim generation inspect --id RETAINED-ID --format json
+policynim generation activate RETAINED-ID --expect-no-active --format json
+```
+
+`--expect-no-active` and `--expect-active ID` are mutually exclusive; one is
+required. A concurrent activation makes the missing-pointer expectation stale.
+A malformed pointer still requires explicit operator recovery.
+
 Builds, migration, and imports that require a source match recheck their inputs
 after waiting for writer ownership. Changed source selections stop before
 embedding or staging; review the current selection and retry.
@@ -106,10 +118,18 @@ snapshots receive full validation. Filesystems without reliable change stamps al
 receive full validation. If a change stamp isn't available, pinned reads validate
 content instead of weakening the identity check. A restored stamp is accepted only
 after content validation. Operator inspection and export always validate all bytes.
+Warm health probes return only the validated generation ID and chunk count when
+the pointer, artifact identities, and configured embedding space still match.
+They probe the same reader-lease admission that retrieval requires, retaining the
+selected generation during inspection, but don't clone source models. Cold probes,
+changed identities, unavailable change stamps, and entries outside the bounded
+cache still use full pinned validation. There's no time-based healthy-state cache.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
 preserved with warnings. A changed candidate found during reinspection or before
 rename gets its own warning while other candidates, trash, and staging cleanup
-continue. Pointer changes and expired operation budgets still stop retention.
+continue. Pointer changes, expired operation budgets, and directory synchronization
+failures still stop retention; a failed durability barrier isn't a local candidate
+rejection.
 After interruption, cleanup can remove empty folders with
 managed stage/trash names; unmatched names and nonempty unowned entries stay
 preserved. Dangling staging links stay in place and produce a warning.

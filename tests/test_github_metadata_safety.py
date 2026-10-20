@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -158,3 +159,94 @@ def test_capped_remote_label_list_cant_produce_a_partial_write_plan() -> None:
             runner=capped,
         )
     assert len(commands) == 1
+
+
+def _duplicate_taxonomy(path: Path, duplicate_name: str) -> None:
+    """Write repeated normalized names with conflicting metadata for the command boundary."""
+    path.write_text(
+        '- name: "type/bug"\n  color: "d73a4a"\n  description: "First entry."\n'
+        f'- name: "{duplicate_name}"\n  color: "000000"\n  description: "Repeated entry."\n'
+    )
+
+
+@pytest.mark.parametrize("duplicate_name", ["type/bug", " type/bug ", "TYPE/BUG"])
+def test_label_taxonomy_rejects_repeated_normalized_names(
+    tmp_path: Path, duplicate_name: str
+) -> None:
+    """The loader rejects repeated names before planning multiple writes to one label."""
+    module = _script("labels")
+    taxonomy = tmp_path / "labels.yml"
+    _duplicate_taxonomy(taxonomy, duplicate_name)
+    with pytest.raises(module.LabelSyncError, match="Duplicate label name"):
+        module.load_label_taxonomy(taxonomy)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Exercises a POSIX executable process boundary."
+)
+@pytest.mark.parametrize("mode", ["dry-run", "live", "apply"])
+@pytest.mark.parametrize("duplicate_name", ["type/bug", " type/bug ", "TYPE/BUG"])
+def test_duplicate_taxonomy_stops_public_cli_before_any_github_process(
+    tmp_path: Path, mode: str, duplicate_name: str
+) -> None:
+    """Real command dispatch rejects duplicates before simulated partial external application."""
+    taxonomy = tmp_path / "labels.yml"
+    _duplicate_taxonomy(taxonomy, duplicate_name)
+    binary_directory = tmp_path / "bin"
+    binary_directory.mkdir()
+    receipt = tmp_path / "github-invocations.json"
+    fake_gh = binary_directory / "gh"
+    fake_gh.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "receipt = Path(os.environ['POLICYNIM_TEST_GH_RECEIPT'])\n"
+        "calls = json.loads(receipt.read_text()) if receipt.exists() else []\n"
+        "calls.append(sys.argv[1:])\n"
+        "receipt.write_text(json.dumps(calls))\n"
+        "if sys.argv[1:3] == ['label', 'list']:\n"
+        "    print('[]')\n"
+        "elif sys.argv[1:3] == ['label', 'create']:\n"
+        "    previous = [call for call in calls[:-1] if call[:2] == ['label', 'create']]\n"
+        "    if any(call[2].casefold() == sys.argv[3].casefold() for call in previous):\n"
+        "        sys.stderr.write('label already exists after prior create')\n"
+        "        sys.exit(1)\n"
+    )
+    fake_gh.chmod(0o755)
+    arguments = [
+        sys.executable,
+        str(ROOT / "scripts" / "sync_github_labels.py"),
+        "--labels-file",
+        str(taxonomy),
+        "--format",
+        "json",
+    ]
+    if mode != "dry-run":
+        arguments.append("--" + mode)
+    result = subprocess.run(
+        arguments,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": str(binary_directory) + os.pathsep + os.environ.get("PATH", ""),
+            "POLICYNIM_TEST_GH_RECEIPT": str(receipt),
+        },
+    )
+    assert not receipt.exists(), "GitHub invocations: " + receipt.read_text()
+    assert result.returncode == 1
+    assert "Duplicate label name" in result.stderr and not result.stdout
+
+
+@pytest.mark.parametrize(("color", "action"), [("000000", "noop"), ("ffffff", "update")])
+def test_label_plan_matches_existing_case_variants_without_creating_again(
+    color: str, action: str
+) -> None:
+    """Desired casing can't turn an existing GitHub label identity into another create."""
+    module = _script("labels")
+    desired = [{"name": "TYPE/BUG", "color": color, "description": "Bug reports."}]
+    existing = [{"name": "type/bug", "color": "000000", "description": "Bug reports."}]
+    plan = module.plan_label_sync(desired, existing)
+    assert len(plan) == 1 and plan[0]["action"] == action
+    assert plan[0]["name"] == "TYPE/BUG"

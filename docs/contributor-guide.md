@@ -208,7 +208,7 @@ The default example configs use:
 - reranking:
   [`nvidia/llama-nemotron-rerank-vl-1b-v2`](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2-infer)
 - grounded generation:
-  [`nvidia/nemotron-3-super-120b-a12b`](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/build)
+  [`nvidia/nemotron-3.5-lightning-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b/build)
 
 See [provider recovery](hosted-provider-recovery.md) before switching an existing
 installation to a different embedding model. Index identity must match even

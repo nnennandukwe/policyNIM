@@ -56,12 +56,14 @@ evaluation and actual stdio/HTTP discovery for MCP protocols `2026-07-28` and
 `2025-11-25`, including rejection of unauthenticated HTTP requests.
 
 To repeat these checks, use the fresh environment's Python from a directory
-outside this repository to run `scripts/verify_installed_package.py`. Supply the
+outside this repository to run the absolute path to `scripts/verify_installed_package.py`. Supply the
 absolute wheel and public bundle paths with `--wheel` and `--bundle`, the trusted
 contents of `artifacts/public-generation/generation.sha256` with `--bundle-digest`,
 the source commit with `--revision`, and an output JSON path with `--output`.
-Also supply `--lockfile uv.lock`, `--lock-digest sha256:<digest>`, and
-`--requirements` pointing to the exported runtime requirements used for installation.
+Also supply `--lockfile /absolute/path/to/checkout/uv.lock`,
+`--lock-digest sha256:<digest>`, and `--requirements` with the absolute path to the
+exported runtime requirements used for installation. Relative paths resolve from
+the working directory where you launch the verifier, not from its script directory.
 CI exports with `uv export --locked --no-dev --no-emit-project`, installs those
 artifacts with required hashes, and installs the wheel without dependency resolution.
 The report records the lock digest, requirements digest and actual installed versions.

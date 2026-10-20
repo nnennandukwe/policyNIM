@@ -54,7 +54,9 @@ _AGENT_WORKFLOW_CARDS: tuple[AgentWorkflowCard, ...] = (
             "PolicyNIM tools before you start a longer coding session."
         ),
         "prompt": (
-            "List the PolicyNIM MCP tools and confirm policy_preflight and policy_search "
+            "List the PolicyNIM MCP tools and confirm policy_search, policy_compile, "
+            "policy_preflight and "
+            "policy_preflight_evidence "
             "are available before starting implementation."
         ),
     },
