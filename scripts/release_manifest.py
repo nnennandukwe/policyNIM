@@ -47,6 +47,13 @@ def check_receipt(
     """Require matching completed source and generation evidence for both protocols."""
     require(isinstance(receipt, dict), "Artifact receipt must be a JSON object.")
     require(receipt.get("status") == "passed", "Artifact verification didn't pass.")
+    offline = receipt.get("synthetic_offline_cases")
+    require(
+        isinstance(offline, dict)
+        and offline.get("case_count") == 6
+        and offline.get("overall_pass_rate") == 1.0,
+        "Artifact offline fixture requires exactly 6 passing cases.",
+    )
     require(receipt.get("source_revision") == revision, "Artifact source revision differs.")
     recorded_lock = receipt.get("dependency_lock")
     if isinstance(recorded_lock, dict):

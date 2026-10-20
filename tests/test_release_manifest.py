@@ -68,6 +68,7 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
     (assets / "policynim-public-generation.sha256").write_text("sha256:" + manifest.sha256(bundle))
     common = {
         "status": "passed",
+        "synthetic_offline_cases": {"case_count": 6, "overall_pass_rate": 1.0},
         "source_revision": "a" * 40,
         "dependency_lock": "sha256:" + manifest.sha256(repo / "uv.lock"),
         "generation_id": hashlib.sha256(source_manifest).hexdigest(),
@@ -371,3 +372,59 @@ def test_package_metadata_compares_canonical_names_and_full_markers() -> None:
         b'Requires-Dist: demo_package[fast-path]>=1; python_version < "3.13"\n'
     )
     manifest.check_package_metadata(payload, project, "0.2.0")
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [
+        None,
+        {"case_count": 5, "overall_pass_rate": 1.0},
+        {"case_count": 6, "overall_pass_rate": 0.5},
+    ],
+)
+def test_manifest_cli_rejects_incomplete_wheel_evaluation(release_assets, metrics):
+    """A real publication command can't accept missing, reduced or failing wheel evidence."""
+    repo, assets = release_assets
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=release-test",
+            "-c",
+            "user.email=release-test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    revision = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    for path in assets.glob("*-evidence-*.json"):
+        receipt = json.loads(path.read_text())
+        receipt["source_revision"] = revision
+        receipt["synthetic_offline_cases"] = {"case_count": 6, "overall_pass_rate": 1.0}
+        if path.name == "wheel-evidence-3.11.json":
+            receipt["synthetic_offline_cases"] = metrics
+        path.write_text(json.dumps(receipt))
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            str(assets),
+            "--repo-root",
+            str(repo),
+            "--tag",
+            "v0.2.0",
+            "--source-sha",
+            revision,
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "offline fixture" in result.stderr.lower()
+    assert not (assets / "RELEASE_MANIFEST.json").exists()
