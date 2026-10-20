@@ -88,15 +88,18 @@ def read_policy_catalog(
     with selected as snapshot:
         snapshot.validate_read()
         catalog = snapshot.indexed_catalog.model_dump(mode="json")
-        catalog["resource_uri"] = f"policynim://generations/{snapshot.generation_id}/catalog"
-        catalog["policy_resources"] = [
-            {
-                "policy_id": document.metadata.policy_id,
-                "uri": policy_resource_uri(snapshot.generation_id, document.metadata.policy_id),
-            }
-            for document in snapshot.documents
-        ]
-        return catalog
+        return {
+            "generation_id": snapshot.generation_id,
+            "resource_uri": f"policynim://generations/{snapshot.generation_id}/catalog",
+            "policy_resources": [
+                {
+                    "policy_id": document.metadata.policy_id,
+                    "uri": policy_resource_uri(snapshot.generation_id, document.metadata.policy_id),
+                }
+                for document in snapshot.documents
+            ],
+            **catalog,
+        }
 
 
 def read_policy_resource(
