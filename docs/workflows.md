@@ -352,11 +352,16 @@ fail retrieval/output scoring and are also checked in preflight's retained conte
 selected policies and compiled constraints. Returned citation coordinates and trace
 generation identity are checked independently against the held generation. These
 checks establish structural grounding; optional conformance judgments and live
-retrieval evidence remain separate measures.
+retrieval evidence remain separate measures. Generation and compilation encode
+source chunks as JSON data in a user message and explicitly reject embedded requests
+to change instruction authority or execute tools. Offline adversarial checks verify
+that message boundary and fabricated-reference rejection; they don't establish
+universal prompt-injection resistance or live model adherence.
 
 JSON reports retain the parsed suite definition, its canonical SHA256 digest,
 generation/catalog identity, configured provider models, and actual search/preflight
-outputs. Local reports can therefore contain task text and policy excerpts; keep
+outputs. Provider usage is marked unavailable for live runs because this adapter
+doesn't collect it, and not performed for synthetic offline runs; no cost is inferred. Local reports can therefore contain task text and policy excerpts; keep
 private-profile reports in the intended local workspace. The CLI prints metrics,
 identities and report paths without case bodies or suite inputs. New JSON and HTML
 files use exclusive creation and owner-only permissions on POSIX; Windows operators

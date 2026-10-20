@@ -312,6 +312,7 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
         """Produce controlled provider output so local grounding checks remain independent."""
 
         def generate_preflight(self, request, context, *, compiled_packet=None, **kwargs):
+            """Return controlled output with the exact supplied policy citations."""
             return GeneratedPreflightDraft(
                 summary="Apply the selected deployment controls.",
                 applicable_policies=[
@@ -354,6 +355,7 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
     assert run.suite_definition == suite
     assert run.suite_digest == report.suite_digest
     assert run.catalog_digest == digest
+    assert run.provider_usage == "unavailable"
     assert all(case.passed for case in run.case_results), run.model_dump_json(indent=2)
     assert all(set(case.actual_policy_ids) == {"C", "D", "E"} for case in run.case_results)
     assert run.case_results[0].preflight_result is not None
@@ -376,15 +378,20 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
         "review_flags",
         "tests_required",
         "rationale",
+        "title",
     ],
 )
 def test_forbidden_policy_in_generated_narrative_fails(field: str) -> None:
     """Generated text can't evade exclusion checks by omitting structured policy fields."""
     policy_id = "PRIVATE-EXCLUDED-001"
     payload = {"task": "Review", "summary": "Review", "insufficient_context": True}
-    if field == "rationale":
+    if field in {"rationale", "title"}:
         payload["applicable_policies"] = [
-            {"policy_id": "ALLOWED", "title": "Allowed", "rationale": policy_id}
+            {
+                "policy_id": "ALLOWED",
+                "title": policy_id if field == "title" else "Allowed",
+                "rationale": policy_id if field == "rationale" else "Allowed guidance",
+            }
         ]
     else:
         payload[field] = policy_id if field == "summary" else [policy_id]

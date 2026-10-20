@@ -1274,6 +1274,7 @@ class EvalModeRunResult(StrictModel):
     suite_definition: EvalSuite | None = None
     catalog_digest: str | None = None
     provider_models: dict[str, str] = Field(default_factory=dict)
+    provider_usage: Literal["not_performed", "unavailable"] = "not_performed"
 
     backend: EvalBackend = "default"
     rerank_enabled: bool
