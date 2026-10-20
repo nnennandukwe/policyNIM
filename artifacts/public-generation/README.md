@@ -9,8 +9,8 @@ personal-data redaction, explicit startup rejection, correlation fallback, job l
 auth state, private policy packs, execution evidence, or model-quality results.
 Embedding usage wasn't collected; no cost or quality result is inferred.
 
-Generation: `ed3b3fd4142e5232b62d880ad9c7943d76ba3bf56d5e24664e47741691223d02`.
-Catalog: `sha256:4afa01ea24f98cb7745998b0f6ba57bdbd61ca617f817fcdaba04528c4ea716b`.
+Generation: `3872748209444592f271c84a870714bf759f5d00622f105782878a16dbd05a52`.
+Catalog: `sha256:a95f9b3e777716553982115425a681adc7038e417e55430eea7878f869222661`.
 
 `generation.sha256` binds the transport bytes. Docker import revalidates hashes,
 schemas, source membership/provenance, catalog, index, rules, model identity, and

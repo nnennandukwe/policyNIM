@@ -16,7 +16,7 @@
     "BE-CONFIG-001": "sha256:24587f51748e6393a0ce31f63c852d69a354b4be24804541772913d0c70e2354",
     "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
     "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
-    "BE-LOG-001": "sha256:fe831e088b5cb7c3ee889dda6b0677ca42d6567b4f0a95b1a68fccb6baf67c56",
+    "BE-LOG-001": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
     "BE-TRACE-001": "sha256:38d1dc5249fd7d14369270968fb1c92a81d956e12aacb32189d5f6ffe545efbf",
     "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
     "SUPPLY-BUILD-001": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
@@ -1059,7 +1059,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:fe831e088b5cb7c3ee889dda6b0677ca42d6567b4f0a95b1a68fccb6baf67c56",
+      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
@@ -1081,7 +1081,7 @@
         },
         {
           "requirement_id": "LOG-3",
-          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include safe cause and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
+          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include the operation, outcome, safe cause, and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -1099,7 +1099,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:fe831e088b5cb7c3ee889dda6b0677ca42d6567b4f0a95b1a68fccb6baf67c56",
+      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
@@ -1121,7 +1121,7 @@
         },
         {
           "requirement_id": "LOG-3",
-          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include safe cause and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
+          "quote": "Record job success, retry, and terminal-failure events with safe correlation; include the operation, outcome, safe cause, and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -1139,7 +1139,7 @@
         "BE-LOG-001"
       ],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:fe831e088b5cb7c3ee889dda6b0677ca42d6567b4f0a95b1a68fccb6baf67c56",
+      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "The unrelated editorial correction changes no safe structured logging behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
@@ -1710,7 +1710,7 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:fe831e088b5cb7c3ee889dda6b0677ca42d6567b4f0a95b1a68fccb6baf67c56",
+      "policy_revision": "sha256:c312ac741fffddf8535040a0c954f4c95a8d2e8ad5114c1300a978d410bd8a07",
       "expected_outcome": "respect_documented_boundary",
       "expected_evidence": [],
       "boundary_evidence": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging.",
@@ -1781,12 +1781,12 @@
       "rationale": "Selected artifact checks don't establish a complete framework level or certification; their narrower verified result can still be reported."
     }
   ],
-  "generation_id": "ed3b3fd4142e5232b62d880ad9c7943d76ba3bf56d5e24664e47741691223d02",
-  "catalog_digest": "sha256:4afa01ea24f98cb7745998b0f6ba57bdbd61ca617f817fcdaba04528c4ea716b",
+  "generation_id": "3872748209444592f271c84a870714bf759f5d00622f105782878a16dbd05a52",
+  "catalog_digest": "sha256:a95f9b3e777716553982115425a681adc7038e417e55430eea7878f869222661",
   "profile_id": null,
   "profile_digest": null,
   "full_engineering_profile": {
     "profile_id": "policynim.full-engineering",
-    "profile_digest": "sha256:fdcfad201af69f752f14e01144a9764e5123fcc6a531ee9af63291053d765722"
+    "profile_digest": "sha256:5bf36bf04c583003a160fdafaa6d08d05f6a325b14b2bb71e9e45d4094df0493"
   }
 }

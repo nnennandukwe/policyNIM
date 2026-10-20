@@ -66,10 +66,10 @@ REL-TIMEOUT-001 = "sha256:9feccfb3e03f44f4c72ae63081b32232be7089bb2c2cae94380820
 path = "../observability"
 pack_id = "policynim.observability"
 version = "0.3.0"
-digest = "sha256:b9b901f5627796064e72c0986402ae5bbc9b5f0fed94b0b0e94052cdf0533fad"
+digest = "sha256:20a9415b59fc2f9f7698097cedfd109f6364c1924c1cff4b21a48d0a5d6bb920"
 
 [packs.policies]
-BE-LOG-001 = "sha256:920777705bb2df85bdfc258d0d9369280a0ebed786fb53916976b4b00908d314"
+BE-LOG-001 = "sha256:2c98a7ffa3c58680af737fb41395404db25ad008fa04542c7d28a77815b5ac0e"
 BE-TRACE-001 = "sha256:f0029fc0dee7cb9ed75bf39383ac677815066ef1ca75da7f2f1d01f84cdffea8"
 OBS-READINESS-001 = "sha256:ebba533b77ec44ed5b4b5b610c173da3715f05f4a1cd66cf7bcba9b093b32c45"
 

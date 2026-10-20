@@ -25,7 +25,7 @@ Applies to application-developer, service-operator. Select this policy when the 
 
 - **LOG-1** Exclude secrets, tokens, authorization headers, session cookies, reset links, private keys, sensitive payloads, email addresses, phone numbers, and user-provided free text by default. Any personal-data exception needs an approved purpose, access controls, and retention limit. Support: CS-LOG:Data to exclude; PolicyNIM decision.
 - **LOG-2** Emit structured logs for service events; free-form string logs are allowed only for local development. Include service, operation, outcome, and safe actor/request identifiers when available; include trace context without copying arbitrary request bodies. Support: OTEL-LOG:Trace Context Fields; OTEL-LOG:Field: Resource; PolicyNIM decision.
-- **LOG-3** Record job success, retry, and terminal-failure events with safe correlation; include safe cause and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention. Support: PolicyNIM decision.
+- **LOG-3** Record job success, retry, and terminal-failure events with safe correlation; include the operation, outcome, safe cause, and operator action for failures. Choose warning/error severity for operator actionability, bound repeated events, and review access and retention. Support: PolicyNIM decision.
 
 ## Recommended Guidance
 
