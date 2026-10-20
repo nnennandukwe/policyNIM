@@ -67,8 +67,12 @@ def test_invalid_fresh_seed_never_creates_target(tmp_path: Path, failure: str) -
         first[0].write_bytes(b"not an archive")
         first = (first[0], hashlib.sha256(first[0].read_bytes()).hexdigest(), first[2])
     if failure == "source":
-        settings = settings.model_copy(update={"corpus_dir": tmp_path / "missing-sources"})
-    with pytest.raises(GenerationError):
+        assert settings.corpus_dir is not None
+        member = settings.corpus_dir / "A.md"
+        member.write_text(member.read_text() + "\nReviewed changed source.\n")
+    with pytest.raises(
+        GenerationError, match="Bundle sources don't match" if failure == "source" else None
+    ):
         store.bootstrap_bundle(
             first[0],
             expected_digest="0" * 64 if failure == "checksum" else first[1],
