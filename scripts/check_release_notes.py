@@ -28,7 +28,7 @@ def version_notes(root: Path) -> tuple[str, str]:
     index = current[0]
     end = headers[index + 1].start() if index + 1 < len(headers) else len(changelog)
     body = changelog[headers[index].end() : end].strip()
-    visible = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
+    visible = re.sub(r"<!--.*?(?:-->|$)", "", body, flags=re.DOTALL).strip()
     plain = visible.strip("#*- \t\r\n.!:").casefold()
     if not plain or plain in {"todo", "tbd", "placeholder", "coming soon"}:
         raise ValueError("Current version needs nonempty release notes.")
