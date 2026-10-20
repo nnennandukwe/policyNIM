@@ -17,7 +17,7 @@
     "platform": "macOS-26.6-arm64-arm-64bit",
     "python": "3.11.13"
   },
-  "harness_sha256": "dafe8d2c6948988636dd4297f9c08be04b53251f4af182a2f6440ee6a22a1c2e",
+  "harness_sha256": "39e8903e9493edeabf06b8265524f9c71f0acd6931207d8050c908237a629caa",
   "limits": [
     "Only search is measured; other tools require separate workload evidence.",
     "Synthetic vectors don't measure model quality or NVIDIA latency.",
@@ -30,9 +30,9 @@
   "scenarios": [
     {
       "accepted_operation_latency_ms": {
-        "p50": 155.121,
-        "p95": 197.067,
-        "p99": 227.095
+        "p50": 137.136,
+        "p95": 201.595,
+        "p99": 212.72
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
@@ -42,17 +42,19 @@
       "client_concurrency": 10,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 1.966,
-        "p95": 5.625,
-        "p99": 9.872
+        "p50": 1.675,
+        "p95": 6.069,
+        "p99": 25.115
       },
-      "duration_seconds": 0.896,
+      "drain_observation": null,
+      "duration_seconds": 0.787,
       "health_latency_ms": {
-        "p50": 13.666,
-        "p95": 38.161,
-        "p99": 40.954
+        "p50": 13.22,
+        "p95": 23.236,
+        "p99": 31.099
       },
       "intervention": null,
+      "intervention_started_with_active_work": null,
       "live_provider_usage": null,
       "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
       "observed_peak_active_operations": 10,
@@ -60,12 +62,12 @@
         "active_operations": 0,
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 147.796,
-        "latency_p95_ms": 183.005,
-        "latency_p99_ms": 198.797,
+        "latency_p50_ms": 133.072,
+        "latency_p95_ms": 191.678,
+        "latency_p99_ms": 200.415,
         "latency_sample_count": 51,
         "latency_sample_limit": 1000,
-        "latency_window": "most_recent_terminal_operations",
+        "latency_window": "most_recent_timed_terminal_operations",
         "outcomes": {
           "completed": 51
         },
@@ -90,15 +92,15 @@
         "p99": null
       },
       "response_latency_ms": {
-        "p50": 155.121,
-        "p95": 197.067,
-        "p99": 227.095
+        "p50": 137.136,
+        "p95": 201.595,
+        "p99": 212.72
       },
-      "responses_per_second": 55.823,
-      "sampled_peak_server_rss_bytes": 164036608,
+      "responses_per_second": 63.559,
+      "sampled_peak_server_rss_bytes": 164429824,
       "scenario": "baseline",
       "server_exit_code": -15,
-      "successful_operations_per_second": 55.823,
+      "successful_operations_per_second": 63.559,
       "successful_search_hit_counts": {
         "5": 50
       },
@@ -106,9 +108,9 @@
     },
     {
       "accepted_operation_latency_ms": {
-        "p50": 167.259,
-        "p95": 208.508,
-        "p99": 208.508
+        "p50": 165.001,
+        "p95": 202.646,
+        "p99": 202.646
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
@@ -118,17 +120,19 @@
       "client_concurrency": 25,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 2.951,
-        "p95": 5.794,
-        "p99": 5.794
+        "p50": 2.442,
+        "p95": 8.889,
+        "p99": 8.889
       },
-      "duration_seconds": 0.237,
+      "drain_observation": null,
+      "duration_seconds": 0.213,
       "health_latency_ms": {
-        "p50": 15.096,
-        "p95": 43.756,
-        "p99": 43.756
+        "p50": 13.733,
+        "p95": 41.648,
+        "p99": 41.648
       },
       "intervention": null,
+      "intervention_started_with_active_work": null,
       "live_provider_usage": null,
       "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
       "observed_peak_active_operations": 10,
@@ -136,12 +140,12 @@
         "active_operations": 0,
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 141.808,
-        "latency_p95_ms": 188.142,
-        "latency_p99_ms": 188.142,
+        "latency_p50_ms": 141.893,
+        "latency_p95_ms": 185.937,
+        "latency_p99_ms": 185.937,
         "latency_sample_count": 11,
         "latency_sample_limit": 1000,
-        "latency_window": "most_recent_terminal_operations",
+        "latency_window": "most_recent_timed_terminal_operations",
         "outcomes": {
           "completed": 11
         },
@@ -162,20 +166,20 @@
       },
       "provider_stage_event_count": 22,
       "rejected_response_latency_ms": {
-        "p50": 17.711,
-        "p95": 35.315,
-        "p99": 37.424
+        "p50": 16.109,
+        "p95": 23.812,
+        "p99": 29.773
       },
       "response_latency_ms": {
-        "p50": 18.175,
-        "p95": 190.48,
-        "p99": 208.508
+        "p50": 16.352,
+        "p95": 181.064,
+        "p99": 202.646
       },
-      "responses_per_second": 210.86,
-      "sampled_peak_server_rss_bytes": 152649728,
+      "responses_per_second": 234.358,
+      "sampled_peak_server_rss_bytes": 154238976,
       "scenario": "saturation",
       "server_exit_code": -15,
-      "successful_operations_per_second": 42.172,
+      "successful_operations_per_second": 46.872,
       "successful_search_hit_counts": {
         "5": 10
       },
@@ -183,29 +187,31 @@
     },
     {
       "accepted_operation_latency_ms": {
-        "p50": 555.441,
-        "p95": 591.551,
-        "p99": 600.02
+        "p50": 533.73,
+        "p95": 579.713,
+        "p99": 596.592
       },
       "attempted_requests": 50,
       "cheap_probe_outcomes": {
-        "health_200": 70,
-        "ok": 70
+        "health_200": 75,
+        "ok": 75
       },
       "client_concurrency": 10,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 2.223,
-        "p95": 3.665,
-        "p99": 4.271
+        "p50": 1.735,
+        "p95": 2.081,
+        "p99": 23.523
       },
-      "duration_seconds": 2.847,
+      "drain_observation": null,
+      "duration_seconds": 2.772,
       "health_latency_ms": {
-        "p50": 14.499,
-        "p95": 32.154,
-        "p99": 56.919
+        "p50": 13.089,
+        "p95": 17.057,
+        "p99": 25.98
       },
       "intervention": null,
+      "intervention_started_with_active_work": null,
       "live_provider_usage": null,
       "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
       "observed_peak_active_operations": 10,
@@ -213,12 +219,12 @@
         "active_operations": 0,
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 550.299,
-        "latency_p95_ms": 583.608,
-        "latency_p99_ms": 590.622,
+        "latency_p50_ms": 530.977,
+        "latency_p95_ms": 565.925,
+        "latency_p99_ms": 583.513,
         "latency_sample_count": 51,
         "latency_sample_limit": 1000,
-        "latency_window": "most_recent_terminal_operations",
+        "latency_window": "most_recent_timed_terminal_operations",
         "outcomes": {
           "completed": 51
         },
@@ -243,15 +249,15 @@
         "p99": null
       },
       "response_latency_ms": {
-        "p50": 555.441,
-        "p95": 591.551,
-        "p99": 600.02
+        "p50": 533.73,
+        "p95": 579.713,
+        "p99": 596.592
       },
-      "responses_per_second": 17.562,
-      "sampled_peak_server_rss_bytes": 160890880,
+      "responses_per_second": 18.038,
+      "sampled_peak_server_rss_bytes": 161513472,
       "scenario": "slow-provider",
       "server_exit_code": -15,
-      "successful_operations_per_second": 17.562,
+      "successful_operations_per_second": 18.038,
       "successful_search_hit_counts": {
         "5": 50
       },
@@ -271,17 +277,19 @@
       "client_concurrency": 10,
       "completed_client_responses": 50,
       "discovery_latency_ms": {
-        "p50": 2.258,
-        "p95": 5.635,
-        "p99": 5.635
+        "p50": 1.645,
+        "p95": 3.57,
+        "p99": 3.57
       },
-      "duration_seconds": 0.658,
+      "drain_observation": null,
+      "duration_seconds": 0.63,
       "health_latency_ms": {
-        "p50": 14.068,
-        "p95": 20.57,
-        "p99": 20.57
+        "p50": 12.956,
+        "p95": 16.756,
+        "p99": 16.756
       },
       "intervention": null,
+      "intervention_started_with_active_work": null,
       "live_provider_usage": null,
       "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
       "observed_peak_active_operations": 0,
@@ -289,12 +297,12 @@
         "active_operations": 0,
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 126.033,
-        "latency_p95_ms": 126.033,
-        "latency_p99_ms": 126.033,
+        "latency_p50_ms": 128.558,
+        "latency_p95_ms": 128.558,
+        "latency_p99_ms": 128.558,
         "latency_sample_count": 1,
         "latency_sample_limit": 1000,
-        "latency_window": "most_recent_terminal_operations",
+        "latency_window": "most_recent_timed_terminal_operations",
         "outcomes": {
           "completed": 1
         },
@@ -314,17 +322,17 @@
       },
       "provider_stage_event_count": 2,
       "rejected_response_latency_ms": {
-        "p50": 122.806,
-        "p95": 130.414,
-        "p99": 133.328
+        "p50": 120.506,
+        "p95": 128.141,
+        "p99": 130.358
       },
       "response_latency_ms": {
-        "p50": 122.806,
-        "p95": 130.414,
-        "p99": 133.328
+        "p50": 120.506,
+        "p95": 128.141,
+        "p99": 130.358
       },
-      "responses_per_second": 76.024,
-      "sampled_peak_server_rss_bytes": 148242432,
+      "responses_per_second": 79.425,
+      "sampled_peak_server_rss_bytes": 147079168,
       "scenario": "locked-database",
       "server_exit_code": -15,
       "successful_operations_per_second": 0.0,
@@ -339,23 +347,25 @@
       },
       "attempted_requests": 1,
       "cheap_probe_outcomes": {
-        "health_200": 21,
-        "ok": 21
+        "health_200": 15,
+        "ok": 15
       },
       "client_concurrency": 10,
       "completed_client_responses": 0,
       "discovery_latency_ms": {
-        "p50": 2.037,
-        "p95": 2.321,
-        "p99": 2.362
+        "p50": 1.977,
+        "p95": 3.297,
+        "p99": 3.297
       },
-      "duration_seconds": 0.78,
+      "drain_observation": "terminal_outcome_observed",
+      "duration_seconds": 0.537,
       "health_latency_ms": {
-        "p50": 13.384,
-        "p95": 13.859,
-        "p99": 13.939
+        "p50": 14.326,
+        "p95": 16.658,
+        "p99": 16.658
       },
       "intervention": "client_task_cancelled",
+      "intervention_started_with_active_work": true,
       "live_provider_usage": null,
       "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
       "observed_peak_active_operations": 1,
@@ -363,12 +373,12 @@
         "active_operations": 0,
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 521.623,
-        "latency_p95_ms": 523.651,
-        "latency_p99_ms": 523.651,
+        "latency_p50_ms": 526.473,
+        "latency_p95_ms": 532.468,
+        "latency_p99_ms": 532.468,
         "latency_sample_count": 2,
         "latency_sample_limit": 1000,
-        "latency_window": "most_recent_terminal_operations",
+        "latency_window": "most_recent_timed_terminal_operations",
         "outcomes": {
           "completed": 2
         },
@@ -396,7 +406,7 @@
         "p99": null
       },
       "responses_per_second": 0.0,
-      "sampled_peak_server_rss_bytes": 145227776,
+      "sampled_peak_server_rss_bytes": 145588224,
       "scenario": "disconnect",
       "server_exit_code": -15,
       "successful_operations_per_second": 0.0,
@@ -405,9 +415,9 @@
     },
     {
       "accepted_operation_latency_ms": {
-        "p50": 528.626,
-        "p95": 528.626,
-        "p99": 528.626
+        "p50": 528.74,
+        "p95": 528.74,
+        "p99": 528.74
       },
       "attempted_requests": 1,
       "cheap_probe_outcomes": {
@@ -418,17 +428,19 @@
       "client_concurrency": 10,
       "completed_client_responses": 1,
       "discovery_latency_ms": {
-        "p50": 1.895,
-        "p95": 2.473,
-        "p99": 2.473
+        "p50": 1.852,
+        "p95": 3.127,
+        "p99": 3.127
       },
-      "duration_seconds": 0.531,
+      "drain_observation": null,
+      "duration_seconds": 0.53,
       "health_latency_ms": {
-        "p50": 14.492,
-        "p95": 22.786,
-        "p99": 22.786
+        "p50": 13.007,
+        "p95": 13.459,
+        "p99": 13.459
       },
       "intervention": "SIGTERM_during_active_work",
+      "intervention_started_with_active_work": true,
       "live_provider_usage": null,
       "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
       "observed_peak_active_operations": 1,
@@ -436,12 +448,12 @@
         "active_operations": 0,
         "job_backlog": null,
         "latency_clock": "persisted_utc_wall_timestamps",
-        "latency_p50_ms": 523.234,
-        "latency_p95_ms": 523.858,
-        "latency_p99_ms": 523.858,
+        "latency_p50_ms": 522.221,
+        "latency_p95_ms": 523.191,
+        "latency_p99_ms": 523.191,
         "latency_sample_count": 2,
         "latency_sample_limit": 1000,
-        "latency_window": "most_recent_terminal_operations",
+        "latency_window": "most_recent_timed_terminal_operations",
         "outcomes": {
           "completed": 2
         },
@@ -466,21 +478,21 @@
         "p99": null
       },
       "response_latency_ms": {
-        "p50": 528.626,
-        "p95": 528.626,
-        "p99": 528.626
+        "p50": 528.74,
+        "p95": 528.74,
+        "p99": 528.74
       },
-      "responses_per_second": 1.884,
-      "sampled_peak_server_rss_bytes": 143998976,
+      "responses_per_second": 1.887,
+      "sampled_peak_server_rss_bytes": 145440768,
       "scenario": "shutdown",
       "server_exit_code": -15,
-      "successful_operations_per_second": 1.884,
+      "successful_operations_per_second": 1.887,
       "successful_search_hit_counts": {
         "5": 1
       },
       "warmup_operations": 1
     }
   ],
-  "source_revision": "aba5d40452cf68f7f467d56faec8980867ef66b0",
+  "source_revision": "bc98a78aad3b283f0dc017c23fe9e6a9c9fee63d",
   "working_tree_dirty": false
 }

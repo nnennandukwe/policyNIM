@@ -156,11 +156,11 @@ supply that production evidence, and this change doesn't authorize more replicas
 
 The [uniform receipt](evidence/hosted-capacity/uniform-synthetic.json) and
 [skewed receipt](evidence/hosted-capacity/skewed-synthetic.json) were generated from
-clean source `aba5d40452cf68f7f467d56faec8980867ef66b0` on the hardware named
+clean source `bc98a78aad3b283f0dc017c23fe9e6a9c9fee63d` on the hardware named
 inside each report. Each run used 25 synthetic callers, 10,000 chunks, two requests
 per caller and a global cap of ten. Both baseline scenarios completed all 50
 requests with ten active operations observed. Uniform baseline accepted-request
-p95 was 210.707 ms; the receipt records separate saturation, locking, slow-provider,
+p95 was 223.342 ms; the receipt records separate saturation, locking, slow-provider,
 disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
