@@ -692,3 +692,13 @@ def test_activation_keeps_correlation_when_worker_context_is_missing(
         persisted = connection.execute("SELECT correlation_id FROM operation_usage").fetchone()[0]
     assert persisted == (worker_correlation if worker_context else accepted_correlation)
     admission.store.close()
+
+
+@pytest.mark.parametrize(
+    "code", ["acceptance_conflict", "acceptance_finalized", "acceptance_not_found"]
+)
+def test_acceptance_failures_have_static_safe_telemetry_codes(code: str) -> None:
+    """Known reservation failures keep their category without copying private error detail."""
+    from policynim.interfaces.mcp import _failure_class_from_error
+
+    assert _failure_class_from_error(OperationAdmissionError(code + ": private-task-token")) == code
