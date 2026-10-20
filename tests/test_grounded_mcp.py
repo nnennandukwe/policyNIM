@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -118,6 +119,44 @@ def test_public_catalog_resources_and_prompt_need_no_provider(
                 "policy_compile",
                 "policy_preflight_evidence",
             }
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+def test_large_catalog_prefix_contains_readable_immutable_policy(generation, mode) -> None:
+    """Keep a usable source link within the actual SDK's first 2 KB of large output."""
+    from test_ingest_service import MockEmbedder
+
+    settings, store, _ = generation
+    source = Path(settings.corpus_dir) / "A.md"
+    source.write_text(source.read_text() + "\n" + "Review the retained source. " * 3500)
+    published = store.build(settings, embedder=MockEmbedder())
+    with store.pin_retained(published.generation_id) as snapshot:
+        original_catalog = snapshot.indexed_catalog.model_dump(mode="json")
+
+    async def exercise() -> None:
+        """Discover the exact prefix URI and read it through the real resource interface."""
+        server = mcp_module._register_tools(mcp_module._new_mcp_server())
+        async with Client(server, mode=mode) as client:
+            result = await client.read_resource("policynim://catalog")
+            serialized = result.model_dump_json()
+            assert len(serialized) > 80_000
+            found = re.search(
+                r"policynim://generations/[a-f0-9]{64}/policies/[a-f0-9]{64}",
+                serialized[:2048],
+            )
+            assert found is not None, "The 2 KB client preview needs an immutable policy link."
+            content = result.contents[0]
+            assert isinstance(content, TextResourceContents)
+            catalog = json.loads(content.text)
+            assert {key: catalog[key] for key in original_catalog} == original_catalog
+            assert set(catalog) == set(original_catalog) | {"resource_uri", "policy_resources"}
+            assert catalog["generation_id"] == published.generation_id
+            assert found.group() == catalog["policy_resources"][0]["uri"]
+            policy = await client.read_resource(found.group())
+            assert isinstance(policy.contents[0], TextResourceContents)
+            assert json.loads(policy.contents[0].text)["document"]["metadata"]["policy_id"] == "A"
 
     asyncio.run(exercise())
 
