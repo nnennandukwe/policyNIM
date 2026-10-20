@@ -38,12 +38,14 @@ def test_clean_close_retries_deferred_aliases_after_releasing_the_handle(
         *,
         dir_fd: int | None = None,
     ) -> int:
+        """Track the real pending owner handle for sharing checks."""
         descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
         if str(path).endswith(".pending"):
             descriptors.append(descriptor)
         return descriptor
 
     def reject_open_inode(path: Path, missing_ok: bool = False) -> None:
+        """Reject unlink only while this process holds the same inode open."""
         target = path.stat(follow_symlinks=False)
         for descriptor in descriptors:
             try:
