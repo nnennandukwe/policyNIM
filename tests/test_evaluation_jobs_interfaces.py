@@ -164,6 +164,7 @@ def test_authenticated_http_job_survives_disconnect_and_retains_owner_reports(
                         )
                         assert not submitted.is_error
                         accepted = EvaluationJobInfo.model_validate(submitted.structured_content)
+                        assert accepted.work_units == 1 and accepted.admission_id is not None
                         async with asyncio.timeout(5):
                             while not started.is_set():
                                 await asyncio.sleep(0.01)
@@ -317,7 +318,8 @@ def test_foreground_cli_reports_accounting_pause_and_exits(job_context, monkeypa
     assert calls == ["case-0", "closed"]
 
 
-def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context) -> None:
+@pytest.mark.parametrize("failure", ["generation", "quota"])
+def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context, failure) -> None:
     """A rejected request can't start the shared worker or execute another owner's job."""
     from mcp.server import MCPServer
 
@@ -344,10 +346,21 @@ def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context)
     mcp_jobs.register_evaluation_jobs(
         server, get_principal=lambda _: principal(), get_worker=lambda: worker, run_tool=run_tool
     )
-    rejected = suite.model_copy(update={"expected_catalog_digest": "sha256:" + "0" * 64})
+    if failure == "generation":
+        rejected = suite.model_copy(update={"expected_catalog_digest": "sha256:" + "0" * 64})
+    else:
+        service.settings.mcp_principal_daily_operation_quota = 1
+        rejected = suite.model_copy(
+            update={
+                "cases": [
+                    suite.cases[0],
+                    suite.cases[0].model_copy(update={"case_id": "second-execution"}),
+                ]
+            }
+        )
 
     async def exercise() -> None:
-        """Reject mismatched captured inputs through actual SDK dispatch."""
+        """Reject invalid source expectations or excess weighted work through SDK dispatch."""
         async with Client(server) as client:
             result = await client.call_tool(
                 "eval_submit",
