@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +14,7 @@ HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 WORKFLOW_FILES = (CI_WORKFLOW, HOSTED_SMOKE_WORKFLOW, RELEASE_WORKFLOW)
 USES_LINE = re.compile(
-    r"uses: (?P<action>[^@\s]+)@(?P<ref>[0-9a-f]{40}|v[0-9][^\s#]*)"
+    r"uses:\s*['\"]?(?P<action>[^@\s'\"]+)@(?P<ref>[^\s#'\"]+)['\"]?"
     r"(?:\s+#\s*(?P<version>v[0-9][^\s#]*))?"
 )
 NODE24_ACTION_MAJOR_COMMENTS = {
@@ -208,3 +209,16 @@ def test_release_uses_locked_dependencies_without_implicit_resync() -> None:
                     assert "--locked" in line
                 if "uv run" in line:
                     assert "--no-sync" in line
+
+
+@pytest.mark.parametrize("reference", ["main", "v5", "abc123", "A" * 40])
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+def test_action_reference_parser_doesnt_hide_mutable_refs(
+    tmp_path: Path, reference: str, quote: str
+) -> None:
+    """Unpinned refs must reach the pin assertion, including quoted YAML values."""
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: {quote}actions/checkout@{reference}{quote} # v5.0.1\n")
+    uses = _workflow_uses(path)
+    assert uses == [("actions/checkout", reference, "v5.0.1")]
+    assert re.fullmatch(r"[0-9a-f]{40}", uses[0][1]) is None
