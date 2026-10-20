@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from policynim.errors import PolicyNIMError
+from policynim.providers.lifecycle import close_components
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.index_store import create_index_store
 from policynim.settings import Settings
@@ -21,7 +22,11 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
             "Operation state couldn't be read. Check the hosted state volume and database locks. "
             "No database was created or changed."
         ) from exc
-    readiness = inspect_index_readiness(create_index_store(settings))
+    index_store = create_index_store(settings)
+    try:
+        readiness = inspect_index_readiness(index_store)
+    finally:
+        close_components(index_store)
     return {
         **report.model_dump(mode="json"),
         "index_state": readiness.state,
