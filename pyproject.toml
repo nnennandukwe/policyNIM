@@ -67,6 +67,9 @@ policynim = "policynim.interfaces.cli:main"
 requires = ["hatchling==1.29.0"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.sdist]
+include = ["/.gitignore", "/src/policynim", "/policies", "/evals", "/README.md", "/LICENSE", "/pyproject.toml", "/uv.lock"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/policynim"]
 

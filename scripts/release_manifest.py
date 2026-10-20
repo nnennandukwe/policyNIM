@@ -8,8 +8,10 @@ import json
 import re
 import subprocess
 import sys
+import tarfile
 import tomllib
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
 PLATFORMS = {
@@ -62,6 +64,65 @@ def check_receipt(
         )
 
 
+SDIST_INPUTS = (
+    ".gitignore",
+    "src/policynim",
+    "policies",
+    "evals",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+    "uv.lock",
+)
+
+
+def check_source_distribution(archive_path: Path, repo_root: Path, version: str) -> None:
+    """Match every source-download file to the selected tracked package inputs."""
+    tracked = (
+        subprocess.check_output(
+            ["git", "-C", str(repo_root), "ls-files", "-z", "--", *SDIST_INPUTS]
+        )
+        .decode("utf-8")
+        .split("\0")
+    )
+    expected = {name for name in tracked if name}
+    require({"pyproject.toml", "uv.lock"} <= expected, "Source package inputs are incomplete.")
+    seen: set[str] = set()
+    prefix = f"policynim-{version}/"
+    with tarfile.open(archive_path, "r:gz") as archive:
+        for member in archive:
+            require(member.name.startswith(prefix), "Source archive root differs.")
+            name = member.name[len(prefix) :]
+            require(name and ".." not in name.split("/"), "Unsafe source archive path.")
+            if member.isdir():
+                continue
+            require(member.isfile(), "Source archive links aren't accepted.")
+            require(name not in seen, "Duplicate source archive member.")
+            require(name in expected or name == "PKG-INFO", "Unexpected source archive file.")
+            seen.add(name)
+            content = archive.extractfile(member)
+            require(content is not None, "Source archive content is missing.")
+            if name == "PKG-INFO":
+                require(member.size <= 1024 * 1024, "Source metadata is too large.")
+                metadata = BytesParser().parsebytes(content.read(1024 * 1024 + 1))
+                require(
+                    metadata["Name"] == "policynim" and metadata["Version"] == version,
+                    "Source package version differs.",
+                )
+            else:
+                source = repo_root / name
+                require(
+                    not source.is_symlink() and source.is_file(),
+                    "Source input must be a regular file.",
+                )
+                require(
+                    member.size == source.stat().st_size
+                    and hashlib.file_digest(content, "sha256").hexdigest() == sha256(source),
+                    "Source archive bytes differ from checkout.",
+                )
+    require(seen == expected | {"PKG-INFO"}, "Source archive omits package inputs.")
+
+
 def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: str) -> dict:
     """Validate every required artifact before writing the public manifest and checksums."""
     project = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -95,6 +156,7 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
         "Missing release assets: " + ", ".join(sorted(required - assets.keys())),
     )
     require(assets.keys() <= required, "Unexpected release assets aren't accepted.")
+    check_source_distribution(assets[f"policynim-{version}.tar.gz"], repo_root, version)
     bundle = assets["policynim-public-generation.zip"]
     bundle_digest = assets["policynim-public-generation.sha256"].read_text(encoding="utf-8").strip()
     require(bundle_digest == "sha256:" + sha256(bundle), "Public bundle checksum differs.")
@@ -189,6 +251,13 @@ def main() -> int:
         require(
             observed == args.source_sha, "Checked-out source differs from the requested revision."
         )
+        require(
+            subprocess.run(
+                ["git", "-C", str(args.repo_root), "diff", "--quiet", "HEAD"], check=False
+            ).returncode
+            == 0,
+            "Tracked checkout changes differ from the requested source revision.",
+        )
         result = generate_manifest(
             asset_dir=args.asset_dir,
             repo_root=args.repo_root,
@@ -201,6 +270,7 @@ def main() -> int:
         KeyError,
         TypeError,
         zipfile.BadZipFile,
+        tarfile.TarError,
         subprocess.CalledProcessError,
     ) as error:
         print(f"Release evidence rejected: {error}", file=sys.stderr)

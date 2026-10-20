@@ -147,3 +147,9 @@ unexpected assets and stale receipts stop publication.
 `SHA256SUMS` also covers the manifest. This gate covers artifact verification;
 real coding-client, live-provider, production and rollback acceptance stay separate
 under #104. Keep those receipts tied to the final release revision before promotion.
+
+The source distribution includes tracked package source, public policies, evaluation
+fixtures, README, license, build metadata, lockfile and ignore rules. Checkout pointers
+and agent state aren't package inputs. The gate compares every source-archive file
+with these tracked inputs and checks package metadata before adding the source
+download to the manifest; missing, altered and unexpected source files block publication.

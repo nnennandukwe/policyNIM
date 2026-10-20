@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
+import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -33,6 +36,15 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
         "install.ps1",
     ]:
         (assets / name).write_bytes(name.encode())
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "pyproject.toml", "uv.lock"], check=True)
+    with tarfile.open(assets / "policynim-0.2.0.tar.gz", "w:gz") as archive:
+        for name in ["pyproject.toml", "uv.lock"]:
+            archive.add(repo / name, arcname="policynim-0.2.0/" + name)
+        info = tarfile.TarInfo("policynim-0.2.0/PKG-INFO")
+        payload = b"Metadata-Version: 2.4\nName: policynim\nVersion: 0.2.0\n"
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
     catalog = "sha256:" + "1" * 64
     source_manifest = json.dumps({"catalog_digest": catalog}).encode()
     bundle = assets / "policynim-public-generation.zip"
@@ -183,4 +195,37 @@ def test_cli_rejects_a_revision_that_isnt_checked_out(release_assets) -> None:
     )
     assert result.returncode == 1
     assert "Checked-out source differs" in result.stderr
+    assert not (assets / "RELEASE_MANIFEST.json").exists()
+
+
+@pytest.mark.parametrize(
+    "fault", ["arbitrary-bytes", "missing-source", "changed-source", "private-state"]
+)
+def test_source_archive_must_match_release_checkout(release_assets, fault: str) -> None:
+    """An unverified source download can't inherit passing binary evidence."""
+    repo, assets = release_assets
+    path = assets / "policynim-0.2.0.tar.gz"
+    if fault == "arbitrary-bytes":
+        path.write_bytes(b"unverified source")
+    else:
+        with tarfile.open(path, "w:gz") as archive:
+            files = {
+                "pyproject.toml": (repo / "pyproject.toml").read_bytes(),
+                "uv.lock": (repo / "uv.lock").read_bytes(),
+                "PKG-INFO": b"Name: policynim\nVersion: 0.2.0\n",
+            }
+            if fault == "missing-source":
+                del files["uv.lock"]
+            elif fault == "changed-source":
+                files["uv.lock"] = b"different lock"
+            else:
+                files[".git"] = b"private checkout pointer"
+            for name, payload in files.items():
+                info = tarfile.TarInfo("policynim-0.2.0/" + name)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+    with pytest.raises((ValueError, tarfile.TarError)):
+        manifest.generate_manifest(
+            asset_dir=assets, repo_root=repo, tag="v0.2.0", revision="a" * 40
+        )
     assert not (assets / "RELEASE_MANIFEST.json").exists()
