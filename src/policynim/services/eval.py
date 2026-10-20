@@ -490,6 +490,7 @@ class EvalService:
             suite_digest=_suite_digest(suite),
             catalog_digest=snapshot.catalog.digest if snapshot else None,
             suite_definition=suite,
+            provider_usage="unavailable" if mode == "live" else "not_performed",
             provider_models=(
                 {
                     "embedding": self._settings.nvidia_embed_model,
@@ -547,6 +548,7 @@ class EvalService:
             suite_definition=result_payload.suite_definition,
             catalog_digest=result_payload.catalog_digest,
             provider_models=result_payload.provider_models,
+            provider_usage=result_payload.provider_usage,
             generation_id=result_payload.generation_id,
             backend=backend,
             rerank_enabled=rerank_enabled,
@@ -762,6 +764,7 @@ def _score_preflight_case(
             *result.review_flags,
             *result.tests_required,
             *(policy.rationale for policy in result.applicable_policies),
+            *(policy.title for policy in result.applicable_policies),
         ]
     )
     observed_policies.update(
