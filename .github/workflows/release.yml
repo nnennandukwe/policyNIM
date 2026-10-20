@@ -25,6 +25,10 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -35,7 +39,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Sync dependencies
         run: uv sync --locked --group test --group dev
@@ -53,9 +57,11 @@ jobs:
         run: uv run --no-sync pytest -q -m "not live and not docker_live"
 
       - name: Build Python distribution
+        if: matrix.python-version == '3.11'
         run: uv build --out-dir dist
 
       - name: Upload Python distribution
+        if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: python-dist
@@ -64,6 +70,10 @@ jobs:
 
   wheel-smoke:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     needs: verify
     steps:
       - name: Check out repository
@@ -81,7 +91,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Verify fresh wheel from locked dependencies
         run: |
@@ -113,7 +123,7 @@ jobs:
                   "--lockfile", str(root / "uv.lock"),
                   "--requirements", str(requirements),
                   "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
-                  "--output", str(root / "wheel-evidence.json"),
+                  "--output", str(root / "wheel-evidence-${{ matrix.python-version }}.json"),
               ], cwd=runtime, check=True)
           PY
 
@@ -121,8 +131,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: wheel-evidence
-          path: wheel-evidence.json
+          name: wheel-evidence-${{ matrix.python-version }}
+          path: wheel-evidence-${{ matrix.python-version }}.json
           if-no-files-found: error
 
   standalone-build:

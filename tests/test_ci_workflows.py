@@ -442,3 +442,19 @@ def test_standalone_verification_requires_requested_release_version() -> None:
     )
     assert '"--expected-version"' in command
     assert 'os.environ["RELEASE_TAG"].removeprefix("v")' in command
+
+
+def test_release_validates_both_supported_python_runtimes() -> None:
+    """Publication waits for full source and fresh wheel checks on Python3.11 and3.12."""
+    jobs = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]
+    for name in ["verify", "wheel-smoke"]:
+        job = jobs[name]
+        assert job["strategy"]["matrix"]["python-version"] == ["3.11", "3.12"]
+        setup = next(step for step in job["steps"] if step["name"] == "Set up Python")
+        assert setup["with"]["python-version"] == "${{ matrix.python-version }}"
+    wheel = jobs["wheel-smoke"]
+    evidence = next(
+        step for step in wheel["steps"] if step["name"] == "Retain wheel verification evidence"
+    )
+    assert "matrix.python-version" in evidence["with"]["name"]
+    assert "matrix.python-version" in evidence["with"]["path"]

@@ -18,6 +18,7 @@ PLATFORMS = {
     "darwin-amd64": ("Darwin", {"x86_64", "AMD64"}),
     "windows-amd64": ("Windows", {"x86_64", "AMD64"}),
 }
+PYTHON_RUNTIMES = ("3.11", "3.12")
 GENERATED = {"RELEASE_MANIFEST.json", "SHA256SUMS"}
 
 
@@ -81,7 +82,7 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
         "install.ps1",
         "policynim-public-generation.zip",
         "policynim-public-generation.sha256",
-        "wheel-evidence.json",
+        *(f"wheel-evidence-{runtime}.json" for runtime in PYTHON_RUNTIMES),
     }
     for target in PLATFORMS:
         suffix = "zip" if target == "windows-amd64" else "tar.gz"
@@ -120,14 +121,21 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
             receipt.get("archive") == {"name": name, "sha256": sha256(assets[name])},
             "Standalone archive differs from its receipt.",
         )
-    receipt = json.loads(assets["wheel-evidence.json"].read_text(encoding="utf-8"))
-    check_receipt(receipt, revision=revision, lock=lock, generation=generation, catalog=catalog)
-    require(isinstance(receipt.get("wheel"), dict), "Wheel receipt metadata is missing.")
-    require(receipt["wheel"].get("package_version") == version, "Wheel package version differs.")
-    require(
-        receipt["wheel"].get("sha256") == sha256(assets[wheel]),
-        "Wheel differs from its receipt.",
-    )
+    for runtime in PYTHON_RUNTIMES:
+        receipt = json.loads(assets[f"wheel-evidence-{runtime}.json"].read_text(encoding="utf-8"))
+        check_receipt(receipt, revision=revision, lock=lock, generation=generation, catalog=catalog)
+        require(isinstance(receipt.get("wheel"), dict), "Wheel receipt metadata is missing.")
+        require(
+            receipt["wheel"].get("package_version") == version, "Wheel package version differs."
+        )
+        require(
+            receipt["wheel"].get("sha256") == sha256(assets[wheel]),
+            "Wheel differs from its receipt.",
+        )
+        require(
+            isinstance(receipt.get("python"), str) and receipt["python"].startswith(runtime + "."),
+            "Wheel Python runtime differs.",
+        )
     entries = [
         {"name": name, "size_bytes": path.stat().st_size, "sha256": sha256(path)}
         for name, path in sorted(assets.items())

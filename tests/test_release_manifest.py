@@ -79,7 +79,10 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
             "package_version": "0.2.0",
         },
     }
-    (assets / "wheel-evidence.json").write_text(json.dumps(receipt))
+    for runtime in ["3.11", "3.12"]:
+        (assets / f"wheel-evidence-{runtime}.json").write_text(
+            json.dumps({**receipt, "python": runtime + ".0"})
+        )
     return repo, assets
 
 
@@ -126,7 +129,16 @@ def test_mismatched_receipts_cant_authorize_publication(release_assets, field, v
 
 
 @pytest.mark.parametrize(
-    "change", ["archive", "wheel", "missing-platform", "unexpected-file", "wrong-tag"]
+    "change",
+    [
+        "archive",
+        "wheel",
+        "missing-platform",
+        "unexpected-file",
+        "wrong-tag",
+        "missing-runtime",
+        "wrong-runtime",
+    ],
 )
 def test_replaced_or_missing_downloads_cant_reuse_passing_evidence(release_assets, change) -> None:
     """Passing receipt metadata can't authorize substituted bytes or omitted platforms."""
@@ -137,6 +149,13 @@ def test_replaced_or_missing_downloads_cant_reuse_passing_evidence(release_asset
         (assets / "policynim-0.2.0-py3-none-any.whl").write_bytes(b"substitution")
     elif change == "missing-platform":
         (assets / "standalone-evidence-windows-amd64.json").unlink()
+    elif change == "missing-runtime":
+        (assets / "wheel-evidence-3.12.json").unlink()
+    elif change == "wrong-runtime":
+        path = assets / "wheel-evidence-3.12.json"
+        receipt = json.loads(path.read_text())
+        receipt["python"] = "3.11.99"
+        path.write_text(json.dumps(receipt))
     elif change == "unexpected-file":
         (assets / "unreviewed.log").write_text("unreviewed")
     with pytest.raises(ValueError):
