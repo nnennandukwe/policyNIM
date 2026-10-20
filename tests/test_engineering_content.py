@@ -121,6 +121,14 @@ def test_authored_scenario_evidence_matches_actual_chunks(case: dict) -> None:
     assert provenance is not None
     assert case["policy_revision"] == provenance.content_digest
     assert case["input"] and case["rationale"]
+    assert (
+        case["expected_outcome"]
+        == {
+            "applicable": "apply_guidance",
+            "violating": "require_changes",
+            "out_of_scope": "not_applicable",
+        }[case["kind"]]
+    )
     if case["kind"] == "out_of_scope":
         assert case["role"] not in provenance.applicability
         assert case["expected_policy_ids"] == case["expected_evidence"] == []
