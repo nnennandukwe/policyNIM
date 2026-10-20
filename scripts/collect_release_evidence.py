@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -348,12 +349,12 @@ def artifact_facts(directory: Path | None, expected: Subject) -> dict[str, Any]:
                 or name in checksums
             ):
                 raise ValueError("Invalid asset name.")
-            if type(entry["size_bytes"]) is not int or entry["size_bytes"] < 1:
+            if type(entry["size_bytes"]) is not int or not 1 <= entry["size_bytes"] <= 2 * 1024**3:
                 raise ValueError("Invalid asset size.")
             total_size += entry["size_bytes"]
             if total_size > 8 * 1024**3:
                 raise ValueError("Asset set exceeds its limit.")
-            checksum, size = file_digest(directory / name)
+            checksum, size = file_digest(directory / name, limit=entry["size_bytes"])
             if checksum != entry["sha256"] or size != entry["size_bytes"]:
                 raise ValueError("Asset bytes differ.")
             checksums[name] = checksum
@@ -364,9 +365,14 @@ def artifact_facts(directory: Path | None, expected: Subject) -> dict[str, Any]:
             if match is None or match[2] in actual:
                 raise ValueError("Invalid checksums.")
             actual[match[2]] = match[1]
-        if actual != checksums or {path.name for path in directory.iterdir()} != set(checksums) | {
-            "SHA256SUMS"
-        }:
+        expected_names = set(checksums) | {"SHA256SUMS"}
+        observed_names: set[str] = set()
+        with os.scandir(directory) as contents:
+            for item in contents:
+                if item.name not in expected_names:
+                    raise ValueError("Asset inventory differs.")
+                observed_names.add(item.name)
+        if actual != checksums or observed_names != expected_names:
             raise ValueError("Asset inventory differs.")
         result.update(status="passed", reason=None, asset_sha256=checksums)
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):

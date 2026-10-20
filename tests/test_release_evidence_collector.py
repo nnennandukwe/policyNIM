@@ -465,3 +465,32 @@ def test_published_schema_rejects_empty_execution_requirements(candidate) -> Non
     selection["required_checks"].append(requirement)
     with pytest.raises(JSONSchemaValidationError):
         Draft202012Validator(schema).validate(selection)
+
+
+def test_artifact_hashing_uses_the_selected_size_bound(candidate) -> None:
+    """The CLI's artifact adapter rejects enlarged bytes before hashing their payload."""
+    path, _, assets = candidate
+    script = """
+import sys
+sys.path.insert(0, 'scripts')
+import collect_release_evidence as collector
+original = collector.file_digest
+
+def bounded_digest(path, *, limit=2 * 1024**3):
+    '''Observe the actual manifest-to-reader limit without reading oversized data.'''
+    assert limit == len(b'fixture artifact'), 'manifest size must bound the reader'
+    return original(path, limit=limit)
+
+collector.file_digest = bounded_digest
+sys.argv = ['collector', '--selection', sys.argv[1], '--artifact-dir', sys.argv[2]]
+raise SystemExit(collector.main())
+"""
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(path), str(assets)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr
