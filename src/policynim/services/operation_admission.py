@@ -10,7 +10,11 @@ from threading import Event
 from typing import Literal, TypeVar
 
 from policynim.errors import PolicyNIMError, ProviderError
-from policynim.operations import emit_operation_event
+from policynim.operations import (
+    current_correlation_id,
+    emit_operation_event,
+    safe_exception_diagnostics,
+)
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import (
     AuthenticatedPrincipal,
@@ -49,7 +53,7 @@ def record_operation_storage_failure(
         level=logging.ERROR,
         event="operation.storage_failure",
         phase=phase,
-        exception_class=type(error).__name__,
+        **safe_exception_diagnostics(error),
         sqlite_code=code if isinstance(code, int) else None,
         os_errno=os_errno if isinstance(os_errno, int) else None,
         operation_id=operation_id,
@@ -81,6 +85,8 @@ def admit_operation(
     credential_id: str | None = None,
     now: float | None = None,
     before_accept: Callable[[], None] | None = None,
+    correlation_id: str | None = None,
+    retention_days: int = 30,
 ) -> OperationAdmission:
     """Apply service-owned admission policy to a snapshot protected by the store's transaction."""
     if min(daily_limit, principal_limit, global_limit) < 1:
@@ -112,6 +118,8 @@ def admit_operation(
         decide=decide,
         credential_id=credential_id,
         now=now,
+        correlation_id=correlation_id,
+        retention_days=retention_days,
     )
 
 
@@ -188,6 +196,8 @@ class OperationAdmissionService:
                     else None,
                     credential_id=principal.credential_id,
                     before_accept=require_ready,
+                    correlation_id=current_correlation_id(),
+                    retention_days=self.settings.mcp_operation_retention_days,
                 )
                 break
             except (sqlite3.Error, OSError, ValueError) as exc:
