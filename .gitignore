@@ -16,7 +16,7 @@
 .voice/
 __pycache__/
 build/
-data/
+/data/
 dist/
 *.pyc
 .threadloop/state/
