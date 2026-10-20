@@ -89,7 +89,8 @@ directory, safely extracts them, and runs the extracted command instead of the
 original build directory. Only a completed six-case offline fixture and both MCP
 protocol/transport checks can produce `archive_verified: true` and the archive
 checksum. Changed, unsafe or incomplete archives fail before publication; failed
-receipts retain the requested source, platform, version and digest context.
+receipts retain the requested source, platform, version and digest context as
+incomplete execution.
 
 The lock digest identifies the selected build checkout. The workflow performs a
 locked dependency sync before building from that checkout; the standalone receipt

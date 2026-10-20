@@ -312,3 +312,52 @@ def test_partial_offline_fixture_cant_pass_before_transports(
     )
     with pytest.raises(RuntimeError, match="requires exactly 6 cases"):
         verifier.verify(args)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The failing child uses a POSIX executable script.")
+def test_failed_command_receipt_keeps_requested_identity(tmp_path: Path) -> None:
+    """Actual failed command verification retains requested context without a passed claim."""
+    command = tmp_path / "policynim"
+    command.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('Usage: policynim' if '--help' in sys.argv else '0.0.1')\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_bytes(b"locked")
+    output = tmp_path / "failure.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "verify_standalone.py"),
+            "--command",
+            str(command),
+            "--bundle",
+            str(tmp_path / "unused.zip"),
+            "--bundle-digest",
+            "sha256:" + "b" * 64,
+            "--lockfile",
+            str(lockfile),
+            "--lock-digest",
+            "sha256:" + hashlib.sha256(b"locked").hexdigest(),
+            "--revision",
+            "a" * 40,
+            "--expected-version",
+            "0.1.0",
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    receipt = json.loads(output.read_text())
+    assert receipt["status"] == "failed"
+    assert receipt["source_revision"] == "a" * 40
+    assert receipt["expected_version"] == "0.1.0"
+    assert receipt["public_bundle_digest"] == "sha256:" + "b" * 64
+    assert receipt["expected_dependency_lock"] == "sha256:" + hashlib.sha256(b"locked").hexdigest()
+    assert receipt["platform"] == verifier.platform.system()
+    assert "execution didn't complete" in receipt["context_scope"]
+    assert "Standalone version differs" in receipt["message"]
