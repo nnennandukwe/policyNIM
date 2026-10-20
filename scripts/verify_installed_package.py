@@ -134,10 +134,12 @@ def safe_diagnostic(text: str, env: dict[str, str]) -> str:
     return text[-4000:]
 
 
-def run_command(arguments: list[str], *, env: dict[str, str], cwd: Path) -> str:
+def run_command(
+    arguments: list[str], *, env: dict[str, str], cwd: Path, command: str | None = None
+) -> str:
     """Exercise the user's installed command and retain sanitized failure details."""
     completed = subprocess.run(
-        [installed_command(), *arguments],
+        [command or installed_command(), *arguments],
         env=env,
         cwd=cwd,
         capture_output=True,
@@ -154,9 +156,11 @@ def run_command(arguments: list[str], *, env: dict[str, str], cwd: Path) -> str:
     return completed.stdout
 
 
-def run_cli(arguments: list[str], *, env: dict[str, str], cwd: Path) -> dict:
+def run_cli(
+    arguments: list[str], *, env: dict[str, str], cwd: Path, command: str | None = None
+) -> dict:
     """Parse the actual installed console command's structured result."""
-    return json.loads(run_command(arguments, env=env, cwd=cwd))
+    return json.loads(run_command(arguments, env=env, cwd=cwd, command=command))
 
 
 async def check_client(client: Client, mode: str) -> dict[str, object]:
@@ -175,12 +179,14 @@ async def check_client(client: Client, mode: str) -> dict[str, object]:
     return {"protocol": expected, "tools": names, "invalid_argument_rejected": True}
 
 
-async def check_stdio(env: dict[str, str], cwd: Path) -> list[dict[str, object]]:
+async def check_stdio(
+    env: dict[str, str], cwd: Path, *, command: str | None = None
+) -> list[dict[str, object]]:
     """Launch installed stdio children for both protocol generations."""
     results = []
     for mode in ("auto", "legacy"):
         parameters = StdioServerParameters(
-            command=installed_command(),
+            command=command or installed_command(),
             args=["mcp", "--transport", "stdio"],
             cwd=cwd,
             env=env,

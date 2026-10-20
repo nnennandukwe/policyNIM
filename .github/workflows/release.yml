@@ -152,16 +152,37 @@ jobs:
       - name: Build standalone bundle
         run: uv run --no-sync pyinstaller --clean --noconfirm packaging/pyinstaller.spec
 
-      - name: Smoke standalone bundle
+      - name: Verify standalone generation and transports
         shell: bash
         run: |
-          if [ "${{ matrix.platform }}" = "windows-amd64" ]; then
-            dist/policynim/policynim.exe --help
-            dist/policynim/policynim.exe --version
-          else
-            dist/policynim/policynim --help
-            dist/policynim/policynim --version
-          fi
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import subprocess
+
+          root = Path.cwd()
+          suffix = ".exe" if os.name == "nt" else ""
+          bundle = root / "artifacts/public-generation"
+          subprocess.run([
+              "uv", "run", "--no-sync", "python", "scripts/verify_standalone.py",
+              "--command", str(root / "dist/policynim" / ("policynim" + suffix)),
+              "--bundle", str(bundle / "generation.zip"),
+              "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+              "--lockfile", str(root / "uv.lock"),
+              "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
+              "--revision", os.environ["GITHUB_SHA"],
+              "--output", "standalone-evidence-${{ matrix.platform }}.json",
+          ], check=True)
+          PY
+
+      - name: Retain standalone verification evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: standalone-evidence-${{ matrix.platform }}
+          path: standalone-evidence-${{ matrix.platform }}.json
+          if-no-files-found: error
 
       - name: Archive Unix standalone bundle
         if: matrix.archive == 'tar'
@@ -245,6 +266,8 @@ jobs:
           find release-downloads -type f -exec cp {} release-assets/ \;
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install.ps1 release-assets/install.ps1
+          cp artifacts/public-generation/generation.zip release-assets/policynim-public-generation.zip
+          cp artifacts/public-generation/generation.sha256 release-assets/policynim-public-generation.sha256
           (
             cd release-assets
             sha256sum * > SHA256SUMS

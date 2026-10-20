@@ -71,6 +71,19 @@ The verifier refuses an installation resolved back to a source checkout. It neve
 calls model providers; protocol discovery doesn't establish live retrieval quality
 or Codex/Claude UI interoperability. Retain those acceptance results separately.
 
+Standalone builds must also import the public generation and negotiate both MCP
+protocols over stdio and authenticated HTTP. Run `scripts/verify_standalone.py`
+with `--command` pointing to the built executable, `--bundle` and `--bundle-digest`
+identifying the reviewed public archive, `--lockfile` and `--lock-digest`
+identifying the build lock, and `--revision` and `--output` identifying the source
+commit and receipt. This check runs without provider credentials and records a
+digest of the complete standalone directory, including native-library bytes.
+It doesn't establish live retrieval quality or coding-client acceptance.
+
+The release workflow retains a separate `standalone-evidence-<platform>.json`
+receipt for each platform. A successful help command alone can't detect a missing
+SQLite vector extension; generation import must succeed before the archive ships.
+
 ## GitHub Release
 
 Create and push a version tag from the commit you want to release:
@@ -91,6 +104,8 @@ release with:
 - `policynim-vX.Y.Z-darwin-amd64.tar.gz`
 - `policynim-vX.Y.Z-windows-amd64.zip`
 - `SHA256SUMS`
+- `policynim-public-generation.zip` and its `policynim-public-generation.sha256`
+- Platform-specific `standalone-evidence-<platform>.json` receipts
 
 PolicyNIM publishes separate macOS bundles for Apple Silicon and Intel hosts.
 
