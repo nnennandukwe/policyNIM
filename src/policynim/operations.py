@@ -68,8 +68,8 @@ class OperationBudget:
         self.unavailable_usage_attempts = 0
         self._usage_callback = usage_callback
 
-    def reserve_provider_call(self) -> None:
-        """Persist an attempt reservation before dispatch; never exceed the accepted limit."""
+    def reserve_provider_call(self) -> float:
+        """Persist before dispatch, correcting known-unsent calls and returning fresh time left."""
         self.remaining()
         if (
             self.max_provider_calls is not None
@@ -80,7 +80,15 @@ class OperationBudget:
             )
         self.provider_attempts += 1
         self.unavailable_usage_attempts += 1
-        self._record_usage()
+        try:
+            self._record_usage()
+            return self.remaining()
+        except BaseException:
+            # No send has started; retain prior calls without inventing upstream usage.
+            self.provider_attempts -= 1
+            self.unavailable_usage_attempts -= 1
+            self._record_usage()
+            raise
 
     def record_provider_usage(self, total_tokens: int | None) -> None:
         """Keep returned measured usage separate from attempts with unknown upstream cost."""

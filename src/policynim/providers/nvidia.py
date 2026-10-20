@@ -700,8 +700,7 @@ def _request_with_retry(
     """Classify failures and bound every attempt and delay by the shared deadline."""
     budget = current_budget()
     for attempt in range(max_retries + 1):
-        budget.reserve_provider_call()
-        timeout = min(timeout_seconds, budget.remaining())
+        timeout = min(timeout_seconds, budget.reserve_provider_call())
         start = time.monotonic()
         failure: str | None = None
         usage: int | None = None
