@@ -179,7 +179,8 @@ def test_release_gate_order_and_locked_environment() -> None:
     by_name = {step["name"]: step for step in steps}
     assert (
         by_name["Sync locked evidence dependencies"]["run"]
-        == "uv sync --locked --no-dev --group verification --python ${{ env.PYTHON_VERSION }}"
+        == "uv sync --locked --no-dev --no-default-groups --group verification "
+        "--python ${{ env.PYTHON_VERSION }}"
     )
     assert (
         "check_release_notes.py --repo-root . --output release-notes.md"

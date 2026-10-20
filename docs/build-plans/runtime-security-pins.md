@@ -1,0 +1,9 @@
+# Patched runtime dependencies (#157)
+
+The locked standard runtime audit reports published advisories in direct and transitive dependencies. The release needs compatible patched packages and a retained assessment of any remaining advisory. Passing the existing suite doesn't establish patched dependencies.
+
+1. Verify advisory records and package metadata against upstream sources. Keep Python 3.11/3.12, NVIDIA integrations, current MCP protocol contracts and explicit runtime pins. Keep the Phoenix publication client/eval library in the main runtime and install the UI server in its own tool environment, as selected for this release. Preserve the existing external `phoenix serve` process boundary and document setup; keep headless evaluation self-contained. The optional NeMo launcher has an upstream LeptonAI AnyIO ceiling incompatible with the patched main runtime, so move that unused tool installation outside PolicyNIM's extras; don't force an incompatible override.
+2. Update affected direct pins and resolve patched transitive versions through the normal universal lock, including optional NVIDIA extras. Retain failed resolver evidence. Avoid unrelated dependency or action upgrades.
+3. Audit the resolved standard and all-extra graphs. Test actual auth/provider/error paths, offline/static gates, fresh installed MCP transports, package metadata, and a fresh local Phoenix startup/publication path. Retain source/lock identities and advisory reachability limits. Complete local review and exact-head PR gates before adoption; repeat final release artifacts, client, and hosted checks afterward.
+
+The audit isn't proof of exploitation or universal safety. An advisory with no patched release needs a source-based reachability assessment. Existing user workspaces and saved Phoenix data stay untouched during verification.

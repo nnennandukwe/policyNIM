@@ -410,18 +410,21 @@ def test_release_publication_joins_checked_artifact_evidence_before_upload() -> 
     assert joined < published
     assert '--source-sha "$GITHUB_SHA"' in commands[joined]
     assert '--tag "$RELEASE_TAG"' in commands[joined]
+    assert "uv run --no-sync" in commands[joined]
+    assert any("uv sync --locked" in command for command in commands)
+    assert any("astral-sh/setup-uv@" in step.get("uses", "") for step in publication["steps"])
     wheel = "\n".join(step.get("run", "") for step in jobs["wheel-smoke"]["steps"])
     assert '"export", "--locked"' in wheel
     assert '"--require-hashes", "--no-deps"' in wheel
     assert "verify_installed_package.py" in wheel
     names = [step["name"] for step in jobs["standalone-build"]["steps"]]
     assert names.index("Archive Unix standalone bundle") < names.index(
-        "Bind standalone receipt to archive"
+        "Verify standalone generation and transports"
     )
     assert names.index("Archive Windows standalone bundle") < names.index(
-        "Bind standalone receipt to archive"
+        "Verify standalone generation and transports"
     )
-    assert names.index("Bind standalone receipt to archive") < names.index(
+    assert names.index("Verify standalone generation and transports") < names.index(
         "Retain standalone verification evidence"
     )
 
@@ -432,9 +435,11 @@ def test_standalone_upload_excludes_committed_generation_sources() -> None:
     upload = next(step for step in job["steps"] if step["name"] == "Upload standalone bundle")
     assert upload["with"]["path"] == "standalone-archives/*"
     binding = next(
-        step["run"] for step in job["steps"] if step["name"] == "Bind standalone receipt to archive"
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify standalone generation and transports"
     )
-    assert 'Path("standalone-archives").iterdir()' in binding
+    assert '(root / "standalone-archives").iterdir()' in binding
 
 
 def test_standalone_verification_requires_requested_release_version() -> None:
@@ -599,3 +604,23 @@ def test_release_verifier_guard_rejects_missing_helper_group(job_name: str) -> N
             )
     with pytest.raises(AssertionError):
         _assert_release_verification_dependencies(workflow)
+
+
+def test_standalone_archive_payload_runs_before_receipt_binding() -> None:
+    """The actual compressed payload must run before evidence can authorize upload."""
+    steps = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["standalone-build"]["steps"]
+    verification = next(
+        i for i, step in enumerate(steps) if "scripts/verify_standalone.py" in step.get("run", "")
+    )
+    assert (
+        next(i for i, step in enumerate(steps) if step["name"] == "Archive Unix standalone bundle")
+        < verification
+    )
+    assert (
+        next(
+            i for i, step in enumerate(steps) if step["name"] == "Archive Windows standalone bundle"
+        )
+        < verification
+    )
+    assert '"--archive"' in steps[verification]["run"]
+    assert not any(step["name"] == "Bind standalone receipt to archive" for step in steps)
