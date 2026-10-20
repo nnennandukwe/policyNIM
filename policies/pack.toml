@@ -1,26 +1,111 @@
 schema_version = 1
 pack_id = "policynim.baseline"
-version = "0.2.0"
+version = "0.3.0"
 
 [[policies]]
 policy_id = "ARCH-API-001"
-path = "architecture/api-versioning-guidance.md"
+path = "api/api-versioning-guidance.md"
+requirement_level = "required"
+applicability = ["api-producer", "api-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Semantic Versioning 2.0.0"
+url = "https://semver.org/spec/v2.0.0.html"
+revision = "2.0.0"
+sections = ["1", "7", "8"]
+retrieved_on = 2026-10-20
+license = "CC-BY-3.0"
+attribution = "Tom Preston-Werner and SemVer contributors"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
 
 [[policies]]
 policy_id = "ARCH-JOB-001"
-path = "architecture/background-job-design-rules.md"
+path = "reliability/background-job-design-rules.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "AWS: Timeouts, retries, and backoff with jitter"
+url = "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter"
+revision = "Published and last modified 2019-12-05"
+sections = ["Timeouts", "Retries and backoff", "Jitter"]
+retrieved_on = 2026-10-20
+license = "Amazon Web Services copyright; cited commentary, no source text redistributed"
+attribution = "Marc Brooker; Amazon Web Services"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
 
 [[policies]]
 policy_id = "BE-LOG-001"
-path = "backend/backend-logging-standard.md"
+path = "observability/backend-logging-standard.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "OWASP Logging Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["Data to exclude"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OpenTelemetry stable Logs Data Model"
+url = "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md"
+revision = "3e4f2ff15933d70356cc18a9a96719b78d116233"
+sections = ["Trace Context Fields", "Field: Resource", "Severity Fields"]
+retrieved_on = 2026-10-20
+license = "Apache-2.0"
+attribution = "OpenTelemetry authors; Cloud Native Computing Foundation"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
 
 [[policies]]
 policy_id = "BE-CONFIG-001"
-path = "backend/config-validation-and-fail-closed.md"
+path = "reliability/config-validation-and-fail-closed.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "OWASP Secrets Management Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["2 General Secrets Management"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
 
 [[policies]]
 policy_id = "BE-TRACE-001"
-path = "backend/request-correlation-and-tracing-standard.md"
+path = "observability/request-correlation-and-tracing-standard.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "W3C Trace Context Recommendation"
+url = "https://www.w3.org/TR/2021/REC-trace-context-1-20211123/"
+revision = "W3C Recommendation 2021-11-23"
+sections = ["3.2", "4", "6", "7"]
+retrieved_on = 2026-10-20
+license = "W3C permissive document license; source link retained"
+attribution = "W3C Distributed Tracing Working Group, 2021"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "OpenTelemetry stable Logs Data Model"
+url = "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md"
+revision = "3e4f2ff15933d70356cc18a9a96719b78d116233"
+sections = ["Trace Context Fields", "Field: Resource", "Severity Fields"]
+retrieved_on = 2026-10-20
+license = "Apache-2.0"
+attribution = "OpenTelemetry authors; Cloud Native Computing Foundation"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
 
 [[policies]]
 policy_id = "SEC-AUTH-001"
@@ -328,3 +413,250 @@ retrieved_on = 2026-10-15
 license = "Apache-2.0 with retained MIT contributions; see licenses/MCP-UPSTREAM.txt"
 attribution = "Model Context Protocol contributors"
 change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "TEST-FAIL-001"
+path = "testing/failure-and-recovery.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.8.1", "PW.8.2", "PW.4.1", "PS.2.1", "PS.3.1"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "TEST-CONTRACT-001"
+path = "testing/public-boundary-contracts.md"
+requirement_level = "required"
+applicability = ["application-developer", "library-maintainer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.8.1", "PW.8.2", "PW.4.1", "PS.2.1", "PS.3.1"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "Google SRE: Testing for Reliability"
+url = "https://sre.google/sre-book/testing-reliability/"
+revision = "Site Reliability Engineering, 2016, chapter 17"
+sections = ["Types of Software Testing", "Traditional Tests", "Production Tests"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Alex Perry and Max Luebbe; edited by Diane Bates; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "API-ERROR-001"
+path = "api/http-errors.md"
+requirement_level = "required"
+applicability = ["api-producer", "api-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "RFC 9110: HTTP Semantics"
+url = "https://www.rfc-editor.org/rfc/rfc9110.html"
+revision = "RFC 9110, June 2022"
+sections = ["9.2.2", "15", "10.2.3"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Roy Fielding, Mark Nottingham, Julian Reschke; IETF Trust, 2022"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "RFC 9457: Problem Details for HTTP APIs"
+url = "https://www.rfc-editor.org/rfc/rfc9457.html"
+revision = "RFC 9457, July 2023"
+sections = ["3", "5"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Mark Nottingham, Erik Wilde, Sanjay Dalal; IETF Trust, 2023"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "API-PAGE-001"
+path = "api/pagination-contracts.md"
+requirement_level = "required"
+applicability = ["api-producer", "api-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "RFC 8288: Web Linking"
+url = "https://datatracker.ietf.org/doc/html/rfc8288"
+revision = "RFC 8288, October 2017"
+sections = ["2.1", "3"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Mark Nottingham; IETF Trust, 2017"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "DATA-MIGRATE-001"
+path = "data/migration-recovery.md"
+requirement_level = "required"
+applicability = ["application-developer", "database-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Google SRE: Data Integrity"
+url = "https://sre.google/sre-book/data-integrity/"
+revision = "Site Reliability Engineering, 2016, chapter 26"
+sections = ["Delivering a Recovery System, Rather Than a Backup System"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Raymond Blum and Rhandeev Singh; edited by Betsy Beyer; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "DATA-TRANSACTION-001"
+path = "data/transaction-boundaries.md"
+requirement_level = "required"
+applicability = ["application-developer", "database-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "PostgreSQL 18: Transactions"
+url = "https://www.postgresql.org/docs/18/tutorial-transactions.html"
+revision = "PostgreSQL 18"
+sections = ["3.4"]
+retrieved_on = 2026-10-20
+license = "PostgreSQL License; source legal notice linked"
+attribution = "PostgreSQL Global Development Group and The Regents of the University of California"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "REL-TIMEOUT-001"
+path = "reliability/deadlines-and-retries.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "AWS: Timeouts, retries, and backoff with jitter"
+url = "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter"
+revision = "Published and last modified 2019-12-05"
+sections = ["Timeouts", "Retries and backoff", "Jitter"]
+retrieved_on = 2026-10-20
+license = "Amazon Web Services copyright; cited commentary, no source text redistributed"
+attribution = "Marc Brooker; Amazon Web Services"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "RFC 9110: HTTP Semantics"
+url = "https://www.rfc-editor.org/rfc/rfc9110.html"
+revision = "RFC 9110, June 2022"
+sections = ["9.2.2", "15", "10.2.3"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Roy Fielding, Mark Nottingham, Julian Reschke; IETF Trust, 2022"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "REL-OVERLOAD-001"
+path = "reliability/admission-and-backpressure.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Google SRE: Handling Overload"
+url = "https://sre.google/sre-book/handling-overload/"
+revision = "Site Reliability Engineering, 2016, chapter 21"
+sections = ["The Pitfalls of \"Queries per Second\"", "Per-Customer Limits", "Client-Side Throttling"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Alejandro Forero Cuervo; edited by Sarah Chavis; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "OBS-READINESS-001"
+path = "observability/metrics-and-readiness.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Google SRE: Monitoring Distributed Systems"
+url = "https://sre.google/sre-book/monitoring-distributed-systems/"
+revision = "Site Reliability Engineering, 2016, chapter 6"
+sections = ["The Four Golden Signals", "Black-Box Versus White-Box"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Rob Ewaschuk; edited by Betsy Beyer; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "SUPPLY-BUILD-001"
+path = "supply-chain/dependencies-and-builds.md"
+requirement_level = "required"
+applicability = ["build-maintainer", "release-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.8.1", "PW.8.2", "PW.4.1", "PS.2.1", "PS.3.1"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "OpenSSF OSPS Baseline 2026.08.28"
+url = "https://baseline.openssf.org/versions/2026-08-28"
+revision = "2026.08.28"
+sections = ["OSPS-BR-01.01", "OSPS-BR-01.03", "OSPS-BR-04.01", "OSPS-BR-05.01", "OSPS-BR-06.01", "OSPS-DO-06.01"]
+retrieved_on = 2026-10-20
+license = "CC-BY-4.0"
+attribution = "OSPS Baseline contributors; a Series of LF Projects, LLC"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "SUPPLY-PROVENANCE-001"
+path = "supply-chain/provenance-and-verification.md"
+requirement_level = "required"
+applicability = ["build-maintainer", "release-operator", "artifact-consumer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.8.1", "PW.8.2", "PW.4.1", "PS.2.1", "PS.3.1"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "OpenSSF OSPS Baseline 2026.08.28"
+url = "https://baseline.openssf.org/versions/2026-08-28"
+revision = "2026.08.28"
+sections = ["OSPS-BR-01.01", "OSPS-BR-01.03", "OSPS-BR-04.01", "OSPS-BR-05.01", "OSPS-BR-06.01", "OSPS-DO-06.01"]
+retrieved_on = 2026-10-20
+license = "CC-BY-4.0"
+attribution = "OSPS Baseline contributors; a Series of LF Projects, LLC"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "SLSA 1.2: Verifying artifacts"
+url = "https://slsa.dev/spec/v1.2/verifying-artifacts"
+revision = "1.2"
+sections = ["How to verify", "Forming Expectations"]
+retrieved_on = 2026-10-20
+license = "Community Specification License 1.0"
+attribution = "SLSA contributors; The Linux Foundation"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

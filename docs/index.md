@@ -53,3 +53,5 @@ operations into separate pages so the root README can stay short.
 
 - [Complete policy generations](policy-generations.md): atomic activation, migration, rollback,
   retained readers, and verified offline deployment bundles.
+
+- [Engineering topic packs and source coverage](engineering-policy-coverage.md)

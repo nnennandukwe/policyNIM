@@ -1,6 +1,6 @@
 # Application Security and MCP Source Coverage
 
-The maintained `policynim.baseline@0.2.0` source pack selects 15 policies. Nine
+The maintained security revisions introduced in `policynim.baseline@0.2.0` remain in the expanded `0.3.0` aggregate and the selectable `policynim.security-mcp@0.3.0` pack. Nine
 security policies were added or materially revised for #94; the six other
 members retain their existing bytes. The package/software version remains
 `0.1.0`. A source-pack version doesn't publish a package or activate an index.

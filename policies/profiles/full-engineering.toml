@@ -1,0 +1,84 @@
+schema_version = 1
+profile_id = "policynim.full-engineering"
+
+[[packs]]
+path = "../security"
+pack_id = "policynim.security-mcp"
+version = "0.3.0"
+digest = "sha256:55f03de16a11c5e8c57a4a47d00ea1c7f88b5e136390b6820de2dd2f001a8a2c"
+
+[packs.policies]
+MCP-AUTH-001 = "sha256:768ce7746e5a3bd54851d42e8105c718514cb92ccf47a8e44d755c4ec5d842bd"
+MCP-CONSENT-001 = "sha256:b61c0f6177516b5959afe234b1b9529dccb6f1d1271560a0ef82f170cc1e5948"
+MCP-CONTENT-001 = "sha256:247976700c422e2fb8d1bb8812f35c09cb8480c4c7bd4d52fc9eb3c7d3c3204b"
+MCP-TRUST-001 = "sha256:b373042d2408f37c8d56358b9fe4b929057ebb3b7a75c5d214b149d8b28bdd13"
+SEC-AUTH-001 = "sha256:a575ced7314956b76734af46d5468504afe4d81aa297effb6a87f69fe305683d"
+SEC-EGRESS-001 = "sha256:bc66dfd449904023266d83310f8143d17521e109ae3365090c153fdcc4b40d02"
+SEC-INPUT-001 = "sha256:74547f393ae82f065686aaf680f05378e06a77016c04c384b7093ff4fa03f5f3"
+SEC-PUBLIC-ENDPOINT-002 = "sha256:fd294d46ce7a7c3b32d9459b46e07f42d3cc16d4f4ddf0171f80f67bd9b5dcb9"
+SEC-SECRET-001 = "sha256:7c9e640dcea39d8dba19f321050cf7495dcfd08d40d536f2e9f728f3b77f1dac"
+SEC-SESSION-001 = "sha256:d1dc2aef6c3d3084abe92e14b79a981466c4d463d21f451cca9aece00f6c56fe"
+
+[[packs]]
+path = "../testing"
+pack_id = "policynim.testing"
+version = "0.3.0"
+digest = "sha256:5460e82c89d8c69bf186c72ecbab98a4549bf262a2ba417f2f76129abd779b8f"
+
+[packs.policies]
+TEST-CONTRACT-001 = "sha256:953201040a4135b768a63132ccb79866cb1caf37d98b6ed157740e4a48dbbd3d"
+TEST-FAIL-001 = "sha256:4673373c636fce7068a86c16154c5f7b59ac255ef59f6881de19b9181e5efbd7"
+
+[[packs]]
+path = "../api"
+pack_id = "policynim.api"
+version = "0.3.0"
+digest = "sha256:f0726cb71c97285b24b2e52ff2b470818e9da055fe47b431fd8fe0d53c59cde7"
+
+[packs.policies]
+API-ERROR-001 = "sha256:96cb4bb61361b37b49c6b005ec5554f83f0efbe3b203a2204c959fe383d47998"
+API-PAGE-001 = "sha256:33f1fe94f02dd326ab636d15972a1d1f165267e5e6183e56cdbcb143eab94faf"
+ARCH-API-001 = "sha256:309b7bf7f14d14176a7d41195351a918fb7db568a1671987994d5ae6ca5dc684"
+
+[[packs]]
+path = "../data"
+pack_id = "policynim.data"
+version = "0.3.0"
+digest = "sha256:22a138e1cd491f1749f4e09eab151ea482609063c23832697750358982ed8658"
+
+[packs.policies]
+DATA-MIGRATE-001 = "sha256:b5320937bbff180757e3db9bd5b1b55458ba1fc02055cf7f3c8b0df0c27b3fdb"
+DATA-TRANSACTION-001 = "sha256:3888193d954ac3c19aeabde8e1f72c33418ad15c110174769e65e7b8d35fec88"
+
+[[packs]]
+path = "../reliability"
+pack_id = "policynim.reliability"
+version = "0.3.0"
+digest = "sha256:ca23dcd3b9dd085b96dad6b6fe20761919ba89cbd97eb8236160c2ba2ad1d007"
+
+[packs.policies]
+ARCH-JOB-001 = "sha256:89098d9459fd2570190a04ce879c9e6a27a35dadf64b19453240f17889536612"
+BE-CONFIG-001 = "sha256:fa69a6ae0d23fc50ddcdd2a651cc22e1d9579fb7901049b3f49aa966c20ad696"
+REL-OVERLOAD-001 = "sha256:5b7c50916529e2d2f1f4b085c63e722545dc2d748bd724444bd1f669819f7273"
+REL-TIMEOUT-001 = "sha256:9feccfb3e03f44f4c72ae63081b32232be7089bb2c2cae943808205f8d977bba"
+
+[[packs]]
+path = "../observability"
+pack_id = "policynim.observability"
+version = "0.3.0"
+digest = "sha256:fa3db297601ac7f4488b8c9ce60423dbbe022a11462aa7cec70077c5a3640974"
+
+[packs.policies]
+BE-LOG-001 = "sha256:635d9759cc0b527e3d1293fffa75533e3e7493dc4ac87da7fc1125871d87290d"
+BE-TRACE-001 = "sha256:06b6c413239bf7efa8c36a760ec616c010ae00bd3ec2b800c753cb18fc044400"
+OBS-READINESS-001 = "sha256:ebba533b77ec44ed5b4b5b610c173da3715f05f4a1cd66cf7bcba9b093b32c45"
+
+[[packs]]
+path = "../supply-chain"
+pack_id = "policynim.supply-chain"
+version = "0.3.0"
+digest = "sha256:e59fd6a441406c310f435e20f3229bc3c1e7a62331b7f63847bbe986d6194e17"
+
+[packs.policies]
+SUPPLY-BUILD-001 = "sha256:3600dae46a5611de5ef4587562401fadfcee1b64b011b0edf9b478482f02774c"
+SUPPLY-PROVENANCE-001 = "sha256:8bf92f5f4294792c690c3d6dc42f3c9b80ff3bd5806629af27fb03abdb144c2f"
