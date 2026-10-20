@@ -24,6 +24,7 @@ class OperationOwner:
         path = self.directory / (self.identity + ".lock")
         self._path = path
         pending = self.directory / ("." + self.identity + ".pending")
+        self._pending_path = pending
         descriptor = os.open(pending, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
         published = False
         try:
@@ -87,18 +88,20 @@ class OperationOwner:
         if not self._release.alive:
             return
         try:
-            observed = self._path.stat(follow_symlinks=False)
             owned = os.fstat(self._descriptor)
-            if (observed.st_dev, observed.st_ino) == (owned.st_dev, owned.st_ino):
-                self._path.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            logging.getLogger(__name__).warning(
-                "Operation owner cleanup failed: storage_unavailable."
-            )
         finally:
-            self._release()
+            self._release()  # Windows can't unlink an inode held by this CRT descriptor.
+        for path in (self._path, self._pending_path):
+            try:
+                observed = path.stat(follow_symlinks=False)
+                if (observed.st_dev, observed.st_ino) == (owned.st_dev, owned.st_ino):
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logging.getLogger(__name__).warning(
+                    "Operation owner cleanup failed: storage_unavailable."
+                )
 
 
 def _lock(descriptor: int, *, shared: bool = False) -> None:

@@ -238,11 +238,19 @@ class OperationStore:
         if not self._has_admitted:
             self._owner.close()
             return
-        with closing(self._connect()) as connection:
-            active = connection.execute(
-                "SELECT COUNT(*) FROM operation_usage WHERE owner_id = ? AND outcome = 'accepted'",
-                (self._owner.identity,),
-            ).fetchone()[0]
+        try:
+            with closing(self._connect()) as connection:
+                active = connection.execute(
+                    "SELECT COUNT(*) FROM operation_usage "
+                    "WHERE owner_id = ? AND outcome = 'accepted'",
+                    (self._owner.identity,),
+                ).fetchone()[0]
+        except (sqlite3.Error, OSError) as exc:
+            logging.getLogger(__name__).warning(
+                "Operation owner release deferred: %s. Retry close after state storage recovers.",
+                type(exc).__name__,
+            )
+            return  # Unknown accounting retains ownership until retry or process exit.
         if active:
             return  # Preserve ownership until process exit or successful terminal recovery.
         self._owner.close()
