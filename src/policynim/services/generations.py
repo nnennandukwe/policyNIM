@@ -1634,7 +1634,11 @@ class GenerationStore:
     def bootstrap_bundle(
         self, bundle: Path, *, expected_digest: str, source_settings: Settings | None = None
     ) -> PublicationResult:
-        """Seed an absent root once or preserve a validated existing active selection."""
+        """Seed once or preserve selection within service-controlled roots and parent paths.
+
+        Directory identity checks don't isolate same-UID pathname mutation after admission.
+        All writers must cooperate with the store's ownership and locking protocol.
+        """
         fresh_identity: tuple[int, int] | None = None
         contents: dict[str, bytes] | None = None
         incoming: SourceSnapshot | None = None
