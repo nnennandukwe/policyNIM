@@ -357,3 +357,24 @@ def test_entrypoint_preserves_safe_generation_diagnosis(
     assert error["generation_phase"] == phase and needle in error["message"]
     assert "private-note-sentinel" not in error["message"]
     assert str(target.root) not in error["message"]
+
+
+def test_cached_settings_validation_names_fields_without_exposing_inputs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exercise the actual cached loader and its wrapped validation failure."""
+    from policynim.interfaces import hosted
+
+    hosted.get_settings.cache_clear()
+    monkeypatch.setenv("POLICYNIM_NVIDIA_TIMEOUT_SECONDS", "private-invalid-sentinel")
+    monkeypatch.setattr(
+        hosted, "prepare_hosted_generation", lambda *args: pytest.fail("Storage mustn't start")
+    )
+    try:
+        assert hosted.main() == 1
+    finally:
+        hosted.get_settings.cache_clear()
+    error = json.loads(capsys.readouterr().err)
+    assert error["phase"] == "settings"
+    assert error["invalid_settings"] == ["nvidia_timeout_seconds"]
+    assert "private-invalid-sentinel" not in json.dumps(error)

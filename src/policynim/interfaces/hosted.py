@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from policynim.errors import GenerationError, PolicyNIMError
+from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError
 from policynim.services.generations import GenerationStore
 from policynim.settings import Settings, get_settings
 from policynim.types import EmbeddingIdentity
@@ -120,9 +120,12 @@ def main() -> int:
             "phase": phase,
             "message": messages[phase],
         }
-        if isinstance(error, ValidationError):
+        validation_error = error if isinstance(error, ValidationError) else None
+        if isinstance(error, ConfigurationError) and isinstance(error.__cause__, ValidationError):
+            validation_error = error.__cause__
+        if validation_error is not None:
             fields = set()
-            for detail in error.errors(include_input=False, include_context=False):
+            for detail in validation_error.errors(include_input=False, include_context=False):
                 location = detail["loc"]
                 if location and isinstance(location[0], str):
                     field = location[0].lower().removeprefix("policynim_")
