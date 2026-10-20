@@ -181,6 +181,8 @@ def test_authored_scenario_evidence_matches_actual_chunks(case: dict) -> None:
         return
     if case["kind"] == "out_of_scope":
         assert case["role"] in provenance.applicability
+        actor = case["role"].replace("-", " ")
+        assert case["input"].lower().startswith((f"a {actor} ", f"an {actor} "))
         intent = entry.body.split("## Intent\n\n", 1)[1].split("\n\n##", 1)[0]
         assert case["scope_evidence"] == intent
         assert case["expected_policy_ids"] == case["expected_evidence"] == []

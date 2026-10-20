@@ -121,7 +121,7 @@
     {
       "case_id": "test-fail-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "application-developer",
+      "role": "service-operator",
       "input": "A service operator corrects a static help heading; execution, rejection, effects, and recovery behavior stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -213,7 +213,7 @@
     {
       "case_id": "test-contract-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "application-developer",
+      "role": "library-maintainer",
       "input": "A library maintainer renames a private local variable; public inputs, outputs, errors, and caller behavior stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -399,7 +399,7 @@
     {
       "case_id": "api-error-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "api-producer",
+      "role": "api-consumer",
       "input": "An API consumer changes the spacing of successful scalar results in its local display; HTTP status and error handling stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -583,7 +583,7 @@
     {
       "case_id": "data-migrate-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "application-developer",
+      "role": "database-operator",
       "input": "A database operator tunes a read-only dashboard query without schema, data, migration, or application-version changes.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -857,7 +857,7 @@
     {
       "case_id": "be-config-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "application-developer",
+      "role": "service-operator",
       "input": "A service operator updates an incident contact name in a static guide; runtime settings, validation, and enabled integrations stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -1047,7 +1047,7 @@
     {
       "case_id": "rel-overload-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "application-developer",
+      "role": "service-operator",
       "input": "A service operator changes an incident dashboard title; request admission, resource use, quotas, and degradation stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -1335,7 +1335,7 @@
     {
       "case_id": "obs-readiness-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "application-developer",
+      "role": "service-operator",
       "input": "A service operator corrects spelling in an incident guide; readiness responses, metrics, probes, and alert rules stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -1433,7 +1433,7 @@
     {
       "case_id": "supply-build-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "build-maintainer",
+      "role": "release-operator",
       "input": "A release operator edits an unshipped meeting agenda; dependency inputs, toolchains, builds, and distributed artifacts stay unchanged.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
@@ -1527,7 +1527,7 @@
     {
       "case_id": "supply-provenance-001-out-of-scope",
       "kind": "out_of_scope",
-      "role": "build-maintainer",
+      "role": "artifact-consumer",
       "input": "An artifact consumer reorders local bookmark labels without downloading, trusting, verifying, or executing any artifact.",
       "expected_policy_ids": [],
       "out_of_scope_policy_ids": [
