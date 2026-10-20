@@ -79,7 +79,7 @@ def test_dependency_lock_digest_cant_be_substituted(tmp_path: Path) -> None:
     lock = tmp_path / "uv.lock"
     lock.write_text("version = 1\npackage = []\n")
     with pytest.raises(RuntimeError, match="digest differs"):
-        verifier.check_dependencies(lock, "sha256:" + "0" * 64)
+        verifier.check_dependencies(lock, "sha256:" + "0" * 64, tmp_path / "requirements.txt")
 
 
 def test_unreviewed_installed_version_fails_lock_verification(monkeypatch, tmp_path: Path) -> None:
@@ -93,6 +93,37 @@ def test_unreviewed_installed_version_fails_lock_verification(monkeypatch, tmp_p
         "distributions",
         lambda: [SimpleNamespace(metadata={"Name": "runtime_dep"}, version="2.0")],
     )
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("runtime-dep==1.0\n")
     digest = "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest()
     with pytest.raises(RuntimeError, match="runtime-dep==2.0"):
-        verifier.check_dependencies(lock, digest)
+        verifier.check_dependencies(lock, digest, requirements)
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_bootstrap_pip_uses_runtime_selection(monkeypatch, tmp_path: Path, selected: bool) -> None:
+    """Optional lock entries can't constrain an unselected bundled installer."""
+    import hashlib
+
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        'version = 1\n[[package]]\nname = "pip"\nversion = "26.0.1"\n'
+        '[[package]]\nname = "policynim"\nversion = "0.1.0"\n'
+    )
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("pip==26.0.1\n" if selected else "# base runtime\n")
+    monkeypatch.setattr(
+        verifier.importlib.metadata,
+        "distributions",
+        lambda: [
+            SimpleNamespace(metadata={"Name": "pip"}, version="24.0"),
+            SimpleNamespace(metadata={"Name": "policynim"}, version="0.1.0"),
+        ],
+    )
+    digest = "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest()
+    if selected:
+        with pytest.raises(RuntimeError, match="pip==24.0"):
+            verifier.check_dependencies(lock, digest, requirements)
+    else:
+        report = verifier.check_dependencies(lock, digest, requirements)
+        assert report["bootstrap_versions"] == {"pip": "24.0"}

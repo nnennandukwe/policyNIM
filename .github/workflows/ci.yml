@@ -133,6 +133,7 @@ jobs:
                   "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
                   "--revision", os.environ["GITHUB_SHA"],
                   "--lockfile", str(root / "uv.lock"),
+                  "--requirements", str(requirements),
                   "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
                   "--output", str(root / "package-evidence.json"),
               ], cwd=runtime, check=True)
