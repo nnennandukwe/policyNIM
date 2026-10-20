@@ -1,0 +1,45 @@
+name: Feature Request
+description: Propose a PolicyNIM workflow, CLI, MCP, docs, or release improvement.
+title: "[Feature]: "
+labels: ["type/feature", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PolicyNIM prioritizes verifiable agent workflows, fail-closed behavior,
+        and docs that match command output.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - CLI
+        - MCP
+        - Hosted beta
+        - Installability
+        - Runtime evidence
+        - Docs
+        - CI or release
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What developer or maintainer workflow is blocked or slow?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include example commands, MCP calls, or docs shape where useful.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: How should this be verified?
+      description: Name deterministic tests, `doctor`, MCP smoke, docs parity, or opt-in live gates.
+    validations:
+      required: true

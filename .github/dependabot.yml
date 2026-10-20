@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "surface/install-release"
+      - "surface/ci"
+      - "needs/codeowner-review"
+      - "status/needs-triage"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:30"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "surface/ci"
+      - "needs/codeowner-review"
+      - "status/needs-triage"

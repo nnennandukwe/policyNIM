@@ -69,8 +69,9 @@ def test_clean_close_retries_deferred_aliases_after_releasing_the_handle(
 
 
 @pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("active_slot", [False, True])
 def test_close_defers_without_raising_or_releasing_uncertain_ownership(
-    tmp_path: Path, completed: bool, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, completed: bool, active_slot: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An exclusive SQLite writer can't break shutdown or release an unverified active owner."""
     path = tmp_path / "auth.sqlite3"
@@ -82,6 +83,7 @@ def test_close_defers_without_raising_or_releasing_uncertain_ownership(
         daily_limit=5,
         principal_limit=1,
         global_limit=1,
+        active_slot=active_slot,
     )
     assert accepted.operation_id is not None
     if completed:
@@ -93,7 +95,7 @@ def test_close_defers_without_raising_or_releasing_uncertain_ownership(
         store.close()
         assert inspect_owner_lease(path, owner) == "live"
         writer.commit()
-    assert store.usage("caller").active == (0 if completed else 1)
+    assert store.usage("caller").active == (1 if active_slot and not completed else 0)
     if not completed:
         store.finish(accepted.operation_id, "completed")
     store.close()

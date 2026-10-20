@@ -268,7 +268,7 @@ Important hosted behavior:
 - `/mcp` returns:
   - `401 {"error":"Unauthorized."}` for missing, invalid, or revoked bearer tokens
   - `403 {"error":"Account suspended."}` for suspended self-serve accounts
-  - MCP tool error `quota_exceeded` when accepted-operation allowance is exhausted;
+  - MCP tool error `quota_exceeded` when reserved-work-unit allowance is exhausted;
     discovery remains usable, and the tool message gives the UTC reset time
 - hosted MCP logs emit one JSON object per line for auth rejects and tool calls,
   including `auth_result`, `tool_name`, `latency_ms`, and
@@ -383,23 +383,28 @@ measurements and shouldn't be added together as total latency.
 
 ## Principal operation limits
 
-Hosted authentication doesn't consume operation allowance. Accepted expensive work
-(search and preflight) charges once when its admission transaction
-commits, before providers start. Later provider failure, cancellation or process loss
-keeps that charge: upstream usage may already exist. Invalid credentials, missing
-scopes, saturation and exhausted allowance start no provider and add no charge.
-A cancelled/expired worker is rejected before reservation, and cancellation is
-checked again with the write-locked snapshot; neither check charges usage.
+Hosted authentication doesn't consume work-unit allowance. Interactive expensive
+work (search, preflight, compile and preflight evidence) reserves one unit when its
+admission transaction commits, before providers start. Durable evaluation work
+reserves its validated case/configuration weight before the job is queued; worker
+activation doesn't reserve another unit. Later provider failure, cancellation or
+process loss keeps the accepted charge. A rejected new acceptance adds no charge.
+Cancellation/deadline checks run again with the write-locked acceptance snapshot.
+Queued activation also rechecks authority, cancellation, deadline and active caps:
+rejection starts no provider and adds no units, while the prior reservation stays
+charged. Cancelling or expiring an already accepted queued job doesn't refund it.
 Initialization, discovery, public health, resources and job polling aren't expensive
-operations. Durable evaluation submission deduplication and worker integration belong
-to #101; polling or returning an existing submission must never create another charge.
+operations. Resources, review prompts, job inspection, results and cancellation
+reserve no units. Returning an existing durable submission reserves no additional
+units. Their local worker concurrency remains bounded. Durable evaluation integration
+is tracked in [#101](https://github.com/nnennandukwe/policyNIM/issues/101).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` | `10` | Global active work, held until worker cleanup finishes |
 | `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS_PER_PRINCIPAL` | `2` | Active work per authenticated issuer/subject |
-| `POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA` | `500` | Accepted operations per OAuth/operator principal per UTC day |
-| `POLICYNIM_BETA_DAILY_REQUEST_QUOTA` | `500` | Accepted operations per beta account per UTC day; historical name retained |
+| `POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA` | `500` | Reserved work units per OAuth/operator principal per UTC day |
+| `POLICYNIM_BETA_DAILY_REQUEST_QUOTA` | `500` | Reserved work units per beta account per UTC day; historical name retained |
 | `POLICYNIM_BETA_AUTH_DB_PATH` | `data/runtime/auth.sqlite3` | Durable hosted account and operation state, including OAuth-only usage |
 
 All numeric limits must be positive. Settings retain constructor, environment and
@@ -407,8 +412,12 @@ configured dotenv/default precedence. OAuth principal identity uses issuer plus
 subject, so switching clients doesn't reset usage. Beta identity uses the account,
 so key rotation doesn't reset it. Operator key replacement creates a new principal;
 operators must rotate keys deliberately and keep their aggregate provider budget.
-The portal's `accepted operations` count and remaining allowance use the new
-operation rows. Historical HTTP authentication counters remain preserved separately
+The portal's `reserved work units` count and remaining allowance sum the weights
+in operation rows. Interactive expensive operations reserve one unit each. A durable
+evaluation submission reserves one unit per validated case execution and selected
+configuration before it's queued. One job still counts as one accepted operation
+and uses one active slot while executing; provider attempts and token usage are
+separate measurements. Historical operation rows migrate to one unit each. Historical HTTP authentication counters remain preserved separately
 and aren't represented as provider work. This migration starts accepted-work usage
 from zero; it doesn't rewrite audit history.
 
@@ -418,7 +427,8 @@ admission: key rotation, revocation and suspension are checked again at admissio
 No token or raw task/policy content is stored in operation rows. Rows contain a
 hashed principal identifier, random operation ID, operation name, timestamps, local
 process ID and outcome. Outcomes are completed, failed, cancelled or interrupted;
-accepted rows remain active until cleanup. Provider token usage remains `unknown`
+accepted interactive rows remain active until cleanup. Queued evaluation reservations
+aren't active; their slot is acquired separately when the worker starts. Provider token usage remains `unknown`
 in this ledger; existing stage events report measured provider usage when supplied.
 Neither accepted-operation counts nor estimated usage imply financial billing.
 
@@ -491,3 +501,43 @@ only matching aliases older than one hour. This prevents pruning from racing wor
 startup. Quiesce admissions and drain or stop workers before taking a matching database
 and owner-directory backup. A database-only emergency restore can leave unknown owners;
 keep those reservations until an operator reconciles them.
+
+### Durable weighted evaluation acceptance
+
+`OperationAdmissionService.accept_work` commits the validated weight against the
+principal's UTC-day allowance. The job store invokes it after its duplicate,
+capacity and archive checks, before inserting the job row. These databases commit
+separately: if quota acceptance commits and job insertion fails, the acceptance
+remains charged and inactive. Retrying the same opaque key and request digest
+reuses its operation ID without charging again. Changed input under that key is
+rejected. An over-budget acceptance creates no queued job. The jobs store's stable
+identity namespaces keys across workspaces that share a quota database.
+
+`run_accepted` rechecks current authority, credentials, deadline and active limits,
+then acquires one execution slot without another daily charge. Cancellation,
+provider failure and process loss don't refund accepted units. A terminal acceptance
+can't execute again. Job recovery preserves completed case checkpoints and marks
+interrupted work for inspection; it doesn't blindly repeat provider requests.
+Internal terminal reconciliation uses the job's bound owner and operation identity,
+so expired or revoked credentials don't prevent accounting cleanup. Live execution
+can't be finalized by queued-job cleanup.
+
+The operation report keeps logical row counts, `reserved_work_units`,
+`inactive_accepted_operations` and observed active slots separate. Inactive acceptance
+isn't proof of a queued job: an interrupted submission can leave a reservation
+before job insertion. Actual queue depth comes from the jobs database.
+Reserved units include all
+retained accepted work, including terminal outcomes; they aren't provider-call or
+billing totals. The daily usage view sums only the current UTC day's units. The
+persisted latency sample measures acceptance through terminal accounting, including
+queue time for evaluation jobs.
+
+Keyed evaluation acceptance rows are permanent idempotency tombstones, matching
+the jobs store's permanent submission keys. The configured operation retention
+window still prunes unkeyed terminal interactive rows; it doesn't prune these
+keyed records or reset their historical charges. Operators must provision and
+monitor the persistent volume accordingly. Never delete quota tombstones while
+retaining jobs that can replay their keys. A failed terminal write pauses new work
+on that service until the operator inspects state and restarts it. Keep the quota
+database, jobs database and owner leases on the same persistent deployment volume;
+back up both databases with SQLite's online-backup API before operator recovery.
