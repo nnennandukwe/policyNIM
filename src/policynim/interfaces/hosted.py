@@ -36,6 +36,7 @@ def prepare_hosted_generation(settings: Settings, *, seed_dir: Path = _SEED_DIR)
         seed_dir / "generation.zip",
         expected_digest=checksum.decode("ascii").strip(),
         source_settings=settings,
+        expected_seed_id=settings.generation_id,
     )
     for warning in result.warnings:
         print(json.dumps({"status": "warning", "message": warning}), file=sys.stderr)
@@ -50,29 +51,28 @@ def main() -> int:
         prepare_hosted_generation(get_settings())
         phase = "process_exec"
         os.execvp("policynim", ["policynim", "mcp", "--transport", "streamable-http"])
-    except (PolicyNIMError, OSError, ValueError):
-        print(
-            json.dumps(
-                {
-                    "status": "error",
-                    "phase": phase,
-                    "message": (
-                        "Hosted startup couldn't validate or seed generation storage. "
-                        "Existing state is preserved. Check the volume, configuration, and "
-                        "image seed; run `policynim generation inspect`. For an interrupted "
-                        "first import, preserve the root and explicitly import a verified "
-                        "bundle before restarting."
-                    )
-                    if phase == "generation_storage"
-                    else (
-                        "Hosted MCP couldn't start after generation validation. "
-                        "The committed generation is preserved. Check the installed "
-                        "policynim command and executable permissions before restarting."
-                    ),
-                }
+    except (PolicyNIMError, OSError, ValueError) as error:
+        failure = {
+            "status": "error",
+            "phase": phase,
+            "message": (
+                "Hosted startup couldn't validate or seed generation storage. "
+                "Existing state is preserved. Check the volume, configuration, and "
+                "image seed; run `policynim generation inspect`. For an interrupted "
+                "first import, preserve the root and explicitly import a verified "
+                "bundle before restarting."
+            )
+            if phase == "generation_storage"
+            else (
+                "Hosted MCP couldn't start after generation validation. "
+                "The committed generation is preserved. Check the installed "
+                "policynim command and executable permissions before restarting."
             ),
-            file=sys.stderr,
-        )
+        }
+        if isinstance(error, GenerationError):
+            failure["generation_phase"] = error.phase
+            failure["message"] = str(error)[:2048]
+        print(json.dumps(failure), file=sys.stderr)
         return 1
     return 0
 

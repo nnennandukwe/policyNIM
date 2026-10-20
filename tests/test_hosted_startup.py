@@ -62,6 +62,23 @@ def test_start_preserves_explicit_operator_generation(
     assert (target.root / "active.json").read_bytes() == before
 
 
+@pytest.mark.parametrize("matches_seed", [True, False])
+def test_fresh_explicit_selection_is_checked_before_activation(
+    hosted_seed: HostedSeed, matches_seed: bool
+) -> None:
+    """A configured retained ID can't leave a different seed activated after failure."""
+    from policynim.interfaces.hosted import prepare_hosted_generation
+
+    settings, target, seed, image_id = hosted_seed
+    settings = settings.model_copy(update={"generation_id": image_id if matches_seed else "0" * 64})
+    if matches_seed:
+        assert prepare_hosted_generation(settings, seed_dir=seed) == image_id
+    else:
+        with pytest.raises(GenerationError):
+            prepare_hosted_generation(settings, seed_dir=seed)
+        assert not target.root.exists()
+
+
 @pytest.mark.parametrize("state", ["empty", "unowned", "corrupt_pointer", "missing_object"])
 def test_start_refuses_existing_incomplete_or_damaged_root(
     hosted_seed: HostedSeed, state: str
@@ -137,3 +154,44 @@ def test_entrypoint_failure_is_nonzero_and_redacts_private_details(
     assert "private-secret-sentinel" not in error
     assert "generation inspect" in error
     assert json.loads(error)["status"] == "error"
+
+
+@pytest.mark.parametrize(
+    "state,phase,needle",
+    [
+        ("checksum", "bootstrap", "image seed checksum isn't valid"),
+        ("unowned", "open", "isn't an owned generation store"),
+        ("pointer", "inspect", "activation pointer isn't valid"),
+    ],
+)
+def test_entrypoint_preserves_safe_generation_diagnosis(
+    hosted_seed: HostedSeed,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    state: str,
+    phase: str,
+    needle: str,
+) -> None:
+    """Actual checksum, ownership, and pointer failures keep their safe phase and detail."""
+    from policynim.interfaces import hosted
+
+    settings, target, seed, _ = hosted_seed
+    prepare = hosted.prepare_hosted_generation
+    if state == "checksum":
+        (seed / "generation.sha256").write_text("broken", encoding="ascii")
+    elif state == "unowned":
+        target.root.mkdir(parents=True)
+        (target.root / "private-notes.txt").write_text("private-note-sentinel")
+    else:
+        prepare(settings, seed_dir=seed)
+        (target.root / "active.json").write_text("broken", encoding="ascii")
+    monkeypatch.setattr(hosted, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        hosted, "prepare_hosted_generation", lambda current: prepare(current, seed_dir=seed)
+    )
+    monkeypatch.setattr(hosted.os, "execvp", lambda *args: pytest.fail("MCP mustn't start"))
+    assert hosted.main() == 1
+    error = json.loads(capsys.readouterr().err)
+    assert error["generation_phase"] == phase and needle in error["message"]
+    assert "private-note-sentinel" not in error["message"]
+    assert str(target.root) not in error["message"]
