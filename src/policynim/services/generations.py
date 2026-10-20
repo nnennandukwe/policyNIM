@@ -183,11 +183,29 @@ class GenerationSnapshot:
                 _remove_reader_marker(path, identity)
 
     def validate_read(self) -> None:
-        """Check the validated artifact identities without hashing corpus or index bytes."""
+        """Check identities and validate content when change stamps aren't available."""
         if self._lease is None or self._artifact_identity is None:
             raise GenerationError("read", "The pinned reader is closed; create a new service.")
-        if GenerationStore._artifact_token(self.directory) != self._artifact_identity:
-            raise GenerationError("read", "Pinned generation artifacts changed; inspect them.")
+        token = GenerationStore._artifact_token(self.directory)
+        unknown_stamp = False
+        for previous, current in zip(self._artifact_identity, token, strict=True):
+            if previous[:-1] != current[:-1] or (
+                previous[-1] is not None and current[-1] is not None and previous[-1] != current[-1]
+            ):
+                raise GenerationError("read", "Pinned generation artifacts changed; inspect them.")
+            unknown_stamp = unknown_stamp or previous[-1] is None or current[-1] is None
+        if unknown_stamp:
+            inspector = GenerationStore(
+                root=self.directory.parent.parent, embedding=self.manifest.embedding
+            )
+            inspector._inspect(
+                self.directory,
+                expected_id=self.generation_id,
+                expected_embedding=self.manifest.embedding,
+            )
+            if GenerationStore._artifact_token(self.directory) != token:
+                raise GenerationError("read", "Generation changed during content validation.")
+            self._artifact_identity = token
 
 
 def _remove_reader_marker(path: Path, identity: tuple[int, int] | None) -> None:
@@ -820,11 +838,13 @@ class GenerationStore:
                 "Check filesystem permissions and available storage before retrying.",
             ) from exc
 
-    def _execute(self, operation: Callable[[], PublicationResult]) -> PublicationResult:
+    def _execute(
+        self, operation: Callable[[], PublicationResult], *, initialize: bool = True
+    ) -> PublicationResult:
         """Preserve a committed result if publisher cleanup fails after activation."""
         result: PublicationResult | None = None
         try:
-            with self._writer(initialize=True):
+            with self._writer(initialize=initialize):
                 self._pointer()
                 result = operation()
                 try:
@@ -1173,7 +1193,7 @@ class GenerationStore:
                 )
             return self._activate(self._inspect_id(generation_id))
 
-        return self._execute(operation)
+        return self._execute(operation, initialize=False)
 
     def rollback(self, *, expected_active: str) -> PublicationResult:
         """Restore the previous generation against the operator's observed active ID."""
@@ -1189,7 +1209,7 @@ class GenerationStore:
                 raise GenerationError("rollback", "No complete previous generation is retained.")
             return self._activate(self._inspect_id(pointer.previous))
 
-        return self._execute(operation)
+        return self._execute(operation, initialize=False)
 
     def _has_readers(self, generation_id: str, warnings: list[str]) -> bool:
         """Probe unique kernel leases and remove only unlocked stale lease markers."""
@@ -1367,8 +1387,14 @@ class GenerationStore:
             if generation_id in protected:
                 result.kept.append(generation_id)
                 continue
-            self._inspect(snapshot.directory, expected_id=generation_id)
-            token = self._artifact_token(snapshot.directory)
+            try:
+                self._inspect(snapshot.directory, expected_id=generation_id)
+                token = self._artifact_token(snapshot.directory)
+            except ProviderError:
+                raise
+            except Exception as error:
+                result.warnings.append(self._retention_warning(snapshot.directory, error))
+                continue
             with self._locked():
                 if self._has_readers(generation_id, result.warnings):
                     result.kept.append(generation_id)
@@ -1379,11 +1405,15 @@ class GenerationStore:
                     )
                 trash = self.root / "trash" / (generation_id + "-" + uuid4().hex)
                 self._step("prune_rename")
-                if self._artifact_token(snapshot.directory) != token:
-                    raise GenerationError(
-                        "prune", "An object changed before retention; preserve and inspect it."
-                    )
-                snapshot.directory.rename(trash)
+                try:
+                    if self._artifact_token(snapshot.directory) != token:
+                        raise GenerationError(
+                            "prune", "An object changed before retention; preserve and inspect it."
+                        )
+                    snapshot.directory.rename(trash)
+                except (GenerationError, OSError) as error:
+                    result.warnings.append(self._retention_warning(snapshot.directory, error))
+                    continue
                 _sync_directory(self.root / "objects")
                 _sync_directory(trash.parent)
                 result.removed.append(generation_id)
