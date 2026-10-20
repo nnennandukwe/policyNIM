@@ -731,15 +731,58 @@ def test_concurrent_submissions_deduplicate_and_keep_owner_queue_bound(
         try:
             return service.submit(suite, idempotency_key=key, principal=principal())
         except EvaluationJobError as error:
-            assert error.code == "queue_full"
+            assert error.code in {"queue_full", "principal_busy"}
             return None
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         repeated = list(pool.map(submit, ["same-key"] * 6))
-    assert all(item is not None for item in repeated)
+    assert any(item is not None for item in repeated)
+    repeated = [submit("same-key") for _ in repeated]
     assert len({item.job_id for item in repeated if item is not None}) == 1
     with ThreadPoolExecutor(max_workers=6) as pool:
         bounded = list(pool.map(submit, [f"unique-{index}" for index in range(6)]))
     assert len([item for item in bounded if item is not None]) == 1
     assert service.store.aggregate_counts() == {"queued": 2}
+    assert not service.settings.beta_auth_db_path.exists()
+
+
+def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """A blocked capture rejects that owner's overlap while another principal can submit."""
+    from threading import Event, Thread, current_thread
+
+    from policynim.services.generations import GenerationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    entered, release = Event(), Event()
+    exported = GenerationStore.export_bundle
+
+    def blocked_capture(self, *args, **kwargs):
+        """Hold only the first owner's real export at its public archive boundary."""
+        if current_thread().name == "capturing-owner":
+            entered.set()
+            assert release.wait(5)
+        return exported(self, *args, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", blocked_capture)
+    accepted: list = []
+    thread = Thread(
+        name="capturing-owner",
+        target=lambda: accepted.append(
+            service.submit(suite, idempotency_key="first", principal=principal())
+        ),
+    )
+    thread.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(EvaluationJobError, match="principal_busy"):
+            service.submit(suite, idempotency_key="overlap", principal=principal())
+        another = service.submit(suite, idempotency_key="other", principal=principal("other"))
+        assert another.state == "queued"
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive() and len(accepted) == 1
+    assert service.submit(suite, idempotency_key="first", principal=principal()) == accepted[0]
     assert not service.settings.beta_auth_db_path.exists()

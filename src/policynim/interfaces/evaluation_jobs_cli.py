@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import sqlite3
 import time
 from pathlib import Path
 from typing import Annotated, TypeVar
@@ -45,7 +46,14 @@ def _service() -> EvaluationJobService:
 
 def _failure(error: Exception) -> None:
     """Keep local failures off stdout and return a nonzero command status."""
-    typer.echo(str(error), err=True)
+    message = (
+        "job_storage_unavailable: The job operation couldn't be confirmed. "
+        "Preserve storage and inspect its state after checking the volume. "
+        "Retry submissions with the same idempotency key."
+        if isinstance(error, sqlite3.Error)
+        else str(error)
+    )
+    typer.echo(message, err=True)
     raise typer.Exit(1) from error
 
 
@@ -96,7 +104,7 @@ def inspect_job(job_id: str) -> None:
         typer.echo(
             _service().inspect(job_id, principal=local_job_principal()).model_dump_json(indent=2)
         )
-    except (PolicyNIMError, OSError) as exc:
+    except (PolicyNIMError, OSError, sqlite3.Error) as exc:
         _failure(exc)
 
 
@@ -107,7 +115,7 @@ def cancel_job(job_id: str) -> None:
         typer.echo(
             _service().cancel(job_id, principal=local_job_principal()).model_dump_json(indent=2)
         )
-    except (PolicyNIMError, OSError) as exc:
+    except (PolicyNIMError, OSError, sqlite3.Error) as exc:
         _failure(exc)
 
 
@@ -118,7 +126,7 @@ def job_result(job_id: str) -> None:
         typer.echo(
             _service().result(job_id, principal=local_job_principal()).model_dump_json(indent=2)
         )
-    except (PolicyNIMError, OSError) as exc:
+    except (PolicyNIMError, OSError, sqlite3.Error) as exc:
         _failure(exc)
 
 
@@ -146,7 +154,7 @@ def run_worker(
             time.sleep(1)
     except KeyboardInterrupt:
         return
-    except (PolicyNIMError, OSError) as exc:
+    except (PolicyNIMError, OSError, sqlite3.Error) as exc:
         _failure(exc)
     finally:
         if worker is not None:
@@ -159,5 +167,5 @@ def prune_jobs() -> None:
     try:
         count = _service().store.purge_expired()
         typer.echo('{"expired_reports_removed":' + str(count) + "}")
-    except (PolicyNIMError, OSError) as exc:
+    except (PolicyNIMError, OSError, sqlite3.Error) as exc:
         _failure(exc)

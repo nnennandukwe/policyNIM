@@ -35,7 +35,7 @@ MCP results reference `policynim://evaluation-jobs/{job_id}/report` and numbered
 
 ## Bounds and usage
 
-The default queue accepts at most eight nonterminal jobs globally and two per owner. One kernel-locked worker processes one job at a time per database. Queue rejection doesn't start provider work. The worker uses the shared principal admission service; duplicate submissions and polling don't consume expensive-work allowances.
+The default queue accepts at most eight nonterminal jobs globally and two per owner. One kernel-locked worker processes one job at a time per database. Queue rejection doesn't start provider work. A nonblocking kernel lock bounds generation archive capture to one concurrent submission per principal, including across processes. Overlapping captures return `principal_busy`; retry with the same key after the first capture finishes. Already accepted duplicates return their existing handle before capture. The worker uses the shared principal admission service; duplicate submissions and polling don't consume expensive-work allowances.
 
 Default limits are 100 cases, 3,600 seconds, 512 provider attempts and seven days of report retention. The CLI can set up to 1,000 cases, 86,400 seconds, 10,000 attempts and 30 days of retention. Hosted MCP restricts submission to at most 3,600 seconds and 512 attempts. Suite JSON is limited to 1 MiB. The deadline starts when the job's accepted, including queue time, and survives restart. Each provider attempt, including retries, reserves its budget durably before dispatch. Cancellation, deadline and call-budget checks run before the next provider stage.
 

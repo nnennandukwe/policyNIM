@@ -200,36 +200,54 @@ class EvaluationJobService:
         existing = self.store.find_submission(owner, idempotency_key, request_digest)
         if existing is not None:
             return existing
-        self.store.ensure_capacity(owner)
-        generation_store = GenerationStore(
-            root=resolve_runtime_path(self.settings.generations_dir),
-            embedding=EmbeddingIdentity(
-                model=configuration.nvidia_embed_model, endpoint=configuration.nvidia_base_url
-            ),
+        capture_lock = self.store.path.with_name(
+            self.store.path.name + "." + owner + ".submit.lock"
         )
-        with generation_store.pin(self.settings.generation_id) as snapshot:
-            validate_suite_generation(suite, snapshot)
-            with TemporaryDirectory(prefix="job-capture-", dir=self.store.path.parent) as directory:
-                path = Path(directory) / "generation.zip"
-                digest = generation_store.export_bundle(path, snapshot.generation_id)
-                archive = path.read_bytes()
-            captured = EvaluationJobSnapshot(
-                generation_id=snapshot.generation_id,
-                generation_archive_digest=digest,
-                suite_digest=payload_digest(suite.model_dump(mode="json")),
-                configuration_digest=payload_digest(configuration.model_dump(mode="json")),
-                suite=suite,
-                configuration=configuration,
-                authorization=_authorization(principal),
-                limits=limits,
+        descriptor = os.open(
+            capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+        )
+        os.close(descriptor)
+        with try_exclusive_file_lock(capture_lock) as acquired:
+            if not acquired:
+                raise EvaluationJobError(
+                    "principal_busy: Another submission is capturing this principal's inputs. "
+                    "Retry later with the same idempotency key."
+                )
+            existing = self.store.find_submission(owner, idempotency_key, request_digest)
+            if existing is not None:
+                return existing
+            self.store.ensure_capacity(owner)
+            generation_store = GenerationStore(
+                root=resolve_runtime_path(self.settings.generations_dir),
+                embedding=EmbeddingIdentity(
+                    model=configuration.nvidia_embed_model, endpoint=configuration.nvidia_base_url
+                ),
             )
-        return self.store.submit(
-            owner_id=owner,
-            idempotency_key=idempotency_key,
-            request_digest=request_digest,
-            snapshot=captured,
-            archive=archive,
-        )
+            with generation_store.pin(self.settings.generation_id) as snapshot:
+                validate_suite_generation(suite, snapshot)
+                with TemporaryDirectory(
+                    prefix="job-capture-", dir=self.store.path.parent
+                ) as directory:
+                    path = Path(directory) / "generation.zip"
+                    digest = generation_store.export_bundle(path, snapshot.generation_id)
+                    archive = path.read_bytes()
+                captured = EvaluationJobSnapshot(
+                    generation_id=snapshot.generation_id,
+                    generation_archive_digest=digest,
+                    suite_digest=payload_digest(suite.model_dump(mode="json")),
+                    configuration_digest=payload_digest(configuration.model_dump(mode="json")),
+                    suite=suite,
+                    configuration=configuration,
+                    authorization=_authorization(principal),
+                    limits=limits,
+                )
+            return self.store.submit(
+                owner_id=owner,
+                idempotency_key=idempotency_key,
+                request_digest=request_digest,
+                snapshot=captured,
+                archive=archive,
+            )
 
     @_job_storage_boundary
     def inspect(self, job_id: str, *, principal: AuthenticatedPrincipal) -> EvaluationJobInfo:
@@ -329,6 +347,7 @@ class EvaluationJobWorker:
                 _LOG.error("Evaluation worker needs attention: %s", type(exc).__name__)
                 self._stop.wait(1)
 
+    @_job_storage_boundary
     def run_once(self) -> EvaluationJobInfo | None:
         """Execute at most one accepted job while holding the stable worker kernel lock."""
         with try_exclusive_file_lock(self.lock_path) as acquired:

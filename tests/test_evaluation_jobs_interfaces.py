@@ -241,3 +241,32 @@ def test_authenticated_http_job_survives_disconnect_and_retains_owner_reports(
 
     asyncio.run(exercise())
     assert calls == ["case-one", "closed"]
+
+
+@pytest.mark.parametrize("arguments", [["worker", "--once"], ["prune"]])
+def test_cli_sqlite_lock_is_a_controlled_recoverable_failure(
+    job_context, monkeypatch, arguments: list[str]
+) -> None:
+    """Actual SQLite write contention returns a nonzero recovery message without traceback."""
+    import sqlite3
+
+    service, suite, _ = job_context
+    accepted = service.submit(suite, idempotency_key="locked-cli", principal=principal())
+    monkeypatch.setattr(cli_module, "_service", lambda: service)
+    monkeypatch.setattr(cli_module, "local_job_principal", principal)
+    connect = service.store._connect
+
+    def bounded_connection():
+        """Shorten only SQLite's wait in this real lock-contention regression."""
+        connection = connect()
+        connection.execute("PRAGMA busy_timeout=10")
+        return connection
+
+    monkeypatch.setattr(service.store, "_connect", bounded_connection)
+    with sqlite3.connect(service.store.path) as competing:
+        competing.execute("BEGIN IMMEDIATE")
+        result = CliRunner().invoke(app, ["eval-jobs", *arguments])
+    assert result.exit_code == 1
+    assert "job_storage_unavailable" in result.output and "Preserve storage" in result.output
+    assert "Traceback" not in result.output and str(service.store.path) not in result.output
+    assert service.inspect(accepted.job_id, principal=principal()).state == "queued"
