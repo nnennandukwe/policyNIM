@@ -298,6 +298,55 @@ def test_same_dimension_other_model_is_rejected(tmp_path: Path) -> None:
         wrong.pin()
 
 
+@pytest.mark.parametrize("change", ["model", "endpoint"])
+def test_retained_source_reader_uses_sealed_identity_without_weakening_retrieval(
+    tmp_path: Path, change: str
+) -> None:
+    """Historical source evidence stays readable after current embedding settings change."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    published = store.migrate(settings, index_path=index, rules_path=rules)
+    changed = identity.model_copy(
+        update={change: "different-model" if change == "model" else "https://new.invalid/v1"}
+    )
+    reader = GenerationStore(root=store.root, embedding=changed)
+    with pytest.raises(GenerationError):
+        reader.pin(published.generation_id)
+    with reader.pin_retained(published.generation_id) as retained:
+        assert retained.manifest.embedding == identity
+        assert retained.generation_id == published.generation_id
+        assert retained.documents
+        retained.validate_read()
+        assert settings.corpus_dir is not None
+        member = settings.corpus_dir / "A.md"
+        for suffix in ("second", "third"):
+            member.write_text(member.read_text() + f"\n{suffix}\n")
+            store.build(settings, MockEmbedder())
+        assert published.generation_id in store.prune(keep_recent=0).kept
+        retained.validate_read()
+    with pytest.raises(GenerationError):
+        reader.pin(published.generation_id)
+    assert published.generation_id in store.prune(keep_recent=0).removed
+
+
+@pytest.mark.parametrize("artifact", ["manifest.json", "catalog.json"])
+def test_retained_source_reader_rejects_changed_artifacts(tmp_path: Path, artifact: str) -> None:
+    """Reading historical sources never skips manifest or artifact-integrity validation."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    published = store.migrate(settings, index_path=index, rules_path=rules)
+    with store.pin_retained(published.generation_id) as snapshot:
+        path = snapshot.directory / artifact
+    path.write_bytes(path.read_bytes() + b" ")
+    with pytest.raises(GenerationError):
+        store.pin_retained(published.generation_id)
+    assert not list((store.root / "leases" / published.generation_id).glob("*.lock"))
+
+
 def test_dangling_object_entry_rejects_before_stage_installation(tmp_path: Path) -> None:
     """Unexpected names stay preserved, and failed activation leaves no ownerless stage."""
     import os
@@ -882,6 +931,159 @@ def test_initialization_failure_is_retryable_without_partial_activation(
     store = GenerationStore(root=root, embedding=identity)
     result = store.migrate(settings, index_path=index, rules_path=rules)
     assert store.inspect().generation_id == result.generation_id
+
+
+@pytest.mark.parametrize("boundary", ["owner_write", "owner_flush", "owner_link"])
+def test_bootstrap_process_exit_can_resume_without_deleting_unknown_data(
+    tmp_path: Path, boundary: str
+) -> None:
+    """A killed first publisher can recover its reserved incomplete owner record."""
+    import subprocess
+    import sys
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    root = tmp_path / "generations"
+    script = """
+import os,sys
+from pathlib import Path
+sys.path.insert(0,"tests")
+from test_ingest_service import MockEmbedder
+from policynim.services.generations import GenerationStore
+from policynim.settings import Settings
+from policynim.types import EmbeddingIdentity
+def terminate(point):
+    "Terminate the real publisher at the selected bootstrap boundary."
+    if point == sys.argv[3]: os._exit(73)
+settings=Settings(_env_file=None,corpus_dir=Path(sys.argv[2]),
+    nvidia_embed_model="test-embed",nvidia_base_url="https://example.invalid/v1")
+GenerationStore(root=Path(sys.argv[1]),embedding=EmbeddingIdentity(
+    model=settings.nvidia_embed_model,endpoint=settings.nvidia_base_url),
+    fault=terminate).build(settings,MockEmbedder())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(root), str(settings.corpus_dir), boundary],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 73, result.stderr
+    assert not (root / "active.json").exists()
+    assert list(root.glob(".owner-*.tmp"))
+    store = GenerationStore(root=root, embedding=identity)
+    published = store.migrate(settings, index_path=index, rules_path=rules)
+    assert store.inspect().generation_id == published.generation_id
+    assert not list(root.glob(".owner-*.tmp"))
+
+
+@pytest.mark.parametrize("boundary", ["stage_owner_write", "trash_owner_write"])
+def test_interrupted_owner_markers_recover_through_public_prune(
+    tmp_path: Path, boundary: str
+) -> None:
+    """Pruning retries an interrupted marker only when its surrounding state proves ownership."""
+    import subprocess
+    import sys
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    root = tmp_path / "generations"
+    store = GenerationStore(root=root, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    assert settings.corpus_dir is not None
+    member = settings.corpus_dir / "A.md"
+    for suffix in ("second", "third"):
+        member.write_text(member.read_text() + f"\n{suffix}\n")
+        store.build(settings, MockEmbedder())
+    active = (root / "active.json").read_bytes()
+    script = """
+import os,sys
+from pathlib import Path
+sys.path.insert(0,"tests")
+from test_ingest_service import MockEmbedder
+from policynim.services.generations import GenerationStore
+from policynim.settings import Settings
+from policynim.types import EmbeddingIdentity
+def terminate(point):
+    "Terminate the process after a reserved marker exists but before its write."
+    if point == sys.argv[3]: os._exit(73)
+settings=Settings(_env_file=None,corpus_dir=Path(sys.argv[2]),
+    nvidia_embed_model="test-embed",nvidia_base_url="https://example.invalid/v1")
+store=GenerationStore(root=Path(sys.argv[1]),embedding=EmbeddingIdentity(
+    model=settings.nvidia_embed_model,endpoint=settings.nvidia_base_url),fault=terminate)
+if sys.argv[3].startswith("stage_"): store.build(settings,MockEmbedder())
+else: store.prune(keep_recent=0)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(root), str(settings.corpus_dir), boundary],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 73, result.stderr
+    assert (root / "active.json").read_bytes() == active
+    assert not store.prune(keep_recent=0).warnings
+    assert not list((root / "staging").iterdir())
+    assert not list((root / "trash").iterdir())
+
+
+def test_malformed_queued_sources_retain_their_validation_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source changed while waiting must report its source error before provider work."""
+    from contextlib import contextmanager
+
+    from policynim.errors import InvalidPolicyDocumentError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    assert settings.corpus_dir is not None
+    member = settings.corpus_dir / "A.md"
+    original = member.read_text()
+    pointer = (store.root / "active.json").read_bytes()
+    writer = store._writer
+
+    @contextmanager
+    def corrupt_selection(*, initialize: bool = False):
+        """Make an initially valid source malformed after writer acquisition."""
+        with writer(initialize=initialize):
+            member.write_text("---\npolicy_id: A\nunknown_key: true\n---\n# Broken\n")
+            yield
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_writer", corrupt_selection)
+        with pytest.raises(InvalidPolicyDocumentError, match="unsupported frontmatter keys"):
+            store.build(settings, MockEmbedder())
+    assert (store.root / "active.json").read_bytes() == pointer
+    assert not list((store.root / "staging").iterdir())
+    member.write_text(original)
+    assert store.build(settings, MockEmbedder()).generation_id == store.inspect().generation_id
+
+
+@pytest.mark.parametrize("kind", ["bootstrap_unknown", "stage_unknown", "stage_partial_with_data"])
+def test_marker_recovery_preserves_unrecognized_state(tmp_path: Path, kind: str) -> None:
+    """Reserved marker names can't authorize deleting unrelated bytes."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    root = tmp_path / "generations"
+    store = GenerationStore(root=root, embedding=identity)
+    if kind == "bootstrap_unknown":
+        root.mkdir()
+        record = root / (".owner-" + "a" * 32 + ".tmp")
+        record.write_bytes(b"unrecognized owner data")
+        with pytest.raises(GenerationError):
+            store.migrate(settings, index_path=index, rules_path=rules)
+        assert record.read_bytes() == b"unrecognized owner data"
+        assert not (root / "owner.json").exists()
+        return
+    store.migrate(settings, index_path=index, rules_path=rules)
+    stage = root / "staging/build-abcdefgh"
+    stage.mkdir()
+    (stage / ".owner").write_bytes(b"unknown" if kind == "stage_unknown" else b"")
+    if kind == "stage_partial_with_data":
+        (stage / "snapshot.json").write_bytes(b"preserve this unowned data")
+    before = {entry.name: entry.read_bytes() for entry in stage.iterdir()}
+    assert store.prune(keep_recent=0).warnings
+    assert {entry.name: entry.read_bytes() for entry in stage.iterdir()} == before
 
 
 @pytest.mark.parametrize(
