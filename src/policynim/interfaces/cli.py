@@ -77,7 +77,12 @@ _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
 _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
-_EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
+_EXPECTED_MCP_TOOLS = (
+    "policy_preflight",
+    "policy_search",
+    "policy_compile",
+    "policy_preflight_evidence",
+)
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
 _WINDOWS_PATH_TOKEN_RE = re.compile(
     r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
@@ -1744,7 +1749,8 @@ def _build_quickstart_payload(
         "agent_workflows": _quickstart_agent_workflows(),
         "next_steps": [
             "Load the generated config in your MCP client.",
-            "Ask the client to list `policy_preflight` and `policy_search`.",
+            "Ask the client to list `policy_search`, `policy_compile`, "
+            "`policy_preflight` and `policy_preflight_evidence`.",
         ],
         "safety": [
             "This command does not launch the MCP server.",

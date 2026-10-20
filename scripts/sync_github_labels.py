@@ -105,6 +105,15 @@ def load_label_taxonomy(path: Path) -> list[dict[str, str]]:
         labels.append(_validate_label(current))
     if not labels:
         raise LabelSyncError(f"No labels found in {path}.")
+    names: set[str] = set()
+    for label in labels:
+        name_identity = label["name"].casefold()
+        if name_identity in names:
+            raise LabelSyncError(
+                f"Duplicate label name {label['name']!r}. "
+                "Remove repeated entries before previewing or applying the taxonomy."
+            )
+        names.add(name_identity)
     return labels
 
 
@@ -113,10 +122,10 @@ def plan_label_sync(
     existing: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     """Return deterministic create/update/noop actions for desired labels."""
-    existing_by_name = {label["name"]: label for label in existing}
+    existing_by_name = {label["name"].casefold(): label for label in existing}
     plan: list[dict[str, Any]] = []
     for label in desired:
-        current = existing_by_name.get(label["name"])
+        current = existing_by_name.get(label["name"].casefold())
         if current is None:
             plan.append({"action": "create", **label})
             continue

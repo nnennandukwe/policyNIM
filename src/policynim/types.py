@@ -551,6 +551,7 @@ class Citation(StrictModel):
     section: str
     lines: str
     chunk_id: str
+    resource_uri: str | None = None
 
 
 class SearchRequest(StrictModel):
@@ -908,6 +909,7 @@ class GeneratedPreflightDraft(StrictModel):
 class PreflightResult(StrictModel):
     """Preflight response shared by CLI and MCP."""
 
+    run_id: str | None = None
     generation_id: GenerationID | None = None
 
     task: str
@@ -1103,6 +1105,7 @@ class PolicyEvidenceTraceConformanceCheck(StrictModel):
 class PolicyEvidenceTrace(StrictModel):
     """Replay-free evidence trace for one policy-conditioned preflight run."""
 
+    run_id: str | None = None
     generation_id: GenerationID | None = None
 
     task: str

@@ -406,6 +406,28 @@ class SQLiteVecIndexStore(IndexStore):
             ).fetchall()
         return [_policy_chunk_from_row(row) for row in rows]
 
+    def list_chunk_ids(self) -> list[str]:
+        """Read only logical identifiers when building a bounded resource-key lookup cache."""
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            return [row[0] for row in conn.execute(f"SELECT chunk_id FROM {_CHUNKS_TABLE}")]
+
+    def get_chunk(self, chunk_id: str) -> PolicyChunk | None:
+        """Use the unique chunk-ID index and materialize only the requested evidence row."""
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                f"""
+                SELECT chunk_id, path, section, lines, text, policy_id, title, doc_type,
+                       domain, tags_json, grounded_in_json,
+                       (SELECT value FROM {_METADATA_TABLE}
+                        WHERE key = 'provenance:' || {_CHUNKS_TABLE}.policy_id)
+                           AS policy_provenance_json
+                FROM {_CHUNKS_TABLE} WHERE chunk_id = ?
+                """,
+                (chunk_id,),
+            ).fetchone()
+        return _policy_chunk_from_row(row) if row is not None else None
+
     def search(
         self,
         query_embedding: Sequence[float],
