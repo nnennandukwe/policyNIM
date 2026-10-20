@@ -759,7 +759,12 @@ def test_run_server_surfaces_streamable_http_port_conflicts(monkeypatch) -> None
 
 def test_mcp_registers_both_public_tools() -> None:
     tools = asyncio.run(mcp_module.mcp.list_tools())
-    assert {tool.name for tool in tools} == {"policy_preflight", "policy_search"}
+    assert {tool.name for tool in tools} == {
+        "policy_preflight",
+        "policy_search",
+        "policy_compile",
+        "policy_preflight_evidence",
+    }
 
 
 def test_mcp_describes_typed_results_and_bounded_inputs() -> None:
@@ -856,7 +861,7 @@ def test_mcp_rejects_eleventh_operation_before_provider_construction(monkeypatch
         try:
             await _wait_until_set(all_started)
             assert all(thread != get_ident() for thread in factory_threads)
-            assert len(await asyncio.wait_for(server.list_tools(), timeout=0.5)) == 2
+            assert len(await asyncio.wait_for(server.list_tools(), timeout=0.5)) == 4
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://localhost"
             ) as client:

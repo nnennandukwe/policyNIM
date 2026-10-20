@@ -2289,6 +2289,7 @@ def test_producers_reject_sources_inside_an_owned_store(tmp_path: Path, producer
     calls: list[str] = []
 
     def factory():
+        """Record provider construction if nested-source admission reaches embedding."""
         calls.append("provider")
         return MockEmbedder()
 
@@ -2321,6 +2322,7 @@ def test_build_rejects_profile_inside_an_owned_store(tmp_path: Path) -> None:
     calls: list[str] = []
 
     def factory():
+        """Record provider construction if nested-profile admission reaches embedding."""
         calls.append("provider")
         return MockEmbedder()
 
@@ -2416,6 +2418,7 @@ def test_failed_pin_preserves_unexpected_lease_directory_contents(tmp_path: Path
     note = store.root / "leases" / active / "operator-note"
 
     def fault(step: str) -> None:
+        """Preserve an operator note before rejecting cold generation validation."""
         if step == "inspect":
             note.write_bytes(b"preserve this recovery note")
             raise GenerationError("inspect", "Injected rejection.")
@@ -2448,9 +2451,11 @@ def test_http_health_reuses_validation_outside_publication_lock(
     workers: list[Thread] = []
 
     def inspect(self, *args, **kwargs):
+        """Probe pointer admission while cold generation validation is running."""
         admitted = Event()
 
         def read_pointer():
+            """Signal a successful pointer read from the concurrent worker."""
             store.read_activation()
             admitted.set()
 
@@ -2461,6 +2466,7 @@ def test_http_health_reuses_validation_outside_publication_lock(
         return original_inspect(self, *args, **kwargs)
 
     def read(path: Path, **kwargs):
+        """Count sealed artifact reads to verify validation cache reuse."""
         if path.parent.name == active:
             reads.append(path.name)
         return original_read(path, **kwargs)
@@ -2495,6 +2501,7 @@ def test_failed_pin_cleans_created_directory_after_budget_rejection(
     budget = OperationBudget(seconds=1, clock=lambda: now[0])
 
     def fault(step: str) -> None:
+        """Reject cold validation through the selected deadline or cancellation path."""
         if step == "inspect":
             if failure == "deadline":
                 now[0] = 2.0
@@ -2527,6 +2534,7 @@ def test_resumed_trash_cleanup_rejects_self_consistent_owner_tampering(
         store.build(settings, MockEmbedder())
 
     def fault(step: str) -> None:
+        """Interrupt retention before deleting the first catalog artifact."""
         if step == "trash_remove_catalog.json":
             raise OSError("Injected first-unlink interruption.")
 
@@ -2564,6 +2572,7 @@ def test_interrupted_trash_retains_manifest_until_last_data_removal(
         store.build(settings, MockEmbedder())
 
     def fault(step: str) -> None:
+        """Interrupt retention at the selected data-deletion boundary."""
         if step == boundary:
             raise OSError("Injected partial-unlink interruption.")
 
@@ -2571,6 +2580,7 @@ def test_interrupted_trash_retains_manifest_until_last_data_removal(
     interrupted_owner = [False]
 
     def unlink(path: Path, *args, **kwargs):
+        """Interrupt the final trash ownership-record unlink exactly once."""
         if (
             boundary == "owner_unlink"
             and path.name == ".owner"

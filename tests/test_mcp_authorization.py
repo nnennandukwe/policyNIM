@@ -514,7 +514,7 @@ def test_real_http_client_authenticates_every_request(
             headers["Authorization"] = "Bearer external-fixture-token"
             accepted = client.post("/mcp", json=message, headers=headers)
             assert accepted.status_code == 200
-            assert len(accepted.json()["result"]["tools"]) == 2
+            assert len(accepted.json()["result"]["tools"]) == 4
             headers["Mcp-Method"] = "tools/call"
             headers["Mcp-Name"] = "policy_search"
             call = {

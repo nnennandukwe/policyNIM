@@ -18,6 +18,9 @@ operations into separate pages so the root README can stay short.
 - [release.md](release.md): package, GitHub release, PyPI, and standalone
   installer release checklist
 
+- [Grounded MCP guidance](grounded-mcp.md): compiled constraints, evidence traces,
+  immutable policy resources and the review prompt.
+
 ## Examples
 
 - [../examples/codex/README.md](../examples/codex/README.md): hosted-first Codex setup
