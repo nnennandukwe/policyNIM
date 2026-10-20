@@ -17,12 +17,15 @@ client version and observed deployment identity.
 | Windows wheel | Windows Server 2022, Python 3.11/3.12 | Require the same final-revision package jobs with explicit UTF-8 decoding. |
 | Docker | `Dockerfile` and `Dockerfile.railway` | Require offline build/import/startup checks without provider credentials. |
 
-SDK checks also call `policy_search` with an invalid argument and require rejection
-without provider work. These checks don't prove that a coding client can complete a
-user workflow. The package verifier's current two-tool checks cover
-`policy_search` and `policy_preflight`; #100 and #101 own the additional tools,
-versioned resources and durable-job operations. Those additions need updated
-installed-client checks on the integrated release.
+SDK checks call `policy_search` with an invalid `top_k` and require the range
+validation message without provider work. Installed stdio checks discover four
+guidance tools: `policy_search`, `policy_preflight`, `policy_compile` and
+`policy_preflight_evidence`. Authenticated HTTP checks discover those tools plus
+`eval_submit`, `eval_inspect`, `eval_cancel` and `eval_result`; they also require
+missing-token rejection. Resource templates, prompts and scope authorization
+have separate integration tests. These SDK checks don't
+prove that a coding client can complete a user workflow or that provider-backed
+jobs succeed in production.
 
 ## Coding clients and authorization
 

@@ -35,6 +35,7 @@ from policynim.operations import (
     emit_operation_event,
     operation_correlation,
     operation_scope,
+    safe_exception_diagnostics,
 )
 from policynim.providers.lifecycle import NVIDIAClients, borrow_clients
 from policynim.runtime_paths import resolve_runtime_path
@@ -55,7 +56,6 @@ from policynim.storage.evaluation_jobs import (
 from policynim.storage.file_lock import try_exclusive_file_lock
 from policynim.types import CompileRequest, EmbeddingIdentity, EvalCaseResult, EvalSuite
 
-_LOG = logging.getLogger("policynim.jobs")
 _KEY_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -355,7 +355,12 @@ class EvaluationJobWorker:
                     self._stop.wait(0.5)
             except Exception as exc:
                 # No request, provider body, caller identity or source text is logged.
-                _LOG.error("Evaluation worker needs attention: %s", type(exc).__name__)
+                emit_operation_event(
+                    level=logging.ERROR,
+                    event="evaluation.worker_failure",
+                    phase="worker_loop",
+                    **safe_exception_diagnostics(exc),
+                )
                 self._stop.wait(1)
 
     def require_admission_ready(self) -> None:

@@ -347,6 +347,7 @@ def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context)
     rejected = suite.model_copy(update={"expected_catalog_digest": "sha256:" + "0" * 64})
 
     async def exercise() -> None:
+        """Reject mismatched captured inputs through actual SDK dispatch."""
         async with Client(server) as client:
             result = await client.call_tool(
                 "eval_submit",

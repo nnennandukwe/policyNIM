@@ -1,4 +1,4 @@
-"""Read-only operational summaries for the local hosted operator."""
+"""Operational summaries with read-only records and coordinated generation leases."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import errno
 import sqlite3
 
 from policynim.errors import GenerationError, PolicyNIMError
+from policynim.job_types import EvaluationJobError
 from policynim.operations import close_components
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.generations import GenerationStore
@@ -18,7 +19,7 @@ from policynim.types import EmbeddingIdentity
 
 
 def inspect_operational_report(settings: Settings) -> dict[str, object]:
-    """Inspect bounded aggregate evidence without creating state or calling providers."""
+    """Inspect records without providers; generation validation needs writable lease metadata."""
     try:
         report = OperationStore.report(resolve_runtime_path(settings.beta_auth_db_path))
     except (sqlite3.Error, OSError) as exc:
@@ -27,14 +28,15 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
             "No database was created or changed."
         ) from exc
     readiness, active_generation = _generation_readiness(settings)
+    telemetry_reason = None
     try:
         backlog = inspect_job_backlog(
             resolve_runtime_path(settings.eval_workspace_dir) / "jobs" / "jobs.sqlite3"
         )
-    except (sqlite3.Error, OSError) as exc:
-        raise PolicyNIMError(
-            "Job state couldn't be read. Preserve the evaluation workspace and check volume access."
-        ) from exc
+    except EvaluationJobError as exc:
+        backlog, telemetry_reason = None, exc.code
+    except (sqlite3.Error, OSError):
+        backlog, telemetry_reason = None, "job_store_unreadable"
     return {
         **report.model_dump(mode="json"),
         "index_state": readiness.state,
@@ -46,7 +48,14 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
         "global_active_limit": settings.mcp_max_concurrent_operations,
         "principal_active_limit": settings.mcp_max_concurrent_operations_per_principal,
         "provider_telemetry_source": "policynim.operations structured stage/attempt logs",
-        "job_telemetry_status": "available" if backlog is not None else "unavailable_no_job_store",
+        "job_telemetry_status": (
+            "unavailable"
+            if telemetry_reason
+            else "available"
+            if backlog is not None
+            else "unavailable_no_job_store"
+        ),
+        "job_telemetry_reason": telemetry_reason,
     }
 
 

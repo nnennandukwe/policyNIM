@@ -1192,3 +1192,40 @@ def test_delayed_quarantine_retains_damaged_inputs_for_the_accepted_retention_wi
     assert service.store.purge_expired() == 1
     assert service.inspect(accepted.job_id, principal=principal()).result_expired
     assert calls == []
+
+
+def test_background_worker_fault_has_safe_owned_location(generation, tmp_path, monkeypatch, caplog):
+    """Background maintenance faults retain a useful location without private exception text."""
+    import json
+    import logging
+    from threading import Event
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, _, _ = job_setup(generation, tmp_path)
+    worker = EvaluationJobWorker(service)
+    observed = Event()
+
+    def fail_purge():
+        """Raise at the real maintenance boundary after run_once finds no queued work."""
+        observed.set()
+        raise RuntimeError("private-task-bearer-path-sentinel")
+
+    monkeypatch.setattr(service.store, "purge_expired", fail_purge)
+    try:
+        with caplog.at_level(logging.ERROR):
+            worker.start()
+            assert observed.wait(5)
+            worker.close()
+        events = [
+            json.loads(record.message)
+            for record in caplog.records
+            if record.name == "policynim.operations"
+        ]
+        failure = next(event for event in events if event["event"] == "evaluation.worker_failure")
+        assert failure["exception_class"] == "RuntimeError"
+        assert any(frame["function"] == "_loop" for frame in failure["internal_frames"])
+        assert "private-task-bearer-path-sentinel" not in caplog.text
+        assert worker._thread is not None and not worker._thread.is_alive()
+    finally:
+        worker.close()

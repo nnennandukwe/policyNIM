@@ -659,3 +659,45 @@ def test_readonly_report_separates_live_crashed_and_unknown_ownership(tmp_path: 
     report = OperationStore.report(path)
     assert report.active_operations == report.unreconciled_operations == 0
     assert report.unknown_owner_operations == report.reserved_operations == 1
+
+
+@pytest.mark.parametrize("damage", ["legacy", "symlink", "corrupt"])
+def test_report_preserves_generation_when_job_store_is_unavailable(generation, tmp_path, damage):
+    """One damaged telemetry source can't hide independently verified generation readiness."""
+    settings, _, generation_id = generation
+    operations = OperationStore(tmp_path / "operator.sqlite3")
+    workspace = tmp_path / "evaluations"
+    path = workspace / "jobs" / "jobs.sqlite3"
+    path.parent.mkdir(parents=True)
+    if damage == "legacy":
+        with sqlite3.connect(path) as db:
+            db.execute("PRAGMA user_version=1")
+    elif damage == "symlink":
+        target = tmp_path / "private-target.sqlite3"
+        target.write_bytes(b"private-content")
+        path.symlink_to(target)
+    else:
+        path.write_bytes(b"private-corrupt-database")
+    before = path.read_bytes()
+    settings = settings.model_copy(
+        update={"beta_auth_db_path": operations.path, "eval_workspace_dir": workspace}
+    )
+    try:
+        report = inspect_operational_report(settings)
+        assert report["index_state"] == "ready"
+        assert report["active_generation"] == generation_id
+        assert report["job_backlog"] is None
+        assert report["job_telemetry_status"] == "unavailable"
+        assert (
+            report["job_telemetry_reason"]
+            == {
+                "legacy": "job_store_version",
+                "symlink": "job_store_invalid",
+                "corrupt": "job_store_unreadable",
+            }[damage]
+        )
+        assert path.read_bytes() == before
+        assert path.is_symlink() == (damage == "symlink")
+        assert "private" not in json.dumps(report)
+    finally:
+        operations.close()
