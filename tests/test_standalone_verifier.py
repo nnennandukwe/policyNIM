@@ -408,3 +408,56 @@ def test_stdio_failure_cant_leak_credential_suffix_across_capture_boundary(
         assert "safe-diagnostic-end-marker" in str(failure.value)
     else:
         assert "omitted" in str(failure.value)
+
+
+@pytest.mark.parametrize("artifact_kind", ["standalone", "wheel"])
+def test_verification_children_use_owned_home_without_changing_parent(
+    tmp_path, monkeypatch, artifact_kind
+):
+    """Installed verification can't merge a real user profile into its packaged-source check."""
+    command = tmp_path / "policynim"
+    command.write_bytes(b"launcher")
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_bytes(b"locked")
+    parent_home = os.environ.get("HOME")
+    parent_profile = os.environ.get("USERPROFILE")
+
+    class ReachedProbe(RuntimeError):
+        """Stop before any fixture provider or transport work."""
+
+    def inspect_child(arguments, *, env, cwd, **kwargs):
+        """Inspect the actual environment handed to the first child command."""
+        child_home = Path(env["HOME"])
+        assert child_home.is_relative_to(cwd) and child_home.is_dir()
+        assert env["USERPROFILE"] == str(child_home)
+        raise ReachedProbe("owned child environment observed")
+
+    monkeypatch.setattr(verifier.checks, "run_command", inspect_child)
+    monkeypatch.setattr(verifier.checks, "check_wheel", lambda *args: {})
+    monkeypatch.setattr(verifier.checks, "check_dependencies", lambda *args: {})
+    args = argparse.Namespace(
+        command=command,
+        wheel=tmp_path / "unused.whl",
+        requirements=tmp_path / "unused.txt",
+        lockfile=lockfile,
+        lock_digest="sha256:" + hashlib.sha256(b"locked").hexdigest(),
+        revision="a" * 40,
+        bundle_digest="sha256:" + "b" * 64,
+        expected_version="0.1.0",
+    )
+    with pytest.raises(ReachedProbe):
+        (verifier.verify if artifact_kind == "standalone" else verifier.checks.verify)(args)
+    assert os.environ.get("HOME") == parent_home
+    assert os.environ.get("USERPROFILE") == parent_profile
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not hasattr(os, "mkfifo"), reason="POSIX special-file contract."
+)
+def test_artifact_identity_rejects_real_fifo_without_reading_it(tmp_path: Path):
+    """A real FIFO can't disappear from the claimed complete artifact identity."""
+    command = tmp_path / "policynim"
+    command.write_bytes(b"launcher")
+    os.mkfifo(tmp_path / "special-entry")
+    with pytest.raises(RuntimeError, match="special file"):
+        verifier.artifact_identity(command)

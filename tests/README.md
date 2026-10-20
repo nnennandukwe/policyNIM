@@ -33,8 +33,8 @@ Current automated coverage includes:
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with
   mock-backed import-injected package modules; default CI doesn't import live optional
   NVIDIA eval packages
-- Optional NVIDIA Eval Launcher dependency resolution through
-  `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
+- Optional NVIDIA evaluation adapter dependency resolution through
+  `uv sync --extra nvidia-eval --group test --group dev`
 - Internal NeMo Guardrails output-rail wrapper coverage for lazy package
   gating, packaged assets, malformed rail output, blocked output, citation drift,
   regeneration context pass-through, and default factory isolation

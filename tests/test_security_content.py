@@ -29,7 +29,7 @@ def test_security_policy_has_reviewable_sources_and_paired_cases(policy_id: str)
     provenance = entry.policy.provenance
     assert provenance is not None
     assert provenance.content_digest == SUITE["changed_policy_revisions"][policy_id]
-    assert provenance.pack_version == "0.2.0"
+    assert provenance.pack_version == "0.3.0"
     assert provenance.grounding_kind == "adaptation"
     assert provenance.applicability
     assert entry.policy.grounded_in == [str(source.url) for source in provenance.sources]
@@ -132,7 +132,7 @@ def test_security_corpus_ingests_with_revisions_and_source_evidence(tmp_path: Pa
         runtime_rules_artifact_path=tmp_path / "rules.json",
     ) as service:
         result = service.run()
-    assert result.document_count == CATALOG.effective_count == 15
+    assert result.document_count == CATALOG.effective_count == 26
     assert result.chunk_count == len(CHUNKS)
     assert result.catalog_digest == CATALOG.digest
     assert store.inspect_readiness().state == "ready"

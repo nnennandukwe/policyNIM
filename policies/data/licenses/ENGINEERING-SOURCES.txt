@@ -1,0 +1,124 @@
+Engineering source references
+
+BE-LOG-001 and BE-CONFIG-001 retain their OWASP adaptation labels and recorded attribution and reuse terms. The other engineering policies are original PolicyNIM recommendations informed by the cited standards and publications. Source requirements, contextual recommendations, and PolicyNIM choices remain separately labeled; none claims source endorsement. Google SRE and AWS source prose isn't redistributed.
+
+SSDF: NIST SSDF 1.1 final
+URL: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf
+Revision: SP 800-218, February 2022
+Attribution: Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST
+Source terms: Not subject to copyright in the United States; see publication authority notice
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+SRE-TEST: Google SRE: Testing for Reliability
+URL: https://sre.google/sre-book/testing-reliability/
+Revision: Site Reliability Engineering, 2016, chapter 17
+Attribution: Alex Perry and Max Luebbe; edited by Diane Bates; Google
+Source terms: Online reading edition; no redistribution permission asserted
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+SRE-DATA: Google SRE: Data Integrity
+URL: https://sre.google/sre-book/data-integrity/
+Revision: Site Reliability Engineering, 2016, chapter 26
+Attribution: Raymond Blum and Rhandeev Singh; edited by Betsy Beyer; Google
+Source terms: Online reading edition; no redistribution permission asserted
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+SRE-OVERLOAD: Google SRE: Handling Overload
+URL: https://sre.google/sre-book/handling-overload/
+Revision: Site Reliability Engineering, 2016, chapter 21
+Attribution: Alejandro Forero Cuervo; edited by Sarah Chavis; Google
+Source terms: Online reading edition; no redistribution permission asserted
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+SRE-MONITOR: Google SRE: Monitoring Distributed Systems
+URL: https://sre.google/sre-book/monitoring-distributed-systems/
+Revision: Site Reliability Engineering, 2016, chapter 6
+Attribution: Rob Ewaschuk; edited by Betsy Beyer; Google
+Source terms: Online reading edition; no redistribution permission asserted
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+AWS-RETRY: AWS: Timeouts, retries, and backoff with jitter
+URL: https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter
+Revision: Published and last modified 2019-12-05
+Attribution: Marc Brooker; Amazon Web Services
+Source terms: Amazon Web Services copyright; cited commentary, no source text redistributed
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+HTTP: RFC 9110: HTTP Semantics
+URL: https://www.rfc-editor.org/rfc/rfc9110.html
+Revision: RFC 9110, June 2022
+Attribution: Roy Fielding, Mark Nottingham, Julian Reschke; IETF Trust, 2022
+Source terms: IETF Trust Legal Provisions / BCP 78; no RFC text or code copied
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+PROBLEM: RFC 9457: Problem Details for HTTP APIs
+URL: https://www.rfc-editor.org/rfc/rfc9457.html
+Revision: RFC 9457, July 2023
+Attribution: Mark Nottingham, Erik Wilde, Sanjay Dalal; IETF Trust, 2023
+Source terms: IETF Trust Legal Provisions / BCP 78; no RFC text or code copied
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+LINK: RFC 8288: Web Linking
+URL: https://datatracker.ietf.org/doc/html/rfc8288
+Revision: RFC 8288, October 2017
+Attribution: Mark Nottingham; IETF Trust, 2017
+Source terms: IETF Trust Legal Provisions / BCP 78; no RFC text or code copied
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+SEMVER: Semantic Versioning 2.0.0
+URL: https://semver.org/spec/v2.0.0.html
+Revision: 2.0.0
+Attribution: Tom Preston-Werner and SemVer contributors
+Source terms: CC-BY-3.0
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+POSTGRES: PostgreSQL 18: Transactions
+URL: https://www.postgresql.org/docs/18/tutorial-transactions.html
+Revision: PostgreSQL 18
+Attribution: PostgreSQL Global Development Group and The Regents of the University of California
+Source terms: PostgreSQL License; source legal notice linked
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+TRACE: W3C Trace Context Recommendation
+URL: https://www.w3.org/TR/2021/REC-trace-context-1-20211123/
+Revision: W3C Recommendation 2021-11-23
+Attribution: W3C Distributed Tracing Working Group, 2021
+Source terms: W3C permissive document license; source link retained
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+OTEL-LOG: OpenTelemetry stable Logs Data Model
+URL: https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md
+Revision: 3e4f2ff15933d70356cc18a9a96719b78d116233
+Attribution: OpenTelemetry authors; Cloud Native Computing Foundation
+Source terms: Apache-2.0
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+SLSA: SLSA 1.2: Verifying artifacts
+URL: https://slsa.dev/spec/v1.2/verifying-artifacts
+Revision: 1.2
+Attribution: SLSA contributors; The Linux Foundation
+Source terms: Community Specification License 1.0
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+OSPS: OpenSSF OSPS Baseline 2026.08.28
+URL: https://baseline.openssf.org/versions/2026-08-28
+Revision: 2026.08.28
+Attribution: OSPS Baseline contributors; a Series of LF Projects, LLC
+Source terms: Apache-2.0; repository LICENSE at fb138f9140a7dd5a5f6b4edff43599ae05759c68
+Changes: Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed.
+
+CS-LOG: OWASP Logging Cheat Sheet
+URL: https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md
+Revision: 72865b1e3b5754246a101778dc00b37f9c233373
+Attribution: OWASP Cheat Sheet Series contributors
+Source terms: CC-BY-SA-4.0
+Changes: PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim.
+
+CS-SECRET: OWASP Secrets Management Cheat Sheet
+URL: https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md
+Revision: 72865b1e3b5754246a101778dc00b37f9c233373
+Attribution: OWASP Cheat Sheet Series contributors
+Source terms: CC-BY-SA-4.0
+Changes: PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim.
+
+Reuse notices: https://trustee.ietf.org/license-info ; https://www.w3.org/copyright/document-license/ ; https://github.com/CommunitySpecification/1.0/blob/main/LICENSE.md ; https://semver.org/ ; https://github.com/ossf/security-baseline/blob/main/LICENSE ; https://www.postgresql.org/docs/18/legalnotice.html . No license for Google SRE or AWS prose is inferred from public availability.
