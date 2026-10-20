@@ -2825,6 +2825,7 @@ release = [
     { name = "pyinstaller" },
 ]
 test = [
+    { name = "jsonschema" },
     { name = "pytest" },
 ]
 
@@ -2864,7 +2865,10 @@ dev = [
     { name = "ruff", specifier = "==0.15.7" },
 ]
 release = [{ name = "pyinstaller", specifier = "==6.19.0" }]
-test = [{ name = "pytest", specifier = "==8.3.4" }]
+test = [
+    { name = "jsonschema", specifier = "==4.26.0" },
+    { name = "pytest", specifier = "==8.3.4" },
+]
 
 [[package]]
 name = "pre-commit"
