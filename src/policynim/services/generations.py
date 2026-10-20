@@ -386,12 +386,18 @@ class GenerationStore:
             for directory in missing:
                 self._step("root_parent_fsync")
                 _sync_directory(directory.parent)
-        if not self.root.is_dir():
+        if not self.root.exists():
             raise GenerationError(
                 "open",
-                "No managed generation exists. Import a verified bundle "
-                "or explicitly migrate the standalone index and rules.",
+                "No managed generation exists.",
+                recovery=(
+                    "For a fresh install, run `policynim ingest` from verified sources "
+                    "or import a verified bundle. If a standalone index and rules already "
+                    "exist, preserve them and run `policynim generation migrate` for that pair."
+                ),
             )
+        if not self.root.is_dir():
+            raise GenerationError("open", "The generation root isn't a directory.")
         owner = self.root / "owner.json"
         if not owner.exists() and not initialize:
             raise GenerationError("open", "The directory isn't an owned generation store.")
