@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
+import logging
 import sqlite3
+import time
 from collections.abc import Callable
 from threading import Event
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from policynim.errors import PolicyNIMError, ProviderError
-from policynim.operations import current_correlation_id
+from policynim.operations import (
+    current_correlation_id,
+    emit_operation_event,
+    safe_exception_diagnostics,
+)
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import (
     AuthenticatedPrincipal,
     AuthorizationError,
     authorize_operation,
+    principal_identity,
 )
 from policynim.settings import Settings
 from policynim.storage.operation_store import (
@@ -29,9 +34,43 @@ from policynim.storage.operation_store import (
 _Result = TypeVar("_Result")
 
 
-def principal_identity(issuer: str, subject: str) -> str:
-    """Keep one user's allowance stable across clients and key rotation."""
-    return hashlib.sha256(json.dumps([issuer, subject]).encode()).hexdigest()
+def _is_busy(error: BaseException) -> bool:
+    """Classify SQLite writer contention from codes without parsing private messages."""
+    code = getattr(error, "sqlite_errorcode", None)
+    return isinstance(code, int) and code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+
+
+def record_operation_storage_failure(
+    error: BaseException,
+    *,
+    phase: Literal["initialization", "reservation", "finish", "beta_auth_initialization"],
+    operation_id: str | None = None,
+) -> None:
+    """Record safe error codes and an opaque operation reference without payloads or paths."""
+    code = getattr(error, "sqlite_errorcode", None)
+    os_errno = getattr(error, "errno", None)
+    emit_operation_event(
+        level=logging.ERROR,
+        event="operation.storage_failure",
+        phase=phase,
+        **safe_exception_diagnostics(error),
+        sqlite_code=code if isinstance(code, int) else None,
+        os_errno=os_errno if isinstance(os_errno, int) else None,
+        operation_id=operation_id,
+    )
+
+
+def _admission_storage_error(error: BaseException) -> str:
+    """Keep ordinary bounded writer contention separate from storage outages."""
+    if _is_busy(error):
+        return (
+            "admission_busy: No operation started. Operation state is busy; retry shortly "
+            "after active work drains."
+        )
+    return (
+        "admission_unavailable: No operation started. Ask the operator to check "
+        "the hosted state volume and database locks, then retry."
+    )
 
 
 def admit_operation(
@@ -104,13 +143,12 @@ class OperationAdmissionService:
             else:
                 self.store = store
             self.store.recover_interrupted()
+            self.store.prune_owner_leases()
         except (sqlite3.Error, OSError, ValueError) as exc:
             if created_store is not None:
                 created_store.close()
-            raise OperationAdmissionError(
-                "admission_unavailable: No operation started. Ask the operator to check "
-                "the hosted state volume and database locks, then retry."
-            ) from exc
+            record_operation_storage_failure(exc, phase="initialization")
+            raise OperationAdmissionError(_admission_storage_error(exc)) from exc
 
     def run(
         self,
@@ -138,30 +176,38 @@ class OperationAdmissionService:
             if check_ready is not None:
                 check_ready()
 
-        require_ready()
-        try:
-            decision = admit_operation(
-                self.store,
-                principal_id=principal_identity(principal.issuer, principal.subject),
-                operation=operation_name,
-                daily_limit=(
-                    self.settings.beta_daily_request_quota
+        attempt = 0
+        while True:
+            require_ready()
+            try:
+                decision = admit_operation(
+                    self.store,
+                    principal_id=principal_identity(principal.issuer, principal.subject),
+                    operation=operation_name,
+                    daily_limit=(
+                        self.settings.beta_daily_request_quota
+                        if principal.source == "beta_key"
+                        else self.settings.mcp_principal_daily_operation_quota
+                    ),
+                    principal_limit=self.settings.mcp_max_concurrent_operations_per_principal,
+                    global_limit=self.settings.mcp_max_concurrent_operations,
+                    beta_account_id=int(principal.subject)
                     if principal.source == "beta_key"
-                    else self.settings.mcp_principal_daily_operation_quota
-                ),
-                principal_limit=self.settings.mcp_max_concurrent_operations_per_principal,
-                global_limit=self.settings.mcp_max_concurrent_operations,
-                beta_account_id=int(principal.subject) if principal.source == "beta_key" else None,
-                credential_id=principal.credential_id,
-                correlation_id=current_correlation_id(),
-                retention_days=self.settings.mcp_operation_retention_days,
-                before_accept=require_ready,
-            )
-        except (sqlite3.Error, OSError, ValueError) as exc:
-            raise OperationAdmissionError(
-                "admission_unavailable: No operation started. Ask the operator to check "
-                "the hosted state volume and database locks, then retry."
-            ) from exc
+                    else None,
+                    credential_id=principal.credential_id,
+                    before_accept=require_ready,
+                    correlation_id=current_correlation_id(),
+                    retention_days=self.settings.mcp_operation_retention_days,
+                )
+                break
+            except (sqlite3.Error, OSError, ValueError) as exc:
+                if _is_busy(exc) and attempt < 2:
+                    attempt += 1
+                    time.sleep(0.05)
+                    continue
+                record_operation_storage_failure(exc, phase="reservation")
+                raise OperationAdmissionError(_admission_storage_error(exc)) from exc
+        self.store.prune_owner_leases()
         if decision.rejection == "invalid_token":
             raise AuthorizationError(
                 "invalid_token: Authenticate again before retrying.", code="invalid_token"
@@ -193,6 +239,9 @@ class OperationAdmissionService:
                 self.store.finish(decision.operation_id, outcome)
             except (sqlite3.Error, OSError) as exc:
                 self._accounting_incomplete.set()
+                record_operation_storage_failure(
+                    exc, phase="finish", operation_id=decision.operation_id
+                )
                 raise OperationAdmissionError(
                     "accounting_incomplete: Work was accepted and may have completed. "
                     "Don't retry blindly; ask the operator to inspect operation state."

@@ -298,6 +298,7 @@ async def _rpc(
                         "principal_busy",
                         "quota_exceeded",
                         "admission_unavailable",
+                        "admission_busy",
                     ]
                     if name in payload
                 ),

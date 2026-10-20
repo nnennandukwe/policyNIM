@@ -482,3 +482,19 @@ A `cancelled` ledger outcome records caller cancellation before worker drain
 finished. Provider work may already have completed and incurred usage. The public
 async adapter drains cleanup and propagates cancellation instead of returning that
 result; provider success and caller completion aren't interchangeable outcomes.
+
+Routine SQLite writer contention retries reservation at most three times, with
+100 ms SQLite waits and 50 ms between retries. The worker rechecks authority and
+its cancellation/deadline before each attempt. Exhaustion returns `admission_busy`
+with short retry guidance and no accepted charge; other storage errors remain
+`admission_unavailable`. Terminal writes retain their separate bounded retry policy.
+`operation.storage_failure` events include phase, exception class, SQLite/OS error
+codes and an opaque operation ID for uncertain terminal writes. They omit error
+messages, paths, credentials, principal labels and raw inputs.
+
+After committed recovery and admission, lease cleanup inspects at most 100 files.
+It removes an unlocked retired owner only when no accepted database row references
+it. Live owners, unresolved accepted work and unknown ownership stay preserved.
+Cleanup failures defer housekeeping with a fixed error class; they don't refund
+accepted usage or hide an accounting failure. The portal and admission service use
+the same canonical legacy identity fields and hash implementation.
