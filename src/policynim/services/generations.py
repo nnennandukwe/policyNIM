@@ -117,6 +117,14 @@ class TrashRecord(StrictModel):
     artifacts: dict[str, Digest]
 
 
+@dataclass(frozen=True)
+class GenerationReadiness:
+    """Small validated health identity without borrowed corpus or reader ownership."""
+
+    generation_id: str
+    chunk_count: int
+
+
 @dataclass
 class GenerationSnapshot:
     """One validated immutable object retained for its reader's entire lifetime."""
@@ -183,11 +191,29 @@ class GenerationSnapshot:
                 _remove_reader_marker(path, identity)
 
     def validate_read(self) -> None:
-        """Check the validated artifact identities without hashing corpus or index bytes."""
+        """Check identities and validate content when change stamps aren't available."""
         if self._lease is None or self._artifact_identity is None:
             raise GenerationError("read", "The pinned reader is closed; create a new service.")
-        if GenerationStore._artifact_token(self.directory) != self._artifact_identity:
-            raise GenerationError("read", "Pinned generation artifacts changed; inspect them.")
+        token = GenerationStore._artifact_token(self.directory)
+        unknown_stamp = False
+        for previous, current in zip(self._artifact_identity, token, strict=True):
+            if previous[:-1] != current[:-1] or (
+                previous[-1] is not None and current[-1] is not None and previous[-1] != current[-1]
+            ):
+                raise GenerationError("read", "Pinned generation artifacts changed; inspect them.")
+            unknown_stamp = unknown_stamp or previous[-1] is None or current[-1] is None
+        if unknown_stamp:
+            inspector = GenerationStore(
+                root=self.directory.parent.parent, embedding=self.manifest.embedding
+            )
+            inspector._inspect(
+                self.directory,
+                expected_id=self.generation_id,
+                expected_embedding=self.manifest.embedding,
+            )
+            if GenerationStore._artifact_token(self.directory) != token:
+                raise GenerationError("read", "Generation changed during content validation.")
+            self._artifact_identity = token
 
 
 def _remove_reader_marker(path: Path, identity: tuple[int, int] | None) -> None:
@@ -266,13 +292,38 @@ def _file_change_stamp(path: Path, observed: os.stat_result) -> int | None:
         return None
 
 
+@dataclass
+class _ReaderAdmission:
+    """One atomically selected reader lease with explicit ownership transfer."""
+
+    selected: str
+    activation: GenerationPointer | None
+    lease: AbstractContextManager[None]
+    path: Path
+    identity: tuple[int, int]
+    cleanup: ResourceStack
+    validated: bool = False
+
+    def transfer_to(self, snapshot: GenerationSnapshot) -> None:
+        """Give the full reader its lease while temporary health probes retain scoped cleanup."""
+        self.validated = True
+        snapshot.activation = self.activation
+        snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
+            self.lease,
+            self.path,
+            self.identity,
+        )
+        self.cleanup.pop_all()
+
+
 @dataclass(frozen=True)
 class _CachedGeneration:
     """One verified immutable object identity; cache entries never own reader handles."""
 
     token: ArtifactToken
-    snapshot: GenerationSnapshot
+    snapshot: GenerationSnapshot | None
     size: int
+    readiness: GenerationReadiness
 
 
 _VALIDATION_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
@@ -688,7 +739,7 @@ class GenerationStore:
                     _VALIDATION_CACHE.move_to_end(key)
                 else:
                     cached = None
-            if cached is not None:
+            if cached is not None and cached.snapshot is not None:
                 result = deepcopy(cached.snapshot)
                 if self._artifact_token(directory) != token:
                     raise GenerationError("inspect", "Generation changed while opening its reader.")
@@ -703,7 +754,7 @@ class GenerationStore:
                         _VALIDATION_CACHE.move_to_end(key)
                     else:
                         cached = None
-                if cached is not None:
+                if cached is not None and cached.snapshot is not None:
                     result = deepcopy(cached.snapshot)
                     if self._artifact_token(directory) != token:
                         raise GenerationError(
@@ -724,21 +775,29 @@ class GenerationStore:
                 )
                 with _CACHE_LOCK:
                     _VALIDATION_CACHE.pop(key, None)
-                    if size <= _CACHE_MAX_BYTES:
-                        while _VALIDATION_CACHE and (
-                            len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
-                            or sum(entry.size for entry in _VALIDATION_CACHE.values()) + size
-                            > _CACHE_MAX_BYTES
-                        ):
-                            _VALIDATION_CACHE.popitem(last=False)
-                        _VALIDATION_CACHE[key] = _CachedGeneration(token, snapshot, size)
+                    retained_size = size if size <= _CACHE_MAX_BYTES else 0
+                    while _VALIDATION_CACHE and (
+                        len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
+                        or sum(entry.size for entry in _VALIDATION_CACHE.values()) + retained_size
+                        > _CACHE_MAX_BYTES
+                    ):
+                        _VALIDATION_CACHE.popitem(last=False)
+                    _VALIDATION_CACHE[key] = _CachedGeneration(
+                        token,
+                        snapshot if retained_size else None,
+                        retained_size,
+                        GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count),
+                    )
             return deepcopy(snapshot)
 
     def _remove_failed_lease_directory(self, directory: Path, identity: tuple[int, int]) -> None:
         """Remove only this failed reader's empty directory, serialized with new readers."""
         try:
-            # Cleanup still owns this obligation after the request budget expires.
-            with exclusive_file_lock(self.root / ".publish.lock"):
+            # Failed probes must release handles without waiting for another writer.
+            with try_exclusive_file_lock(self.root / ".publish.lock") as acquired:
+                if not acquired:
+                    LOGGER.warning("Failed reader lease-directory cleanup deferred while busy.")
+                    return
                 if _read_regular(self.root / "owner.json", max_bytes=len(_OWNER)) != _OWNER:
                     return
                 observed = directory.lstat()
@@ -755,12 +814,40 @@ class GenerationStore:
         except GenerationError:
             LOGGER.warning("Failed reader's lease-directory ownership needs inspection.")
 
-    def pin(
-        self, generation_id: str | None = None, *, force_validation: bool = False
-    ) -> GenerationSnapshot:
-        """Register a lease atomically, then validate outside the short publication lock."""
+    def readiness(self, generation_id: str | None = None) -> GenerationReadiness:
+        """Probe reader admission and reuse unchanged health metadata without cloning corpus."""
+        with self._reader_admission(generation_id) as admission:
+            selected = admission.selected
+            directory = self.root / "objects" / selected
+            token = self._artifact_token(directory)
+            key = (str(directory.absolute()), selected, self.embedding.model_dump_json())
+            cached = None
+            if self._fault is None and all(item[-1] is not None for item in token):
+                with _CACHE_LOCK:
+                    candidate = _VALIDATION_CACHE.get(key)
+                    if candidate is not None and candidate.token == token:
+                        cached = candidate
+                        _VALIDATION_CACHE.move_to_end(key)
+            if cached is not None:
+                result = cached.readiness
+                if self._artifact_token(directory) != token:
+                    raise GenerationError(
+                        "inspect", "Generation changed during readiness inspection."
+                    )
+                check_budget()
+                admission.validated = True
+                return result
+            snapshot = self._reader_snapshot(selected, force=False)
+            check_budget()
+            admission.validated = True
+            return GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count)
+
+    @contextmanager
+    def _reader_admission(self, generation_id: str | None) -> Iterator[_ReaderAdmission]:
+        """Select and lease one object atomically before validation or metadata inspection."""
         try:
             with ResourceStack() as cleanup:
+                admission: _ReaderAdmission | None = None
                 with self._locked():
                     pointer = self._pointer()
                     selected = self._selected_id(generation_id, pointer)
@@ -786,11 +873,14 @@ class GenerationStore:
                             raise GenerationError("pin", "The reader lease directory isn't valid.")
                     else:
                         created = directory.lstat()
-                        cleanup.callback(
-                            self._remove_failed_lease_directory,
-                            directory,
-                            (created.st_dev, created.st_ino),
-                        )
+                        created_identity = created.st_dev, created.st_ino
+
+                        def remove_failed_directory() -> None:
+                            """Remove a newly owned empty folder only when admission failed."""
+                            if admission is None or not admission.validated:
+                                self._remove_failed_lease_directory(directory, created_identity)
+
+                        cleanup.callback(remove_failed_directory)
                     lease_path = directory / (uuid4().hex + ".lock")
                     descriptor = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(descriptor, "wb") as handle:
@@ -803,16 +893,10 @@ class GenerationStore:
                     observed = lease_path.lstat()
                     if (observed.st_dev, observed.st_ino) != identity:
                         raise GenerationError("pin", "Reader lease identity changed.")
-                snapshot = self._reader_snapshot(selected, force=force_validation)
-                check_budget()
-                snapshot.activation = pointer
-                snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
-                    lease,
-                    lease_path,
-                    identity,
+                admission = _ReaderAdmission(
+                    selected, pointer, lease, lease_path, identity, cleanup
                 )
-                cleanup.pop_all()
-                return snapshot
+                yield admission
         except OSError as exc:
             raise GenerationError(
                 "pin",
@@ -820,11 +904,23 @@ class GenerationStore:
                 "Check filesystem permissions and available storage before retrying.",
             ) from exc
 
-    def _execute(self, operation: Callable[[], PublicationResult]) -> PublicationResult:
+    def pin(
+        self, generation_id: str | None = None, *, force_validation: bool = False
+    ) -> GenerationSnapshot:
+        """Register a lease atomically, then validate outside the short publication lock."""
+        with self._reader_admission(generation_id) as admission:
+            snapshot = self._reader_snapshot(admission.selected, force=force_validation)
+            check_budget()
+            admission.transfer_to(snapshot)
+            return snapshot
+
+    def _execute(
+        self, operation: Callable[[], PublicationResult], *, initialize: bool = True
+    ) -> PublicationResult:
         """Preserve a committed result if publisher cleanup fails after activation."""
         result: PublicationResult | None = None
         try:
-            with self._writer(initialize=True):
+            with self._writer(initialize=initialize):
                 self._pointer()
                 result = operation()
                 try:
@@ -941,12 +1037,20 @@ class GenerationStore:
             self._step("object_rename")
             (prepared.directory / ".owner").unlink(missing_ok=True)
             prepared.directory.rename(target)
-            self._step("objects_fsync")
-            _sync_directory(target.parent)
-            self._step("staging_parent_fsync")
-            _sync_directory(prepared.directory.parent)
-        self._inspect(target, expected_id=prepared.generation_id, expected_embedding=self.embedding)
+        # An occupied object may be a rename left by an interrupted publication.
+        # Repeat every durability barrier before any pointer can refer to it.
+        self._step("object_directory_fsync")
+        _sync_directory(target)
+        self._step("objects_fsync")
+        _sync_directory(target.parent)
+        self._step("staging_parent_fsync")
+        _sync_directory(self.root / "staging")
         token = self._artifact_token(target)
+        self._inspect(target, expected_id=prepared.generation_id, expected_embedding=self.embedding)
+        if self._artifact_token(target) != token:
+            raise GenerationError(
+                "activate", "Generation changed during inspection; preserve and inspect it."
+            )
         with self._locked():
             return self._commit_activation(prepared, target, token)
 
@@ -1173,7 +1277,7 @@ class GenerationStore:
                 )
             return self._activate(self._inspect_id(generation_id))
 
-        return self._execute(operation)
+        return self._execute(operation, initialize=False)
 
     def rollback(self, *, expected_active: str) -> PublicationResult:
         """Restore the previous generation against the operator's observed active ID."""
@@ -1189,7 +1293,7 @@ class GenerationStore:
                 raise GenerationError("rollback", "No complete previous generation is retained.")
             return self._activate(self._inspect_id(pointer.previous))
 
-        return self._execute(operation)
+        return self._execute(operation, initialize=False)
 
     def _has_readers(self, generation_id: str, warnings: list[str]) -> bool:
         """Probe unique kernel leases and remove only unlocked stale lease markers."""
@@ -1367,8 +1471,14 @@ class GenerationStore:
             if generation_id in protected:
                 result.kept.append(generation_id)
                 continue
-            self._inspect(snapshot.directory, expected_id=generation_id)
-            token = self._artifact_token(snapshot.directory)
+            try:
+                self._inspect(snapshot.directory, expected_id=generation_id)
+                token = self._artifact_token(snapshot.directory)
+            except ProviderError:
+                raise
+            except Exception as error:
+                result.warnings.append(self._retention_warning(snapshot.directory, error))
+                continue
             with self._locked():
                 if self._has_readers(generation_id, result.warnings):
                     result.kept.append(generation_id)
@@ -1379,11 +1489,15 @@ class GenerationStore:
                     )
                 trash = self.root / "trash" / (generation_id + "-" + uuid4().hex)
                 self._step("prune_rename")
-                if self._artifact_token(snapshot.directory) != token:
-                    raise GenerationError(
-                        "prune", "An object changed before retention; preserve and inspect it."
-                    )
-                snapshot.directory.rename(trash)
+                try:
+                    if self._artifact_token(snapshot.directory) != token:
+                        raise GenerationError(
+                            "prune", "An object changed before retention; preserve and inspect it."
+                        )
+                    snapshot.directory.rename(trash)
+                except (GenerationError, OSError) as error:
+                    result.warnings.append(self._retention_warning(snapshot.directory, error))
+                    continue
                 _sync_directory(self.root / "objects")
                 _sync_directory(trash.parent)
                 result.removed.append(generation_id)

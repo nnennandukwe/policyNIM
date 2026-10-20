@@ -72,6 +72,36 @@ sha256_file() {
   fi
 }
 
+verify_attestation() {
+  case "${POLICYNIM_VERIFY_ATTESTATION:-}" in
+    "" | 0 | false | FALSE | no | off) return 0 ;;
+    1 | true | TRUE | yes | required) ;;
+    *) fail "Invalid POLICYNIM_VERIFY_ATTESTATION value. Use required or 0." ;;
+  esac
+  need_command gh
+  case "$REPO_URL" in
+    https://github.com/*) slug="${REPO_URL#https://github.com/}" ;;
+    *) fail "Attestation verification requires an https://github.com repository URL." ;;
+  esac
+  slug="${slug%/}"
+  slug="${slug%.git}"
+  case "$slug" in
+    */*/* | *[!A-Za-z0-9_./-]* | /* | */ | "") fail "Invalid GitHub repository for attestation verification." ;;
+    */*) ;;
+    *) fail "Invalid GitHub repository for attestation verification." ;;
+  esac
+  if ! source_revision="$(gh api "repos/$slug/commits/$TAG" --jq .sha)"; then
+    fail "Couldn't resolve the release source revision. Check $RELEASE_PAGE_URL and retry."
+  fi
+  case "$source_revision" in
+    *[!0-9a-f]*) fail "Invalid release source revision for attestation verification." ;;
+  esac
+  [ "${#source_revision}" -eq 40 ] || fail "Invalid release source revision for attestation verification."
+  if ! gh attestation verify "$1" --repo "$slug" --signer-workflow "$slug/.github/workflows/release.yml" --source-digest "$source_revision"; then
+    fail "Artifact attestation verification failed for $2. Check $RELEASE_PAGE_URL and retry the install."
+  fi
+}
+
 extract_bundle() {
   archive_path="$1"
   destination="$2"
@@ -197,8 +227,9 @@ if [ "$actual_checksum" != "$expected_checksum" ]; then
   fail "Checksum mismatch for $ASSET_NAME. Check $RELEASE_PAGE_URL and retry the install."
 fi
 
+verify_attestation "$asset_path" "$ASSET_NAME"
 extract_bundle "$asset_path" "$extract_dir"
-bundle_binary="$(find "$extract_dir" -type f -name policynim -perm -111 | head -n 1)"
+bundle_binary="$(find "$extract_dir" -type f -name policynim -perm -100 | head -n 1)"
 if [ -z "$bundle_binary" ]; then
   fail "Extracted asset $ASSET_NAME did not contain an executable policynim binary. Check $RELEASE_PAGE_URL and retry."
 fi

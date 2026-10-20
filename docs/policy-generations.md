@@ -9,7 +9,9 @@ root's `generations` directory. Absolute paths work for an operator-owned store.
 Each object contains `manifest.json`, `snapshot.json`, `catalog.json`,
 `index.sqlite3`, and `runtime_rules.json`. Its ID is the SHA256 digest of the
 manifest bytes. The snapshot keeps raw policy text and pack manifests, parsed
-profile configuration, and license notices. Validation binds artifact hashes,
+profile configuration, and license notices. License notices must use UTF-8. A decoding error names the
+notice and stops before provider calls, preserving the prior active generation.
+Validation binds artifact hashes,
 model/provider/endpoint and
 vector dimension, schemas, exact chunks/provenance, and source-derived rules.
 Activation replaces `active.json` once, retaining both active and previous IDs.
@@ -81,7 +83,20 @@ as the rollback token. Rollback, activate, import, and migration validate the
 replacement independently and preserve damaged old bytes. A malformed pointer or
 unowned store still fails; recover into a separate operator-owned store rather
 than guessing state. Paid builds reject damaged active state before provider
-construction.
+construction. Neither activate nor rollback creates a missing root or adopts an
+unowned directory when the recovery request is refused.
+
+If an owned store has no activation pointer but retains a complete orphan, inspect
+it explicitly, then require the missing-pointer state when activating it:
+
+```bash
+policynim generation inspect --id RETAINED-ID --format json
+policynim generation activate RETAINED-ID --expect-no-active --format json
+```
+
+`--expect-no-active` and `--expect-active ID` are mutually exclusive; one is
+required. A concurrent activation makes the missing-pointer expectation stale.
+A malformed pointer still requires explicit operator recovery.
 
 Builds, migration, and imports that require a source match recheck their inputs
 after waiting for writer ownership. Changed source selections stop before
@@ -100,9 +115,22 @@ Runtime readers reuse successful validation only while all five artifact identit
 membership, metadata-change stamps, and embedding settings match. The process cache
 holds at most eight snapshots and 32 MiB of serialized source models; larger
 snapshots receive full validation. Filesystems without reliable change stamps also
-receive full validation. Operator inspection and export always validate all bytes.
+receive full validation. If a change stamp isn't available, pinned reads validate
+content instead of weakening the identity check. A restored stamp is accepted only
+after content validation. Operator inspection and export always validate all bytes.
+Warm health probes return only the validated generation ID and chunk count when
+the pointer, artifact identities, and configured embedding space still match.
+They probe the same reader-lease admission that retrieval requires, retaining the
+selected generation during inspection, but don't clone source models. Cold probes,
+changed identities, unavailable change stamps, and entries outside the bounded
+cache still use full pinned validation. There's no time-based healthy-state cache.
 Pruning deletes only validated owned objects. Changed or unknown entries remain
-preserved with warnings. After interruption, cleanup can remove empty folders with
+preserved with warnings. A changed candidate found during reinspection or before
+rename gets its own warning while other candidates, trash, and staging cleanup
+continue. Pointer changes, expired operation budgets, and directory synchronization
+failures still stop retention; a failed durability barrier isn't a local candidate
+rejection.
+After interruption, cleanup can remove empty folders with
 managed stage/trash names; unmatched names and nonempty unowned entries stay
 preserved. Dangling staging links stay in place and produce a warning.
 An interrupted initial owner record can resume under the publication lock only

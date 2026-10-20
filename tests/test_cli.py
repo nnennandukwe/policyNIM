@@ -6,7 +6,7 @@ import asyncio
 import json
 import shlex
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -489,6 +489,21 @@ class MockIndexDumpService:
     def __init__(self) -> None:
         """Track whether the CLI closed the dump service."""
         self.closed = False
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
 
     def list_chunks(self) -> list[PolicyChunk]:
         return [
@@ -2357,7 +2372,13 @@ def test_quickstart_defaults_to_hosted_mcp_without_requiring_setup(
         in (agent_workflows[1]["prompt"])
     )
     assert "cited policy lines" in agent_workflows[1]["prompt"]
-    assert "policy_preflight and policy_search" in agent_workflows[2]["prompt"]
+    for name in (
+        "policy_search",
+        "policy_compile",
+        "policy_preflight",
+        "policy_preflight_evidence",
+    ):
+        assert name in agent_workflows[2]["prompt"]
     assert "before starting implementation" in agent_workflows[2]["prompt"]
 
 
@@ -2689,21 +2710,25 @@ def test_quickstart_help_mentions_targets_clients_and_json_output() -> None:
 
 
 def test_route_help_mentions_task_type_override() -> None:
+    """Route help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["route", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
 
 
 def test_compile_help_mentions_task_type_override() -> None:
+    """Compile help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["compile", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:
@@ -2730,12 +2755,13 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
 
 
 def test_preflight_help_mentions_current_top_k_behavior() -> None:
+    """Preflight help identifies the discovery limit and trace option."""
     result = runner.invoke(app, ["preflight", "--help"])
     help_text = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "Retrieval depth." in help_text
-    assert "1-20." in help_text
+    assert "Discovery hits," in help_text
+    assert "1-20;" in help_text
     assert "--trace" in help_text
     assert "Reserved retrieval depth" not in help_text
 
@@ -3587,8 +3613,16 @@ def test_mcp_smoke_failure_text_prints_recovery_steps(
 @pytest.mark.parametrize(
     ("tool_names", "expected_status", "missing_tools"),
     [
-        (["policy_search", "policy_preflight"], "ok", []),
-        (["policy_search"], "error", ["policy_preflight"]),
+        (
+            ["policy_search", "policy_preflight", "policy_compile", "policy_preflight_evidence"],
+            "ok",
+            [],
+        ),
+        (
+            ["policy_search"],
+            "error",
+            ["policy_preflight", "policy_compile", "policy_preflight_evidence"],
+        ),
     ],
 )
 def test_mcp_stdio_smoke_discovers_sdk_tools_with_float_timeout(
@@ -3663,7 +3697,12 @@ def test_mcp_stdio_smoke_reports_sdk_failures_and_closes_session(
 
     assert report["status"] == "error"
     assert report["tools"] == []
-    assert report["missing_tools"] == ["policy_preflight", "policy_search"]
+    assert report["missing_tools"] == [
+        "policy_preflight",
+        "policy_search",
+        "policy_compile",
+        "policy_preflight_evidence",
+    ]
     assert type(failure).__name__ in str(report["message"])
     assert "policynim doctor" in " ".join(cast(list[str], report["next_steps"]))
     session.__aexit__.assert_awaited_once()
@@ -4452,7 +4491,7 @@ def test_evidence_report_command_rejects_empty_output(
     )
 
     assert result.exit_code == 1
-    assert "must not be empty" in result.stderr
+    assert "can't be empty" in result.stderr
 
 
 def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) -> None:
@@ -4600,3 +4639,64 @@ def test_support_bundle_redacts_embedded_windows_diagnostic_with_spaces(
     assert "Work Projects" not in result.stdout
     assert "acme" not in result.stdout
     assert "<local-path>" in result.stdout
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+@pytest.mark.parametrize("prefix", ["Index ", ""])
+def test_support_bundle_preserves_diagnostics_between_two_windows_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str, prefix: str
+) -> None:
+    """Separate drive roots can't absorb the failure reason between private paths."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    first = separator.join(["C:", "PrivateData", "x.db"])
+    second = separator.join(["C:", "PrivateConfig", "y"])
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {
+            "status": "action_required",
+            "message": prefix + first + " missing; config at " + second,
+        },
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    message = json.loads(result.stdout)["doctor"]["message"]
+    assert "missing; config at" in message
+    assert "PrivateData" not in message and "PrivateConfig" not in message
+
+
+def test_support_bundle_keeps_ambiguous_windows_directory_names_private(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """File-like words and apparent prose can still belong to a real directory name."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    path = r"C:\Client.env see docs\setup\index.sqlite3"
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {
+            "status": "action_required",
+            "message": "Failed " + path,
+        },
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Client.env see docs" not in json.loads(result.stdout)["doctor"]["message"]
+
+
+@pytest.mark.parametrize("tag", ["file:", "SOURCE:"])
+def test_support_bundle_redacts_tagged_posix_paths_with_colon_directories(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tag: str
+) -> None:
+    """A diagnostic prefix can't make a POSIX directory look like a Windows drive."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {"status": "action_required", "message": f"Missing {tag}/opt/private/a:b/x"},
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    message = json.loads(result.stdout)["doctor"]["message"]
+    assert "private" not in message and "a:b" not in message
+    assert f"Missing {tag}" in message and "<local-path>" in message

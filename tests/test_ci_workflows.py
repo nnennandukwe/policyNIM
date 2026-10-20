@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from pathlib import Path
@@ -23,6 +24,7 @@ def _workflow_files(directory: Path) -> tuple[Path, ...]:
 
 WORKFLOW_FILES = _workflow_files(REPO_ROOT / ".github/workflows")
 NODE24_ACTION_MAJOR_COMMENTS = {
+    "actions/attest": {"v4"},
     "actions/checkout": {"v5", "v6", "v7"},
     "actions/setup-python": {"v6"},
     "actions/upload-artifact": {"v6", "v7"},
@@ -463,6 +465,26 @@ def test_release_validates_both_supported_python_runtimes() -> None:
     assert "matrix.python-version" in evidence["with"]["path"]
 
 
+def test_release_attests_and_verifies_every_asset_before_publication() -> None:
+    """A checksum manifest alone can't establish the trusted release producer."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["publish-github-release"]
+    names = [step["name"] for step in job["steps"]]
+    assert (
+        names.index("Generate release asset attestations")
+        < names.index("Verify release asset attestations")
+        < names.index("Create draft GitHub release")
+    )
+    assert job["permissions"]["id-token"] == "write"
+    assert job["permissions"]["attestations"] == "write"
+    attest = next(
+        step for step in job["steps"] if step["name"] == "Generate release asset attestations"
+    )
+    assert attest["with"]["subject-checksums"] == "release-assets/SHA256SUMS"
+    assert names.index("Check release tag source") < names.index(
+        "Generate release asset attestations"
+    )
+
+
 def _assert_release_source_python_selection(job: dict) -> None:
     """Every uv source-check command must override the repository interpreter pin."""
     for step in job["steps"]:
@@ -484,3 +506,38 @@ def test_release_python_guard_detects_removed_override() -> None:
     step["run"] = step["run"].replace(" --python ${{ matrix.python-version }}", "")
     with pytest.raises(AssertionError):
         _assert_release_source_python_selection(job)
+
+
+def test_wheel_export_uses_the_running_matrix_interpreter() -> None:
+    """Fresh wheel dependencies must use the interpreter that created their environment."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["wheel-smoke"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify fresh wheel from locked dependencies"
+    )
+    script = command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exports = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.List)
+        and len(node.elts) >= 2
+        and isinstance(node.elts[0], ast.Constant)
+        and node.elts[0].value == "uv"
+        and isinstance(node.elts[1], ast.Constant)
+        and node.elts[1].value == "export"
+    ]
+    assert len(exports) == 1
+    arguments = exports[0].elts
+    selection = next(
+        (
+            index
+            for index, node in enumerate(arguments)
+            if isinstance(node, ast.Constant) and node.value == "--python"
+        ),
+        None,
+    )
+    assert selection is not None, "uv export must override the repository's Python pin"
+    assert ast.dump(arguments[selection + 1]) == ast.dump(
+        ast.parse("sys.executable", mode="eval").body
+    )

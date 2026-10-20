@@ -31,7 +31,7 @@ Current automated coverage includes:
   Phoenix startup, deterministic span publishing, and synchronous code
   annotations
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with
-  mock-backed import-injected package modules; default CI does not import live optional
+  mock-backed import-injected package modules; default CI doesn't import live optional
   NVIDIA eval packages
 - Optional NVIDIA Eval Launcher dependency resolution through
   `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
@@ -50,7 +50,8 @@ Current automated coverage includes:
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`,
   including Markdown/file artifact exports
 - CLI output for `beta-admin` hosted operator commands, including audit-log filtering
-- MCP tool parity for `policy_preflight` and `policy_search`
+- MCP search, compilation, preflight and same-run evidence schemas, plus immutable
+  catalog/policy/chunk resources and the review prompt
 - MCP startup wiring for `stdio` and `streamable-http`
 - Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper
 - Hosted beta portal routes, signed-session flow, SQLite auth storage, and
@@ -80,7 +81,7 @@ Hosted onboarding versus Docker build-test env vars:
 - Set `NVIDIA_API_KEY` as well if you want the positive baked-index image validation
   to run instead of skip; the Docker harness passes it as a BuildKit secret, not
   as a build arg.
-- Do not rely on `-m live` to pick up Docker build checks; they use the dedicated
+- Don't rely on `-m live` to pick up Docker build checks; they use the dedicated
   `docker_live` marker.
 
 Run the hosted build and deployed-service suites manually with:

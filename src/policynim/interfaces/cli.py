@@ -77,10 +77,15 @@ _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
 _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
-_EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
-_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
+_EXPECTED_MCP_TOOLS = (
+    "policy_preflight",
+    "policy_search",
+    "policy_compile",
+    "policy_preflight_evidence",
+)
+_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
 _WINDOWS_PATH_TOKEN_RE = re.compile(
-    r"[A-Za-z]:[\\/](?:[^\\/\r\n\"<>|?*]+[\\/])*[^\s\\/\r\n\"<>|?*]+"
+    r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
 )
 
 app = typer.Typer(
@@ -540,7 +545,7 @@ def preflight(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Retrieval depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     trace: Annotated[
@@ -669,7 +674,7 @@ def route(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -724,7 +729,7 @@ def compile(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -1281,6 +1286,18 @@ def beta_admin_audit_log(
     typer.echo(json.dumps([event.model_dump(mode="json") for event in events], indent=2))
 
 
+@beta_admin_app.command("operations")
+def beta_admin_operations() -> None:
+    """Print aggregate local admission/outcome evidence without credentials or request content."""
+    from policynim.services.operational_report import inspect_operational_report
+
+    try:
+        report = inspect_operational_report(get_settings())
+    except PolicyNIMError as exc:
+        _exit_with_error(str(exc))
+    typer.echo(json.dumps(report, indent=2, sort_keys=True))
+
+
 def main() -> None:
     """Run the PolicyNIM CLI."""
     app()
@@ -1382,7 +1399,7 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
     """Write rendered CLI artifact text to a user-provided path atomically."""
     output_value = output.strip()
     if not output_value:
-        raise PolicyNIMError("Runtime evidence report output path must not be empty.")
+        raise PolicyNIMError("Runtime evidence report output path can't be empty.")
 
     target = resolve_runtime_path(Path(output_value))
     if target.exists() and target.is_dir():
@@ -1404,13 +1421,18 @@ def _write_cli_artifact_text(output: str, content: str) -> Path:
             temp_file.write("\n")
         os.replace(temp_path, target)
     except OSError as exc:
+        cleanup_note = ""
         if temp_path is not None:
             try:
                 Path(temp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as cleanup_exc:
+                cleanup_note = (
+                    " Staged report cleanup also failed "
+                    f"({type(cleanup_exc).__name__[:64]}, errno={cleanup_exc.errno}). "
+                    "Inspect the output directory for a retained .tmp file before retrying."
+                )
         raise PolicyNIMError(
-            f"Could not write runtime evidence report to {target}: {exc}."
+            f"Couldn't write runtime evidence report to {target}: {exc}.{cleanup_note}"
         ) from exc
     return target
 
@@ -1727,7 +1749,8 @@ def _build_quickstart_payload(
         "agent_workflows": _quickstart_agent_workflows(),
         "next_steps": [
             "Load the generated config in your MCP client.",
-            "Ask the client to list `policy_preflight` and `policy_search`.",
+            "Ask the client to list `policy_search`, `policy_compile`, "
+            "`policy_preflight` and `policy_preflight_evidence`.",
         ],
         "safety": [
             "This command does not launch the MCP server.",
@@ -2654,7 +2677,13 @@ def _support_bundle_token_is_absolute_path(value: str) -> bool:
         return False
     if value.startswith("/") and not value.startswith("//"):
         return len(Path(value).parts) >= 3
-    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"\\", "/"}
+    return (
+        len(value) >= 3
+        and value[0].isalpha()
+        and value[1] == ":"
+        and value[2] in {"\\", "/"}
+        and ":" not in value[3:]
+    )
 
 
 def _support_bundle_redaction_prefix(path_text: str) -> str | None:

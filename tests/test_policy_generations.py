@@ -856,6 +856,7 @@ _PRECOMMIT_POINTS = [
     "inspect",
     "stage_directory_fsync",
     "object_rename",
+    "object_directory_fsync",
     "objects_fsync",
     "staging_parent_fsync",
     "managed_directories_fsync",
@@ -2288,6 +2289,7 @@ def test_producers_reject_sources_inside_an_owned_store(tmp_path: Path, producer
     calls: list[str] = []
 
     def factory():
+        """Record provider construction if nested-source admission reaches embedding."""
         calls.append("provider")
         return MockEmbedder()
 
@@ -2320,6 +2322,7 @@ def test_build_rejects_profile_inside_an_owned_store(tmp_path: Path) -> None:
     calls: list[str] = []
 
     def factory():
+        """Record provider construction if nested-profile admission reaches embedding."""
         calls.append("provider")
         return MockEmbedder()
 
@@ -2415,6 +2418,7 @@ def test_failed_pin_preserves_unexpected_lease_directory_contents(tmp_path: Path
     note = store.root / "leases" / active / "operator-note"
 
     def fault(step: str) -> None:
+        """Preserve an operator note before rejecting cold generation validation."""
         if step == "inspect":
             note.write_bytes(b"preserve this recovery note")
             raise GenerationError("inspect", "Injected rejection.")
@@ -2447,9 +2451,11 @@ def test_http_health_reuses_validation_outside_publication_lock(
     workers: list[Thread] = []
 
     def inspect(self, *args, **kwargs):
+        """Probe pointer admission while cold generation validation is running."""
         admitted = Event()
 
         def read_pointer():
+            """Signal a successful pointer read from the concurrent worker."""
             store.read_activation()
             admitted.set()
 
@@ -2460,6 +2466,7 @@ def test_http_health_reuses_validation_outside_publication_lock(
         return original_inspect(self, *args, **kwargs)
 
     def read(path: Path, **kwargs):
+        """Count sealed artifact reads to verify validation cache reuse."""
         if path.parent.name == active:
             reads.append(path.name)
         return original_read(path, **kwargs)
@@ -2494,6 +2501,7 @@ def test_failed_pin_cleans_created_directory_after_budget_rejection(
     budget = OperationBudget(seconds=1, clock=lambda: now[0])
 
     def fault(step: str) -> None:
+        """Reject cold validation through the selected deadline or cancellation path."""
         if step == "inspect":
             if failure == "deadline":
                 now[0] = 2.0
@@ -2526,6 +2534,7 @@ def test_resumed_trash_cleanup_rejects_self_consistent_owner_tampering(
         store.build(settings, MockEmbedder())
 
     def fault(step: str) -> None:
+        """Interrupt retention before deleting the first catalog artifact."""
         if step == "trash_remove_catalog.json":
             raise OSError("Injected first-unlink interruption.")
 
@@ -2563,6 +2572,7 @@ def test_interrupted_trash_retains_manifest_until_last_data_removal(
         store.build(settings, MockEmbedder())
 
     def fault(step: str) -> None:
+        """Interrupt retention at the selected data-deletion boundary."""
         if step == boundary:
             raise OSError("Injected partial-unlink interruption.")
 
@@ -2570,6 +2580,7 @@ def test_interrupted_trash_retains_manifest_until_last_data_removal(
     interrupted_owner = [False]
 
     def unlink(path: Path, *args, **kwargs):
+        """Interrupt the final trash ownership-record unlink exactly once."""
         if (
             boundary == "owner_unlink"
             and path.name == ".owner"
@@ -2897,3 +2908,333 @@ def test_prune_stops_on_budget_rejection_without_misclassifying_objects(
     assert store.inspect().generation_id == active
     assert not list((store.root / "trash").iterdir())
     assert not list((store.root / "staging").iterdir())
+
+
+@pytest.mark.parametrize("operation", ["build", "activate", "rollback"])
+def test_mutation_during_final_activation_inspection_preserves_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Publication can't adopt a token first observed after inspected bytes changed."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    if operation != "build":
+        store.build(settings, MockEmbedder())
+    pointer = (store.root / "active.json").read_bytes()
+    original = GenerationStore._inspect
+    inspections = 0
+    changed: list[Path] = []
+
+    def inspect(self: GenerationStore, directory: Path, **kwargs: Any):
+        """Change rules after their validation on the final target inspection only."""
+        nonlocal inspections
+        snapshot = original(self, directory, **kwargs)
+        selected = (
+            directory.parent.name == "objects" and directory.name != first.generation_id
+            if operation == "build"
+            else directory == store.root / "objects" / first.generation_id
+        )
+        if selected:
+            inspections += 1
+            if inspections == (1 if operation == "build" else 3):
+                artifact = directory / "runtime_rules.json"
+                artifact.write_bytes(artifact.read_bytes() + b"damaged-during-inspection")
+                changed.append(artifact)
+        return snapshot
+
+    monkeypatch.setattr(GenerationStore, "_inspect", inspect)
+    with pytest.raises(GenerationError, match="Generation changed"):
+        if operation == "build":
+            store.build(settings, MockEmbedder())
+        elif operation == "activate":
+            store.activate(first.generation_id, expected_active=json.loads(pointer)["active"])
+        else:
+            store.rollback(expected_active=json.loads(pointer)["active"])
+    assert len(changed) == 1
+    assert (store.root / "active.json").read_bytes() == pointer
+    assert changed[0].read_bytes().endswith(b"damaged-during-inspection")
+
+
+def test_publication_syncs_object_membership_before_pointer_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The removed staging owner must be durable in the object before activation commits."""
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_sync = generations._sync_directory
+    synced_objects: list[Path] = []
+
+    def sync(path: Path) -> None:
+        """Observe actual directory synchronization after owner removal and object installation."""
+        original_sync(path)
+        if path.parent == store.root / "objects":
+            assert not (path / ".owner").exists()
+            synced_objects.append(path)
+
+    def fault(step: str) -> None:
+        """Check the required directory durability barrier before the real pointer replacement."""
+        if step == "before_activate":
+            assert synced_objects
+
+    monkeypatch.setattr(generations, "_sync_directory", sync)
+    result = GenerationStore(root=store.root, embedding=identity, fault=fault).build(
+        settings, MockEmbedder()
+    )
+    assert synced_objects == [store.root / "objects" / result.generation_id]
+
+
+@pytest.mark.parametrize("snapshot_cache", [False, True])
+def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snapshot_cache: bool
+) -> None:
+    """Unchanged probes avoid corpus copies while checking the real reader-admission path."""
+    import os
+
+    from starlette.testclient import TestClient
+
+    from policynim.interfaces.mcp import _build_streamable_http_app
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    token = store._artifact_token(store.root / "objects" / first.generation_id)
+    if any(item[-1] is None for item in token):
+        pytest.skip("Reliable change stamps aren't available; full health validation is required.")
+    if not snapshot_cache:
+        monkeypatch.setattr(generations, "_CACHE_MAX_BYTES", 1)
+    original_copy, original_open = generations.deepcopy, os.open
+    clones: list[str] = []
+    lease_opens: list[str] = []
+
+    def copy(value, memo=None):
+        """Observe whole snapshot clones without changing the real ownership behavior."""
+        if isinstance(value, generations.GenerationSnapshot):
+            clones.append(value.generation_id)
+        return original_copy(value, memo)
+
+    def open_file(path, flags, mode=0o777, *, dir_fd=None):
+        """Observe actual filesystem reader-lease opens on the public health path."""
+        if str(store.root / "leases") in str(path):
+            lease_opens.append(str(path))
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(generations, "deepcopy", copy)
+        monkeypatch.setattr(os, "open", open_file)
+        for _ in range(3):
+            response = client.get("/healthz")
+            assert response.status_code == 200
+            assert response.json()["generation_id"] == first.generation_id
+        assert clones == []
+        assert lease_opens
+        artifact = store.root / "objects" / first.generation_id / "runtime_rules.json"
+        artifact.write_bytes(artifact.read_bytes() + b"tampered")
+        assert client.get("/healthz").status_code == 503
+
+
+def test_health_revalidates_when_change_stamps_are_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unavailable cache stamps never let a public probe hide changed generation bytes."""
+    from starlette.testclient import TestClient
+
+    from policynim.interfaces.mcp import _build_streamable_http_app
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules)
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(generations, "_file_change_stamp", lambda path, observed: None)
+        assert client.get("/healthz").status_code == 200
+        artifact = store.root / "objects" / active.generation_id / "runtime_rules.json"
+        artifact.write_bytes(artifact.read_bytes() + b"tampered")
+        assert client.get("/healthz").status_code == 503
+
+
+def test_warm_health_refuses_failed_reader_lease_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached valid generation can't hide storage failure that blocks every new search reader."""
+    import errno
+    import os
+
+    from starlette.testclient import TestClient
+
+    from policynim.errors import GenerationError
+    from policynim.interfaces.mcp import _build_streamable_http_app
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_open = os.open
+
+    def exhausted(path, flags, mode=0o777, *, dir_fd=None):
+        """Inject ENOSPC only at the real filesystem reader-lease creation boundary."""
+        if str(store.root / "leases") in str(path) and flags & os.O_CREAT:
+            raise OSError(errno.ENOSPC, "private storage payload")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(os, "open", exhausted)
+        response = client.get("/healthz")
+        assert response.status_code == 503
+        assert "private storage payload" not in response.text
+        with pytest.raises(GenerationError):
+            store.pin()
+
+
+def test_readiness_retains_selected_generation_during_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cold health keeps its selected object while real supported writers rotate and prune."""
+    from contextlib import contextmanager
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    original_locked = store._locked
+    rotate = True
+    published: list[str] = []
+
+    @contextmanager
+    def locked(**kwargs):
+        """Rotate twice immediately after the health selection/admission lock is released."""
+        nonlocal rotate
+        with original_locked(**kwargs):
+            yield
+        if rotate:
+            rotate = False
+            other = GenerationStore(root=store.root, embedding=identity)
+            assert settings.corpus_dir is not None
+            member = settings.corpus_dir / "A.md"
+            for revision in ("second", "third"):
+                member.write_text(member.read_text() + f"\nReviewed {revision} revision.\n")
+                published.append(other.build(settings, MockEmbedder()).generation_id)
+            other.prune(keep_recent=0)
+
+    monkeypatch.setattr(store, "_locked", locked)
+    result = store.readiness()
+    assert result.generation_id == first.generation_id
+    assert len(published) == 2
+    assert store.inspect().generation_id == published[-1]
+    store.prune(keep_recent=0)
+    assert not (store.root / "objects" / first.generation_id).exists()
+
+
+def test_orphan_activation_repeats_failed_rename_durability_barriers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Orphan recovery repeats directory durability barriers before committing a pointer."""
+    from policynim.errors import GenerationError
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules)
+    pointer = (store.root / "active.json").read_bytes()
+    original_sync = generations._sync_directory
+    failed = False
+    synchronized: list[Path] = []
+
+    def sync(path: Path) -> None:
+        """Fail the first actual objects-parent barrier after object installation."""
+        nonlocal failed
+        if path == store.root / "objects" and not failed:
+            failed = True
+            raise OSError("injected directory synchronization failure")
+        original_sync(path)
+        synchronized.append(path)
+
+    monkeypatch.setattr(generations, "_sync_directory", sync)
+    with pytest.raises(GenerationError):
+        store.build(settings, MockEmbedder())
+    assert (store.root / "active.json").read_bytes() == pointer
+    orphan = next(p for p in (store.root / "objects").iterdir() if p.name != active.generation_id)
+    synchronized.clear()
+
+    def fault(step: str) -> None:
+        """Require all rename durability barriers before committing the occupied orphan."""
+        if step == "before_activate":
+            assert {orphan, orphan.parent, store.root / "staging"} <= set(synchronized)
+
+    recovered = GenerationStore(root=store.root, embedding=identity, fault=fault).activate(
+        orphan.name, expected_active=active.generation_id
+    )
+    assert recovered.generation_id == orphan.name
+    assert store.inspect().generation_id == orphan.name
+
+
+@pytest.mark.parametrize("validation_fails", [False, True])
+def test_readiness_cleanup_doesnt_wait_for_another_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, validation_fails: bool
+) -> None:
+    """A real publisher lock can't trap cleanup after successful or failed validation."""
+    from threading import Event, Thread
+
+    from policynim.errors import GenerationError
+    from policynim.storage.file_lock import exclusive_file_lock
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_snapshot = store._reader_snapshot
+    held, release, finished = Event(), Event(), Event()
+    errors: list[BaseException] = []
+    holders: list[Thread] = []
+
+    def hold() -> None:
+        """Hold the real publication lock until the test releases the competing publisher."""
+        with exclusive_file_lock(store.root / ".publish.lock"):
+            held.set()
+            release.wait(5)
+
+    def snapshot(generation_id: str, *, force: bool):
+        """Start the lock holder only after actual generation validation has completed."""
+        result = original_snapshot(generation_id, force=force)
+        holder = Thread(target=hold, daemon=True)
+        holders.append(holder)
+        holder.start()
+        assert held.wait(3)
+        if validation_fails:
+            raise GenerationError("inspect", "Injected validation refusal.")
+        return result
+
+    def probe() -> None:
+        """Exercise public health readiness while retaining all raised failures."""
+        try:
+            store.readiness()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(store, "_reader_snapshot", snapshot)
+    worker = Thread(target=probe, daemon=True)
+    worker.start()
+    try:
+        assert held.wait(3)
+        completed_while_writer_held = finished.wait(1)
+    finally:
+        release.set()
+        worker.join(5)
+        for holder in holders:
+            holder.join(5)
+    assert completed_while_writer_held
+    assert len(errors) == int(validation_fails)
+    if errors:
+        assert isinstance(errors[0], GenerationError)
+    assert not worker.is_alive()
+    assert not list((store.root / "leases").rglob("*.lock"))

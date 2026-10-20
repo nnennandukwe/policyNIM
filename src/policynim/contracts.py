@@ -127,6 +127,12 @@ class IndexStore(Protocol):
         """Return the number of rows in the local index."""
         ...
 
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Read whole selected policies or refuse their row/UTF-8 payload budget."""
+        ...
+
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
         ...

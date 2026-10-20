@@ -13,10 +13,15 @@ operations into separate pages so the root README can stay short.
   MCP, runtime/evidence, eval, and troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,
   recovery, container build flow, and Railway deployment notes
+- [Chat availability recovery](chat-availability-recovery.md): current chat model,
+  account-access failures, explicit overrides, and validated request options
 - [hosted-authorization.md](hosted-authorization.md): external issuer foundation,
   operation scopes, key migration, and remaining OAuth acceptance checks
 - [release.md](release.md): package, GitHub release, PyPI, and standalone
   installer release checklist
+
+- [Grounded MCP guidance](grounded-mcp.md): compiled constraints, evidence traces,
+  immutable policy resources and the review prompt.
 
 ## Examples
 
@@ -53,3 +58,4 @@ operations into separate pages so the root README can stay short.
 
 - [Complete policy generations](policy-generations.md): atomic activation, migration, rollback,
   retained readers, and verified offline deployment bundles.
+- [hosted-capacity.md](hosted-capacity.md): aggregate operational reporting, retention and synthetic HTTP capacity evidence

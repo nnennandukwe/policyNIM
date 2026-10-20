@@ -51,7 +51,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
   commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
   `preflight`, `eval`, `mcp`, `mcp-config`, `mcp-smoke`, `support-bundle`,
   `beta-admin`, `runtime`, and `evidence`.
-- MCP tools for `policy_preflight` and `policy_search`.
+- MCP tools for `policy_search`, `policy_compile`, `policy_preflight` and
+  `policy_preflight_evidence`, with versioned policy resources and a review prompt.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
 
@@ -60,6 +61,8 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` to bound expensive tool calls per server
 (default `10`). Excess calls receive a retry-later error. See the
 [MCP workflow](docs/workflows.md) for transport and public-origin configuration.
+See [grounded MCP guidance](docs/grounded-mcp.md) for tool schemas, evidence and
+immutable resource links.
 
 The maintained source baseline includes application-security and MCP trust guidance
 with pinned references, role boundaries, and authored scenarios. See the
