@@ -165,8 +165,13 @@ After manifest checks, the release job signs every subject in `SHA256SUMS` using
 GitHub's pinned `actions/attest` action. Before draft creation, each subject must
 pass `gh attestation verify` against this repository,
 `nnennandukwe/policyNIM/.github/workflows/release.yml` and the exact release source
-commit. Verification has bounded subprocess timeouts and retries; failures retain
-partial receipts and stop publication. Signing permissions belong only to that job.
+commit. Each verifier call has a 45-second timeout. A timeout immediately stops
+verification as incomplete; only nonzero exits retry, up to three attempts with
+two-second waits. Failures retain partial receipts and stop publication. Receipts
+include each attempt's outcome and return code, plus static recovery hints derived
+from at most 8 KiB of stderr. Raw command output isn't printed or retained in the
+receipt. Hints don't establish the cause or relax any verification constraint.
+Signing permissions belong only to that job.
 The workflow retains the signing bundle and verification receipt as workflow
 artifacts, outside the release inputs they describe.
 
@@ -175,7 +180,10 @@ independent review, a hermetic build, a security certification or a SLSA level.
 [GitHub's action documentation](https://github.com/actions/attest/tree/59d89421af93a897026c735860bf21b6eb4f7b26)
 explains its provenance and signing permissions. Actual signing and verification
 are observed during the release workflow; local subprocess tests don't create
-cryptographic evidence.
+cryptographic evidence. Synthetic archive tests prove installer gate ordering
+and preservation of an existing install. Fresh-artifact packaging, runtime and
+client acceptance belong to the separate release evidence and runtime verifier
+receipts; those checks don't replace signing evidence.
 
 Installers can require this check before extraction and replacement. Install
 GitHub CLI and authenticate it with `gh auth login`. Set

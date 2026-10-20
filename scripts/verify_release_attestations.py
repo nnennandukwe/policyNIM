@@ -7,8 +7,57 @@ import hashlib
 import json
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
+
+_DIAGNOSTIC_BYTES = 8192
+
+
+def _diagnostic_hint(stderr: bytes) -> tuple[str, str]:
+    """Map a bounded untrusted prefix to static hints without reproducing its contents."""
+    text = stderr.decode("utf-8", errors="replace").lower()
+    if any(
+        marker in text
+        for marker in (
+            "http 401",
+            "http 403",
+            "authentication required",
+            "authentication failed",
+            "gh auth login",
+            "not logged into",
+        )
+    ):
+        return "authentication", "Run gh auth status and check repository access before retrying."
+    if any(marker in text for marker in ("no attestations", "attestation not found", "http 404")):
+        return (
+            "attestation_unavailable",
+            "Check access and confirm that this signed subject has a published attestation.",
+        )
+    mismatch = any(
+        marker in text for marker in ("does not match", "mismatch", "expected", "not match")
+    )
+    if "expected san value to match" in text or (
+        mismatch and any(marker in text for marker in ("signer workflow", "workflow identity"))
+    ):
+        return (
+            "workflow_identity",
+            "Check the expected release workflow and the artifact's signing workflow; "
+            "keep the pin.",
+        )
+    if "expected sourcerepositorydigest to be" in text or (
+        mismatch and any(marker in text for marker in ("source digest", "source revision"))
+    ):
+        return (
+            "source_revision",
+            "Check the expected source commit and obtain its matching signed artifact; "
+            "keep the pin.",
+        )
+    return (
+        "unclassified",
+        "Check GitHub CLI availability and service status, then retry with the same verification "
+        "constraints. Use a private operator session for further diagnosis.",
+    )
 
 
 def verify_subjects(
@@ -65,32 +114,91 @@ def verify_subjects(
         if {path.name for path in asset_dir.iterdir()} != names | {"SHA256SUMS"}:
             raise ValueError("Unverified release asset is present.")
         for name, digest, path in subjects:
-            result: dict = {"name": name, "sha256": digest, "verified": False}
+            result: dict = {
+                "name": name,
+                "sha256": digest,
+                "verified": False,
+                "attempt_outcomes": [],
+            }
             report["subjects"].append(result)
             for attempt in range(1, 4):
                 result["attempts"] = attempt
                 try:
-                    process = subprocess.run(
-                        [
-                            "gh",
-                            "attestation",
-                            "verify",
-                            str(path),
-                            "--repo",
-                            repository,
-                            "--signer-workflow",
-                            report["signer_workflow"],
-                            "--source-digest",
-                            revision,
-                        ],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=timeout,
-                        check=False,
-                    )
+                    with tempfile.TemporaryFile() as diagnostic_stream:
+                        process = subprocess.run(
+                            [
+                                "gh",
+                                "attestation",
+                                "verify",
+                                str(path),
+                                "--repo",
+                                repository,
+                                "--signer-workflow",
+                                report["signer_workflow"],
+                                "--source-digest",
+                                revision,
+                            ],
+                            stdout=subprocess.DEVNULL,
+                            stderr=diagnostic_stream,
+                            timeout=timeout,
+                            check=False,
+                        )
+                        diagnostic_stream.seek(0)
+                        diagnostic = diagnostic_stream.read(_DIAGNOSTIC_BYTES + 1)
                 except subprocess.TimeoutExpired:
+                    result.update(
+                        returncode=None,
+                        diagnostic_hint="verification_timeout",
+                        recovery_instruction="Check service responsiveness, then rerun "
+                        "verification "
+                        "with the same pins. A timeout stops this run without retrying.",
+                    )
+                    result["attempt_outcomes"].append(
+                        {
+                            "attempt": attempt,
+                            "outcome": "timeout",
+                            "returncode": None,
+                            "diagnostic_hint": "verification_timeout",
+                        }
+                    )
                     report["failure"] = "verification_timeout"
                     return report
+                except OSError:
+                    result.update(
+                        returncode=None,
+                        diagnostic_hint="verifier_unavailable",
+                        recovery_instruction="Check GitHub CLI installation and local temporary "
+                        "storage, then rerun verification with the same pins.",
+                    )
+                    result["attempt_outcomes"].append(
+                        {
+                            "attempt": attempt,
+                            "outcome": "unavailable",
+                            "returncode": None,
+                            "diagnostic_hint": "verifier_unavailable",
+                        }
+                    )
+                    report["failure"] = "invalid_subjects_or_verifier_unavailable"
+                    return report
+                hint, recovery = (
+                    ("verified", "")
+                    if process.returncode == 0
+                    else _diagnostic_hint(diagnostic[:_DIAGNOSTIC_BYTES])
+                )
+                result.update(
+                    returncode=process.returncode,
+                    diagnostic_hint=hint,
+                    recovery_instruction=recovery,
+                )
+                result["attempt_outcomes"].append(
+                    {
+                        "attempt": attempt,
+                        "outcome": "verified" if process.returncode == 0 else "rejected",
+                        "returncode": process.returncode,
+                        "diagnostic_hint": hint,
+                        "stderr_prefix_truncated": len(diagnostic) > _DIAGNOSTIC_BYTES,
+                    }
+                )
                 if process.returncode == 0:
                     break
                 if attempt == 3:

@@ -44,7 +44,8 @@ def subjects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         "with open(os.environ['ATTESTATION_TEST_LOG'],'a') as log:\n"
         "    log.write(json.dumps(sys.argv[1:])+'\\n')\n"
         "time.sleep(float(os.environ.get('ATTESTATION_TEST_DELAY','0')))\n"
-        "print('private verifier sentinel',file=sys.stderr)\n"
+        "print(os.environ.get('ATTESTATION_TEST_STDERR','private verifier sentinel'),"
+        "file=sys.stderr)\n"
         "raise SystemExit(int(os.environ.get('ATTESTATION_TEST_EXIT','0')))\n"
     )
     fake.chmod(0o755)
@@ -118,12 +119,27 @@ def test_stalled_verifier_is_killed_and_recorded_incomplete(subjects, monkeypatc
     report = verifier.verify_subjects(assets, "owner/project", "a" * 40, timeout=0.05)
     assert report["status"] == "failed"
     assert report["failure"] == "verification_timeout"
+    subject = report["subjects"][0]
+    assert subject["attempts"] == 1
+    assert subject["returncode"] is None
+    assert subject["attempt_outcomes"] == [
+        {
+            "attempt": 1,
+            "outcome": "timeout",
+            "returncode": None,
+            "diagnostic_hint": "verification_timeout",
+        }
+    ]
+    assert "without retrying" in subject["recovery_instruction"]
 
 
 def test_cli_retains_failed_receipt_and_exits_nonzero(subjects, monkeypatch, tmp_path) -> None:
     """Publication receives a nonzero exit even when writing diagnostics succeeds."""
     assets, _ = subjects
     monkeypatch.setenv("ATTESTATION_TEST_EXIT", "1")
+    monkeypatch.setenv(
+        "ATTESTATION_TEST_STDERR", "HTTP 401: private verifier sentinel token=secret"
+    )
     output = tmp_path / "verification.json"
     result = subprocess.run(
         [
@@ -143,5 +159,93 @@ def test_cli_retains_failed_receipt_and_exits_nonzero(subjects, monkeypatch, tmp
         timeout=10,
     )
     assert result.returncode == 1
-    assert json.loads(output.read_text())["status"] == "failed"
-    assert "private verifier sentinel" not in result.stdout + result.stderr
+    report = json.loads(output.read_text())
+    assert report["status"] == "failed"
+    assert report["subjects"][0]["diagnostic_hint"] == "authentication"
+    assert "gh auth status" in result.stdout
+    assert "private verifier sentinel" not in result.stdout + result.stderr + output.read_text()
+    assert "token=secret" not in result.stdout + result.stderr + output.read_text()
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "hint", "instruction"),
+    [
+        ("HTTP 401: authentication required", "authentication", "gh auth status"),
+        ("no attestations found for artifact", "attestation_unavailable", "signed subject"),
+        (
+            "signer workflow does not match expected identity",
+            "workflow_identity",
+            "release workflow",
+        ),
+        ("source digest does not match expected revision", "source_revision", "source commit"),
+        (
+            "failed to verify certificate identity: expected SAN value to match regex private",
+            "workflow_identity",
+            "release workflow",
+        ),
+        (
+            "expected SourceRepositoryDigest to be private-revision, got private-other-revision",
+            "source_revision",
+            "source commit",
+        ),
+        ("an unrecognized rejection", "unclassified", "verification constraints"),
+    ],
+)
+def test_actual_gh_rejections_retain_only_allowlisted_hints(
+    subjects, monkeypatch, diagnostic: str, hint: str, instruction: str
+) -> None:
+    """Actual child stderr yields static recovery hints and per-attempt exit evidence."""
+    assets, log = subjects
+    monkeypatch.setenv("ATTESTATION_TEST_EXIT", "1")
+    monkeypatch.setenv(
+        "ATTESTATION_TEST_STDERR", diagnostic + " private verifier sentinel token=secret"
+    )
+    report = verifier.verify_subjects(assets, "owner/project", "a" * 40)
+    subject = report["subjects"][0]
+    assert report["failure"] == "attestation_rejected"
+    assert subject["diagnostic_hint"] == hint
+    assert instruction in subject["recovery_instruction"]
+    assert subject["returncode"] == 1
+    assert [entry["attempt"] for entry in subject["attempt_outcomes"]] == [1, 2, 3]
+    assert all(entry["returncode"] == 1 for entry in subject["attempt_outcomes"])
+    assert all(entry["outcome"] == "rejected" for entry in subject["attempt_outcomes"])
+    assert len(log.read_text().splitlines()) == 3
+    assert "private verifier sentinel" not in json.dumps(report)
+    assert "token=secret" not in json.dumps(report)
+
+
+def test_stderr_classification_reads_only_bounded_prefix(subjects, monkeypatch) -> None:
+    """A long response can't expand the receipt or classify a hidden trailing hint."""
+    assets, _ = subjects
+    monkeypatch.setenv("ATTESTATION_TEST_EXIT", "1")
+    monkeypatch.setenv(
+        "ATTESTATION_TEST_STDERR", "x" * 9000 + " HTTP 401 private verifier sentinel"
+    )
+    report = verifier.verify_subjects(assets, "owner/project", "a" * 40)
+    subject = report["subjects"][0]
+    assert subject["diagnostic_hint"] == "unclassified"
+    assert all(entry["stderr_prefix_truncated"] for entry in subject["attempt_outcomes"])
+    assert "private verifier sentinel" not in json.dumps(report)
+    assert len(json.dumps(report)) < 3000
+
+
+def test_missing_verifier_has_safe_attempt_evidence(subjects, monkeypatch, tmp_path) -> None:
+    """An actual missing executable fails closed without disclosing search paths."""
+    assets, _ = subjects
+    missing = tmp_path / "private-search-path-sentinel"
+    missing.mkdir()
+    monkeypatch.setenv("PATH", str(missing))
+    report = verifier.verify_subjects(assets, "owner/project", "a" * 40)
+    subject = report["subjects"][0]
+    assert report["failure"] == "invalid_subjects_or_verifier_unavailable"
+    assert subject["diagnostic_hint"] == "verifier_unavailable"
+    assert subject["returncode"] is None
+    assert subject["attempt_outcomes"] == [
+        {
+            "attempt": 1,
+            "outcome": "unavailable",
+            "returncode": None,
+            "diagnostic_hint": "verifier_unavailable",
+        }
+    ]
+    assert "private-search-path-sentinel" not in json.dumps(report)
