@@ -66,7 +66,14 @@ def record_operation_storage_failure(
 def _admission_storage_error(error: BaseException) -> str:
     """Keep ordinary bounded writer contention separate from storage outages."""
     if isinstance(error, AuthDatabaseError):
-        return f"admission_unavailable: No operation started. {error}"
+        recovery = (
+            "Ask the operator to preserve auth storage and inspect "
+            "ownership, permissions and aliases."
+            if error.code == "auth_storage_unsafe"
+            else "Ask the operator to preserve auth storage and check "
+            "directory access and available space."
+        )
+        return f"admission_unavailable: No operation started. {error.code}: {recovery}"
     if _is_busy(error):
         return (
             "admission_busy: No operation started. Operation state is busy; retry shortly "
