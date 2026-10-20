@@ -259,10 +259,10 @@ def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRunti
     """Normalize one runtime request into a deterministic matching target."""
     if isinstance(request, ShellCommandActionRequest):
         rendered = shlex.join(request.command)
-        without_empty_operands = shlex.join(item for item in request.command if item != "")
+        without_blank_operands = shlex.join(item for item in request.command if item.strip())
         return _NormalizedRuntimeAction(
             kind=request.kind,
-            match_values=tuple(dict.fromkeys((rendered, without_empty_operands))),
+            match_values=tuple(dict.fromkeys((rendered, without_blank_operands))),
         )
     if isinstance(request, FileWriteActionRequest):
         return _NormalizedRuntimeAction(

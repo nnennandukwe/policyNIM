@@ -194,15 +194,16 @@ def test_shell_models_preserve_argument_contents(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Requires the POSIX rm command.")
+@pytest.mark.parametrize("blank_operand", ["", " ", "\t", "\n"])
 def test_empty_operands_cant_bypass_destructive_command_screening(
-    runtime_settings: Settings, tmp_path: Path
+    runtime_settings: Settings, tmp_path: Path, blank_operand: str
 ) -> None:
-    """Screen an empty-operand variant while preserving the exact execution request."""
+    """Screen blank-operand variants while preserving the exact execution request."""
     target = tmp_path / "owned-target.txt"
     target.write_text("Owned test data.")
-    command = ["rm", "", "-rf", target.name]
+    command = ["rm", blank_operand, "-rf", target.name]
     # Prove the actual command can remove its target despite reporting an
-    # empty-operand error; the test owns every affected path.
+    # missing-operand error; the test owns every affected path.
     subprocess.run(command, cwd=tmp_path, capture_output=True, check=False, timeout=10)
     assert not target.exists()
     target.write_text("Owned test data.")
