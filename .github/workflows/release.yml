@@ -42,19 +42,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        run: uv sync --locked --group test --group dev
+        run: uv sync --locked --python ${{ matrix.python-version }} --group test --group dev
 
       - name: Check lockfile
         run: uv lock --check
 
       - name: Run Ruff
-        run: uv run --no-sync ruff check .
+        run: uv run --no-sync --python ${{ matrix.python-version }} ruff check .
 
       - name: Run Pyright
-        run: uv run --no-sync pyright
+        run: uv run --no-sync --python ${{ matrix.python-version }} pyright
 
       - name: Run offline pytest
-        run: uv run --no-sync pytest -q -m "not live and not docker_live"
+        run: uv run --no-sync --python ${{ matrix.python-version }} pytest -q -m "not live and not docker_live"
 
       - name: Build Python distribution
         if: matrix.python-version == '3.11'
