@@ -31,17 +31,23 @@ def artifact_identity(command: Path) -> dict[str, object]:
             checks.require(
                 path.resolve().is_relative_to(root), "Artifact symlink escapes its tree."
             )
-            record = "link:" + relative + ":" + os.readlink(path)
+            record = ["link", relative, os.readlink(path)]
         elif path.is_file():
             with path.open("rb") as content:
                 file_digest = hashlib.file_digest(content, "sha256").hexdigest()
-            record = "file:" + relative + ":" + file_digest
+            record = ["file", relative, file_digest]
             count += 1
         else:
             continue
-        digest.update(record.encode("utf-8") + b"\n")
+        digest.update(
+            json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
+        )
     checks.require(count > 0, "Standalone artifact tree is empty.")
-    return {"tree_sha256": digest.hexdigest(), "file_count": count}
+    return {
+        "tree_sha256": digest.hexdigest(),
+        "file_count": count,
+        "digest_format": "json-records-v1",
+    }
 
 
 def verify(args: argparse.Namespace) -> dict[str, object]:
