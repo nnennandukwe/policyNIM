@@ -159,9 +159,12 @@ def test_release_workflow_runs_offline_verification_before_release_artifacts() -
         "tags:",
         '- "v*.*.*"',
         "uv lock --check",
-        "uv run --no-sync ruff check .",
-        "uv run --no-sync pyright",
-        'uv run --no-sync pytest -q -m "not live and not docker_live"',
+        "uv run --no-sync --python ${{ matrix.python-version }} ruff check .",
+        "uv run --no-sync --python ${{ matrix.python-version }} pyright",
+        (
+            "uv run --no-sync --python ${{ matrix.python-version }} "
+            'pytest -q -m "not live and not docker_live"'
+        ),
         "uv build --out-dir dist",
         "wheel-smoke:",
         "standalone-build:",
@@ -476,3 +479,26 @@ def test_release_attests_and_verifies_every_asset_before_publication() -> None:
         step for step in job["steps"] if step["name"] == "Generate release asset attestations"
     )
     assert attest["with"]["subject-checksums"] == "release-assets/SHA256SUMS"
+
+
+def _assert_release_source_python_selection(job: dict) -> None:
+    """Every uv source-check command must override the repository interpreter pin."""
+    for step in job["steps"]:
+        command = step.get("run", "")
+        if command.startswith(("uv sync", "uv run")):
+            assert "--python ${{ matrix.python-version }}" in command
+
+
+def test_release_source_checks_override_local_python_pin() -> None:
+    """Setting PATH alone can't change uv's project interpreter selection."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["verify"]
+    _assert_release_source_python_selection(job)
+
+
+def test_release_python_guard_detects_removed_override() -> None:
+    """A matrix label can't hide a command that still selects Python3.11."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["verify"]
+    step = next(step for step in job["steps"] if step.get("run", "").startswith("uv sync"))
+    step["run"] = step["run"].replace(" --python ${{ matrix.python-version }}", "")
+    with pytest.raises(AssertionError):
+        _assert_release_source_python_selection(job)
