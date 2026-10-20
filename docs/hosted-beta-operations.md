@@ -268,7 +268,7 @@ Important hosted behavior:
 - `/mcp` returns:
   - `401 {"error":"Unauthorized."}` for missing, invalid, or revoked bearer tokens
   - `403 {"error":"Account suspended."}` for suspended self-serve accounts
-  - MCP tool error `quota_exceeded` when accepted-operation allowance is exhausted;
+  - MCP tool error `quota_exceeded` when reserved-work-unit allowance is exhausted;
     discovery remains usable, and the tool message gives the UTC reset time
 - hosted MCP logs emit one JSON object per line for auth rejects and tool calls,
   including `auth_result`, `tool_name`, `latency_ms`, and
@@ -383,16 +383,20 @@ measurements and shouldn't be added together as total latency.
 
 ## Principal operation limits
 
-Hosted authentication doesn't consume operation allowance. Accepted expensive work
-(search and preflight) charges once when its admission transaction
-commits, before providers start. Later provider failure, cancellation or process loss
+Hosted authentication doesn't consume work-unit allowance. Interactive expensive
+work (search, preflight, compile and preflight evidence) reserves one unit when its
+admission transaction commits, before providers start. Durable evaluation work
+reserves its validated case/configuration weight before the job is queued; worker
+activation doesn't reserve another unit. Later provider failure, cancellation or process loss
 keeps that charge: upstream usage may already exist. Invalid credentials, missing
 scopes, saturation and exhausted allowance start no provider and add no charge.
 A cancelled/expired worker is rejected before reservation, and cancellation is
 checked again with the write-locked snapshot; neither check charges usage.
 Initialization, discovery, public health, resources and job polling aren't expensive
-operations. Durable evaluation submission deduplication and worker integration belong
-to #101; polling or returning an existing submission must never create another charge.
+operations. Resources, review prompts, job inspection, results and cancellation
+reserve no units. Returning an existing durable submission reserves no additional
+units. Their local worker concurrency remains bounded. Durable evaluation integration
+is tracked in [#101](https://github.com/nnennandukwe/policyNIM/issues/101).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

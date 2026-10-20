@@ -96,7 +96,7 @@ authenticates them. The configured limit can range from 1 to 256. It holds a slo
 through response cleanup and rejects excess requests with HTTP `429`,
 `error=auth_busy` and `Retry-After: 1` before contacting the issuer. Public health
 and metadata without an Authorization header remain accessible. This request cap operates separately from Foundation's model-operation cap and
-from principal accepted-operation accounting. See [operation limits](hosted-beta-operations.md#principal-operation-limits).
+from principal work-unit accounting. See [operation limits](hosted-beta-operations.md#principal-operation-limits).
 
 ## Discovery and operation permissions
 
@@ -164,7 +164,7 @@ it doesn't obtain an MCP OAuth token.
 In compatibility mode, a bounded read-only lookup recognizes locally issued
 key hashes, including revoked keys, before any issuer request. Recognition grants
 no access; the existing transactional authenticator still checks revocation,
-account status. Accepted-operation admission checks the key and account again in
+account status. Work acceptance and execution activation check the key and account again in
 the same transaction that charges usage. Known denied keys never reach the issuer. Unknown opaque
 tokens, including ones starting with `pnm_`, can still be verified by the issuer.
 If local recognition storage fails, unrecognized tokens can continue to issuer
