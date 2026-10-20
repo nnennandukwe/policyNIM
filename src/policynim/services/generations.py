@@ -965,8 +965,12 @@ class GenerationStore:
             _sync_directory(target.parent)
             self._step("staging_parent_fsync")
             _sync_directory(prepared.directory.parent)
-        self._inspect(target, expected_id=prepared.generation_id, expected_embedding=self.embedding)
         token = self._artifact_token(target)
+        self._inspect(target, expected_id=prepared.generation_id, expected_embedding=self.embedding)
+        if self._artifact_token(target) != token:
+            raise GenerationError(
+                "activate", "Generation changed during inspection; preserve and inspect it."
+            )
         with self._locked():
             return self._commit_activation(prepared, target, token)
 
