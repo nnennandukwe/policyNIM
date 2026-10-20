@@ -199,3 +199,8 @@ The harness validates JSON-RPC version/request identity and typed MCP discovery/
 results before counting success. HTTP 200 protocol errors, missing results and malformed
 search payloads produce explicit error outcomes; warmup fails instead of inflating
 successful throughput. Responses and validation error text never enter the receipt.
+
+On POSIX hosts, recovery and read-only reporting use compatible shared lease probes,
+while workers retain exclusive ownership. A report observer can't delay committed
+crash recovery. Destructive retired-file cleanup still requires exclusive proof and
+can defer while an observer holds a lease. Other platforms retain conservative probes.
