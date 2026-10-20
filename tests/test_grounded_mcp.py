@@ -462,7 +462,7 @@ def test_chunk_reads_materialize_only_selected_evidence(generation, monkeypatch)
     settings, _, generation_id = generation
     with closing(create_index_store(settings)) as store:
         chunk = store.list_chunks()[0]
-    service_module._chunk_key_lookup.cache_clear()
+    service_module._CHUNK_KEYS.clear()
     original_ids = SQLiteVecIndexStore.list_chunk_ids
     identifier_reads: list[int] = []
 
@@ -766,3 +766,26 @@ def test_current_catalog_requires_retrieval_compatible_configured_generation(gen
         create_index_store(pinned)
     archived = read_policy_catalog(pinned, generation_id=generation_id)
     assert archived["generation_id"] == generation_id
+
+
+def test_unknown_chunk_validates_index_after_cached_lookup(generation, monkeypatch) -> None:
+    """Unknown references can't hide an index swap during a warm cached identifier lookup."""
+    from policynim.errors import GenerationError
+
+    settings, generations, generation_id = generation
+    original = service_module._chunk_key_lookup
+    with pytest.raises(PolicyResourceError, match="unknown_chunk"):
+        read_chunk_resource(settings, generation_id=generation_id, chunk_key="0" * 64)
+    with generations.pin() as snapshot:
+        index_path = snapshot.index_path
+
+    def swap_after_lookup(store, selected_generation: str):
+        """Change the owned test artifact after lookup but before the unknown-key branch."""
+        identifiers = original(store, selected_generation)
+        with index_path.open("ab") as stream:
+            stream.write(b"fixture-index-swap")
+        return identifiers
+
+    monkeypatch.setattr(service_module, "_chunk_key_lookup", swap_after_lookup)
+    with pytest.raises(GenerationError):
+        read_chunk_resource(settings, generation_id=generation_id, chunk_key="0" * 64)
