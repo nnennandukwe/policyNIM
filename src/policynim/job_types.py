@@ -119,6 +119,8 @@ class EvaluationJobInfo(StrictModel):
     report_sha256: str | None = None
     result_expired: bool = False
     next_attempt_at: float = 0
+    work_units: int = Field(default=1, ge=1)
+    admission_id: str | None = None
 
 
 class EvaluationJobReport(StrictModel):

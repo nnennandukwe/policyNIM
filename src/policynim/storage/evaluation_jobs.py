@@ -73,7 +73,7 @@ class EvaluationJobStore:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
             migration = (
                 "ALTER TABLE evaluation_jobs ADD COLUMN active_case_start_attempts "
@@ -81,6 +81,11 @@ class EvaluationJobStore:
                 if version == 1
                 else ""
             )
+            if version in (1, 2):
+                migration += (
+                    "ALTER TABLE evaluation_jobs ADD COLUMN work_units INTEGER NOT NULL DEFAULT 1;"
+                    "ALTER TABLE evaluation_jobs ADD COLUMN admission_id TEXT;"
+                )
             schema = f"""
                 CREATE TABLE IF NOT EXISTS evaluation_job_archives (
                     generation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, archive BLOB NOT NULL
@@ -100,6 +105,7 @@ class EvaluationJobStore:
                     result_expired INTEGER NOT NULL DEFAULT 0,
                     snapshot_json TEXT, report_json TEXT, usage_json TEXT NOT NULL,
                     worker_token TEXT, next_attempt_at REAL NOT NULL DEFAULT 0,
+                    work_units INTEGER NOT NULL DEFAULT 1, admission_id TEXT,
                     UNIQUE(owner_id, idempotency_key)
                 );
                 CREATE TABLE IF NOT EXISTS evaluation_job_cases (
@@ -109,7 +115,7 @@ class EvaluationJobStore:
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
                 {migration}
-                PRAGMA user_version=2;
+                PRAGMA user_version=3;
             """
             for statement in schema.split(";"):
                 if statement.strip():
@@ -194,6 +200,7 @@ class EvaluationJobStore:
         request_digest: str,
         snapshot: EvaluationJobSnapshot,
         archive: bytes,
+        accept_work: Callable[[], tuple[str, int]] | None = None,
     ) -> EvaluationJobInfo:
         """Commit an accepted snapshot and its archive atomically after bounded deduplication."""
         with self._transaction() as connection:
@@ -229,6 +236,7 @@ class EvaluationJobStore:
                 raise EvaluationJobError(
                     "archive_invalid: Preserve the job database for inspection."
                 )
+            admission_id, work_units = accept_work() if accept_work else (None, 1)
             now = self.clock()
             info = EvaluationJobInfo(
                 job_id=uuid4().hex,
@@ -243,6 +251,8 @@ class EvaluationJobStore:
                 configuration_digest=snapshot.configuration_digest,
                 snapshot_digest=payload_digest(snapshot.model_dump(mode="json")),
                 case_count=len(snapshot.suite.cases),
+                admission_id=admission_id,
+                work_units=work_units,
             )
             values = info.model_dump(mode="json")
             values.update(
@@ -630,7 +640,7 @@ def inspect_job_backlog(path: Path) -> dict[str, int] | None:
         raise EvaluationJobError("job_store_invalid: Job storage can't be a symlink.")
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version != 2:
+        if version != 3:
             raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
         return {
             state: count
