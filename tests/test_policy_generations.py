@@ -2989,10 +2989,10 @@ def test_publication_syncs_object_membership_before_pointer_commit(
 
 
 @pytest.mark.parametrize("snapshot_cache", [False, True])
-def test_warm_public_health_avoids_corpus_clones_and_reader_leases(
+def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snapshot_cache: bool
 ) -> None:
-    """Unchanged public probes reuse validated metadata without copying corpus or opening leases."""
+    """Unchanged probes avoid corpus copies while checking the real reader-admission path."""
     import os
 
     from starlette.testclient import TestClient
@@ -3034,7 +3034,7 @@ def test_warm_public_health_avoids_corpus_clones_and_reader_leases(
             assert response.status_code == 200
             assert response.json()["generation_id"] == first.generation_id
         assert clones == []
-        assert lease_opens == []
+        assert lease_opens
         artifact = store.root / "objects" / first.generation_id / "runtime_rules.json"
         artifact.write_bytes(artifact.read_bytes() + b"tampered")
         assert client.get("/healthz").status_code == 503
@@ -3060,3 +3060,181 @@ def test_health_revalidates_when_change_stamps_are_unavailable(
         artifact = store.root / "objects" / active.generation_id / "runtime_rules.json"
         artifact.write_bytes(artifact.read_bytes() + b"tampered")
         assert client.get("/healthz").status_code == 503
+
+
+def test_warm_health_refuses_failed_reader_lease_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached valid generation can't hide storage failure that blocks every new search reader."""
+    import errno
+    import os
+
+    from starlette.testclient import TestClient
+
+    from policynim.errors import GenerationError
+    from policynim.interfaces.mcp import _build_streamable_http_app
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_open = os.open
+
+    def exhausted(path, flags, mode=0o777, *, dir_fd=None):
+        """Inject ENOSPC only at the real filesystem reader-lease creation boundary."""
+        if str(store.root / "leases") in str(path) and flags & os.O_CREAT:
+            raise OSError(errno.ENOSPC, "private storage payload")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(os, "open", exhausted)
+        response = client.get("/healthz")
+        assert response.status_code == 503
+        assert "private storage payload" not in response.text
+        with pytest.raises(GenerationError):
+            store.pin()
+
+
+def test_readiness_retains_selected_generation_during_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cold health keeps its selected object while real supported writers rotate and prune."""
+    from contextlib import contextmanager
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    original_locked = store._locked
+    rotate = True
+    published: list[str] = []
+
+    @contextmanager
+    def locked(**kwargs):
+        """Rotate twice immediately after the health selection/admission lock is released."""
+        nonlocal rotate
+        with original_locked(**kwargs):
+            yield
+        if rotate:
+            rotate = False
+            other = GenerationStore(root=store.root, embedding=identity)
+            assert settings.corpus_dir is not None
+            member = settings.corpus_dir / "A.md"
+            for revision in ("second", "third"):
+                member.write_text(member.read_text() + f"\nReviewed {revision} revision.\n")
+                published.append(other.build(settings, MockEmbedder()).generation_id)
+            other.prune(keep_recent=0)
+
+    monkeypatch.setattr(store, "_locked", locked)
+    result = store.readiness()
+    assert result.generation_id == first.generation_id
+    assert len(published) == 2
+    assert store.inspect().generation_id == published[-1]
+    store.prune(keep_recent=0)
+    assert not (store.root / "objects" / first.generation_id).exists()
+
+
+def test_orphan_activation_repeats_failed_rename_durability_barriers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Orphan recovery repeats directory durability barriers before committing a pointer."""
+    from policynim.errors import GenerationError
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules)
+    pointer = (store.root / "active.json").read_bytes()
+    original_sync = generations._sync_directory
+    failed = False
+    synchronized: list[Path] = []
+
+    def sync(path: Path) -> None:
+        """Fail the first actual objects-parent barrier after object installation."""
+        nonlocal failed
+        if path == store.root / "objects" and not failed:
+            failed = True
+            raise OSError("injected directory synchronization failure")
+        original_sync(path)
+        synchronized.append(path)
+
+    monkeypatch.setattr(generations, "_sync_directory", sync)
+    with pytest.raises(GenerationError):
+        store.build(settings, MockEmbedder())
+    assert (store.root / "active.json").read_bytes() == pointer
+    orphan = next(p for p in (store.root / "objects").iterdir() if p.name != active.generation_id)
+    synchronized.clear()
+
+    def fault(step: str) -> None:
+        """Require all rename durability barriers before committing the occupied orphan."""
+        if step == "before_activate":
+            assert {orphan, orphan.parent, store.root / "staging"} <= set(synchronized)
+
+    recovered = GenerationStore(root=store.root, embedding=identity, fault=fault).activate(
+        orphan.name, expected_active=active.generation_id
+    )
+    assert recovered.generation_id == orphan.name
+    assert store.inspect().generation_id == orphan.name
+
+
+@pytest.mark.parametrize("validation_fails", [False, True])
+def test_readiness_cleanup_doesnt_wait_for_another_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, validation_fails: bool
+) -> None:
+    """A real publisher lock can't trap cleanup after successful or failed validation."""
+    from threading import Event, Thread
+
+    from policynim.errors import GenerationError
+    from policynim.storage.file_lock import exclusive_file_lock
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_snapshot = store._reader_snapshot
+    held, release, finished = Event(), Event(), Event()
+    errors: list[BaseException] = []
+    holders: list[Thread] = []
+
+    def hold() -> None:
+        """Hold the real publication lock until the test releases the competing publisher."""
+        with exclusive_file_lock(store.root / ".publish.lock"):
+            held.set()
+            release.wait(5)
+
+    def snapshot(generation_id: str, *, force: bool):
+        """Start the lock holder only after actual generation validation has completed."""
+        result = original_snapshot(generation_id, force=force)
+        holder = Thread(target=hold, daemon=True)
+        holders.append(holder)
+        holder.start()
+        assert held.wait(3)
+        if validation_fails:
+            raise GenerationError("inspect", "Injected validation refusal.")
+        return result
+
+    def probe() -> None:
+        """Exercise public health readiness while retaining all raised failures."""
+        try:
+            store.readiness()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(store, "_reader_snapshot", snapshot)
+    worker = Thread(target=probe, daemon=True)
+    worker.start()
+    try:
+        assert held.wait(3)
+        completed_while_writer_held = finished.wait(1)
+    finally:
+        release.set()
+        worker.join(5)
+        for holder in holders:
+            holder.join(5)
+    assert completed_while_writer_held
+    assert len(errors) == int(validation_fails)
+    if errors:
+        assert isinstance(errors[0], GenerationError)
+    assert not worker.is_alive()
+    assert not list((store.root / "leases").rglob("*.lock"))
