@@ -66,6 +66,7 @@ from policynim.operations import (
     operation_scope,
     safe_exception_diagnostics,
 )
+from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -1147,15 +1148,17 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
 
 
 def _derive_mcp_url(settings: Settings) -> str | None:
+    """Return the optional configured MCP route without changing origin validation."""
     if settings.mcp_public_base_url is None:
         return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+    return public_route_url(settings.mcp_public_base_url, "/mcp")
 
 
 def _derive_beta_url(settings: Settings) -> str | None:
+    """Return the optional configured portal route for existing templates."""
     if settings.mcp_public_base_url is None:
         return None
-    return str(settings.mcp_public_base_url).rstrip("/") + _BETA_PATH
+    return public_route_url(settings.mcp_public_base_url, _BETA_PATH)
 
 
 def _beta_asset_path(filename: str) -> Path:
