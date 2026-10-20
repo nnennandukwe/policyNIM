@@ -108,7 +108,9 @@ discovery/readiness percentiles, sampled active peak,
 terminal ledger counts, sampled process RSS and process maximum RSS when available.
 RSS sampling uses POSIX `ps` during probes, so the harness supports macOS/Linux.
 The samples include setup/ingestion memory that remains resident; they can miss
-short peaks. A missing shutdown-hook maximum stays `null`. A
+short peaks. The server captures its process maximum at application lifespan shutdown,
+before Uvicorn restores SIGTERM, and names that phase in `peak_server_rss_scope`.
+A failed or missing shutdown measurement stays `null`. A
 warmup search contributes one explicitly identified ledger charge per scenario.
 Provider usage stays unavailable; `live_nvidia_calls` stays zero.
 
@@ -171,3 +173,8 @@ is labeled `client_task_already_completed`; that run doesn't prove a disconnect.
 Unexpected browser callback errors report an unknown stage and the exception class
 with fixed recovery guidance for identity-provider reachability and account storage.
 They don't label every unknown error as an upstream failure or log raw error text.
+
+Readiness transport failures during intentional shutdown remain counted as
+`health_transport_failure`; they don't silently end the sampling series.
+Unexpected probe exceptions fail the harness with a sanitized exception class
+instead of producing a success receipt with incomplete probes.
