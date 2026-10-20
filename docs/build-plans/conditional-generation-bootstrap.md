@@ -33,3 +33,5 @@ but an orphan object reaches that other store. It doesn't establish a cross-UID
 exploit. Supported publisher interleaving remains serialized and preserves the
 winner; independent pathname mutation falls outside that protocol. Hosted volume
 ownership and parent permissions need separate deployment readback.
+
+Seed inspection uses a private temporary directory in the nearest existing target ancestor, then removes it before claiming the root. That service-controlled filesystem needs room for the expanded seed (at most 512 MiB); fresh startup doesn't depend on the system temporary filesystem. Temporary inspection never creates the target root or its missing parents.

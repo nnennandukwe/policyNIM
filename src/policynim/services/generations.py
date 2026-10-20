@@ -1761,7 +1761,12 @@ class GenerationStore:
                 )
                 # Validate every artifact before claiming durable recovery state. The
                 # ordinary staged transaction validates these same immutable bytes again.
-                with TemporaryDirectory(prefix="policynim-seed-validation-") as scratch:
+                ancestor = self.root.parent
+                while not ancestor.exists():
+                    ancestor = ancestor.parent
+                with TemporaryDirectory(
+                    prefix="policynim-seed-validation-", dir=ancestor
+                ) as scratch:
                     directory = Path(scratch)
                     for name, data in contents.items():
                         (directory / name).write_bytes(data)

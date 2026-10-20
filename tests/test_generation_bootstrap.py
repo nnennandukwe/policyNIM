@@ -119,6 +119,22 @@ def test_invalid_seed_artifacts_leave_no_root_and_allow_corrected_seed(
     )
 
 
+def test_seed_validation_uses_target_storage_when_system_temp_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usable target volume doesn't depend on separate system temporary storage."""
+    import tempfile
+
+    _, store, first, _ = bundles(tmp_path)
+    blocked = tmp_path / "system-temp-is-a-file"
+    blocked.write_bytes(b"preserve")
+    monkeypatch.setattr(tempfile, "tempdir", str(blocked))
+    result = store.bootstrap_bundle(first[0], expected_digest=first[1])
+    assert result.generation_id == first[2].generation_id
+    assert blocked.read_bytes() == b"preserve"
+    assert not list(tmp_path.glob("policynim-seed-validation-*"))
+
+
 @pytest.mark.parametrize(
     "kind", ["empty", "unowned", "incomplete", "damaged", "artifact", "embedding", "symlink"]
 )
