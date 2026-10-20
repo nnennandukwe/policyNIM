@@ -160,6 +160,7 @@ def evaluator_factory(calls: list[str]):
 
         def __init__(self, settings):
             """Keep the restored immutable generation settings for public reads."""
+            assert settings.profile is None
             self.settings = settings
 
         def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
@@ -187,6 +188,7 @@ def test_worker_uses_captured_generation_after_source_changes_and_purge(
 
     service, suite, generation_id = job_setup(generation, tmp_path, cases=2)
     accepted = service.submit(suite, idempotency_key="archived", principal=principal())
+    service.settings.profile = tmp_path / "changed-external-profile.toml"
     settings, generations, _ = generation
     source = Path(settings.corpus_dir) / "A.md"
     for index in range(2):

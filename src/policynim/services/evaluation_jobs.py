@@ -486,7 +486,7 @@ class EvaluationJobWorker:
                 **values,
                 "generations_dir": self.store.path.parent / "worker-generations",
                 "generation_id": snapshot.generation_id,
-                "profile_path": None,
+                "profile": None,
             },
             deep=True,
         )
