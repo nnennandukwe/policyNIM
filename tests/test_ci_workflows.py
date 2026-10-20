@@ -419,3 +419,14 @@ def test_release_publication_joins_checked_artifact_evidence_before_upload() -> 
     assert names.index("Bind standalone receipt to archive") < names.index(
         "Retain standalone verification evidence"
     )
+
+
+def test_standalone_upload_excludes_committed_generation_sources() -> None:
+    """A committed artifacts directory mustn't enter the standalone download set."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["standalone-build"]
+    upload = next(step for step in job["steps"] if step["name"] == "Upload standalone bundle")
+    assert upload["with"]["path"] == "standalone-archives/*"
+    binding = next(
+        step["run"] for step in job["steps"] if step["name"] == "Bind standalone receipt to archive"
+    )
+    assert 'Path("standalone-archives").iterdir()' in binding

@@ -131,3 +131,19 @@ After the draft release artifacts pass local smoke tests, run the manual
 `Hosted Beta Smoke` workflow only when the deployed Railway beta and hosted MCP
 secrets are available. This is a deployment promotion check, not part of the
 offline release artifact build.
+
+## Artifact evidence manifest
+
+Before creating the draft, publication runs
+`python scripts/release_manifest.py release-assets --tag vX.Y.Z --source-sha <40-character-commit>`.
+The source revision must match the checked-out commit and the tag must match
+`pyproject.toml`. The gate requires a wheel receipt and four standalone platform
+receipts with the same dependency lock, generation and catalog. Each standalone
+receipt binds its archive checksum after compression; the wheel receipt binds the
+actual installed wheel. Missing platforms, failed probes, changed downloads,
+unexpected assets and stale receipts stop publication.
+
+`RELEASE_MANIFEST.json` records these identities and each download's checksum.
+`SHA256SUMS` also covers the manifest. This gate covers artifact verification;
+real coding-client, live-provider, production and rollback acceptance stay separate
+under #104. Keep those receipts tied to the final release revision before promotion.
