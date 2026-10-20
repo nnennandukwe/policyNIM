@@ -450,9 +450,10 @@ Terminal writes retry SQLite lock contention for a bounded 1.5 seconds before
 reporting incomplete accounting. Active capacity stays reserved during that retry.
 
 MCP errors `server_busy` and `principal_busy` tell callers to retry after active work
-finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Database lock/open
-failures return `admission_unavailable` before providers start: check the volume and
-writer locks before retrying. If recording a terminal outcome fails after accepted
+finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Brief database
+contention returns `admission_busy`; other storage failures return
+`admission_unavailable` before providers start. Check the volume and writer locks
+before retrying. If recording a terminal outcome fails after accepted
 work, `accounting_incomplete` warns that work may have completed and advises against
 blind retries. The accepted row and charge stay intact; inspect and recover state.
 Keep the hosted SQLite file on the persistent volume, include it in backups, and
@@ -498,3 +499,10 @@ it. Live owners, unresolved accepted work and unknown ownership stay preserved.
 Cleanup failures defer housekeeping with a fixed error class; they don't refund
 accepted usage or hide an accounting failure. The portal and admission service use
 the same canonical legacy identity fields and hash implementation.
+
+Owner leases are locked before their final names are published atomically. A process
+that dies before publication can leave a temporary alias; bounded housekeeping removes
+only matching aliases older than one hour. This prevents pruning from racing worker
+startup. Quiesce admissions and drain or stop workers before taking a matching database
+and owner-directory backup. A database-only emergency restore can leave unknown owners;
+keep those reservations until an operator reconciles them.

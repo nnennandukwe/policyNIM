@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import sqlite3
+import stat
 import time
 import uuid
 from collections.abc import Callable
@@ -253,6 +255,15 @@ class OperationStore:
                 for index, path in enumerate(self._owner.directory.iterdir()):
                     if index >= 100:
                         break
+                    if re.fullmatch(r"\.[0-9a-f]{32}\.pending", path.name):
+                        observed = path.stat(follow_symlinks=False)
+                        if (
+                            stat.S_ISREG(observed.st_mode)
+                            and observed.st_mtime < time.time() - 3600
+                        ):
+                            path.unlink()
+                            removed += 1
+                        continue
                     if path.suffix != ".lock":
                         continue
                     active = connection.execute(

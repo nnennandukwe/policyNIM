@@ -23,19 +23,31 @@ class OperationOwner:
         self.identity = uuid.uuid4().hex
         path = self.directory / (self.identity + ".lock")
         self._path = path
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        pending = self.directory / ("." + self.identity + ".pending")
+        descriptor = os.open(pending, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        published = False
         try:
             os.write(descriptor, b"0")
             _lock(descriptor)
-        except BaseException:
+            os.link(pending, path)  # Publish only an already-held inode, without replacing a lease.
+            published = True
             try:
-                path.unlink()
+                pending.unlink()
             except OSError:
                 logging.getLogger(__name__).warning(
-                    "Operation owner cleanup failed: storage_unavailable."
+                    "Operation owner temporary alias cleanup deferred: storage_unavailable."
                 )
-            finally:
-                os.close(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            for unfinished in (pending, path) if published else (pending,):
+                try:
+                    unfinished.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logging.getLogger(__name__).warning(
+                        "Operation owner cleanup failed: storage_unavailable."
+                    )
             raise
         self._descriptor = descriptor
         self._release = weakref.finalize(self, os.close, descriptor)

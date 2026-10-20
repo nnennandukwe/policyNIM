@@ -816,3 +816,76 @@ def test_recovered_crash_leases_are_removed_only_after_terminal_commit(tmp_path:
     assert service.store.usage("crashed").interrupted == 3
     service.store.close()
     assert list(directory.iterdir()) == []
+
+
+def test_owner_is_locked_before_other_processes_can_reap_it(tmp_path: Path) -> None:
+    """Publication during concurrent pruning can't leave an accepted crash without its lease."""
+    import queue
+    import textwrap
+    import threading
+
+    settings = _settings(tmp_path, mcp_max_concurrent_operations=1)
+    service = OperationAdmissionService(settings)
+    script = textwrap.dedent("""
+        import os, sys
+        from pathlib import Path
+        from policynim.storage import operation_lease
+        from policynim.storage.operation_store import OperationStore
+        from policynim.services.operation_admission import admit_operation
+        original = operation_lease._lock
+        def paused(descriptor):
+            print("owner_created", flush=True)
+            input()
+            original(descriptor)
+        operation_lease._lock = paused
+        store = OperationStore(Path(sys.argv[1]))
+        admit_operation(store, principal_id="crashed", operation="policy_search",
+                        daily_limit=10, principal_limit=1, global_limit=1)
+        os._exit(0)
+    """)
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(settings.beta_auth_db_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        ready: queue.Queue[str] = queue.Queue()
+        stdout = process.stdout
+        threading.Thread(target=lambda: ready.put(stdout.readline()), daemon=True).start()
+        assert ready.get(timeout=5).strip() == "owner_created"
+        pruned = service.store.prune_owner_leases()
+        _, errors = process.communicate("continue\n", timeout=10)
+        assert process.returncode == 0, errors
+        assert (
+            service.run(
+                lambda: "done",
+                principal=_principal(),
+                operation_name="policy_search",
+                cancelled=lambda: False,
+            )
+            == "done"
+        )
+        assert pruned == 0
+        assert service.store.usage("crashed").interrupted == 1
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_old_incomplete_publication_is_reaped_without_touching_recent_files(tmp_path: Path) -> None:
+    """A process killed before publication can't accumulate unbounded stale pending metadata."""
+    import time
+
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    directory = store.path.with_name(store.path.name + ".owners")
+    old = directory / ("." + "a" * 32 + ".pending")
+    recent = directory / ("." + "b" * 32 + ".pending")
+    old.write_bytes(b"0")
+    recent.write_bytes(b"0")
+    os.utime(old, (time.time() - 7200, time.time() - 7200))
+    assert store.prune_owner_leases() == 1
+    assert not old.exists() and recent.exists()
