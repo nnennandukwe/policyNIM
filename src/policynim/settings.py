@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     ] = 8000
     mcp_max_concurrent_operations: Annotated[int, Field(ge=1)] = 10
     mcp_max_concurrent_operations_per_principal: Annotated[int, Field(ge=1)] = 2
+    mcp_operation_retention_days: Annotated[int, Field(ge=1, le=365)] = 30
     mcp_principal_daily_operation_quota: Annotated[int, Field(ge=1)] = 500
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)

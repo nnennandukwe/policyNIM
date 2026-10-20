@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import json
 import logging
 import secrets
@@ -55,7 +56,12 @@ from policynim.interfaces.mcp_authorization import (
     OperationAuthorizationApp,
     record_authorization_failure,
 )
-from policynim.operations import OperationBudget, operation_scope
+from policynim.operations import (
+    OperationBudget,
+    current_correlation_id,
+    operation_correlation,
+    operation_scope,
+)
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -344,6 +350,7 @@ def _emit_hosted_event(
 ) -> None:
     payload = {
         "event": event,
+        "correlation_id": current_correlation_id(),
         "auth_result": auth_result,
         "tool_name": tool_name,
         "latency_ms": latency_ms,
@@ -369,7 +376,7 @@ def _failure_class_from_error(exc: BaseException) -> str | None:
 
 def _request_id_from_context(ctx: Context) -> str | None:
     try:
-        return ctx.request_id
+        return hashlib.sha256(str(ctx.request_id).encode()).hexdigest()[:24]
     except ValueError:
         return None
 
@@ -493,6 +500,21 @@ def policy_search(
 
 
 async def _run_logged_tool(
+    tool_name: str,
+    operation: Callable[[], dict[str, object]],
+    *,
+    ctx: Context,
+    executor: _ToolExecutor,
+    principal: AuthenticatedPrincipal | None = None,
+) -> dict[str, object]:
+    """Mint a content-free correlation ID shared by HTTP, admission and provider events."""
+    with operation_correlation():
+        return await _run_correlated_tool(
+            tool_name, operation, ctx=ctx, executor=executor, principal=principal
+        )
+
+
+async def _run_correlated_tool(
     tool_name: str,
     operation: Callable[[], dict[str, object]],
     *,
@@ -874,7 +896,7 @@ def _register_beta_routes(
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
         except Exception:
-            LOGGER.exception("Unexpected hosted beta OAuth callback failure.")
+            LOGGER.error("Hosted beta callback failed: unexpected_upstream_error.")
             return _render_beta_landing(
                 settings,
                 message=(
@@ -1326,8 +1348,8 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
-        LOGGER.exception(
-            "Hosted beta auth initialization failed. "
+        LOGGER.error(
+            "Hosted beta auth initialization failed: storage_unavailable. "
             "Continuing with env-issued break-glass tokens only."
         )
         return None
