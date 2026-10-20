@@ -28,6 +28,7 @@ import httpx2
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
+from packaging.requirements import Requirement
 
 import policynim
 from policynim.config_discovery import find_source_checkout_root
@@ -69,7 +70,9 @@ def check_wheel(wheel: Path) -> dict[str, object]:
     }
 
 
-def check_dependencies(lockfile: Path, expected_digest: str) -> dict[str, object]:
+def check_dependencies(
+    lockfile: Path, expected_digest: str, requirements: Path
+) -> dict[str, object]:
     """Bind installed dependency versions to the exact reviewed lockfile bytes."""
     require(lockfile.is_file(), "Dependency lockfile is missing.")
     data = lockfile.read_bytes()
@@ -82,12 +85,21 @@ def check_dependencies(lockfile: Path, expected_digest: str) -> dict[str, object
     for package in packages:
         name = re.sub(r"[-_.]+", "-", package["name"]).lower()
         locked.setdefault(name, set()).add(package["version"])
+    selected: set[str] = {"policynim"}
+    require(requirements.is_file(), "Exported runtime requirements are missing.")
+    requirement_bytes = requirements.read_bytes()
+    for line in requirement_bytes.decode("utf-8").splitlines():
+        if not line or line[0].isspace() or line.startswith("#"):
+            continue
+        requirement = Requirement(line.removesuffix("\\").strip())
+        if requirement.marker is None or requirement.marker.evaluate():
+            selected.add(re.sub(r"[-_.]+", "-", requirement.name).lower())
     versions: dict[str, str] = {}
     bootstrap: dict[str, str] = {}
     for distribution in importlib.metadata.distributions():
         name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
         version = distribution.version
-        if name in {"pip", "setuptools", "wheel"} and name not in locked:
+        if name in {"pip", "setuptools", "wheel"} and name not in selected:
             bootstrap[name] = version
             continue
         require(
@@ -95,7 +107,13 @@ def check_dependencies(lockfile: Path, expected_digest: str) -> dict[str, object
             f"Installed dependency isn't locked: {name}=={version}.",
         )
         versions[name] = version
-    return {"sha256": digest, "installed_versions": versions, "bootstrap_versions": bootstrap}
+    require(selected <= versions.keys(), "A selected runtime dependency isn't installed.")
+    return {
+        "sha256": digest,
+        "requirements_sha256": "sha256:" + hashlib.sha256(requirement_bytes).hexdigest(),
+        "installed_versions": versions,
+        "bootstrap_versions": bootstrap,
+    }
 
 
 def installed_command() -> str:
@@ -192,7 +210,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         "python": platform.python_version(),
         "platform": platform.system(),
         "wheel": check_wheel(args.wheel),
-        "dependency_lock": check_dependencies(args.lockfile, args.lock_digest),
+        "dependency_lock": check_dependencies(args.lockfile, args.lock_digest, args.requirements),
         "sdk_version": importlib.metadata.version("mcp"),
         "provider_calls": "not performed",
         "coding_client_ui": "not tested",
@@ -328,6 +346,7 @@ def main() -> None:
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--lockfile", type=Path, required=True)
     parser.add_argument("--lock-digest", required=True)
+    parser.add_argument("--requirements", type=Path, required=True)
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--bundle-digest", required=True)
     parser.add_argument("--revision", required=True)

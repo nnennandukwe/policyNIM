@@ -393,12 +393,30 @@ class GenerationStore:
                 "or explicitly migrate the standalone index and rules.",
             )
         owner = self.root / "owner.json"
-        if not owner.exists() and (
-            not initialize or any(path.name != ".publish.lock" for path in self.root.iterdir())
-        ):
+        if not owner.exists() and not initialize:
             raise GenerationError("open", "The directory isn't an owned generation store.")
         with exclusive_file_lock(self.root / ".publish.lock", on_wait=check_budget):
             if not owner.exists():
+                interrupted: list[tuple[Path, tuple[int, int], bytes]] = []
+                for entry in self.root.iterdir():
+                    if entry.name == ".publish.lock":
+                        continue
+                    if not re.fullmatch(r"\.owner-[0-9a-f]{32}\.tmp", entry.name):
+                        raise GenerationError(
+                            "open", "The directory isn't an owned generation store."
+                        )
+                    observed = entry.lstat()
+                    content = _read_regular(entry, max_bytes=len(_OWNER))
+                    if not _OWNER.startswith(content):
+                        raise GenerationError("open", "An unknown owner record was preserved.")
+                    interrupted.append((entry, (observed.st_dev, observed.st_ino), content))
+                for entry, identity, content in interrupted:
+                    current = entry.lstat()
+                    if (current.st_dev, current.st_ino) != identity or _read_regular(
+                        entry
+                    ) != content:
+                        raise GenerationError("open", "An owner record changed; preserve it.")
+                    entry.unlink()
                 temporary = self.root / (".owner-" + uuid4().hex + ".tmp")
                 try:
                     self._write(temporary, _OWNER, "owner")
@@ -466,6 +484,7 @@ class GenerationStore:
         expected_id: str | None = None,
         expected_embedding: EmbeddingIdentity | None = None,
         staging: bool = False,
+        cleanup_marker: bool = False,
     ) -> GenerationSnapshot:
         """Prove hashes, schemas, embedding identity and source/catalog/index/rules agreement."""
         self._step("inspect")
@@ -476,6 +495,9 @@ class GenerationStore:
             if staging and ".owner" in names:
                 if _read_regular(directory / ".owner") != _STAGE_OWNER:
                     raise ValueError("Stage ownership mismatch.")
+                names.remove(".owner")
+            if cleanup_marker and ".owner" in names:
+                _read_regular(directory / ".owner")
                 names.remove(".owner")
             if names != _FILES:
                 raise ValueError("Missing or unexpected generation artifact.")
@@ -558,6 +580,27 @@ class GenerationStore:
         """Force full validation under a reader lease without retaining it after this call."""
         with self.pin(generation_id, force_validation=True) as snapshot:
             return replace(snapshot, _lease=None, _lease_path=None, _lease_identity=None)
+
+    def pin_retained(self, generation_id: str) -> GenerationSnapshot:
+        """Read explicit historical source evidence against its sealed embedding identity."""
+        selected = self._selected_id(generation_id, None)
+        with self._locked():
+            directory = self.root / "objects" / selected
+            self._artifact_token(directory)
+            try:
+                manifest_bytes = _read_regular(directory / "manifest.json")
+                if sha256(manifest_bytes).hexdigest() != selected:
+                    raise ValueError("Generation content ID mismatch.")
+                manifest = GenerationManifest.model_validate_json(manifest_bytes)
+            except (ValueError, OSError) as exc:
+                raise GenerationError(
+                    "read", "Retained generation identity couldn't be validated."
+                ) from exc
+        # The ordinary reader still proves every artifact against this sealed
+        # identity and acquires its lease before returning any source evidence.
+        return GenerationStore(root=self.root, embedding=manifest.embedding, fault=self._fault).pin(
+            selected
+        )
 
     def _selected_id(self, generation_id: str | None, pointer: GenerationPointer | None) -> str:
         """Validate an explicit or active ID before using it as a local artifact name."""
@@ -771,7 +814,7 @@ class GenerationStore:
             if result is not None:
                 result.warnings.append("Generation activated; publisher cleanup needs inspection.")
                 return result
-            if isinstance(exc, (GenerationError, ProviderError, ConfigurationError)):
+            if isinstance(exc, PolicyNIMError):
                 raise
             raise GenerationError(
                 "publish",
@@ -836,7 +879,12 @@ class GenerationStore:
             if (observed.st_dev, observed.st_ino) != expected_identity:
                 raise GenerationError("cleanup", "Staging directory identity changed.")
         elif ".owner" in names:
-            if _read_regular(stage / ".owner") != _STAGE_OWNER:
+            marker = _read_regular(stage / ".owner", max_bytes=len(_STAGE_OWNER))
+            if marker != _STAGE_OWNER and not (
+                names == {".owner"}
+                and re.fullmatch(r"build-[a-z0-9_]{8}", stage.name)
+                and _STAGE_OWNER.startswith(marker)
+            ):
                 raise GenerationError("cleanup", "Stage ownership doesn't match.")
         elif names or not re.fullmatch(r"build-[a-z0-9_]{8}", stage.name):
             self._inspect(stage)
@@ -1173,7 +1221,50 @@ class GenerationStore:
             return
         marker = path / ".owner"
         if marker.exists():
-            record = TrashRecord.model_validate_json(_read_regular(marker))
+            marker_bytes = _read_regular(marker)
+            try:
+                record = TrashRecord.model_validate_json(marker_bytes)
+            except ValueError:
+                # Marker creation precedes deletion. A partial marker can recover
+                # only while every original artifact still validates independently.
+                expected_id = path.name.split("-", 1)[0]
+                snapshot = self._inspect(path, expected_id=expected_id, cleanup_marker=True)
+                record = TrashRecord(
+                    schema_version=1,
+                    owner="policynim-generation-trash",
+                    generation_id=expected_id,
+                    artifacts={
+                        **snapshot.manifest.artifacts,
+                        "manifest.json": "sha256:" + expected_id,
+                    },
+                )
+                expected_bytes = _json_bytes(record)
+                if len(marker_bytes) >= len(expected_bytes) or not expected_bytes.startswith(
+                    marker_bytes
+                ):
+                    raise GenerationError(
+                        "cleanup", "Unknown trash ownership was preserved."
+                    ) from None
+                observed = marker.lstat()
+                unchanged = _read_regular(marker) == marker_bytes
+                current = marker.lstat()
+                if not unchanged or (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_size,
+                    current.st_mtime_ns,
+                    current.st_ctime_ns,
+                ) != (
+                    observed.st_dev,
+                    observed.st_ino,
+                    observed.st_size,
+                    observed.st_mtime_ns,
+                    observed.st_ctime_ns,
+                ):
+                    raise GenerationError("cleanup", "Trash ownership changed; preserve it.")
+                marker.unlink()
+                self._write(marker, expected_bytes, "trash_owner")
+                _sync_directory(path)
             if (
                 record.generation_id != path.name.split("-", 1)[0]
                 or set(record.artifacts) != _FILES
