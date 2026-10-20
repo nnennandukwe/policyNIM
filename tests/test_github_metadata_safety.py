@@ -135,3 +135,26 @@ def test_whitespace_label_metadata_fails_before_any_github_call(tmp_path: Path, 
     )
     assert result.returncode == 1
     assert "missing" in result.stderr and not result.stdout
+
+
+def test_capped_remote_label_list_cant_produce_a_partial_write_plan() -> None:
+    """A full-size capped response is unknown completeness and stops before mutation."""
+    module = _script("labels")
+    commands: list[list[str]] = []
+
+    def capped(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return exactly the configured cap, including no proof of the next remote page."""
+        commands.append(command)
+        rows = [
+            {"name": f"existing-{index}", "color": "000000", "description": "Existing."}
+            for index in range(1000)
+        ]
+        return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+
+    with pytest.raises(module.LabelSyncError, match="incomplete"):
+        module.sync_labels(
+            desired=[{"name": "desired", "color": "000000", "description": "Desired."}],
+            apply=True,
+            runner=capped,
+        )
+    assert len(commands) == 1

@@ -26,15 +26,15 @@ body:
     id: support_bundle
     attributes:
       label: policynim support-bundle output
-      description: Run `policynim support-bundle` and paste redacted output. The bundle includes `policynim doctor` diagnostics and redacts local path prefixes by default. For local MCP stdio issues, run `policynim support-bundle --include-mcp-smoke`. Use `--include-local-paths` only in private maintainer triage.
+      description: Run `policynim support-bundle` if available and paste redacted output. If installation or launch failed before the command could run, explain that here and include the install command and safe failure output in the reproduction steps. The bundle includes `policynim doctor` diagnostics and redacts local path prefixes by default. For local MCP stdio issues, run `policynim support-bundle --include-mcp-smoke`. Use `--include-local-paths` only in private maintainer triage.
       render: json
     validations:
-      required: true
+      required: false
   - type: textarea
     id: mcp_config
     attributes:
       label: MCP config evidence
-      description: For hosted MCP issues, paste redacted `policynim mcp-config --target hosted-http --client codex --hosted-url 'https://<host>/mcp' --format json` output and include the `hosted_url_placeholder` value. For local stdio issues, include the matching local `mcp-config` JSON when client setup is involved.
+      description: For hosted MCP issues, paste redacted `policynim mcp-config --target hosted-http --client codex --hosted-url 'https://<host>/mcp' --format json` output and include the `hosted_url_placeholder` value. For local stdio issues, prefer the path-redacted support bundle. If you include local `mcp-config` JSON, remove every local filesystem path, including `repo_root`, `working_directory`, command paths and arguments, before posting.
       render: json
     validations:
       required: false

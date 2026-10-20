@@ -43,7 +43,9 @@ plan before retrying. Don't claim the original operation rolled back.
 Missing authentication, invalid JSON and CLI failures produce nonzero exits.
 Subprocess calls have a 30-second timeout. Check `gh auth status`, access to the
 named repository and network availability, then rerun the live preview. An offline
-preview can't determine which labels already exist. No script logs configured tokens.
+preview can't determine which labels already exist. No script logs configured tokens. A label response at the 1,000-label limit is
+rejected before planning or writing because completeness is unknown; use GitHub's
+paginated API and a suitable administrator tool for larger repositories.
 
 ## Route issues
 

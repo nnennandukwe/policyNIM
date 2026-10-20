@@ -181,6 +181,12 @@ def _load_existing_labels(runner: Runner, *, repo: str) -> list[dict[str, str]]:
         raise LabelSyncError(f"Couldn't parse gh label list JSON: {exc}") from exc
     if not isinstance(payload, list):
         raise LabelSyncError("gh label list returned JSON that wasn't a list.")
+    if len(payload) >= 1000:
+        raise LabelSyncError(
+            "GitHub returned the 1000-label limit; the response may be incomplete. "
+            "No changes were planned or applied. Inspect the full label inventory "
+            "with GitHub's paginated API before using another administrator tool."
+        )
     labels: list[dict[str, str]] = []
     for raw_label in payload:
         if not isinstance(raw_label, dict):
