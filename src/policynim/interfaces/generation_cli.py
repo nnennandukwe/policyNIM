@@ -153,14 +153,26 @@ def export_generation(
 @app.command("activate")
 def activate_generation(
     generation_id: Annotated[str, typer.Argument()],
-    expected_active: ExpectedActive,
+    expected_active: Annotated[
+        str | None, typer.Option("--expect-active", help="Reviewed active generation ID.")
+    ] = None,
+    expected_no_active: Annotated[
+        bool,
+        typer.Option("--expect-no-active", help="Require an owned store with no active pointer."),
+    ] = False,
     output_format: OutputFormat = "text",
 ) -> None:
     """Activate a retained valid object only if the reviewed pointer still matches."""
-    _run(
-        lambda settings, store: store.activate(generation_id, expected_active=expected_active),
-        output_format,
-    )
+
+    def activate(settings: Settings, store: GenerationStore) -> StrictModel:
+        """Require one explicit pointer expectation before recovering the retained object."""
+        if expected_no_active == (expected_active is not None):
+            raise GenerationError(
+                "activate", "Provide exactly one of --expect-active ID or --expect-no-active."
+            )
+        return store.activate(generation_id, expected_active=expected_active)
+
+    _run(activate, output_format)
 
 
 @app.command("rollback")

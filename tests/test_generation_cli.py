@@ -231,3 +231,42 @@ def test_source_recovery_hint_checks_edited_markdown_after_activation(
     assert json.loads(advised.stdout)["status"] == "error"
     assert "A.md" in advised.output
     assert before == (broken.read_bytes(), (store.root / "active.json").read_bytes())
+
+
+def test_cli_recovers_orphan_only_with_explicit_no_active_expectation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An inspected orphan can recover a missing pointer without weakening stale-state refusal."""
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+
+    def fault(step: str) -> None:
+        """Leave a fully installed orphan through the real precommit interruption boundary."""
+        if step == "before_activate":
+            raise RuntimeError("injected interruption")
+
+    with pytest.raises(generation_cli.GenerationError):
+        GenerationStore(root=store.root, embedding=identity, fault=fault).migrate(
+            settings, index_path=index, rules_path=rules
+        )
+    retained = next((store.root / "objects").iterdir()).name
+    assert not (store.root / "active.json").exists()
+    monkeypatch.setattr(generation_cli, "get_settings", lambda: settings)
+    runner = CliRunner()
+    inspected = runner.invoke(app, ["generation", "inspect", "--id", retained, "--format", "json"])
+    assert inspected.exit_code == 0, inspected.output
+    missing_expectation = runner.invoke(
+        app, ["generation", "activate", retained, "--format", "json"]
+    )
+    assert missing_expectation.exit_code != 0
+    assert not (store.root / "active.json").exists()
+    recovered = runner.invoke(
+        app, ["generation", "activate", retained, "--expect-no-active", "--format", "json"]
+    )
+    assert recovered.exit_code == 0, recovered.output
+    pointer = (store.root / "active.json").read_bytes()
+    for flags in (["--expect-no-active"], ["--expect-no-active", "--expect-active", retained]):
+        stale = runner.invoke(app, ["generation", "activate", retained, *flags, "--format", "json"])
+        assert stale.exit_code != 0
+        assert (store.root / "active.json").read_bytes() == pointer

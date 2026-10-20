@@ -856,6 +856,7 @@ _PRECOMMIT_POINTS = [
     "inspect",
     "stage_directory_fsync",
     "object_rename",
+    "object_directory_fsync",
     "objects_fsync",
     "staging_parent_fsync",
     "managed_directories_fsync",
@@ -2944,3 +2945,108 @@ def test_mutation_during_final_activation_inspection_preserves_pointer(
     assert len(changed) == 1
     assert (store.root / "active.json").read_bytes() == pointer
     assert changed[0].read_bytes().endswith(b"damaged-during-inspection")
+
+
+def test_publication_syncs_object_membership_before_pointer_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The removed staging owner must be durable in the object before activation commits."""
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_sync = generations._sync_directory
+    synced_objects: list[Path] = []
+
+    def sync(path: Path) -> None:
+        """Observe actual directory synchronization after owner removal and object installation."""
+        original_sync(path)
+        if path.parent == store.root / "objects":
+            assert not (path / ".owner").exists()
+            synced_objects.append(path)
+
+    def fault(step: str) -> None:
+        """Check the required directory durability barrier before the real pointer replacement."""
+        if step == "before_activate":
+            assert synced_objects
+
+    monkeypatch.setattr(generations, "_sync_directory", sync)
+    result = GenerationStore(root=store.root, embedding=identity, fault=fault).build(
+        settings, MockEmbedder()
+    )
+    assert synced_objects == [store.root / "objects" / result.generation_id]
+
+
+@pytest.mark.parametrize("snapshot_cache", [False, True])
+def test_warm_public_health_avoids_corpus_clones_and_reader_leases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snapshot_cache: bool
+) -> None:
+    """Unchanged public probes reuse validated metadata without copying corpus or opening leases."""
+    import os
+
+    from starlette.testclient import TestClient
+
+    from policynim.interfaces.mcp import _build_streamable_http_app
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    token = store._artifact_token(store.root / "objects" / first.generation_id)
+    if any(item[-1] is None for item in token):
+        pytest.skip("Reliable change stamps aren't available; full health validation is required.")
+    if not snapshot_cache:
+        monkeypatch.setattr(generations, "_CACHE_MAX_BYTES", 1)
+    original_copy, original_open = generations.deepcopy, os.open
+    clones: list[str] = []
+    lease_opens: list[str] = []
+
+    def copy(value, memo=None):
+        """Observe whole snapshot clones without changing the real ownership behavior."""
+        if isinstance(value, generations.GenerationSnapshot):
+            clones.append(value.generation_id)
+        return original_copy(value, memo)
+
+    def open_file(path, flags, mode=0o777, *, dir_fd=None):
+        """Observe actual filesystem reader-lease opens on the public health path."""
+        if str(store.root / "leases") in str(path):
+            lease_opens.append(str(path))
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(generations, "deepcopy", copy)
+        monkeypatch.setattr(os, "open", open_file)
+        for _ in range(3):
+            response = client.get("/healthz")
+            assert response.status_code == 200
+            assert response.json()["generation_id"] == first.generation_id
+        assert clones == []
+        assert lease_opens == []
+        artifact = store.root / "objects" / first.generation_id / "runtime_rules.json"
+        artifact.write_bytes(artifact.read_bytes() + b"tampered")
+        assert client.get("/healthz").status_code == 503
+
+
+def test_health_revalidates_when_change_stamps_are_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unavailable cache stamps never let a public probe hide changed generation bytes."""
+    from starlette.testclient import TestClient
+
+    from policynim.interfaces.mcp import _build_streamable_http_app
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules)
+    with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
+        assert client.get("/healthz").status_code == 200
+        monkeypatch.setattr(generations, "_file_change_stamp", lambda path, observed: None)
+        assert client.get("/healthz").status_code == 200
+        artifact = store.root / "objects" / active.generation_id / "runtime_rules.json"
+        artifact.write_bytes(artifact.read_bytes() + b"tampered")
+        assert client.get("/healthz").status_code == 503
