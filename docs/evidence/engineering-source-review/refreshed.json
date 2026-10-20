@@ -1,0 +1,1960 @@
+{
+  "kind": "independent_authored_scenario_source_review",
+  "source_sha": "abfcd18c871425c48136a86bfa9f6de3a9eb7388",
+  "base_sha": "8605456ea5485b4c895bf721d2690baca0eaa48c",
+  "scenario_path": "evals/engineering_scenarios.json",
+  "raw_scenario_sha256": "2161e9b0d0200ae48e68ee55d03f6a0159a79e4983a81bec5065698233118cfe",
+  "semantic_payload_sha256": "ab0980bee32e2d116fe9c540f263559e67e60955553318a501bb313649f766a5",
+  "semantic_payload_fields": [
+    "changed_policy_revisions",
+    "source_aliases",
+    "cases"
+  ],
+  "review_status": "completed_with_two_low_severity_rationale_reference_findings",
+  "counts": {
+    "policies": 16,
+    "cases": 64,
+    "outcomes_supported": 64,
+    "rationale_reference_findings": 2
+  },
+  "method": "Independent manual reading of all 16 complete authoritative policy bodies and all 64 inputs, expected outcomes, quoted evidence, rationales and paired boundaries/exclusions. Structural hash, exact-quote, support-token, role and topic/aggregate checks supplement that reading; authoring tests and generated outputs weren't used as an oracle.",
+  "policy_revision_table": [
+    {
+      "policy_id": "TEST-FAIL-001",
+      "path": "policies/testing/failure-and-recovery.md",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "TEST-CONTRACT-001",
+      "path": "policies/testing/public-boundary-contracts.md",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "ARCH-API-001",
+      "path": "policies/api/api-versioning-guidance.md",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "API-ERROR-001",
+      "path": "policies/api/http-errors.md",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "API-PAGE-001",
+      "path": "policies/api/pagination-contracts.md",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "DATA-MIGRATE-001",
+      "path": "policies/data/migration-recovery.md",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "DATA-TRANSACTION-001",
+      "path": "policies/data/transaction-boundaries.md",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "ARCH-JOB-001",
+      "path": "policies/reliability/background-job-design-rules.md",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "BE-CONFIG-001",
+      "path": "policies/reliability/config-validation-and-fail-closed.md",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "grounding_kind": "adaptation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "REL-TIMEOUT-001",
+      "path": "policies/reliability/deadlines-and-retries.md",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "REL-OVERLOAD-001",
+      "path": "policies/reliability/admission-and-backpressure.md",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "BE-LOG-001",
+      "path": "policies/observability/backend-logging-standard.md",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "grounding_kind": "adaptation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "BE-TRACE-001",
+      "path": "policies/observability/request-correlation-and-tracing-standard.md",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "OBS-READINESS-001",
+      "path": "policies/observability/metrics-and-readiness.md",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "SUPPLY-BUILD-001",
+      "path": "policies/supply-chain/dependencies-and-builds.md",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    },
+    {
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "path": "policies/supply-chain/provenance-and-verification.md",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "grounding_kind": "project_recommendation",
+      "topic_aggregate_metadata_equal": true
+    }
+  ],
+  "per_case_assessments": [
+    {
+      "case_id": "test-fail-001-applicable",
+      "kind": "applicable",
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "input_sha256": "b0ada140d6e0ac77d26cb03c144673d0747cdf0a3fa9df7868763d3fe79ca458",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "The changed durable publisher needs actual interruption, restart and recovery evidence under FAIL-1 through FAIL-3.",
+      "quoted_requirement_ids": [
+        "FAIL-1",
+        "FAIL-2",
+        "FAIL-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-fail-001-violating",
+        "test-fail-001-out-of-scope",
+        "test-fail-001-boundary"
+      ]
+    },
+    {
+      "case_id": "test-fail-001-violating",
+      "kind": "violating",
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "input_sha256": "6d434caabec1fc2765f84a9c129d3634d8b43b48b05d7fce2d072744397ad18c",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A mocked happy path leaves the claimed crash recovery unverified, so requiring changes follows the runtime-failure rules.",
+      "quoted_requirement_ids": [
+        "FAIL-1",
+        "FAIL-2",
+        "FAIL-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-fail-001-applicable",
+        "test-fail-001-out-of-scope",
+        "test-fail-001-boundary"
+      ]
+    },
+    {
+      "case_id": "test-fail-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "input_sha256": "3fd6db8fd370fe2824f7cb54dbdc35b35e0f96d1f788f22adfad4ea881249eeb",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "The help-heading edit leaves executable behavior unchanged, so this policy needn't be selected.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-fail-001-applicable",
+        "test-fail-001-violating",
+        "test-fail-001-boundary"
+      ]
+    },
+    {
+      "case_id": "test-fail-001-boundary",
+      "kind": "boundary",
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:9390a26f6dc3e884534baca24be46d3c2c5102cd8e6fb25908adc6e398df4cba",
+      "input_sha256": "da7d6a2ce6e3feebdb03b5cddcb266d185c1196d49f8d17a8f3e48f39e36d197",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "The revised input changes publisher recovery and supplies runtime failure/restart/retry evidence; the boundary limits SSDF claims rather than excluding changed recovery.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-fail-001-applicable",
+        "test-fail-001-violating",
+        "test-fail-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "test-contract-001-applicable",
+      "kind": "applicable",
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "input_sha256": "0b7a7a0c0d20576248cb7a6569820e5aa23a3b43f889b6676037ead3512155ee",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A changed producer response and strict installed consumer belong to the public serialization contract.",
+      "quoted_requirement_ids": [
+        "CONTRACT-1",
+        "CONTRACT-2",
+        "CONTRACT-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-contract-001-violating",
+        "test-contract-001-out-of-scope",
+        "test-contract-001-boundary"
+      ]
+    },
+    {
+      "case_id": "test-contract-001-violating",
+      "kind": "violating",
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "input_sha256": "3a4101f33187bd80eb7f20fb512e740f0c0c4ccafd52587730b7f64a10bcdfc8",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An internal dictionary test can't establish acceptance by the rejecting installed consumer.",
+      "quoted_requirement_ids": [
+        "CONTRACT-1",
+        "CONTRACT-2",
+        "CONTRACT-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-contract-001-applicable",
+        "test-contract-001-out-of-scope",
+        "test-contract-001-boundary"
+      ]
+    },
+    {
+      "case_id": "test-contract-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "input_sha256": "cbbc847cbf2473262f21f02daf1579fa1911ec7e6ef4b21b99dfb7ebd4c70459",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A private variable rename with unchanged exported behavior doesn't create a new public contract.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-contract-001-applicable",
+        "test-contract-001-violating",
+        "test-contract-001-boundary"
+      ]
+    },
+    {
+      "case_id": "test-contract-001-boundary",
+      "kind": "boundary",
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:bb22ec2a579d41af067962670114aec96be1b3598445ede2bbf4547da8724be4",
+      "input_sha256": "e5bd0067df752734103120f1d8786254b1e9a36b47695d01445d39047820a913",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "The revised optional public field selects the policy; supported old/new shapes and malformed-ID rejection supply offline contract evidence without a semantic or live-quality claim.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "test-contract-001-applicable",
+        "test-contract-001-violating",
+        "test-contract-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "arch-api-001-applicable",
+      "kind": "applicable",
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "input_sha256": "53051901f2b195503b7c8c39fc09f9942a81e9ccf38a313f360f238a5d61e8e6",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An exposed API change needs compatibility and consumer evidence under the declared version contract.",
+      "quoted_requirement_ids": [
+        "API-1",
+        "API-2",
+        "API-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-api-001-violating",
+        "arch-api-001-out-of-scope",
+        "arch-api-001-boundary"
+      ]
+    },
+    {
+      "case_id": "arch-api-001-violating",
+      "kind": "violating",
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "input_sha256": "06ec639ee696c1cc45855cd51a50380eb6a9005aead38c5ce47f266f5fdb85d9",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Replacing an object with a list breaks the declared consumer contract and needs a supported migration.",
+      "quoted_requirement_ids": [
+        "API-1",
+        "API-2",
+        "API-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-api-001-applicable",
+        "arch-api-001-out-of-scope",
+        "arch-api-001-boundary"
+      ]
+    },
+    {
+      "case_id": "arch-api-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "input_sha256": "5192ff018b0d43bfc3ddaf762b599a52ee94e5bc921e286e3accb46089226ac8",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A private helper change leaves the published API contract unchanged.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-api-001-applicable",
+        "arch-api-001-violating",
+        "arch-api-001-boundary"
+      ]
+    },
+    {
+      "case_id": "arch-api-001-boundary",
+      "kind": "boundary",
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:8a5e4cf3a54b0bd1076b609d0588e933f77dc126c9d800c98f71ff47cf3be762",
+      "input_sha256": "1a3d8dafa27ff3b71b27bb36fb762f63fd4be63102400fe64a8feefa227925a7",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A compatible optional addition can retain its version when consumer compatibility is demonstrated; SemVer isn't imposed on HTTP paths.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-api-001-applicable",
+        "arch-api-001-violating",
+        "arch-api-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "api-error-001-applicable",
+      "kind": "applicable",
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "input_sha256": "ca12a698d5f9ae2a6f819c6f8ec49e27160d5dda1e847ed7435eff9b5e817e1a",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An HTTP error response and its caller recovery behavior fall within the safe error contract.",
+      "quoted_requirement_ids": [
+        "ERROR-1",
+        "ERROR-2",
+        "ERROR-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-error-001-violating",
+        "api-error-001-out-of-scope",
+        "api-error-001-boundary"
+      ]
+    },
+    {
+      "case_id": "api-error-001-violating",
+      "kind": "violating",
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "input_sha256": "0ef3b1fcb714b7a0d1fe75bc477c76da13cccc041383e464bf9cfdaa721592ae",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Credential-bearing error details and treating denied authorization as transient violate safe disclosure and recovery rules.",
+      "quoted_requirement_ids": [
+        "ERROR-1",
+        "ERROR-2",
+        "ERROR-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-error-001-applicable",
+        "api-error-001-out-of-scope",
+        "api-error-001-boundary"
+      ]
+    },
+    {
+      "case_id": "api-error-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "input_sha256": "120aa5590560967386765720fc19b8418445679496ea644d4ce82851e0707451",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "An unchanged successful display doesn't modify the error contract.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-error-001-applicable",
+        "api-error-001-violating",
+        "api-error-001-boundary"
+      ]
+    },
+    {
+      "case_id": "api-error-001-boundary",
+      "kind": "boundary",
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:05160baada0da84b3524dd7cc7494f5a49e8a8a3f901fdbf613abc1e51653bb9",
+      "input_sha256": "0d6a861301146835fa7f4806220923bbbb421060ddf730bc68189cc8f5b078b5",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An existing safe documented error representation can remain; RFC 9457 adoption is optional.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-error-001-applicable",
+        "api-error-001-violating",
+        "api-error-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "api-page-001-applicable",
+      "kind": "applicable",
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "input_sha256": "a84d38a9285a580a745c607dfcbdcf80225271e50843930acb7f6fcbf01d6b0b",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An authorized collection cursor needs ownership, ordering, bounds and termination behavior.",
+      "quoted_requirement_ids": [
+        "PAGE-1",
+        "PAGE-2",
+        "PAGE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-page-001-violating",
+        "api-page-001-out-of-scope",
+        "api-page-001-boundary"
+      ]
+    },
+    {
+      "case_id": "api-page-001-violating",
+      "kind": "violating",
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "input_sha256": "8ca98242f963422c54a34765ab8ca3bec07558f6d700ad0d01ea1ea1ad6fd4cb",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A cursor crossing tenant ownership or failing to terminate violates the documented collection contract.",
+      "quoted_requirement_ids": [
+        "PAGE-1",
+        "PAGE-2",
+        "PAGE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-page-001-applicable",
+        "api-page-001-out-of-scope",
+        "api-page-001-boundary"
+      ]
+    },
+    {
+      "case_id": "api-page-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "input_sha256": "ab4968ef3b00ee42d7fe4550210cb846225dad21e94c7e946963384b0de147b5",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A scalar operation without collection behavior falls outside pagination requirements.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-page-001-applicable",
+        "api-page-001-violating",
+        "api-page-001-boundary"
+      ]
+    },
+    {
+      "case_id": "api-page-001-boundary",
+      "kind": "boundary",
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "input_sha256": "0f034057a44aa92aa25ea6f05b74529e02fb22a40f3c8ffb12cce8c32ff9685c",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A fixed small collection can omit pagination within the documented bounded-collection exception.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "api-page-001-applicable",
+        "api-page-001-violating",
+        "api-page-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "data-migrate-001-applicable",
+      "kind": "applicable",
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "input_sha256": "726ed4e1b52d726cf3f1d5555ce55c5512596a8c8b0621805e119291cdf8e7c5",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A changing stored representation and rollout need compatibility, progress and actual recovery evidence.",
+      "quoted_requirement_ids": [
+        "MIGRATE-1",
+        "MIGRATE-2",
+        "MIGRATE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-migrate-001-violating",
+        "data-migrate-001-out-of-scope",
+        "data-migrate-001-boundary"
+      ]
+    },
+    {
+      "case_id": "data-migrate-001-violating",
+      "kind": "violating",
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "input_sha256": "c7706b892ba8017ccab6adc424920b45bc93b4ecbdad0af7bf6e09cd67e80ce9",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Dropping the old column strands old readers and an untested backup doesn't verify restore; the verdict is supported, with a rationale reference correction recorded separately.",
+      "quoted_requirement_ids": [
+        "MIGRATE-1",
+        "MIGRATE-2",
+        "MIGRATE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-migrate-001-applicable",
+        "data-migrate-001-out-of-scope",
+        "data-migrate-001-boundary"
+      ]
+    },
+    {
+      "case_id": "data-migrate-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "input_sha256": "cd60d3f841a87e67dd505db3804afe5f041711f00ebb8b5b8a86cb42e45441c7",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A read-only query change leaves stored representations and migration behavior unchanged.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-migrate-001-applicable",
+        "data-migrate-001-violating",
+        "data-migrate-001-boundary"
+      ]
+    },
+    {
+      "case_id": "data-migrate-001-boundary",
+      "kind": "boundary",
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "input_sha256": "9d83518e32c6d60b3b73f2c236a00ded87940ec7e6107fd13fcea7e733ba28f6",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Engine-specific transaction and recovery behavior needs an explicit workload decision; the policy supplies no universal numeric recovery target.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-migrate-001-applicable",
+        "data-migrate-001-violating",
+        "data-migrate-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "data-transaction-001-applicable",
+      "kind": "applicable",
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "input_sha256": "0249fadda45dffab8adbd334c625124a3173c4d172a7398edbb3a791e912cbc7",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Coupled writes and effects need the declared atomic boundary and interruption/retry verification.",
+      "quoted_requirement_ids": [
+        "TRANSACTION-1",
+        "TRANSACTION-2",
+        "TRANSACTION-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-transaction-001-violating",
+        "data-transaction-001-out-of-scope",
+        "data-transaction-001-boundary"
+      ]
+    },
+    {
+      "case_id": "data-transaction-001-violating",
+      "kind": "violating",
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "input_sha256": "163f123bf5b5b03a6be83a8762bb0d4187981ffc0ccf709167012388cd390fa5",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Separate commits can split debit and credit, and database rollback can't undo a sent external payment.",
+      "quoted_requirement_ids": [
+        "TRANSACTION-1",
+        "TRANSACTION-2",
+        "TRANSACTION-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-transaction-001-applicable",
+        "data-transaction-001-out-of-scope",
+        "data-transaction-001-boundary"
+      ]
+    },
+    {
+      "case_id": "data-transaction-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "input_sha256": "f4fe40764380de71d4e3c34beb9276654bf963d54d788501f5f0c3ff2ef0bda6",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "An unchanged read-only display doesn't create a multi-effect transaction.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-transaction-001-applicable",
+        "data-transaction-001-violating",
+        "data-transaction-001-boundary"
+      ]
+    },
+    {
+      "case_id": "data-transaction-001-boundary",
+      "kind": "boundary",
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "input_sha256": "06d7bcd2b33acb787853d328b4423ebaa706795a9cf940da3fc26763c98d59ed",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An outbox can be used with its own atomicity and delivery proof; the PostgreSQL example doesn't mandate adopting that engine.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "data-transaction-001-applicable",
+        "data-transaction-001-violating",
+        "data-transaction-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "arch-job-001-applicable",
+      "kind": "applicable",
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "input_sha256": "8bc0d5a7dc024fe4b9ce9fec4ec543d8c5d595c3ae53970a7c220b4acc1ac365",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Durable background work needs duplicate-effect handling, bounded retries and observable terminal behavior.",
+      "quoted_requirement_ids": [
+        "JOB-1",
+        "JOB-2",
+        "JOB-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-job-001-violating",
+        "arch-job-001-out-of-scope",
+        "arch-job-001-boundary"
+      ]
+    },
+    {
+      "case_id": "arch-job-001-violating",
+      "kind": "violating",
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "input_sha256": "d227b1beffcaba84e912cd126479b5f782c76aea9094ab4234bdd5f50d476fe1",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Repeated charging after a lost acknowledgment and an unbounded poison retry violate job effect and retry rules.",
+      "quoted_requirement_ids": [
+        "JOB-1",
+        "JOB-2",
+        "JOB-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-job-001-applicable",
+        "arch-job-001-out-of-scope",
+        "arch-job-001-boundary"
+      ]
+    },
+    {
+      "case_id": "arch-job-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "input_sha256": "f225cd5caa39f44d91c96b6968205fb8059f156cbc78445f6e7e5910a661da5c",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A local pure calculation without a queue, durable job or external effect falls outside this job policy.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-job-001-applicable",
+        "arch-job-001-violating",
+        "arch-job-001-boundary"
+      ]
+    },
+    {
+      "case_id": "arch-job-001-boundary",
+      "kind": "boundary",
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:0f88ddaa7917d858654e5b629b012912dbd9ec5eb11045036a85c1dd835f2a11",
+      "input_sha256": "78a98318d91ad316f0ad78793d46d5b7b58bc1c1f36677dedaf0d173aa3c6e9e",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A documented harmless repeat can be acceptable when its safety is demonstrated; exactly-once execution isn't universally required.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "arch-job-001-applicable",
+        "arch-job-001-violating",
+        "arch-job-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "be-config-001-applicable",
+      "kind": "applicable",
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "input_sha256": "cb38ca1cd25fdd4c16a7d804adaf104a5b844a417c034cbd2ff7eadc4800348e",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An enabled security-sensitive service needs validated required configuration before accepting work.",
+      "quoted_requirement_ids": [
+        "CONFIG-1",
+        "CONFIG-2",
+        "CONFIG-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-config-001-violating",
+        "be-config-001-out-of-scope",
+        "be-config-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-config-001-violating",
+      "kind": "violating",
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "input_sha256": "7e9982a703e316871cac93a9bb665f7df0ef78a4381785b638cf08fe94d08280",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Accepting requests before validating a required issuer violates the explicit startup requirement.",
+      "quoted_requirement_ids": [
+        "CONFIG-1",
+        "CONFIG-2",
+        "CONFIG-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-config-001-applicable",
+        "be-config-001-out-of-scope",
+        "be-config-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-config-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "input_sha256": "6fdcf4b8d1e67e130d097108728770d32a5436755776c60b4b07db56c4559054",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A static contact-detail edit leaves configuration and startup behavior unchanged.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-config-001-applicable",
+        "be-config-001-violating",
+        "be-config-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-config-001-boundary",
+      "kind": "boundary",
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:75c5a27b562563c99627e62c49f86cd0a2d158f0551c51efd283c9d21f605e21",
+      "input_sha256": "33e186096547bc5ddf7bf8a499108325a6cb595c1798f72925e7da248d13dc5d",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A disabled optional integration may omit its credential, provided activation validates it first.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-config-001-applicable",
+        "be-config-001-violating",
+        "be-config-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "rel-timeout-001-applicable",
+      "kind": "applicable",
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "input_sha256": "08fde53355d601d002e59c81c427701d57b7bdb6f4741a3224b15befdbdf8364",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Dependent calls and retries need a shared deadline, safe retry admission and cancellation handling.",
+      "quoted_requirement_ids": [
+        "TIMEOUT-1",
+        "TIMEOUT-2",
+        "TIMEOUT-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-timeout-001-violating",
+        "rel-timeout-001-out-of-scope",
+        "rel-timeout-001-boundary"
+      ]
+    },
+    {
+      "case_id": "rel-timeout-001-violating",
+      "kind": "violating",
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "input_sha256": "9a016481de58d4fca2cb2fec7d4a14fd6b1bedabf9ba489b9fa6d5f77b86e612",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Independent endless retries multiply work beyond the deadline and cancellation boundary.",
+      "quoted_requirement_ids": [
+        "TIMEOUT-1",
+        "TIMEOUT-2",
+        "TIMEOUT-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-timeout-001-applicable",
+        "rel-timeout-001-out-of-scope",
+        "rel-timeout-001-boundary"
+      ]
+    },
+    {
+      "case_id": "rel-timeout-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "input_sha256": "6121e845fb1d92137544867c8de8b440bc5c7bde730baf976db40ddd068f77ea",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A pure calculation without dependency calls or retries doesn't trigger this policy.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-timeout-001-applicable",
+        "rel-timeout-001-violating",
+        "rel-timeout-001-boundary"
+      ]
+    },
+    {
+      "case_id": "rel-timeout-001-boundary",
+      "kind": "boundary",
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:bdb6e47f8293e9cf4fb01dfd4ca7a0d8154425247431f101d60858a367d235f3",
+      "input_sha256": "2b8862fbcaa9223e98fdaaa8d91617219a6d8410ae7456d55285095420c70a20",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Measured workload choices can determine timeouts; AWS example percentiles aren't universal project thresholds.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-timeout-001-applicable",
+        "rel-timeout-001-violating",
+        "rel-timeout-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "rel-overload-001-applicable",
+      "kind": "applicable",
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "input_sha256": "1e7753db2b87dab4486ff91548eb286d4126d78261c297b01e389abe4cf094fb",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Admission under unequal resource costs needs bounded work, caller fairness and recovery evidence.",
+      "quoted_requirement_ids": [
+        "OVERLOAD-1",
+        "OVERLOAD-2",
+        "OVERLOAD-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-overload-001-violating",
+        "rel-overload-001-out-of-scope",
+        "rel-overload-001-boundary"
+      ]
+    },
+    {
+      "case_id": "rel-overload-001-violating",
+      "kind": "violating",
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "input_sha256": "90c9e5f879808cb2a5835aafc723f711ceefbc5710adbda17fb65d7e8a373539",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "An unbounded queue and immediate amplified retries violate admission and caller behavior rules; the verdict is supported, with a rationale reference correction recorded separately.",
+      "quoted_requirement_ids": [
+        "OVERLOAD-1",
+        "OVERLOAD-2",
+        "OVERLOAD-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-overload-001-applicable",
+        "rel-overload-001-out-of-scope",
+        "rel-overload-001-boundary"
+      ]
+    },
+    {
+      "case_id": "rel-overload-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "input_sha256": "c8e8ff8e664add0ab02c00a3bac0c62745c765206ea242e2f3a7a9e2227447db",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A static dashboard layout change leaves admission, workload and overload behavior unchanged.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-overload-001-applicable",
+        "rel-overload-001-violating",
+        "rel-overload-001-boundary"
+      ]
+    },
+    {
+      "case_id": "rel-overload-001-boundary",
+      "kind": "boundary",
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "input_sha256": "593ae1648eedc66aca5b857b972120c372e246d8d504e19cea283d5150161384",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Unequal-cost work needs a cost-aware capacity account; aggregate request rate alone doesn't certify capacity.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "rel-overload-001-applicable",
+        "rel-overload-001-violating",
+        "rel-overload-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "be-log-001-applicable",
+      "kind": "applicable",
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "input_sha256": "37412abaa4b17bdcb60bb14f55bc717804f6ae2b3a533a24d5cbd0348228f841",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A failed job with safe identifiers and absent secret markers falls within structured service-event logging.",
+      "quoted_requirement_ids": [
+        "LOG-1",
+        "LOG-2",
+        "LOG-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-log-001-violating",
+        "be-log-001-out-of-scope",
+        "be-log-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-log-001-violating",
+      "kind": "violating",
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "input_sha256": "fb2412f6f1b77328e8bd58b105af295b59c586b69e1204b1c28e4b0af5807784",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Collecting personal data and raw user text without the approved exception violates default exclusion even when output is structured.",
+      "quoted_requirement_ids": [
+        "LOG-1",
+        "LOG-2",
+        "LOG-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-log-001-applicable",
+        "be-log-001-out-of-scope",
+        "be-log-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-log-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "input_sha256": "d7d060848e397fe91f8f03366b4f49c8a92d22dc241ab5113ef47a4ad64441a5",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A static page layout edit doesn't change logging or private-data collection.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-log-001-applicable",
+        "be-log-001-violating",
+        "be-log-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-log-001-boundary",
+      "kind": "boundary",
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:03e1d2b3678a5915ddd5ccfc6f21749f6e2edd3faff53b989e4482537bcfad61",
+      "input_sha256": "48ee9107d452cdf60efbbc2e7970240a7312294a04d407a7c4d46855332ea93b",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Avoiding sensitive collection is valid and preferred; JSON formatting alone doesn't establish privacy.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-log-001-applicable",
+        "be-log-001-violating",
+        "be-log-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "be-trace-001-applicable",
+      "kind": "applicable",
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "input_sha256": "ace31c342837a8e452b6b70e408a2c33d937b12edb20f0c79856c375e640a22e",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Queued retries and invalid inbound context need safe operation correlation and trace processing.",
+      "quoted_requirement_ids": [
+        "TRACE-1",
+        "TRACE-2",
+        "TRACE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-trace-001-violating",
+        "be-trace-001-out-of-scope",
+        "be-trace-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-trace-001-violating",
+      "kind": "violating",
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "input_sha256": "3c8202776dacfd20f34e690bc28714a16384c974b9531edf412c7ccdb8db7176",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Discarding all correlation or inserting bearer credentials into trace state violates correlation and secret-handling requirements.",
+      "quoted_requirement_ids": [
+        "TRACE-1",
+        "TRACE-2",
+        "TRACE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-trace-001-applicable",
+        "be-trace-001-out-of-scope",
+        "be-trace-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-trace-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "input_sha256": "7399e5da61e83c0bdc9feb4f96bc9b379a4d6ca4da3425503ad619b6a8031922",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "A pure helper rename without requests, workers, dependencies or telemetry changes falls outside this policy.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-trace-001-applicable",
+        "be-trace-001-violating",
+        "be-trace-001-boundary"
+      ]
+    },
+    {
+      "case_id": "be-trace-001-boundary",
+      "kind": "boundary",
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:65913a96994dd4e8a951edc6074cfa366db817642f02a92942e54e1a131f8557",
+      "input_sha256": "c22636a7ccf0fcddef8d8316cf2e3f25b71bbdb56869f152e4bb75aae49f7280",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A child span can have a new span ID while retaining valid trace identity; repeating the parent span ID isn't required.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "be-trace-001-applicable",
+        "be-trace-001-violating",
+        "be-trace-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "obs-readiness-001-applicable",
+      "kind": "applicable",
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "input_sha256": "94fa028a84d7e9c427c61c9a6a408e603ff4ea0630bea4832dbddd6b28944572",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A missing index and validated replacement directly affect required local readiness capabilities.",
+      "quoted_requirement_ids": [
+        "READINESS-1",
+        "READINESS-2",
+        "READINESS-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "obs-readiness-001-violating",
+        "obs-readiness-001-out-of-scope",
+        "obs-readiness-001-boundary"
+      ]
+    },
+    {
+      "case_id": "obs-readiness-001-violating",
+      "kind": "violating",
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "input_sha256": "e8a7676ad636ce459b3f660c6297d97ea525e533b3ef4eeef80eec0fcaa8b62b",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Always-successful health hides unusable searches, and raw prompt labels expose private values with unbounded cardinality.",
+      "quoted_requirement_ids": [
+        "READINESS-1",
+        "READINESS-2",
+        "READINESS-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "obs-readiness-001-applicable",
+        "obs-readiness-001-out-of-scope",
+        "obs-readiness-001-boundary"
+      ]
+    },
+    {
+      "case_id": "obs-readiness-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "input_sha256": "45597c4d5c389a4b460f2d28da816b2f4b3be7728c3da768f951bc2db1fa58c8",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "Incident-guide spelling changes leave probes, metrics and alerts unchanged.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "obs-readiness-001-applicable",
+        "obs-readiness-001-violating",
+        "obs-readiness-001-boundary"
+      ]
+    },
+    {
+      "case_id": "obs-readiness-001-boundary",
+      "kind": "boundary",
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "input_sha256": "0ca4f88e7161dced018defd3068b66d11e4088c7e547eea3b0a3361d0a6913d5",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Separate process liveness and data readiness responses match their different operational purposes.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "obs-readiness-001-applicable",
+        "obs-readiness-001-violating",
+        "obs-readiness-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "supply-build-001-applicable",
+      "kind": "applicable",
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "input_sha256": "9db2627d1d12c461152d86cec9390df4d975b92dff3ed1eb437956e61d097d75",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "A clean installed wheel, selected packs and locked dependencies fall within reviewed build-input and packaged-artifact evidence.",
+      "quoted_requirement_ids": [
+        "BUILD-1",
+        "BUILD-2",
+        "BUILD-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-build-001-violating",
+        "supply-build-001-out-of-scope",
+        "supply-build-001-boundary"
+      ]
+    },
+    {
+      "case_id": "supply-build-001-violating",
+      "kind": "violating",
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "input_sha256": "fae8a4754d8e411644855e780043f81129981843190781767402db72af33524e",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Unpinned tools, release credentials exposed to unreviewed code and checkout-only testing violate reviewed inputs and installed-artifact verification.",
+      "quoted_requirement_ids": [
+        "BUILD-1",
+        "BUILD-2",
+        "BUILD-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-build-001-applicable",
+        "supply-build-001-out-of-scope",
+        "supply-build-001-boundary"
+      ]
+    },
+    {
+      "case_id": "supply-build-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "input_sha256": "bc098a469ba625d30b076fb2617276fdd675ccb12ad18c6ec88474813ce4f75f",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "An unshipped meeting-agenda edit leaves build and distributed-artifact inputs unchanged.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-build-001-applicable",
+        "supply-build-001-violating",
+        "supply-build-001-boundary"
+      ]
+    },
+    {
+      "case_id": "supply-build-001-boundary",
+      "kind": "boundary",
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:caa0cc78c222e9d0d210c42dccc86253138e5e70808fa87f675625ca991866d0",
+      "input_sha256": "e28ba05a79a45ca5aaf06020a4f351aaa7ca092a7dfe2957dafc19b147afc35d",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Exact pins and platform records can be reported without claiming bit-for-bit reproducibility before rebuild evidence exists.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-build-001-applicable",
+        "supply-build-001-violating",
+        "supply-build-001-out-of-scope"
+      ]
+    },
+    {
+      "case_id": "supply-provenance-001-applicable",
+      "kind": "applicable",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "input_sha256": "e689bc208ed12205502547933ec1c8e25f3f4e508a54f33613ec499ebd5ff398",
+      "expected_outcome": "apply_guidance",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Consumer checks of authenticated identity, subject digest and altered bytes are within the verification policy.",
+      "quoted_requirement_ids": [
+        "PROVENANCE-1",
+        "PROVENANCE-2",
+        "PROVENANCE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-provenance-001-violating",
+        "supply-provenance-001-out-of-scope",
+        "supply-provenance-001-boundary"
+      ]
+    },
+    {
+      "case_id": "supply-provenance-001-violating",
+      "kind": "violating",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "input_sha256": "d8fb0e8ef0734557009f6b88c1eb67fbfe7ef37d578d1cf107891f9b9e68c39b",
+      "expected_outcome": "require_changes",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Unsigned uploaded claims without consumer checking can't establish verified downloads.",
+      "quoted_requirement_ids": [
+        "PROVENANCE-1",
+        "PROVENANCE-2",
+        "PROVENANCE-3"
+      ],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-provenance-001-applicable",
+        "supply-provenance-001-out-of-scope",
+        "supply-provenance-001-boundary"
+      ]
+    },
+    {
+      "case_id": "supply-provenance-001-out-of-scope",
+      "kind": "out_of_scope",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "input_sha256": "85ea8a797545e504f86876acd701d35721c8b3c25680981b566d66af29be1b1f",
+      "expected_outcome": "not_applicable",
+      "expected_policy_ids": [],
+      "out_of_scope_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "assessment": "supported_outcome",
+      "reason": "Reordering local bookmarks without obtaining or trusting artifacts falls outside artifact verification.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-provenance-001-applicable",
+        "supply-provenance-001-violating",
+        "supply-provenance-001-boundary"
+      ]
+    },
+    {
+      "case_id": "supply-provenance-001-boundary",
+      "kind": "boundary",
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:2e550013bee51a2be7720c0d2fe01a42d43940161885a0058ad67de32cc4e95e",
+      "input_sha256": "ef57a2b732a45d1a7e527f8a4502e3028f29c83e17c503e7cd91dcfd0d19e6e8",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "assessment": "supported_outcome",
+      "reason": "Selected digest and provenance checks can be reported without claiming a complete framework level or builder certification.",
+      "quoted_requirement_ids": [],
+      "quoted_evidence_matches_source": true,
+      "paired_case_ids": [
+        "supply-provenance-001-applicable",
+        "supply-provenance-001-violating",
+        "supply-provenance-001-out-of-scope"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "severity": "low",
+      "case_id": "data-migrate-001-violating",
+      "field": "rationale",
+      "issue": "The rationale attributes exercised recovery to MIGRATE-1 and MIGRATE-3, while MIGRATE-2 explicitly requires real-reader recovery verification.",
+      "requested_change": "Name MIGRATE-1 and MIGRATE-2 for compatibility and exercised recovery, or name all three if irreversible deletion is discussed.",
+      "outcome_change_required": false,
+      "expected_evidence_already_contains_correct_rule": true
+    },
+    {
+      "severity": "low",
+      "case_id": "rel-overload-001-violating",
+      "field": "rationale",
+      "issue": "The rationale attributes bounded admission and caller behavior to OVERLOAD-1 and OVERLOAD-3. Caller fairness and amplification avoidance are OVERLOAD-2; OVERLOAD-3 covers saturation, cancellation, release and recovery tests.",
+      "requested_change": "Name OVERLOAD-1 and OVERLOAD-2 for the described admission and retry behavior.",
+      "outcome_change_required": false,
+      "expected_evidence_already_contains_correct_rule": true
+    }
+  ],
+  "reviewed_sections": [
+    {
+      "policy_id": "TEST-FAIL-001",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
+      "revision": "SP 800-218, February 2022",
+      "sections": [
+        "PW.8.1",
+        "PW.8.2"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "TEST-CONTRACT-001",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
+      "revision": "SP 800-218, February 2022",
+      "sections": [
+        "PW.8.2"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "TEST-CONTRACT-001",
+      "url": "https://sre.google/sre-book/testing-reliability/",
+      "revision": "Site Reliability Engineering, 2016, chapter 17",
+      "sections": [
+        "Traditional Tests"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "ARCH-API-001",
+      "url": "https://semver.org/spec/v2.0.0.html",
+      "revision": "2.0.0",
+      "sections": [
+        "1",
+        "7",
+        "8"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "API-ERROR-001",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "revision": "RFC 9110, June 2022",
+      "sections": [
+        "15"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "API-ERROR-001",
+      "url": "https://www.rfc-editor.org/rfc/rfc9457.html",
+      "revision": "RFC 9457, July 2023",
+      "sections": [
+        "3",
+        "5"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "API-PAGE-001",
+      "url": "https://datatracker.ietf.org/doc/html/rfc8288",
+      "revision": "RFC 8288, October 2017",
+      "sections": [
+        "2.1",
+        "3"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "DATA-MIGRATE-001",
+      "url": "https://sre.google/sre-book/data-integrity/",
+      "revision": "Site Reliability Engineering, 2016, chapter 26",
+      "sections": [
+        "Delivering a Recovery System, Rather Than a Backup System"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "DATA-TRANSACTION-001",
+      "url": "https://www.postgresql.org/docs/18/tutorial-transactions.html",
+      "revision": "PostgreSQL 18",
+      "sections": [
+        "3.4"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "ARCH-JOB-001",
+      "url": "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter",
+      "revision": "Published and last modified 2019-12-05",
+      "sections": [
+        "Retries and backoff"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "BE-CONFIG-001",
+      "url": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md",
+      "revision": "72865b1e3b5754246a101778dc00b37f9c233373",
+      "sections": [
+        "2 General Secrets Management"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "REL-TIMEOUT-001",
+      "url": "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter",
+      "revision": "Published and last modified 2019-12-05",
+      "sections": [
+        "Timeouts",
+        "Retries and backoff",
+        "Jitter"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "REL-TIMEOUT-001",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "revision": "RFC 9110, June 2022",
+      "sections": [
+        "10.2.3"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "REL-OVERLOAD-001",
+      "url": "https://sre.google/sre-book/handling-overload/",
+      "revision": "Site Reliability Engineering, 2016, chapter 21",
+      "sections": [
+        "The Pitfalls of \"Queries per Second\"",
+        "Per-Customer Limits",
+        "Client-Side Throttling"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "BE-LOG-001",
+      "url": "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md",
+      "revision": "72865b1e3b5754246a101778dc00b37f9c233373",
+      "sections": [
+        "Data to exclude"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "BE-LOG-001",
+      "url": "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md",
+      "revision": "3e4f2ff15933d70356cc18a9a96719b78d116233",
+      "sections": [
+        "Trace Context Fields",
+        "Field: Resource"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "BE-TRACE-001",
+      "url": "https://www.w3.org/TR/2021/REC-trace-context-1-20211123/",
+      "revision": "W3C Recommendation 2021-11-23",
+      "sections": [
+        "3.2",
+        "4",
+        "6",
+        "7"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "BE-TRACE-001",
+      "url": "https://github.com/open-telemetry/opentelemetry-specification/blob/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md",
+      "revision": "3e4f2ff15933d70356cc18a9a96719b78d116233",
+      "sections": [
+        "Trace Context Fields"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "OBS-READINESS-001",
+      "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
+      "revision": "Site Reliability Engineering, 2016, chapter 6",
+      "sections": [
+        "The Four Golden Signals",
+        "Black-Box Versus White-Box"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "SUPPLY-BUILD-001",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
+      "revision": "SP 800-218, February 2022",
+      "sections": [
+        "PW.4.1"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "SUPPLY-BUILD-001",
+      "url": "https://baseline.openssf.org/versions/2026-08-28",
+      "revision": "2026.08.28",
+      "sections": [
+        "OSPS-BR-01.01",
+        "OSPS-BR-01.03",
+        "OSPS-BR-05.01",
+        "OSPS-DO-06.01"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
+      "revision": "SP 800-218, February 2022",
+      "sections": [
+        "PS.2.1"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "url": "https://baseline.openssf.org/versions/2026-08-28",
+      "revision": "2026.08.28",
+      "sections": [
+        "OSPS-BR-06.01"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    },
+    {
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "url": "https://slsa.dev/spec/v1.2/verifying-artifacts",
+      "revision": "1.2",
+      "sections": [
+        "How to verify",
+        "Forming Expectations"
+      ],
+      "manifest_body_use": "Requirement support tokens and the body source footer were reviewed with the complete policy; project-only choices remain labeled."
+    }
+  ],
+  "targeted_primary_section_checks": [
+    {
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf",
+      "sections": [
+        "PW.8.1",
+        "PW.8.2",
+        "PW.4.1",
+        "PS.2.1"
+      ],
+      "assessment": "The narrowed mappings concern security testing, reviewed components and integrity information; general reliability and installed-artifact project rules remain labeled."
+    },
+    {
+      "url": "https://baseline.openssf.org/versions/2026-08-28",
+      "sections": [
+        "OSPS-BR-01.01",
+        "OSPS-BR-01.03",
+        "OSPS-BR-05.01",
+        "OSPS-DO-06.01",
+        "OSPS-BR-06.01"
+      ],
+      "assessment": "The listed controls address untrusted metadata/code, dependency tooling/documentation and authenticated release integrity."
+    },
+    {
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "sections": [
+        "15",
+        "10.2.3"
+      ],
+      "assessment": "Status-code and Retry-After mappings are narrower than a general retry classification mandate; project retry choices remain labeled."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-specification/3e4f2ff15933d70356cc18a9a96719b78d116233/specification/logs/data-model.md",
+      "sections": [
+        "Trace Context Fields",
+        "Field: Resource"
+      ],
+      "assessment": "Trace and resource fields inform correlation and service identity. Project structured-event and severity rules aren't attributed to removed severity mappings."
+    }
+  ],
+  "reviewed_notices": {
+    "engineering_source_notices": [
+      {
+        "path": "policies/api/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      },
+      {
+        "path": "policies/data/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      },
+      {
+        "path": "policies/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      },
+      {
+        "path": "policies/observability/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      },
+      {
+        "path": "policies/reliability/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      },
+      {
+        "path": "policies/supply-chain/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      },
+      {
+        "path": "policies/testing/licenses/ENGINEERING-SOURCES.txt",
+        "sha256": "dd818297e8477f237d9c147510a457211919c61f9ea5eb0db2f4ddc82eb57d26"
+      }
+    ],
+    "assessment": "Both OWASP-derived body footers retain adaptation wording consistent with their topic/aggregate grounding_kind, attribution, pinned upstream URLs, CC-BY-SA-4.0 terms and change notices. All seven engineering notices now preserve that labeling. Existing upstream and CC-BY-SA notice files remain present; this checks internal attribution consistency rather than legal sufficiency.",
+    "retained_notice_files": [
+      "policies/licenses/CC-BY-SA-4.0.txt",
+      "policies/licenses/OWASP-CHEATSHEETS-UPSTREAM.txt",
+      "policies/observability/licenses/CC-BY-SA-4.0.txt",
+      "policies/observability/licenses/OWASP-CHEATSHEETS-UPSTREAM.txt",
+      "policies/reliability/licenses/CC-BY-SA-4.0.txt",
+      "policies/reliability/licenses/OWASP-CHEATSHEETS-UPSTREAM.txt",
+      "policies/security/licenses/CC-BY-SA-4.0.txt",
+      "policies/security/licenses/OWASP-CHEATSHEETS-UPSTREAM.txt"
+    ]
+  },
+  "diff_assessment": {
+    "two_boundary_inputs": "Both now change the runtime or public serialization behavior that selects their policy. Out-of-scope inputs and all expected verdicts remain unchanged.",
+    "per_policy_sections": "Body footers, rule support tokens and topic/aggregate source records were reviewed; broad unused SSDF/OSPS/HTTP/OpenTelemetry section lists were narrowed.",
+    "historical_evidence": "Documentation marks prior receipts and the current generation/bundle as historical pending independent review and rebuild. No previous model result was relabeled."
+  },
+  "limits": [
+    "This reviews the authored source expectations, not model selection, retrieval recall, generated answers, runtime compliance or production readiness.",
+    "All 64 cases are authored expectations; none was executed against a provider during this review.",
+    "External primary-source checking was targeted to the changed SSDF, OSPS, RFC 9110 and pinned OpenTelemetry mappings. This isn't an exhaustive review of all external frameworks or their complete requirements.",
+    "Quoted requirements are policy source evidence. Their fidelity doesn't establish correct applicability to every future task.",
+    "This isn't a legal opinion, license certification or framework compliance certification.",
+    "The receipt binds only the stated source and semantic payload. Corrections to either rationale require a new payload binding; unchanged source/outcome assessments can be carried forward with an explicit delta review."
+  ]
+}

@@ -17,6 +17,10 @@
 __pycache__/
 build/
 data/
+!policies/data/
+!policies/data/**
 dist/
 *.pyc
 .threadloop/state/
+
+/policies/profiles/.*.lock
