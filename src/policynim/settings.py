@@ -32,6 +32,7 @@ from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
+from policynim.nvidia_models import DEFAULT_NVIDIA_CHAT_MODEL
 from policynim.types import DEFAULT_TOP_K, GenerationID, TopK, normalize_provider_endpoint
 
 
@@ -85,7 +86,7 @@ class Settings(BaseSettings):
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
-    nvidia_chat_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    nvidia_chat_model: str = DEFAULT_NVIDIA_CHAT_MODEL
     nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
     nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"

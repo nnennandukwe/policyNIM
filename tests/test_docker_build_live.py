@@ -83,7 +83,11 @@ def test_runtime_image_imports_generation_without_credentials(dockerfile: str) -
         report = json.loads(probe.stdout)
         assert report["health"]["generation_id"] == report["generation_id"]
         assert report["health"]["row_count"] > 0
-        assert report["modern"] == report["legacy"] == ["policy_preflight", "policy_search"]
+        assert (
+            report["modern"]
+            == report["legacy"]
+            == ["policy_compile", "policy_preflight", "policy_preflight_evidence", "policy_search"]
+        )
         assert report["provider_credentials"] is False
     finally:
         subprocess.run(
