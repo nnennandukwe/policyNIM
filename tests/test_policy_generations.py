@@ -3122,3 +3122,109 @@ def test_readiness_retains_selected_generation_during_rotation(
     assert store.inspect().generation_id == published[-1]
     store.prune(keep_recent=0)
     assert not (store.root / "objects" / first.generation_id).exists()
+
+
+def test_orphan_activation_repeats_failed_rename_durability_barriers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Orphan recovery repeats directory durability barriers before committing a pointer."""
+    from policynim.errors import GenerationError
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    active = store.migrate(settings, index_path=index, rules_path=rules)
+    pointer = (store.root / "active.json").read_bytes()
+    original_sync = generations._sync_directory
+    failed = False
+    synchronized: list[Path] = []
+
+    def sync(path: Path) -> None:
+        """Fail the first actual objects-parent barrier after object installation."""
+        nonlocal failed
+        if path == store.root / "objects" and not failed:
+            failed = True
+            raise OSError("injected directory synchronization failure")
+        original_sync(path)
+        synchronized.append(path)
+
+    monkeypatch.setattr(generations, "_sync_directory", sync)
+    with pytest.raises(GenerationError):
+        store.build(settings, MockEmbedder())
+    assert (store.root / "active.json").read_bytes() == pointer
+    orphan = next(p for p in (store.root / "objects").iterdir() if p.name != active.generation_id)
+    synchronized.clear()
+
+    def fault(step: str) -> None:
+        """Require all rename durability barriers before committing the occupied orphan."""
+        if step == "before_activate":
+            assert {orphan, orphan.parent, store.root / "staging"} <= set(synchronized)
+
+    recovered = GenerationStore(root=store.root, embedding=identity, fault=fault).activate(
+        orphan.name, expected_active=active.generation_id
+    )
+    assert recovered.generation_id == orphan.name
+    assert store.inspect().generation_id == orphan.name
+
+
+@pytest.mark.parametrize("validation_fails", [False, True])
+def test_readiness_cleanup_doesnt_wait_for_another_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, validation_fails: bool
+) -> None:
+    """A real publisher lock can't trap cleanup after successful or failed validation."""
+    from threading import Event, Thread
+
+    from policynim.errors import GenerationError
+    from policynim.storage.file_lock import exclusive_file_lock
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.migrate(settings, index_path=index, rules_path=rules)
+    original_snapshot = store._reader_snapshot
+    held, release, finished = Event(), Event(), Event()
+    errors: list[BaseException] = []
+    holders: list[Thread] = []
+
+    def hold() -> None:
+        """Hold the real publication lock until the test releases the competing publisher."""
+        with exclusive_file_lock(store.root / ".publish.lock"):
+            held.set()
+            release.wait(5)
+
+    def snapshot(generation_id: str, *, force: bool):
+        """Start the lock holder only after actual generation validation has completed."""
+        result = original_snapshot(generation_id, force=force)
+        holder = Thread(target=hold, daemon=True)
+        holders.append(holder)
+        holder.start()
+        assert held.wait(3)
+        if validation_fails:
+            raise GenerationError("inspect", "Injected validation refusal.")
+        return result
+
+    def probe() -> None:
+        """Exercise public health readiness while retaining all raised failures."""
+        try:
+            store.readiness()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(store, "_reader_snapshot", snapshot)
+    worker = Thread(target=probe, daemon=True)
+    worker.start()
+    try:
+        assert held.wait(3)
+        completed_while_writer_held = finished.wait(1)
+    finally:
+        release.set()
+        worker.join(5)
+        for holder in holders:
+            holder.join(5)
+    assert completed_while_writer_held
+    assert len(errors) == int(validation_fails)
+    if errors:
+        assert isinstance(errors[0], GenerationError)
+    assert not worker.is_alive()
+    assert not list((store.root / "leases").rglob("*.lock"))

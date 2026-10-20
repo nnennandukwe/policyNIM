@@ -302,9 +302,11 @@ class _ReaderAdmission:
     path: Path
     identity: tuple[int, int]
     cleanup: ResourceStack
+    validated: bool = False
 
     def transfer_to(self, snapshot: GenerationSnapshot) -> None:
         """Give the full reader its lease while temporary health probes retain scoped cleanup."""
+        self.validated = True
         snapshot.activation = self.activation
         snapshot._lease, snapshot._lease_path, snapshot._lease_identity = (
             self.lease,
@@ -791,8 +793,11 @@ class GenerationStore:
     def _remove_failed_lease_directory(self, directory: Path, identity: tuple[int, int]) -> None:
         """Remove only this failed reader's empty directory, serialized with new readers."""
         try:
-            # Cleanup still owns this obligation after the request budget expires.
-            with exclusive_file_lock(self.root / ".publish.lock"):
+            # Failed probes must release handles without waiting for another writer.
+            with try_exclusive_file_lock(self.root / ".publish.lock") as acquired:
+                if not acquired:
+                    LOGGER.warning("Failed reader lease-directory cleanup deferred while busy.")
+                    return
                 if _read_regular(self.root / "owner.json", max_bytes=len(_OWNER)) != _OWNER:
                     return
                 observed = directory.lstat()
@@ -830,9 +835,11 @@ class GenerationStore:
                         "inspect", "Generation changed during readiness inspection."
                     )
                 check_budget()
+                admission.validated = True
                 return result
             snapshot = self._reader_snapshot(selected, force=False)
             check_budget()
+            admission.validated = True
             return GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count)
 
     @contextmanager
@@ -840,6 +847,7 @@ class GenerationStore:
         """Select and lease one object atomically before validation or metadata inspection."""
         try:
             with ResourceStack() as cleanup:
+                admission: _ReaderAdmission | None = None
                 with self._locked():
                     pointer = self._pointer()
                     selected = self._selected_id(generation_id, pointer)
@@ -865,11 +873,14 @@ class GenerationStore:
                             raise GenerationError("pin", "The reader lease directory isn't valid.")
                     else:
                         created = directory.lstat()
-                        cleanup.callback(
-                            self._remove_failed_lease_directory,
-                            directory,
-                            (created.st_dev, created.st_ino),
-                        )
+                        created_identity = created.st_dev, created.st_ino
+
+                        def remove_failed_directory() -> None:
+                            """Remove a newly owned empty folder only when admission failed."""
+                            if admission is None or not admission.validated:
+                                self._remove_failed_lease_directory(directory, created_identity)
+
+                        cleanup.callback(remove_failed_directory)
                     lease_path = directory / (uuid4().hex + ".lock")
                     descriptor = os.open(lease_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(descriptor, "wb") as handle:
@@ -882,7 +893,10 @@ class GenerationStore:
                     observed = lease_path.lstat()
                     if (observed.st_dev, observed.st_ino) != identity:
                         raise GenerationError("pin", "Reader lease identity changed.")
-                yield _ReaderAdmission(selected, pointer, lease, lease_path, identity, cleanup)
+                admission = _ReaderAdmission(
+                    selected, pointer, lease, lease_path, identity, cleanup
+                )
+                yield admission
         except OSError as exc:
             raise GenerationError(
                 "pin",
@@ -1023,12 +1037,14 @@ class GenerationStore:
             self._step("object_rename")
             (prepared.directory / ".owner").unlink(missing_ok=True)
             prepared.directory.rename(target)
-            self._step("object_directory_fsync")
-            _sync_directory(target)
-            self._step("objects_fsync")
-            _sync_directory(target.parent)
-            self._step("staging_parent_fsync")
-            _sync_directory(prepared.directory.parent)
+        # An occupied object may be a rename left by an interrupted publication.
+        # Repeat every durability barrier before any pointer can refer to it.
+        self._step("object_directory_fsync")
+        _sync_directory(target)
+        self._step("objects_fsync")
+        _sync_directory(target.parent)
+        self._step("staging_parent_fsync")
+        _sync_directory(self.root / "staging")
         token = self._artifact_token(target)
         self._inspect(target, expected_id=prepared.generation_id, expected_embedding=self.embedding)
         if self._artifact_token(target) != token:
