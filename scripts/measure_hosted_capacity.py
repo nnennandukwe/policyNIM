@@ -17,13 +17,14 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 
-def _bounded_count(minimum: int, maximum: int):
+def _bounded_count(minimum: int, maximum: int) -> Callable[[str], int]:
     """Validate bounded experiment sizes without expanding every integer in help text."""
 
     def parse(value: str) -> int:

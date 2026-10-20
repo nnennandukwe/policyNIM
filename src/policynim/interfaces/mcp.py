@@ -352,6 +352,7 @@ def _emit_hosted_event(
     upstream_failure_class: str | None,
     request_id: str | None,
 ) -> None:
+    """Emit fixed event fields with opaque correlation and no request or exception payload."""
     payload = {
         "event": event,
         "correlation_id": current_correlation_id(),
@@ -369,6 +370,7 @@ def _elapsed_ms(start_time: float) -> float:
 
 
 def _failure_class_from_error(exc: BaseException) -> str | None:
+    """Retain stable failure categories without copying exception messages into telemetry."""
     current: BaseException | None = exc
     while current is not None:
         if isinstance(current, (OperationAdmissionError, ToolError)):
@@ -390,6 +392,7 @@ def _failure_class_from_error(exc: BaseException) -> str | None:
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
+    """Hash caller-controlled identifiers so they can't smuggle private text into logs."""
     try:
         return hashlib.sha256(str(ctx.request_id).encode()).hexdigest()[:24]
     except ValueError:
