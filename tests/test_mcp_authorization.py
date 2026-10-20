@@ -47,6 +47,7 @@ def oauth_settings(tmp_path: Path, **overrides: object) -> Settings:
         "mcp_oauth_client_id": "policynim-resource",
         "mcp_oauth_client_secret": "fixture-introspection-secret",
         "index_db_path": tmp_path / "index.sqlite3",
+        "generations_dir": tmp_path / "generations",
         "beta_auth_db_path": tmp_path / "auth.sqlite3",
         "runtime_rules_artifact_path": tmp_path / "rules.json",
     }

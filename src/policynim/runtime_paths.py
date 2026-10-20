@@ -81,6 +81,17 @@ def resolve_corpus_root(configured_root: Path | str | None = None) -> Path:
     )
 
 
+def resolve_grounded_eval_suite_path() -> Path:
+    """Resolve reviewed real-corpus cases separately from synthetic offline expectations."""
+    return _resolve_required_resource(
+        "evals",
+        "grounded_cases.json",
+        predicate=Path.is_file,
+        description="grounded evaluation suite",
+        recovery_hint="Reinstall PolicyNIM with its packaged evaluation fixtures.",
+    )
+
+
 def resolve_eval_suite_path() -> Path:
     """Resolve the bundled default eval suite."""
     bundled_suite = _resolve_packaged_resource("evals", "default_cases.json")

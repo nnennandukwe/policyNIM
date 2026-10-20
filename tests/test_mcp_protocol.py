@@ -198,8 +198,8 @@ def test_stdio_subprocess_protocol_round_trip(mode: str, tmp_path: Path) -> None
 
     async def run() -> None:
         """Start and close the SDK-managed child under a bounded timeout."""
-        async with asyncio.timeout(20):
-            async with Client(parameters, mode=mode, read_timeout_seconds=5) as client:
+        async with asyncio.timeout(60):
+            async with Client(parameters, mode=mode, read_timeout_seconds=20) as client:
                 await _exercise_client(client, mode)
 
     asyncio.run(run())

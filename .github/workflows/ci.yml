@@ -77,6 +77,68 @@ jobs:
       - name: Verify Windows profile readers and writers offline
         run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py tests/test_policy_generations.py tests/test_generation_cli.py
 
+      - name: Verify grounded evaluation and Windows diagnostics
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_grounded_evaluations.py tests/test_windows_diagnostics.py
+
+  package-offline:
+    name: Installed package (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build wheel from this revision
+        run: uv build --wheel --python ${{ matrix.python-version }}
+
+      - name: Verify fresh install and real MCP transports without provider calls
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          root = Path.cwd()
+          wheel, = (root / "dist").glob("*.whl")
+          bundle = root / "artifacts/public-generation"
+          with tempfile.TemporaryDirectory(prefix="policynim-package-") as temporary:
+              runtime = Path(temporary)
+              subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
+              python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+              subprocess.run(["uv", "pip", "install", "--python", str(python), str(wheel)], check=True)
+              subprocess.run([
+                  str(python), str(root / "scripts/verify_installed_package.py"),
+                  "--wheel", str(wheel), "--bundle", str(bundle / "generation.zip"),
+                  "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+                  "--revision", os.environ["GITHUB_SHA"],
+                  "--output", str(root / "package-evidence.json"),
+              ], cwd=runtime, check=True)
+          PY
+
+      - name: Retain installed-package verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-evidence-${{ matrix.os }}-${{ matrix.python-version }}
+          path: package-evidence.json
+          if-no-files-found: error
+
   docker-offline:
     name: Offline Docker images
     runs-on: ubuntu-24.04
