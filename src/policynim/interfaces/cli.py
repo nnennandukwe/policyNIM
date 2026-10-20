@@ -1748,7 +1748,8 @@ def _build_quickstart_payload(
         "agent_workflows": _quickstart_agent_workflows(),
         "next_steps": [
             "Load the generated config in your MCP client.",
-            "Ask the client to list `policy_preflight` and `policy_search`.",
+            "Ask the client to list `policy_search`, `policy_compile`, "
+            "`policy_preflight` and `policy_preflight_evidence`.",
         ],
         "safety": [
             "This command does not launch the MCP server.",

@@ -179,8 +179,9 @@ def test_beta_portal_dashboard_shows_agent_workflow_prompts(monkeypatch) -> None
         "Use policy_search for: release installer checksum verification.",
         "cited policy lines",
         (
-            "List the PolicyNIM MCP tools and confirm policy_preflight and "
-            "policy_search are available before starting implementation."
+            "List the PolicyNIM MCP tools and confirm policy_search, policy_compile, "
+            "policy_preflight and policy_preflight_evidence are available before starting "
+            "implementation."
         ),
     ):
         assert token in dashboard.text
