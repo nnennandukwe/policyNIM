@@ -48,6 +48,7 @@ from policynim.errors import (
     IndexCompatibilityError,
     InvalidPolicyDocumentError,
     MissingIndexError,
+    PolicyContextError,
     PolicyNIMError,
     ProviderError,
 )
@@ -518,6 +519,8 @@ async def _run_logged_tool(
 
 def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
+    if isinstance(exc, PolicyContextError):
+        return str(exc)
     if isinstance(exc, IndexCompatibilityError):
         return (
             "The policy index is incompatible or incomplete. Ask the operator to preserve "
@@ -619,7 +622,10 @@ def _register_tools(
         domain: Annotated[str | None, Field(description="Optional policy domain filter.")] = None,
         top_k: Annotated[
             TopK | None,
-            Field(description="Chunks to retrieve, from 1 to 20; omitted uses runtime default."),
+            Field(
+                description="Discovery hits, 1 to 20; complete selected-policy context can exceed "
+                "this count. Omitted uses runtime default."
+            ),
         ] = None,
         *,
         ctx: Context,

@@ -2689,21 +2689,25 @@ def test_quickstart_help_mentions_targets_clients_and_json_output() -> None:
 
 
 def test_route_help_mentions_task_type_override() -> None:
+    """Route help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["route", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
 
 
 def test_compile_help_mentions_task_type_override() -> None:
+    """Compile help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["compile", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:
@@ -2730,12 +2734,13 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
 
 
 def test_preflight_help_mentions_current_top_k_behavior() -> None:
+    """Preflight help identifies the discovery limit and trace option."""
     result = runner.invoke(app, ["preflight", "--help"])
     help_text = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "Retrieval depth." in help_text
-    assert "1-20." in help_text
+    assert "Discovery hits," in help_text
+    assert "1-20;" in help_text
     assert "--trace" in help_text
     assert "Reserved retrieval depth" not in help_text
 

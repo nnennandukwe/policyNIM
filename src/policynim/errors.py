@@ -11,6 +11,27 @@ class PolicyNIMError(Exception):
         self.failure_class = failure_class
 
 
+class PolicyContextError(PolicyNIMError):
+    """Refuse incomplete or unbound selected-policy context before generation."""
+
+    def __init__(self, *, identity_mismatch: bool = False) -> None:
+        """Expose fixed recovery guidance without including source content or paths."""
+        if identity_mismatch:
+            message = (
+                "Selected policy evidence doesn't match the pinned index. "
+                "Preserve the generation and ask the operator to inspect its integrity."
+            )
+            failure_class = "policy_context_identity_mismatch"
+        else:
+            message = (
+                "Complete selected-policy context exceeds the 80-chunk or 256-KiB budget. "
+                "No partial policy context was used. Narrow top_k or domain, or ask the "
+                "operator to split reviewed policy documents before retrying."
+            )
+            failure_class = "policy_context_budget_exceeded"
+        super().__init__(message, failure_class=failure_class)
+
+
 class GenerationError(PolicyNIMError):
     """A bounded generation failure with a phase and source-preserving recovery action."""
 

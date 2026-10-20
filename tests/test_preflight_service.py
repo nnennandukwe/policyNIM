@@ -423,7 +423,8 @@ def test_preflight_service_fails_closed_when_compiler_has_insufficient_context()
     assert result.plan_steps == []
 
 
-def test_preflight_service_caps_retained_chunks_per_policy() -> None:
+def test_preflight_service_caps_discovery_and_completes_selected_policy_context() -> None:
+    """Preserve discovery diversity while supplying complete policy text to generation."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -486,8 +487,10 @@ def test_preflight_service_caps_retained_chunks_per_policy() -> None:
         "BACKEND-1",
         "BACKEND-2",
         "SECURITY-1",
+        "BACKEND-3",
     ]
-    assert sum(chunk.policy.policy_id == "BACKEND-LOG-001" for chunk in generator.last_context) == 2
+    assert generator.last_context[-1].score is None
+    assert sum(chunk.policy.policy_id == "BACKEND-LOG-001" for chunk in generator.last_context) == 3
     assert [citation.chunk_id for citation in result.citations] == [
         "BACKEND-1",
         "BACKEND-2",
