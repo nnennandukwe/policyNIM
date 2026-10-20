@@ -46,6 +46,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
     ConfigurationError,
+    GenerationError,
     IndexCompatibilityError,
     InvalidPolicyDocumentError,
     MissingIndexError,
@@ -600,7 +601,6 @@ async def _run_correlated_tool(
 
 def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
-    from policynim.errors import GenerationError
     from policynim.job_types import EvaluationJobError
     from policynim.services.grounded_mcp import PolicyResourceError
 
@@ -610,7 +610,8 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
         return (
             "generation_unavailable: The selected policy generation is unavailable or invalid. "
             "Historical references never use a newer generation. Ask the operator to inspect "
-            "the retained generations."
+            "the retained generations with `policynim generation inspect`. Import a verified "
+            "bundle or explicitly migrate standalone index and rules if no generation exists."
         )
     if isinstance(exc, OperationAdmissionError):
         return str(exc)
