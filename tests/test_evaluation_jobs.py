@@ -696,3 +696,23 @@ def test_submission_rejects_invalid_case_before_acceptance_or_quota(
         service.submit(suite, idempotency_key="invalid", principal=principal())
     assert service.store.aggregate_counts() == {}
     assert not service.settings.beta_auth_db_path.exists()
+
+
+def test_concurrent_schema_upgrade_keeps_accepted_jobs(generation, tmp_path: Path) -> None:
+    """Competing process-style constructors serialize migration against the same durable row."""
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="before-upgrade", principal=principal())
+    with sqlite3.connect(service.store.path) as db:
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN active_case_start_attempts")
+        db.execute("PRAGMA user_version=1")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        stores = list(pool.map(lambda _: EvaluationJobStore(service.store.path), range(6)))
+    for store in stores:
+        assert store.inspect(accepted.job_id, accepted.owner_id).job_id == accepted.job_id
+    with sqlite3.connect(service.store.path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        names = [row[1] for row in db.execute("PRAGMA table_info(evaluation_jobs)")]
+    assert names.count("active_case_start_attempts") == 1
