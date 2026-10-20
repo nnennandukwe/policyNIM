@@ -17,6 +17,7 @@ from release_evidence_io import (
     decode_json,
     read_bytes,
     read_json,
+    require_separate_output,
     write_document,
 )
 
@@ -607,6 +608,10 @@ def main() -> int:
         return 2
     if args.output is not None:
         try:
+            inputs = [args.selection, *args.execution_receipt, *args.client_declaration]
+            if args.provenance_receipt is not None:
+                inputs.append(args.provenance_receipt)
+            require_separate_output(args.output, inputs, protected_directory=args.artifact_dir)
             write_document(args.output, payload)
         except (OSError, ValueError) as exc:
             report.update(
@@ -614,7 +619,8 @@ def main() -> int:
                 output_failure=type(exc).__name__,
                 output_recovery=(
                     "Inspect the selected output directory, permissions and owned "
-                    ".policynim-evidence-*.tmp files before retrying."
+                    ".policynim-evidence-*.tmp files before retrying. "
+                    "Keep output separate from inputs and release assets."
                 ),
             )
             print(json.dumps(report, sort_keys=True))

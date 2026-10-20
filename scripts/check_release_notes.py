@@ -9,7 +9,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from release_evidence_io import read_bytes, write_document
+from release_evidence_io import read_bytes, require_separate_output, write_document
 
 
 def version_notes(root: Path) -> tuple[str, str]:
@@ -21,6 +21,7 @@ def version_notes(root: Path) -> tuple[str, str]:
     ):
         raise ValueError("Invalid project version.")
     changelog = read_bytes(root / "CHANGELOG.md").decode("utf-8")
+    changelog = re.sub(r"<!--.*?(?:-->|$)", "", changelog, flags=re.DOTALL)
     headers = list(re.finditer(r"^## \[([^\]\n]+)\][^\n]*$", changelog, re.MULTILINE))
     current = [index for index, match in enumerate(headers) if match[1] == version]
     if len(current) != 1 or sum(match[1] == "Unreleased" for match in headers) != 1:
@@ -28,8 +29,7 @@ def version_notes(root: Path) -> tuple[str, str]:
     index = current[0]
     end = headers[index + 1].start() if index + 1 < len(headers) else len(changelog)
     body = changelog[headers[index].end() : end].strip()
-    visible = re.sub(r"<!--.*?(?:-->|$)", "", body, flags=re.DOTALL).strip()
-    plain = visible.strip("#*- \t\r\n.!:").casefold()
+    plain = body.strip("#*- \t\r\n.!:").casefold()
     if not plain or plain in {"todo", "tbd", "placeholder", "coming soon"}:
         raise ValueError("Current version needs nonempty release notes.")
     return version, body
@@ -57,6 +57,9 @@ def main() -> int:
         return 1
     if args.output is not None:
         try:
+            require_separate_output(
+                args.output, [args.repo_root / "CHANGELOG.md", args.repo_root / "pyproject.toml"]
+            )
             write_document(args.output, f"# PolicyNIM {version}\n\n{body}\n".encode())
         except (OSError, ValueError) as exc:
             print(
@@ -67,6 +70,9 @@ def main() -> int:
                         "version": version,
                         "reason": "notes_write_failed",
                         "error_class": type(exc).__name__,
+                        "recovery": (
+                            "Choose an output separate from project inputs and inspect its parent."
+                        ),
                     }
                 )
             )

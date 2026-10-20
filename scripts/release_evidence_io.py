@@ -12,6 +12,22 @@ from typing import Any
 MAX_DOCUMENT_BYTES = 1024 * 1024
 
 
+def require_separate_output(
+    output: Path, inputs: list[Path], *, protected_directory: Path | None = None
+) -> None:
+    """Reject publication paths that replace inputs or enter a verified asset inventory."""
+    destination = output.resolve()
+    if protected_directory is not None and destination.is_relative_to(
+        protected_directory.resolve()
+    ):
+        raise ValueError("Output must stay outside the verified asset directory.")
+    for source in inputs:
+        if destination == source.resolve() or (
+            output.exists() and source.exists() and output.samefile(source)
+        ):
+            raise ValueError("Output can't replace an evidence input.")
+
+
 def read_bytes(path: Path, *, limit: int = MAX_DOCUMENT_BYTES) -> bytes:
     """Reject links/special files and bound reads without trusting a pre-open size alone."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)

@@ -23,7 +23,8 @@ combination that's required; one SDK receipt can't substitute for a coding-clien
 The artifact check recomputes local download sizes and checksums against the selected
 manifest. The provenance check consumes the existing attestation verifier's receipt
 and requires its repository, workflow, source and complete verified subject set to
-match those bytes. Keep the report outside the release asset directory.
+match those bytes. Output paths must stay outside the release asset directory and
+can't replace selection or receipt inputs. The tools reject these aliases before writing.
 
 ## Collect existing receipts
 

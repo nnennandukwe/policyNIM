@@ -534,3 +534,18 @@ def test_success_label_with_recorded_failure_holds(candidate, tmp_path: Path) ->
     receipt_path.write_text(json.dumps(receipt))
     process, report = run_collector(path, assets, "--execution-receipt", str(receipt_path))
     assert process.returncode == 1 and report["checks"][1]["reason"] == "recorded_execution_failed"
+
+
+@pytest.mark.parametrize("target", ["selection", "artifact", "new_asset_entry"])
+def test_output_cant_replace_selected_input_or_mutate_asset_inventory(candidate, target) -> None:
+    """Report publication can't invalidate the input bytes it just verified."""
+    path, _, assets = candidate
+    output = {
+        "selection": path,
+        "artifact": assets / "fixture.whl",
+        "new_asset_entry": assets / "report.json",
+    }[target]
+    before = output.read_bytes() if output.exists() else None
+    process, report = run_collector(path, assets, "--output", str(output))
+    assert process.returncode == 2 and report["decision"] == "hold"
+    assert (output.read_bytes() if output.exists() else None) == before

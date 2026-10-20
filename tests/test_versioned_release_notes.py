@@ -68,3 +68,40 @@ def test_wrong_version_is_nonzero_and_keeps_prior_output(tmp_path: Path) -> None
         check=False,
     )
     assert process.returncode == 1 and output.read_text() == "prior"
+
+
+@pytest.mark.parametrize("filename", ["CHANGELOG.md", "pyproject.toml"])
+def test_notes_output_cant_replace_the_version_or_authored_source(tmp_path: Path, filename) -> None:
+    """An output typo can't replace the source that justified the rendered notes."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## [Unreleased]\n\n## [0.2.0]\nBeta keys remain supported.\n"
+    )
+    output = tmp_path / filename
+    before = output.read_bytes()
+    process = subprocess.run(
+        [sys.executable, str(CHECKER), "--repo-root", str(tmp_path), "--output", str(output)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert process.returncode == 2 and output.read_bytes() == before
+
+
+def test_commented_version_heading_isnt_a_release_section(tmp_path: Path) -> None:
+    """A hidden planning section can't supply the current version's release notes."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## [Unreleased]\n<!--\n## [0.2.0]\nHidden planning notes.\n-->\n"
+    )
+    output = tmp_path / "notes.md"
+    output.write_text("prior notes")
+    process = subprocess.run(
+        [sys.executable, str(CHECKER), "--repo-root", str(tmp_path), "--output", str(output)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert process.returncode == 1 and output.read_text() == "prior notes"
