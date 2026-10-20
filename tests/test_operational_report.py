@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from test_grounded_mcp import generation as generation_fixture
 from typer.testing import CliRunner
 
 from policynim.errors import PolicyNIMError
@@ -22,6 +23,8 @@ from policynim.services.operation_admission import admit_operation
 from policynim.services.operational_report import inspect_operational_report
 from policynim.settings import Settings
 from policynim.storage.operation_store import OperationStore
+
+generation = generation_fixture
 
 
 def test_retention_preserves_active_and_current_day_usage(tmp_path: Path) -> None:
@@ -362,3 +365,72 @@ def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
     assert "internal_error" in response.text and "correlation" in response.text
     assert "private-token" not in response.text and "private-token" not in caplog.text
     assert "RuntimeError" in failures
+
+
+def test_report_observes_active_generation_and_real_job_backlog(generation, tmp_path: Path) -> None:
+    """Provider-free telemetry reflects the served generation and persisted application jobs."""
+    from test_evaluation_jobs import job_setup, principal
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    operations = OperationStore(service.settings.beta_auth_db_path)
+    try:
+        service.submit(suite, idempotency_key="report", principal=principal())
+        report = inspect_operational_report(service.settings)
+        assert report["index_state"] == "ready"
+        assert report["active_generation"] == generation_id
+        assert report["job_backlog"] == {"queued": 1}
+        assert report["job_telemetry_status"] == "available"
+        assert "report" not in json.dumps(report["job_backlog"])
+    finally:
+        operations.close()
+
+
+def test_report_doesnt_claim_damaged_generation_is_ready(generation, tmp_path: Path) -> None:
+    """A malformed activation pointer yields invalid readiness without guessing an identity."""
+    settings, _, _ = generation
+    operations = OperationStore(tmp_path / "operator.sqlite3")
+    settings = settings.model_copy(
+        update={"beta_auth_db_path": operations.path, "eval_workspace_dir": tmp_path / "absent"}
+    )
+    (settings.generations_dir / "active.json").write_text("{}")
+    try:
+        report = inspect_operational_report(settings)
+        assert report["index_state"] == "invalid" and report["active_generation"] is None
+        assert report["job_backlog"] is None
+        assert report["job_telemetry_status"] == "unavailable_no_job_store"
+        assert not settings.eval_workspace_dir.exists()
+    finally:
+        operations.close()
+
+
+@pytest.mark.parametrize("fail_inspect", [False, True])
+def test_report_closes_generation_adapter_after_success_or_failed_inspection(
+    generation, tmp_path: Path, monkeypatch, fail_inspect: bool
+) -> None:
+    """A factory-owned generation lease drains even when its inspector raises unexpectedly."""
+    from policynim.services import operational_report as module
+    from policynim.storage.index_readiness import IndexReadinessReport
+
+    settings, _, generation_id = generation
+    operations = OperationStore(tmp_path / "operator.sqlite3")
+    settings = settings.model_copy(update={"beta_auth_db_path": operations.path})
+    closed: list[bool] = []
+    adapter = SimpleNamespace(generation_id=generation_id, close=lambda: closed.append(True))
+    monkeypatch.setattr(module, "create_index_store", lambda _: adapter)
+
+    def inspect(_):
+        """Inject at the public adapter inspector, retaining real activation validation."""
+        if fail_inspect:
+            raise RuntimeError("fixture inspector failed")
+        return IndexReadinessReport(state="ready", chunk_count=2, compatible=True)
+
+    monkeypatch.setattr(module, "inspect_index_readiness", inspect)
+    try:
+        if fail_inspect:
+            with pytest.raises(RuntimeError, match="fixture inspector failed"):
+                inspect_operational_report(settings)
+        else:
+            assert inspect_operational_report(settings)["active_generation"] == generation_id
+    finally:
+        operations.close()
+    assert closed == [True]

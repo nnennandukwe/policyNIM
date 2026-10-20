@@ -31,8 +31,14 @@ Principal identifiers, client tokens, request bodies, task text, source text and
 individual operation IDs aren't aggregate report labels. Provider usage/retry
 totals remain `null` in this ledger. Existing provider stage/attempt logs retain
 actual token usage when supplied, with an explicit unknown marker otherwise.
-Generation identity and durable job backlog remain unavailable in this slice;
-#93/#101 integration must supply those fields before #103 can close.
+The report validates the active managed generation without provider calls and
+reports its ID only when it's ready. An absent generation is `missing`; damaged
+generation metadata is `invalid`. The owned generation reader closes after
+inspection. `job_backlog` reads aggregate durable job state counts from the private
+evaluation workspace. If job storage hasn't been created, its value remains `null`
+with `job_telemetry_status=unavailable_no_job_store`; the report doesn't create it.
+Job worker executions mint a fresh correlation ID for provider work and admission,
+independent of the submitting client's connection.
 
 `POLICYNIM_MCP_OPERATION_RETENTION_DAYS` defaults to `30` and accepts 1–365.
 Each admission prunes older terminal rows inside its write transaction. It never
