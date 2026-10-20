@@ -100,7 +100,12 @@ def test_changed_policy_has_pinned_sources_and_paired_scope_cases(policy_id: str
         for source in provenance.sources
     )
     cases = [case for case in SUITE["cases"] if case["policy_id"] == policy_id]
-    assert {case["kind"] for case in cases} == {"applicable", "violating", "out_of_scope"}
+    assert {case["kind"] for case in cases} == {
+        "applicable",
+        "violating",
+        "out_of_scope",
+        "boundary",
+    }
     for heading in (
         "Intent",
         "Applicability",
@@ -127,8 +132,16 @@ def test_authored_scenario_evidence_matches_actual_chunks(case: dict) -> None:
             "applicable": "apply_guidance",
             "violating": "require_changes",
             "out_of_scope": "not_applicable",
+            "boundary": "respect_documented_boundary",
         }[case["kind"]]
     )
+    if case["kind"] == "boundary":
+        assert case["role"] in provenance.applicability
+        assert case["expected_policy_ids"] == [case["policy_id"]]
+        assert not case["out_of_scope_policy_ids"]
+        boundary = entry.body.split("## Exceptions and Boundaries\n\n", 1)[1].split("\n\n##", 1)[0]
+        assert case["boundary_evidence"] == boundary
+        return
     if case["kind"] == "out_of_scope":
         assert case["role"] not in provenance.applicability
         assert case["expected_policy_ids"] == case["expected_evidence"] == []

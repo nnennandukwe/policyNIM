@@ -13,7 +13,7 @@
     "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
     "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
     "ARCH-JOB-001": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
-    "BE-CONFIG-001": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
+    "BE-CONFIG-001": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
     "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
     "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
     "BE-LOG-001": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
@@ -116,7 +116,7 @@
           ]
         }
       ],
-      "rationale": "Retain the failing trigger, expected state, actual runtime result, recovery attempt, and revision. Test doubles alone can verify component decisions; they don't establish process or deployment recovery."
+      "rationale": "A mocked happy path can't establish interruption recovery. FAIL-1 and FAIL-3 require the affected runtime failure and a verified recovery attempt."
     },
     {
       "case_id": "test-fail-001-out-of-scope",
@@ -131,7 +131,7 @@
       "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "A static text correction without a runtime effect doesn't need fault injection. These are project verification rules; SSDF addresses security testing and doesn't mandate every listed general reliability case."
+      "rationale": "The unrelated editorial correction changes no failure and recovery verification behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "test-contract-001-applicable",
@@ -207,7 +207,7 @@
           ]
         }
       ],
-      "rationale": "Use a strict consumer fixture or real supported client, the previous supported payload shape, and a rejected malformed shape. Record platform and dependency identities."
+      "rationale": "The installed consumer rejects the producer's changed contract. Internal dictionary tests don't verify that boundary; CONTRACT-1 and CONTRACT-2 require consumer evidence."
     },
     {
       "case_id": "test-contract-001-out-of-scope",
@@ -222,7 +222,7 @@
       "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Internal refactors with unchanged public behavior can reuse existing contract tests. Synthetic fixtures don't prove semantic retrieval or live provider quality."
+      "rationale": "The unrelated editorial correction changes no public boundary contract tests behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "arch-api-001-applicable",
@@ -300,7 +300,7 @@
           ]
         }
       ],
-      "rationale": "Retain old/new request and response examples, consumer contract results, changed semantics, and the deprecation plan. Field reuse and changed defaults need review."
+      "rationale": "Changing an object field to a list breaks existing consumers. API-1 and API-2 require compatibility evidence and a supported migration for an incompatible change."
     },
     {
       "case_id": "arch-api-001-out-of-scope",
@@ -315,7 +315,7 @@
       "policy_revision": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "A proven compatible optional field can keep the current API version. SemVer doesn't prescribe HTTP path versioning or a universal deprecation duration."
+      "rationale": "The unrelated editorial correction changes no api compatibility and version boundaries behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "api-error-001-applicable",
@@ -391,7 +391,7 @@
           ]
         }
       ],
-      "rationale": "Capture sanitized wire responses and strict client handling, including content type and status. Document retryability without treating every server error as transient."
+      "rationale": "The error exposes a credential-bearing connection string and treats authorization denial as transient. ERROR-2 requires safe public details; ERROR-3 requires correct caller recovery."
     },
     {
       "case_id": "api-error-001-out-of-scope",
@@ -406,7 +406,7 @@
       "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "RFC 9457 is an optional common error format. Existing documented error formats can remain; this policy doesn't require converting every response into problem details."
+      "rationale": "The unrelated editorial correction changes no http error contracts behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "api-page-001-applicable",
@@ -484,7 +484,7 @@
           ]
         }
       ],
-      "rationale": "Show traversal over empty and multi-page collections plus a concurrent update. State whether snapshot consistency or duplicate-free traversal is actually guaranteed."
+      "rationale": "A cursor crosses tenant ownership and doesn't terminate. PAGE-1 and PAGE-2 require the declared ownership, ordering and termination behavior."
     },
     {
       "case_id": "api-page-001-out-of-scope",
@@ -499,7 +499,7 @@
       "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "RFC 8288 defines links, not a mandatory pagination algorithm. Cursor format, limits, and consistency guarantees are project choices; fixed small in-memory results can omit pagination."
+      "rationale": "The unrelated editorial correction changes no pagination and collection stability behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "data-migrate-001-applicable",
@@ -573,7 +573,7 @@
           ]
         }
       ],
-      "rationale": "Run the migration on representative old data, interrupt it, resume or restore, and verify old/new readers within the declared compatibility window."
+      "rationale": "Dropping the old column strands old instances, and an untested backup doesn't prove recovery. MIGRATE-1 and MIGRATE-3 require a compatible rollout and exercised recovery."
     },
     {
       "case_id": "data-migrate-001-out-of-scope",
@@ -588,7 +588,7 @@
       "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Database DDL and transaction behavior vary by engine. Online migration patterns and recovery time targets require a workload-specific decision; no universal numeric target is prescribed."
+      "rationale": "The unrelated editorial correction changes no data migration and recovery behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "data-transaction-001-applicable",
@@ -662,7 +662,7 @@
           ]
         }
       ],
-      "rationale": "Record the commit operation, invariant checks, failure location, resulting durable state, and duplicate-effect handling. Keep transaction isolation assumptions explicit."
+      "rationale": "The debit and credit can commit separately, while a database rollback can't reverse a sent external payment. TRANSACTION-1 and TRANSACTION-2 require the actual effect boundary to be proved."
     },
     {
       "case_id": "data-transaction-001-out-of-scope",
@@ -677,7 +677,7 @@
       "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "The PostgreSQL example doesn't establish identical guarantees for every datastore. Outboxes, compensation, and distributed transactions are design options that need their own proof."
+      "rationale": "The unrelated editorial correction changes no transaction boundaries and external effects behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "arch-job-001-applicable",
@@ -753,7 +753,7 @@
           ]
         }
       ],
-      "rationale": "Test duplicate delivery, crash after the effect before acknowledgement, exhausted retries, and an operator retry. Verify the intended side effect occurs once within the documented deduplication window."
+      "rationale": "The retry repeats a charge and poison work has no terminal bound. JOB-1 and JOB-2 require duplicate-effect protection and bounded retry behavior."
     },
     {
       "case_id": "arch-job-001-out-of-scope",
@@ -768,7 +768,7 @@
       "policy_revision": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Exactly-once delivery isn't inferred from a queue setting. Deduplication scope and retention are workload decisions; an explicitly harmless repeat can be documented as such."
+      "rationale": "The unrelated editorial correction changes no background jobs and duplicate effects behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "be-config-001-applicable",
@@ -780,12 +780,12 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
+      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
           "requirement_id": "CONFIG-1",
-          "quote": "Validate required settings that affect security, correctness, or data integrity at startup before accepting requests; expose one testable configuration surface.",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -818,12 +818,12 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
+      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
           "requirement_id": "CONFIG-1",
-          "quote": "Validate required settings that affect security, correctness, or data integrity at startup before accepting requests; expose one testable configuration surface.",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup and stop startup if any required value is invalid; expose one testable configuration surface.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -844,7 +844,7 @@
           ]
         }
       ],
-      "rationale": "Capture startup and reload outcomes for invalid settings, sanitized errors, unchanged durable state, and a corrected retry. Required credentials mustn't leak in diagnostics."
+      "rationale": "An enabled service accepts requests with an unchecked required issuer. CONFIG-1 requires startup validation and refuses startup when a required value is invalid."
     },
     {
       "case_id": "be-config-001-out-of-scope",
@@ -856,10 +856,10 @@
         "BE-CONFIG-001"
       ],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
+      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup."
+      "rationale": "The unrelated editorial correction changes no configuration validation and safe startup behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "rel-timeout-001-applicable",
@@ -939,7 +939,7 @@
           ]
         }
       ],
-      "rationale": "Use a controlled slow dependency and fake clock where appropriate; assert attempt count, exhaustion, cancellation, released resources, and safe errors."
+      "rationale": "Independent endless retries multiply work after cancellation. TIMEOUT-1 and TIMEOUT-2 require a shared bounded deadline and safe retry admission."
     },
     {
       "case_id": "rel-timeout-001-out-of-scope",
@@ -954,7 +954,7 @@
       "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Timeout values follow measured latency, acceptable failure rates, and caller budgets. AWS example percentiles aren't universal requirements; non-idempotent effects need extra protection."
+      "rationale": "The unrelated editorial correction changes no deadlines and bounded retries behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "rel-overload-001-applicable",
@@ -1032,7 +1032,7 @@
           ]
         }
       ],
-      "rationale": "Record workload mix, configured limits, wait/rejection outcomes, resource usage, and the capacity actually tested. Include another caller's progress during saturation."
+      "rationale": "The unbounded queue can't reject overload safely, and immediate retries amplify it. OVERLOAD-1 and OVERLOAD-3 require bounded admission and caller behavior."
     },
     {
       "case_id": "rel-overload-001-out-of-scope",
@@ -1047,7 +1047,7 @@
       "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Per-customer quotas and degradation require product decisions. A request count alone doesn't certify capacity for unequal-cost operations; this policy supplies no universal throughput claim."
+      "rationale": "The unrelated editorial correction changes no admission control and backpressure behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "be-log-001-applicable",
@@ -1127,7 +1127,7 @@
           ]
         }
       ],
-      "rationale": "Test success, retry, failure, and hostile payloads against captured logs. Verify a sensitive marker never appears and a failure can be followed through safe identifiers."
+      "rationale": "The handler collects personal data and raw user text without an approved exception. LOG-1 excludes those values by default; structured output doesn't make them safe."
     },
     {
       "case_id": "be-log-001-out-of-scope",
@@ -1142,7 +1142,7 @@
       "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging."
+      "rationale": "The unrelated editorial correction changes no safe structured logging behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "be-trace-001-applicable",
@@ -1224,7 +1224,7 @@
           ]
         }
       ],
-      "rationale": "Test a cross-boundary success and failure, malformed inbound context, and unsupported downstream propagation. Show how operators locate the resulting spans and logs."
+      "rationale": "Discarding correlation prevents following an operation, while putting a bearer token in trace state exposes credentials. TRACE-1 and TRACE-2 require valid safe context propagation."
     },
     {
       "case_id": "be-trace-001-out-of-scope",
@@ -1239,7 +1239,7 @@
       "policy_revision": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Trace and span IDs have different roles. A new child span normally gets a new span ID; preserve valid trace identity without requiring every hop to repeat the same span ID."
+      "rationale": "The unrelated editorial correction changes no request correlation and trace context behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "obs-readiness-001-applicable",
@@ -1317,7 +1317,7 @@
           ]
         }
       ],
-      "rationale": "Retain actual probe responses, safe telemetry, and a recovery observation. A process listening on a socket doesn't establish that its required data can be served."
+      "rationale": "Always-green health hides failed searches, and prompt-valued labels expose private text with unbounded cardinality. READINESS-1 and READINESS-2 require useful probes and bounded safe telemetry."
     },
     {
       "case_id": "obs-readiness-001-out-of-scope",
@@ -1332,7 +1332,7 @@
       "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Liveness, readiness, dependency diagnostics, and end-user success serve different purposes. Probe design and alert targets are project recommendations, not mandated by Google SRE."
+      "rationale": "The unrelated editorial correction changes no operational signals and readiness behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "supply-build-001-applicable",
@@ -1414,7 +1414,7 @@
           ]
         }
       ],
-      "rationale": "Record locked dependency resolution, the tested artifact digest, clean-install behavior, and security-relevant release notes. A source-checkout test doesn't establish installed-resource availability."
+      "rationale": "An unpinned installer can change the build, unreviewed code receives signing credentials, and only checkout tests run. BUILD-1, BUILD-2 and BUILD-3 require reviewed inputs, controlled credentials and built-artifact verification."
     },
     {
       "case_id": "supply-build-001-out-of-scope",
@@ -1429,7 +1429,7 @@
       "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Exact patch pins alone don't prove bit-for-bit reproducibility. Document platform, toolchain, network inputs, and remaining nondeterminism before making that claim."
+      "rationale": "The unrelated editorial correction changes no dependencies and reproducible build inputs behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
     },
     {
       "case_id": "supply-provenance-001-applicable",
@@ -1507,7 +1507,7 @@
           ]
         }
       ],
-      "rationale": "Show a successful verification plus altered artifact, untrusted signer/builder, and unexpected parameter rejection. Retain the verifier policy and exact artifact digest."
+      "rationale": "Uploaded claims aren't verified provenance. PROVENANCE-1 and PROVENANCE-2 require trusted identity and a consumer check before describing downloads as verified."
     },
     {
       "case_id": "supply-provenance-001-out-of-scope",
@@ -1522,7 +1522,263 @@
       "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "SLSA levels depend on their full track requirements and trust model. This selected guidance doesn't assess a builder or certify SSDF, SLSA, or OSPS compliance."
+      "rationale": "The unrelated editorial correction changes no release provenance and consumer verification behavior. Its documentation-only role and unchanged runtime are outside this policy's applicability."
+    },
+    {
+      "case_id": "test-fail-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "An application developer corrects a comment without changing executable behavior; existing runtime checks remain unchanged.",
+      "expected_policy_ids": [
+        "TEST-FAIL-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-FAIL-001",
+      "policy_revision": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "A static text correction without a runtime effect doesn't need fault injection. These are project verification rules; SSDF addresses security testing and doesn't mandate every listed general reliability case.",
+      "rationale": "A comment-only correction has no runtime effect, so it doesn't require injecting a publisher failure."
+    },
+    {
+      "case_id": "test-contract-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A library maintainer renames a private helper; wire output and exported APIs stay unchanged, and the existing installed-consumer contract tests pass.",
+      "expected_policy_ids": [
+        "TEST-CONTRACT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "TEST-CONTRACT-001",
+      "policy_revision": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Internal refactors with unchanged public behavior can reuse existing contract tests. Synthetic fixtures don't prove semantic retrieval or live provider quality.",
+      "rationale": "An internal refactor can reuse passing contract tests when public behavior hasn't changed; a new external contract isn't invented."
+    },
+    {
+      "case_id": "arch-api-001-boundary",
+      "kind": "boundary",
+      "role": "api-producer",
+      "input": "An API producer adds an optional field; tests show old consumers ignore it and existing request/response meanings stay unchanged, so the supported API version stays the same.",
+      "expected_policy_ids": [
+        "ARCH-API-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-API-001",
+      "policy_revision": "sha256:1f5111ed53dfa81313704df50ae74ae9552f78a1f7ddc98a6371594a52c56350",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "A proven compatible optional field can keep the current API version. SemVer doesn't prescribe HTTP path versioning or a universal deprecation duration.",
+      "rationale": "A proved compatible optional field doesn't require an incompatible API-version migration."
+    },
+    {
+      "case_id": "api-error-001-boundary",
+      "kind": "boundary",
+      "role": "api-producer",
+      "input": "An API keeps its documented safe error format; status handling and caller recovery tests pass without adopting RFC 9457 problem details.",
+      "expected_policy_ids": [
+        "API-ERROR-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-ERROR-001",
+      "policy_revision": "sha256:e5f5385bcc366f99509177a41cfcac323e7430fec4685291fb9919bd9b4b9c28",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "RFC 9457 is an optional common error format. Existing documented error formats can remain; this policy doesn't require converting every response into problem details.",
+      "rationale": "RFC 9457 is optional. Keeping another documented safe format doesn't itself violate the HTTP error contract."
+    },
+    {
+      "case_id": "api-page-001-boundary",
+      "kind": "boundary",
+      "role": "api-producer",
+      "input": "An API returns a fixed two-item in-memory enumeration, with no unbounded collection or tenant-sensitive cursor; it omits pagination.",
+      "expected_policy_ids": [
+        "API-PAGE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "API-PAGE-001",
+      "policy_revision": "sha256:6ef3e48b99a453ddcc97abb023ea3cf4640a662f7c18b0bf034f227f57e6344e",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "RFC 8288 defines links, not a mandatory pagination algorithm. Cursor format, limits, and consistency guarantees are project choices; fixed small in-memory results can omit pagination.",
+      "rationale": "The policy explicitly allows fixed small in-memory results to omit pagination; it doesn't mandate a cursor for every response."
+    },
+    {
+      "case_id": "data-migrate-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A database operator tests a migration and recovery on the selected engine and reports its measured recovery behavior without claiming the same DDL or numeric target for other engines.",
+      "expected_policy_ids": [
+        "DATA-MIGRATE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-MIGRATE-001",
+      "policy_revision": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Database DDL and transaction behavior vary by engine. Online migration patterns and recovery time targets require a workload-specific decision; no universal numeric target is prescribed.",
+      "rationale": "Engine-specific proof doesn't establish universal DDL behavior or a universal recovery-time target."
+    },
+    {
+      "case_id": "data-transaction-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A service uses an outbox with separately tested duplicate handling and compensation; it doesn't claim a database rollback reverses an external payment.",
+      "expected_policy_ids": [
+        "DATA-TRANSACTION-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "DATA-TRANSACTION-001",
+      "policy_revision": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "The PostgreSQL example doesn't establish identical guarantees for every datastore. Outboxes, compensation, and distributed transactions are design options that need their own proof.",
+      "rationale": "An outbox is an allowed design option when its own effect and recovery proof is supplied; a distributed transaction isn't universally required."
+    },
+    {
+      "case_id": "arch-job-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A repeated background task replaces the same public cache entry with identical bytes; the harmless repeat and its workload scope are explicitly documented.",
+      "expected_policy_ids": [
+        "ARCH-JOB-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "ARCH-JOB-001",
+      "policy_revision": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Exactly-once delivery isn't inferred from a queue setting. Deduplication scope and retention are workload decisions; an explicitly harmless repeat can be documented as such.",
+      "rationale": "A documented harmless repeat doesn't require the same deduplication mechanism as a repeated financial charge."
+    },
+    {
+      "case_id": "be-config-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "An optional integration stays explicitly disabled at startup and has no credential; it isn't activated or invoked while disabled.",
+      "expected_policy_ids": [
+        "BE-CONFIG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-CONFIG-001",
+      "policy_revision": "sha256:4dd2e02762d9fee263868746823f9d02bf673977c497013d65b945678b354c04",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup.",
+      "rationale": "Absent optional settings don't invalidate startup while the integration remains disabled. Required settings must be validated before activation."
+    },
+    {
+      "case_id": "rel-timeout-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A service chooses its read deadline from measured dependency latency and the caller's budget; it doesn't copy an example percentile as a universal requirement.",
+      "expected_policy_ids": [
+        "REL-TIMEOUT-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-TIMEOUT-001",
+      "policy_revision": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Timeout values follow measured latency, acceptable failure rates, and caller budgets. AWS example percentiles aren't universal requirements; non-idempotent effects need extra protection.",
+      "rationale": "The timeout follows the measured workload and caller budget. The cited article's example percentile isn't a mandatory global default."
+    },
+    {
+      "case_id": "rel-overload-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "An operator reports separate expensive and cheap operation measurements and avoids certifying capacity from an aggregate request count.",
+      "expected_policy_ids": [
+        "REL-OVERLOAD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "REL-OVERLOAD-001",
+      "policy_revision": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Per-customer quotas and degradation require product decisions. A request count alone doesn't certify capacity for unequal-cost operations; this policy supplies no universal throughput claim.",
+      "rationale": "Unequal-cost operations need workload evidence; a single requests-per-second count doesn't establish capacity."
+    },
+    {
+      "case_id": "be-log-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A handler stops collecting private request bodies and keeps only operation ID and failure class, instead of collecting bodies for a later redactor.",
+      "expected_policy_ids": [
+        "BE-LOG-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-LOG-001",
+      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging.",
+      "rationale": "Avoiding sensitive collection is preferred; the logging policy doesn't require recording a private value merely to redact it."
+    },
+    {
+      "case_id": "be-trace-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A child operation creates a new span ID while retaining valid parent trace identity and safe correlation fields.",
+      "expected_policy_ids": [
+        "BE-TRACE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "BE-TRACE-001",
+      "policy_revision": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Trace and span IDs have different roles. A new child span normally gets a new span ID; preserve valid trace identity without requiring every hop to repeat the same span ID.",
+      "rationale": "A child span normally gets a new span ID. Preserving trace identity doesn't require repeating the parent's span ID."
+    },
+    {
+      "case_id": "obs-readiness-001-boundary",
+      "kind": "boundary",
+      "role": "application-developer",
+      "input": "A liveness probe reports that the process is responsive; a separate readiness probe rejects traffic when the required generation can't be read.",
+      "expected_policy_ids": [
+        "OBS-READINESS-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "OBS-READINESS-001",
+      "policy_revision": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Liveness, readiness, dependency diagnostics, and end-user success serve different purposes. Probe design and alert targets are project recommendations, not mandated by Google SRE.",
+      "rationale": "Liveness and readiness answer different questions. A dependency failure needn't make the liveness probe claim the process is dead."
+    },
+    {
+      "case_id": "supply-build-001-boundary",
+      "kind": "boundary",
+      "role": "build-maintainer",
+      "input": "A release records exact patch pins and platform inputs but doesn't claim bit-for-bit reproducibility until independent rebuild evidence exists.",
+      "expected_policy_ids": [
+        "SUPPLY-BUILD-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-BUILD-001",
+      "policy_revision": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "Exact patch pins alone don't prove bit-for-bit reproducibility. Document platform, toolchain, network inputs, and remaining nondeterminism before making that claim.",
+      "rationale": "Exact versions alone don't prove bit-for-bit reproducibility; the narrower build record is valid without that unproved claim."
+    },
+    {
+      "case_id": "supply-provenance-001-boundary",
+      "kind": "boundary",
+      "role": "build-maintainer",
+      "input": "A consumer verifies an artifact digest and trusted provenance identity but doesn't label the builder SLSA-certified or assess an entire SSDF program.",
+      "expected_policy_ids": [
+        "SUPPLY-PROVENANCE-001"
+      ],
+      "out_of_scope_policy_ids": [],
+      "policy_id": "SUPPLY-PROVENANCE-001",
+      "policy_revision": "sha256:7a5005e52d9440e38b68d81faefc1afc206999c84d6071ac232f0a6f490abb39",
+      "expected_outcome": "respect_documented_boundary",
+      "expected_evidence": [],
+      "boundary_evidence": "SLSA levels depend on their full track requirements and trust model. This selected guidance doesn't assess a builder or certify SSDF, SLSA, or OSPS compliance.",
+      "rationale": "Selected artifact checks don't establish a complete framework level or certification; their narrower verified result can still be reported."
     }
   ]
 }
