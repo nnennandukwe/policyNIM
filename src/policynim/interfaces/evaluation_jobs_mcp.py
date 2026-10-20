@@ -117,10 +117,10 @@ def register_evaluation_jobs(
     ) -> EvaluationJobInfo:
         """Accept a bounded pinned evaluation and return an inspectable application job handle."""
         caller = principal("eval_submit")
-        worker = get_worker()
 
         def operation() -> dict[str, object]:
             """Accept inputs without charging duplicate submissions for provider work."""
+            worker = get_worker()
             worker.require_admission_ready()
             accepted = worker.service.submit(
                 suite,

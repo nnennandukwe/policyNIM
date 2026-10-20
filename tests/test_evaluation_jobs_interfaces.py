@@ -361,3 +361,43 @@ def test_rejected_sdk_submission_doesnt_start_unrelated_queued_work(job_context)
         assert calls == []
     finally:
         worker.close()
+
+
+def test_sdk_job_worker_initialization_failure_is_sanitized(job_context, caplog) -> None:
+    """A lazy worker failure stays inside the same safe tool boundary as submission."""
+    from mcp.server import MCPServer
+
+    service, suite, _ = job_context
+    sentinel = "Bearer private-token /Users/private/job-volume"
+    runtime = mcp_module._ToolExecutor(settings=service.settings)
+    server = MCPServer("job initialization fixture")
+
+    def get_worker():
+        """Fail before a worker exists with an intentionally private exception payload."""
+        raise RuntimeError(sentinel)
+
+    async def run_tool(name, operation, ctx):
+        """Use the production error/logging boundary around SDK tool execution."""
+        return await mcp_module._run_logged_tool(name, operation, ctx=ctx, executor=runtime)
+
+    mcp_jobs.register_evaluation_jobs(
+        server, get_principal=lambda _: principal(), get_worker=get_worker, run_tool=run_tool
+    )
+
+    async def exercise() -> None:
+        """Request submission through SDK dispatch, then inspect its safe protocol error."""
+        try:
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "eval_submit",
+                    {"suite": suite.model_dump(mode="json"), "idempotency_key": "init-failure"},
+                )
+                assert result.is_error
+                assert "internal_error" in str(result.content)
+                assert sentinel not in str(result.content)
+        finally:
+            await runtime.close()
+
+    asyncio.run(exercise())
+    assert sentinel not in caplog.text
+    assert service.store.aggregate_counts() == {}
