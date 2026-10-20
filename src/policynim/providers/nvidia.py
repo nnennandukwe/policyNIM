@@ -8,6 +8,7 @@ import math
 import random
 import time
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from types import TracebackType
@@ -38,6 +39,7 @@ from policynim.types import (
     CompileRequest,
     GeneratedCompiledPolicyDraft,
     GeneratedPolicyConformanceDraft,
+    GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicyConformanceRequest,
     PolicySelectionPacket,
@@ -415,6 +417,11 @@ class NVIDIAGenerator(Generator):
             max_retries=self._max_retries,
             operation="grounded generation",
             response_model=GeneratedPreflightDraft,
+            response_schema=(
+                _bound_generation_schema(context)
+                if self._model == NVIDIA_LIGHTNING_CHAT_MODEL
+                else None
+            ),
             parse=_parse_generation_draft,
             timeout_seconds=self._timeout_seconds,
             retry_initial_seconds=self._retry_initial_seconds,
@@ -613,6 +620,35 @@ class NVIDIAPolicyConformanceEvaluator:
             _close_client(self._client)
 
 
+def _bound_generation_schema(context: Sequence[ScoredChunk]) -> dict[str, Any]:
+    """Narrow request grammar to each retained owner's exact metadata and citation set."""
+    schema = GeneratedPreflightDraft.model_json_schema()
+    owners: dict[tuple[str, str], list[str]] = {}
+    for chunk in context:
+        ids = owners.setdefault((chunk.policy.policy_id, chunk.policy.title), [])
+        if chunk.chunk_id not in ids:
+            ids.append(chunk.chunk_id)
+    properties = schema["properties"]
+    if not owners:
+        properties["applicable_policies"]["maxItems"] = 0
+        properties["citation_ids"]["maxItems"] = 0
+        return schema
+    guidance = schema["$defs"][GeneratedPolicyGuidance.__name__]
+    variants: list[dict[str, Any]] = []
+    for (policy_id, title), ids in owners.items():
+        variant = deepcopy(guidance)
+        fields = variant["properties"]
+        fields["policy_id"]["enum"] = [policy_id]
+        fields["title"]["enum"] = [title]
+        fields["citation_ids"]["items"]["enum"] = ids
+        variants.append(variant)
+    properties["applicable_policies"]["items"] = {"anyOf": variants}
+    properties["citation_ids"]["items"]["enum"] = list(
+        dict.fromkeys(chunk.chunk_id for chunk in context)
+    )
+    return schema
+
+
 def _request_chat_completion(
     client: OpenAI | Any,
     *,
@@ -622,6 +658,7 @@ def _request_chat_completion(
     operation: str,
     response_model: type[BaseModel],
     parse: Callable[[str], Any],
+    response_schema: dict[str, Any] | None = None,
     timeout_seconds: float = 30.0,
     retry_initial_seconds: float = 0.5,
     retry_max_seconds: float = 8.0,
@@ -645,7 +682,9 @@ def _request_chat_completion(
             "json_schema": {
                 "name": response_model.__name__,
                 "strict": True,
-                "schema": response_model.model_json_schema(),
+                "schema": response_schema
+                if response_schema is not None
+                else response_model.model_json_schema(),
             },
         }
 
