@@ -84,7 +84,7 @@ _EXPECTED_MCP_TOOLS = (
     "policy_compile",
     "policy_preflight_evidence",
 )
-_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(?<![A-Za-z]:)(/(?!/)[^\s\"'`<>),;]+)")
+_POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
 _WINDOWS_PATH_TOKEN_RE = re.compile(
     r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
 )
