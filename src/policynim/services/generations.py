@@ -334,9 +334,11 @@ class _CachedGeneration:
 
 
 _VALIDATION_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
+_READINESS_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
 _CACHE_LOCK = Lock()
 _VALIDATION_LOCKS = tuple(Lock() for _ in range(16))
 _CACHE_MAX_ENTRIES = 8
+_READINESS_CACHE_MAX_ENTRIES = 8
 _CACHE_MAX_BYTES = 32 * 1024 * 1024
 
 
@@ -798,20 +800,22 @@ class GenerationStore:
                     + sum(len(doc.model_dump_json().encode()) for doc in snapshot.documents)
                 )
                 with _CACHE_LOCK:
-                    _VALIDATION_CACHE.pop(key, None)
-                    retained_size = size if size <= _CACHE_MAX_BYTES else 0
-                    while _VALIDATION_CACHE and (
-                        len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
-                        or sum(entry.size for entry in _VALIDATION_CACHE.values()) + retained_size
-                        > _CACHE_MAX_BYTES
-                    ):
-                        _VALIDATION_CACHE.popitem(last=False)
-                    _VALIDATION_CACHE[key] = _CachedGeneration(
-                        token,
-                        snapshot if retained_size else None,
-                        retained_size,
-                        GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count),
+                    readiness = GenerationReadiness(
+                        snapshot.generation_id, snapshot.manifest.chunk_count
                     )
+                    _READINESS_CACHE.pop(key, None)
+                    while len(_READINESS_CACHE) >= _READINESS_CACHE_MAX_ENTRIES:
+                        _READINESS_CACHE.popitem(last=False)
+                    _READINESS_CACHE[key] = _CachedGeneration(token, None, 0, readiness)
+                    _VALIDATION_CACHE.pop(key, None)
+                    if size <= _CACHE_MAX_BYTES:
+                        while _VALIDATION_CACHE and (
+                            len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
+                            or sum(entry.size for entry in _VALIDATION_CACHE.values()) + size
+                            > _CACHE_MAX_BYTES
+                        ):
+                            _VALIDATION_CACHE.popitem(last=False)
+                        _VALIDATION_CACHE[key] = _CachedGeneration(token, snapshot, size, readiness)
             return deepcopy(snapshot)
 
     def _remove_failed_lease_directory(self, directory: Path, identity: tuple[int, int]) -> None:
@@ -848,10 +852,14 @@ class GenerationStore:
             cached = None
             if self._fault is None and all(item[-1] is not None for item in token):
                 with _CACHE_LOCK:
-                    candidate = _VALIDATION_CACHE.get(key)
+                    candidate = _READINESS_CACHE.get(key)
                     if candidate is not None and candidate.token == token:
                         cached = candidate
-                        _VALIDATION_CACHE.move_to_end(key)
+                        _READINESS_CACHE.move_to_end(key)
+                    else:
+                        candidate = _VALIDATION_CACHE.get(key)
+                        if candidate is not None and candidate.token == token:
+                            cached = candidate
             if cached is not None:
                 result = cached.readiness
                 try:
