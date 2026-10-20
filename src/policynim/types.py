@@ -1324,6 +1324,7 @@ class EvalFamilyCoverage(StrictModel):
     case_count: int = Field(ge=0)
     passed_case_count: int = Field(ge=0)
     conformance_case_count: int = Field(default=0, ge=0)
+    judged_case_count: int | None = Field(default=None, ge=0)
     operation_counts: dict[EvalKind, int]
 
 
