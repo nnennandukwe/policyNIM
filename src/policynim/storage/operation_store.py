@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import sqlite3
@@ -239,6 +240,29 @@ class OperationStore:
         if active:
             return  # Preserve ownership until process exit or successful terminal recovery.
         self._owner.close()
+
+    def prune_owner_leases(self) -> int:
+        """Inspect at most 100 lease files, removing only unlocked owners with no accepted rows."""
+        removed = 0
+        try:
+            with closing(self._connect()) as connection:
+                for index, path in enumerate(self._owner.directory.iterdir()):
+                    if index >= 100:
+                        break
+                    if path.suffix != ".lock":
+                        continue
+                    active = connection.execute(
+                        "SELECT 1 FROM operation_usage WHERE owner_id = ? "
+                        "AND outcome = 'accepted' LIMIT 1",
+                        (path.stem,),
+                    ).fetchone()
+                    if active is None and self._owner.abandoned(path.stem, remove=True):
+                        removed += 1
+        except (sqlite3.Error, OSError) as exc:
+            logging.getLogger(__name__).warning(
+                "Operation owner cleanup deferred: %s.", type(exc).__name__
+            )
+        return removed
 
     def usage(self, principal_id: str, *, now: float | None = None) -> OperationUsage:
         """Read the current UTC day's accepted work and separate outcome counts."""

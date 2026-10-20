@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import sqlite3
 import time
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 from anyio import to_thread
@@ -16,9 +17,27 @@ from mcp.server.auth.provider import AccessToken
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError
 
 from policynim.errors import PolicyNIMError
-from policynim.services.beta_auth import BetaAuthService
 from policynim.settings import Settings
 from policynim.types import BetaAuthDecision
+
+if TYPE_CHECKING:
+    from policynim.services.beta_auth import BetaAuthService
+
+LEGACY_ISSUER = "urn:policynim:legacy"
+
+
+def principal_identity(issuer: str, subject: str) -> str:
+    """Keep one user's allowance stable across clients and key rotation."""
+    return hashlib.sha256(json.dumps([issuer, subject]).encode()).hexdigest()
+
+
+def legacy_identity(*, token: str, account_id: int | None = None) -> tuple[str, str]:
+    """Resolve legacy identity fields without granting authentication or operation authority."""
+    subject = (
+        str(account_id) if account_id is not None else hashlib.sha256(token.encode()).hexdigest()
+    )
+    return LEGACY_ISSUER, subject
+
 
 READ_SCOPE = "policies:read"
 EVALUATE_SCOPE = "policies:evaluate"
@@ -113,11 +132,9 @@ def principal_from_access_token(token: AccessToken) -> AuthenticatedPrincipal:
 
 def legacy_principal(*, token: str, account_id: int | None = None) -> AuthenticatedPrincipal:
     """Identify legacy credentials without retaining their secrets."""
-    identity = (
-        str(account_id) if account_id is not None else hashlib.sha256(token.encode()).hexdigest()
-    )
+    issuer, identity = legacy_identity(token=token, account_id=account_id)
     return AuthenticatedPrincipal(
-        issuer="urn:policynim:legacy",
+        issuer=issuer,
         subject=identity,
         client_id="legacy-beta" if account_id is not None else "legacy-operator",
         scopes=frozenset(SUPPORTED_SCOPES),

@@ -159,13 +159,14 @@ def check_budget() -> None:
         current.remaining()
 
 
-def emit_operation_event(**fields: Any) -> None:
+def emit_operation_event(*, level: int = logging.INFO, **fields: Any) -> None:
     """Emit only internally selected metadata, never requests or upstream bodies."""
-    _LOG.info(
+    _LOG.log(
+        level,
         json.dumps(
             {"event": "provider.operation", "correlation_id": current_correlation_id(), **fields},
             sort_keys=True,
-        )
+        ),
     )
 
 

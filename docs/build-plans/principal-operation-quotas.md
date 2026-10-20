@@ -21,7 +21,8 @@ In scope: principal/global active limits, UTC-day accepted operations, persisted
 ## Package Layout / File-to-Task Mapping
 
 - `storage/operation_store.py`: transactional admission rows, authority checks and outcome summaries.
-- `services/operation_admission.py`: principal identity, limits, admission lifecycle and recovery errors.
+- `services/authorization.py`: canonical issuer/subject fields and principal identity serialization.
+- `services/operation_admission.py`: limits, admission lifecycle and recovery errors.
 - `interfaces/mcp.py`: pass principal and operation name into the owned worker lifecycle.
 - `services/beta_auth.py`: authenticate without charging; show accepted-operation usage.
 - `settings.py`, `.env.example`, hosted docs: configuration and accounting semantics.

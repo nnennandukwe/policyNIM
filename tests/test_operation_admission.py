@@ -263,7 +263,7 @@ def test_locked_database_rejects_before_provider_work(tmp_path: Path) -> None:
     service = OperationAdmissionService(_settings(tmp_path))
     with sqlite3.connect(service.store.path) as connection:
         connection.execute("BEGIN IMMEDIATE")
-        with pytest.raises(OperationAdmissionError, match="database locks"):
+        with pytest.raises(OperationAdmissionError, match="admission_busy"):
             service.run(
                 lambda: pytest.fail("Provider started"),
                 principal=_principal(),
@@ -560,7 +560,7 @@ def test_failed_construction_does_not_accumulate_owner_files(
     with sqlite3.connect(settings.beta_auth_db_path) as connection:
         connection.execute("BEGIN " + lock_mode)
         for _ in range(3):
-            with pytest.raises(OperationAdmissionError, match="admission_unavailable"):
+            with pytest.raises(OperationAdmissionError, match="admission_busy"):
                 OperationAdmissionService(settings)
             assert list(directory.iterdir()) == []
     recovered = OperationAdmissionService(settings)
@@ -706,3 +706,113 @@ def test_terminal_failure_blocks_cached_service_after_storage_recovers(
             cancelled=lambda: False,
         )
     assert service.store.usage(principal_identity(_principal().issuer, "bob")).accepted == 0
+
+
+def test_transient_admission_writer_lock_retries_once_without_extra_charge(tmp_path: Path) -> None:
+    """Routine local writer contention drains into exactly one accepted operation."""
+    import time
+
+    service = OperationAdmissionService(_settings(tmp_path))
+    started = Event()
+    with (
+        sqlite3.connect(service.store.path) as connection,
+        ThreadPoolExecutor(max_workers=1) as pool,
+    ):
+        connection.execute("BEGIN IMMEDIATE")
+        pending = pool.submit(
+            service.run,
+            lambda: "done",
+            principal=_principal(),
+            operation_name="policy_search",
+            cancelled=lambda: False,
+            check_ready=started.set,
+        )
+        assert started.wait(2)
+        time.sleep(0.2)
+        connection.commit()
+        assert pending.result(timeout=3) == "done"
+    usage = service.store.usage(principal_identity(_principal().issuer, "alice"))
+    assert (usage.accepted, usage.completed, usage.active) == (1, 1, 0)
+
+
+def test_uncertain_accounting_logs_safe_codes_and_operation_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Operators can identify uncertain work without seeing private storage exception text."""
+    import errno
+    import json
+    import logging
+
+    from policynim import operations
+
+    service = OperationAdmissionService(_settings(tmp_path))
+    sentinel = "Authorization: Bearer private-token C:\\private\\state /Users/private/state"
+
+    def unavailable(*args: object, **kwargs: object) -> None:
+        """Fail after acceptance with a private OS error payload and a useful public code."""
+        raise PermissionError(errno.EACCES, sentinel)
+
+    monkeypatch.setattr(service.store, "finish", unavailable)
+    operations._LOG.addHandler(caplog.handler)
+    try:
+        with (
+            caplog.at_level(logging.ERROR),
+            pytest.raises(OperationAdmissionError, match="accounting_incomplete"),
+        ):
+            service.run(
+                lambda: "done",
+                principal=_principal(),
+                operation_name="policy_search",
+                cancelled=lambda: False,
+            )
+    finally:
+        operations._LOG.removeHandler(caplog.handler)
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.getMessage().startswith("{")
+    ]
+    event = next(item for item in events if item["event"] == "operation.storage_failure")
+    assert event["phase"] == "finish" and event["exception_class"] == "PermissionError"
+    assert event["os_errno"] == errno.EACCES and event["sqlite_code"] is None
+    with sqlite3.connect(service.store.path) as connection:
+        assert (
+            event["operation_id"]
+            == connection.execute("SELECT operation_id FROM operation_usage").fetchone()[0]
+        )
+    assert sentinel not in caplog.text and "private-token" not in caplog.text
+
+
+def test_recovered_crash_leases_are_removed_only_after_terminal_commit(tmp_path: Path) -> None:
+    """Repeated process failures don't retain retired lock files or delete unresolved ownership."""
+    settings = _settings(tmp_path)
+    service = OperationAdmissionService(settings)
+    directory = settings.beta_auth_db_path.with_name(settings.beta_auth_db_path.name + ".owners")
+    for index in range(3):
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; "
+                "from policynim.storage.operation_store import OperationStore; "
+                "from policynim.services.operation_admission import admit_operation; "
+                "import sys; s=OperationStore(Path(sys.argv[1])); "
+                "admit_operation(s,principal_id='crashed',operation='policy_search',"
+                "daily_limit=10,principal_limit=10,global_limit=10)",
+                str(settings.beta_auth_db_path),
+            ],
+            check=True,
+        )
+    assert len(list(directory.iterdir())) == 4
+    assert service.store.prune_owner_leases() == 2  # only already-committed terminal owners
+    assert len(list(directory.iterdir())) == 2  # live service plus unresolved accepted owner
+    service.run(
+        lambda: "done",
+        principal=_principal(),
+        operation_name="policy_search",
+        cancelled=lambda: False,
+    )
+    assert len(list(directory.iterdir())) == 1
+    assert service.store.usage("crashed").interrupted == 3
+    service.store.close()
+    assert list(directory.iterdir()) == []

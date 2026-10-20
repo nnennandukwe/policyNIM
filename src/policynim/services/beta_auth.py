@@ -13,6 +13,7 @@ import httpx
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
 from policynim.runtime_paths import resolve_runtime_path
+from policynim.services.authorization import legacy_identity, principal_identity
 from policynim.settings import Settings, get_settings
 from policynim.storage import AuthStore
 from policynim.types import (
@@ -96,7 +97,7 @@ class BetaAuthService:
     def get_portal_usage(self, account_id: int) -> BetaUsageSnapshot:
         """Return the current UTC-day usage for the dashboard."""
         return self._store.get_operation_usage_snapshot(
-            account_id=account_id,
+            principal_id=principal_identity(*legacy_identity(token="", account_id=account_id)),
             usage_date=self._utc_now().date(),
             quota=self._settings.beta_daily_request_quota,
         )
