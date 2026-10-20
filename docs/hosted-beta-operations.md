@@ -627,3 +627,5 @@ directories. It doesn't defend against a hostile process with the same operating
 system identity or replacement of operator-controlled ancestors. POSIX modes
 don't establish Windows ACL privacy; Windows deployments still need an appropriate
 private directory ACL. This is filesystem access control, not database encryption.
+
+The read-only report preserves `auth_storage_unsafe` when an existing database needs permission or alias repair. It leaves those files untouched. Strict MCP startup and degraded authentication logs retain the same safe category; paths, credentials and raw filesystem messages stay out of those diagnostics.

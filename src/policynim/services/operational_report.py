@@ -8,6 +8,7 @@ from policynim.errors import PolicyNIMError
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.inventory import inspect_policy_inventory
 from policynim.settings import Settings
+from policynim.storage.auth_database import AuthDatabaseError
 from policynim.storage.operation_store import OperationStore
 
 
@@ -18,6 +19,8 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
             resolve_runtime_path(settings.beta_auth_db_path.parent)
             / settings.beta_auth_db_path.name
         )
+    except AuthDatabaseError as exc:
+        raise PolicyNIMError(str(exc) + " No database was created or changed.") from None
     except (sqlite3.Error, OSError) as exc:
         raise PolicyNIMError(
             "Operation state couldn't be read. Check the hosted state volume and database locks. "

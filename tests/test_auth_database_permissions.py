@@ -8,6 +8,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -358,7 +359,7 @@ def test_operator_report_rejects_configured_final_symlink_without_changing_targe
     except OSError:
         pytest.skip("This filesystem user lacks link creation permission.")
     before = target.read_bytes()
-    with pytest.raises(PolicyNIMError, match="Operation state couldn't be read"):
+    with pytest.raises(PolicyNIMError, match="auth_storage_unsafe"):
         inspect_operational_report(Settings.model_validate({"beta_auth_db_path": alias}))
     assert target.read_bytes() == before
 
@@ -393,3 +394,116 @@ finally:
         keeper.rollback()
         keeper.close()
         store.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits are the privacy contract.")
+def test_operator_report_names_private_permission_recovery_without_changing_legacy_data(
+    tmp_path: Path,
+) -> None:
+    """A read-only legacy mode rejection directs the operator to repair permissions."""
+    from policynim.errors import PolicyNIMError
+    from policynim.services.operational_report import inspect_operational_report
+    from policynim.settings import Settings
+
+    path = tmp_path / "private-report-sentinel.sqlite3"
+    OperationStore(path).close()
+    path.chmod(0o644)
+    before = path.read_bytes()
+    with pytest.raises(PolicyNIMError) as caught:
+        inspect_operational_report(Settings.model_validate({"beta_auth_db_path": path}))
+    message = str(caught.value)
+    assert "auth_storage_unsafe" in message
+    assert "permissions" in message
+    assert path.name not in message
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+@pytest.mark.parametrize("break_glass", [False, True])
+def test_mcp_startup_keeps_safe_auth_alias_recovery_category(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, break_glass: bool
+) -> None:
+    """Strict startup and degraded startup keep owned categories without exposing paths."""
+    from policynim.errors import ConfigurationError
+    from policynim.interfaces import mcp as mcp_module
+    from policynim.settings import Settings
+
+    path = tmp_path / "private-startup-sentinel.sqlite3"
+    path.mkdir()
+    settings = Settings.model_validate(
+        {
+            "beta_auth_db_path": path,
+            "mcp_require_auth": True,
+            "mcp_public_base_url": "https://example.test",
+            "mcp_bearer_tokens": ("private-bearer-sentinel",),
+            "beta_signup_enabled": not break_glass,
+            "beta_session_secret": "private-session-sentinel",
+            "beta_github_client_id": "synthetic-client",
+            "beta_github_client_secret": "private-oauth-sentinel",
+        }
+    )
+    if break_glass:
+        mcp_module._build_streamable_http_app(settings)
+        message = caplog.text
+    else:
+        with pytest.raises(ConfigurationError) as caught:
+            mcp_module._build_streamable_http_app(settings)
+        message = str(caught.value)
+    assert "auth_storage_unsafe" in message
+    assert "aliases" in message
+    assert path.name not in message
+    assert "private-bearer-sentinel" not in message
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Unlinked inode observations are POSIX-specific.")
+@pytest.mark.parametrize(
+    "phase", ["readonly", "writer_inspection", "writer_prepare", "writer_verify"]
+)
+def test_retired_zero_link_sidecar_observation_doesnt_reject_live_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    """A real last-reader unlink can retire a sidecar while lstat returns its old inode."""
+    from policynim.storage import auth_database
+
+    path = tmp_path / "auth.sqlite3"
+    AuthStore(path=path).close()
+    keeper = sqlite3.connect(path)
+    keeper.execute("PRAGMA journal_mode=WAL")
+    keeper.execute("SELECT * FROM accounts").fetchall()
+    sidecar = path.with_name(path.name + "-wal")
+    descriptor = os.open(sidecar, os.O_RDONLY)
+    original = Path.lstat
+    observations = 0
+    injected = False
+    selected = {"readonly": 1, "writer_inspection": 1, "writer_prepare": 2, "writer_verify": 3}[
+        phase
+    ]
+
+    def observe_retired_inode(candidate, *args, **kwargs):
+        """Return the actual unlinked stat at the kernel race's selected observation point."""
+        nonlocal observations, injected
+        if candidate == sidecar:
+            observations += 1
+            if observations == selected:
+                keeper.close()
+                retired = os.fstat(descriptor)
+                assert retired.st_nlink == 0
+                injected = True
+                return retired
+        return original(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(auth_database.Path, "lstat", observe_retired_inode)
+    try:
+        if phase == "readonly":
+            with closing(
+                auth_database.connect_auth_database(path, timeout=0.1, readonly=True)
+            ) as reader:
+                assert reader.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
+        else:
+            store = AuthStore(path=path)
+            assert store.list_accounts() == []
+            store.close()
+        assert injected
+    finally:
+        keeper.close()
+        os.close(descriptor)

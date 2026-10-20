@@ -11,7 +11,8 @@ from typing import Literal
 
 _UNSAFE = (
     "auth_storage_unsafe: Auth storage needs service-owned regular files without links. "
-    "Preserve the database, inspect ownership and aliases, then retry as the service user."
+    "Preserve the database, inspect ownership, permissions and aliases, "
+    "then retry as the service user."
 )
 _UNAVAILABLE = (
     "auth_storage_unavailable: Private auth storage couldn't be prepared. "
@@ -39,11 +40,24 @@ def _validate_file(observed: os.stat_result) -> None:
         raise AuthDatabaseError("auth_storage_unsafe")
 
 
+def _observe_file(path: Path, *, optional_sidecar: bool = False) -> os.stat_result | None:
+    """Recheck retired optional inodes without opening descriptors or accepting live aliases."""
+    for _ in range(3):
+        try:
+            observed = path.lstat()
+        except FileNotFoundError:
+            return None
+        if optional_sidecar and observed.st_nlink == 0:
+            # SQLite can unlink its last-reader sidecar after lstat acquires the inode.
+            continue
+        return observed
+    raise AuthDatabaseError("auth_storage_unavailable")
+
+
 def _prepare_file(path: Path, *, create: bool) -> os.stat_result | None:
     """Tighten an owned path without opening existing SQLite inodes or dropping their locks."""
-    try:
-        observed = path.lstat()
-    except FileNotFoundError:
+    observed = _observe_file(path, optional_sidecar=not create)
+    if observed is None:
         if not create:
             return None
         try:
@@ -65,7 +79,11 @@ def _prepare_file(path: Path, *, create: bool) -> os.stat_result | None:
             else:
                 # Trusted service-controlled parents and the same-UID boundary are required.
                 os.chmod(path, 0o600)
-        current = path.lstat()
+        current = _observe_file(path, optional_sidecar=not create)
+        if current is None:
+            if not create:
+                return None
+            raise FileNotFoundError
     except FileNotFoundError:
         if not create:
             return None  # A last SQLite reader may remove its WAL/SHM sidecars.
@@ -90,9 +108,8 @@ def connect_auth_database(
                 path,
                 *(path.with_name(path.name + suffix) for suffix in ("-wal", "-shm", "-journal")),
             ):
-                try:
-                    candidate_stat = candidate.lstat()
-                except FileNotFoundError:
+                candidate_stat = _observe_file(candidate, optional_sidecar=candidate != path)
+                if candidate_stat is None:
                     continue
                 _validate_file(candidate_stat)
                 if readonly and os.name == "posix" and candidate_stat.st_mode & 0o077:
