@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import Generator
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.nvidia_models import DEFAULT_NVIDIA_CHAT_MODEL
 from policynim.operations import bounded_stage
 from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.settings import Settings
@@ -29,7 +30,6 @@ from policynim.types import (
 _NEMO_GUARDRAILS_DISTRIBUTION = "nemoguardrails"
 _NVIDIA_GUARDRAILS_EXTRA = "nvidia-guardrails"
 _NVIDIA_GUARDRAILS_INSTALL_HINT = "uv sync --extra nvidia-guardrails"
-_DEFAULT_GUARDRAILS_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 _MODEL_PLACEHOLDER = "__POLICYNIM_NVIDIA_CHAT_MODEL__"
 _ASSET_ROOT = ("templates", "nvidia_guardrails", "preflight_output")
 _CONFIG_ASSET = "config.yml"
@@ -64,7 +64,7 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         if rails is None:
             try:
                 rails, rail_type_output = _create_default_output_rails(
-                    model=model or _DEFAULT_GUARDRAILS_MODEL
+                    model=model or DEFAULT_NVIDIA_CHAT_MODEL
                 )
             except ConfigurationError:
                 _close_component(base_generator)

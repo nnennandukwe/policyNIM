@@ -28,6 +28,7 @@ from pydantic import BaseModel, ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
 from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
 from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
@@ -629,14 +630,14 @@ def _request_chat_completion(
     options: dict[str, Any] = {"temperature": 0, "top_p": 1}
     if model in {
         "nvidia/nemotron-3-super-120b-a12b",
-        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        NVIDIA_LIGHTNING_CHAT_MODEL,
     }:
         options = {
             "temperature": 1,
             "top_p": 0.95,
             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         }
-    if model == "nvidia/nemotron-3.5-lightning-30b-a3b":
+    if model == NVIDIA_LIGHTNING_CHAT_MODEL:
         options["response_format"] = {
             "type": "json_schema",
             "json_schema": {
