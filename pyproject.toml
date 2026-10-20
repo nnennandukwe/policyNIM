@@ -51,7 +51,7 @@ nvidia-guardrails = [
   "nemoguardrails[nvidia]==0.21.0",
 ]
 nvidia-eval = [
-  "nemo-evaluator==0.2.5",
+  "nemo-evaluator==0.2.8",
   "nvidia-nat-eval==1.6.0",
   "nvidia-simple-evals==26.3",
 ]
