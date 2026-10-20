@@ -3,7 +3,7 @@
   "name": "engineering-source-coverage",
   "scope": "authored_source_scenarios",
   "evaluation_status": "not_model_evaluated",
-  "review_status": "author_reviewed_not_independent",
+  "review_status": "independent_source_reviewed_not_model_evaluated",
   "changed_policy_revisions": {
     "TEST-FAIL-001": "sha256:733d8fbc5342abd64c05214097bc162fdaf5c095373f74c43fefc96c98bd3d81",
     "TEST-CONTRACT-001": "sha256:89cdbff4c46a1ec6860833b0148a09d5318bdadba48fdfd310034b4da8e92c96",

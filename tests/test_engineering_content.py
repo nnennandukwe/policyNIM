@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from contextlib import closing
@@ -282,3 +283,39 @@ def test_service_configuration_only_requires_model_identity_when_applicable() ->
         line for line in CATALOG.show("BE-CONFIG-001").body.splitlines() if "**CONFIG-2**" in line
     )
     assert "model identity when models are used" in rule
+
+
+def test_authored_expectations_match_the_independent_source_review() -> None:
+    """Changed expectations need a new reviewed payload rather than a copied status label."""
+    evidence = ROOT / "docs/evidence/engineering-source-review"
+    final = json.loads((evidence / "final.json").read_text())
+    full_bytes = (evidence / "full.json").read_bytes()
+    binding = json.loads((evidence / "current-fixture-binding.json").read_text())
+    assert binding["kind"] == "derived_current_fixture_binding"
+    assert binding["scenario_sha256"] == (
+        "sha256:"
+        + hashlib.sha256((ROOT / "evals/engineering_scenarios.json").read_bytes()).hexdigest()
+    )
+    assert binding["review_receipt_sha256"] == (
+        "sha256:" + hashlib.sha256((evidence / "final.json").read_bytes()).hexdigest()
+    )
+    assert binding["reviewed_semantic_payload_sha256"] == final["semantic_payload_sha256"]
+    assert binding["model_evaluated"] is False
+    assert (
+        "sha256:" + hashlib.sha256(full_bytes).hexdigest()
+        == final["prior_full_review_receipt_sha256"]
+    )
+    payload = {key: SUITE[key] for key in ("changed_policy_revisions", "source_aliases", "cases")}
+    serialized = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    assert "sha256:" + hashlib.sha256(serialized).hexdigest() == final["semantic_payload_sha256"]
+    full = json.loads(full_bytes)
+    assert full["policy_revisions"] == SUITE["changed_policy_revisions"]
+    assert {check["case_id"] for check in full["checks"]} == {
+        case["case_id"] for case in SUITE["cases"]
+    }
+    assert full["supported_findings"] == final["supported_findings"] == []
+    assert final["comparison"]["case_count"] == len(SUITE["cases"]) == 64
+    assert final["comparison"]["only_role_values_changed"] is True
+    assert SUITE["review_status"] == "independent_source_reviewed_not_model_evaluated"

@@ -68,3 +68,14 @@ uv run --no-sync policynim policies validate --source --format json
 Paired authored scenarios cover incompatible API changes, pagination/errors, interrupted migration, partial commit, duplicate effects, exhausted retries, overload, sensitive telemetry, correlation, and provenance verification. The source tests reject changed requirement text or revisions, missing source sections, inconsistent topic descriptors, stale profile pins, and missing selected notices. Live quality and independent scenario judgments belong to the grounded evaluation gate.
 
 Boundary cases exercise compatible API additions, optional error formats, small collections, harmless repeats, disabled integrations, new child span IDs and limits on framework claims. Their expected outcomes are reviewed source expectations; structural checks don't independently establish a model's semantic judgment.
+
+A separate agent reviewed all 64 expected outcomes against the 16 current policy
+sources, without using generated answers. The [full source review](evidence/engineering-source-review/full.json)
+retains each source-based assessment; the [final binding](evidence/engineering-source-review/final.json)
+rechecks five role clarifications with every expected outcome unchanged. CI binds the
+current case/revision/source-alias payload to that review digest. Review-status metadata
+is excluded from that payload so annotating the review doesn't change its expectations.
+These receipts are source-alignment evidence. They don't measure model or retrieval
+quality, runtime compliance, external framework compliance, or release readiness.
+
+The [current fixture binding](evidence/engineering-source-review/current-fixture-binding.json) records the checked-in file hash after the review-status annotation. CI checks that file hash and its reviewed payload separately. The two original review receipts retain the historical file hashes from their stated revisions.
