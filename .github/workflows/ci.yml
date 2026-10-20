@@ -77,6 +77,9 @@ jobs:
       - name: Verify Windows profile readers and writers offline
         run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py tests/test_policy_generations.py tests/test_generation_cli.py tests/test_generation_recovery_boundaries.py
 
+      - name: Verify PowerShell installer signature recovery
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_installer_attestation_powershell.py
+
       - name: Verify grounded evaluation and Windows diagnostics
         run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_grounded_evaluations.py tests/test_windows_diagnostics.py
 

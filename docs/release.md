@@ -153,3 +153,31 @@ fixtures, README, license, build metadata, lockfile and ignore rules. Checkout p
 and agent state aren't package inputs. The gate compares every source-archive file
 with these tracked inputs and checks package metadata before adding the source
 download to the manifest; missing, altered and unexpected source files block publication.
+
+## Signed release provenance
+
+After manifest checks, the release job signs every subject in `SHA256SUMS` using
+GitHub's pinned `actions/attest` action. Before draft creation, each subject must
+pass `gh attestation verify` against this repository,
+`nnennandukwe/policyNIM/.github/workflows/release.yml` and the exact release source
+commit. Verification has bounded subprocess timeouts and retries; failures retain
+partial receipts and stop publication. Signing permissions belong only to that job.
+The workflow retains the signing bundle and verification receipt as workflow
+artifacts, outside the release inputs they describe.
+
+This verifies the workflow identity and artifact bytes. It doesn't establish
+independent review, a hermetic build, a security certification or a SLSA level.
+[GitHub's action documentation](https://github.com/actions/attest/tree/59d89421af93a897026c735860bf21b6eb4f7b26)
+explains its provenance and signing permissions. Actual signing and verification
+are observed during the release workflow; local subprocess tests don't create
+cryptographic evidence.
+
+Installers can require this check before extraction and replacement. Install
+GitHub CLI and authenticate it with `gh auth login`. Set
+`POLICYNIM_VERIFY_ATTESTATION=required` in the installer process.
+The installer resolves the selected release tag's commit and verifies the archive
+against that source and release workflow. A missing verifier, unresolved tag or
+rejected attestation stops installation and preserves the previous install.
+Unset the option or set it to `0` for checksum-only installation; invalid values
+fail rather than silently skipping a requested check. Older releases without
+attestations can't pass the required mode.
