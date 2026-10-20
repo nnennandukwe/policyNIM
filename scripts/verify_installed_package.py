@@ -242,6 +242,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
     report = {
         "status": "working",
         "source_revision": args.revision,
+        "public_bundle_digest": args.bundle_digest,
         "python": platform.python_version(),
         "platform": platform.system(),
         "wheel": check_wheel(args.wheel),

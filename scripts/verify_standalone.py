@@ -31,17 +31,23 @@ def artifact_identity(command: Path) -> dict[str, object]:
             checks.require(
                 path.resolve().is_relative_to(root), "Artifact symlink escapes its tree."
             )
-            record = "link:" + relative + ":" + os.readlink(path)
+            record = ["link", relative, os.readlink(path)]
         elif path.is_file():
             with path.open("rb") as content:
                 file_digest = hashlib.file_digest(content, "sha256").hexdigest()
-            record = "file:" + relative + ":" + file_digest
+            record = ["file", relative, file_digest]
             count += 1
         else:
             continue
-        digest.update(record.encode("utf-8") + b"\n")
+        digest.update(
+            json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
+        )
     checks.require(count > 0, "Standalone artifact tree is empty.")
-    return {"tree_sha256": digest.hexdigest(), "file_count": count}
+    return {
+        "tree_sha256": digest.hexdigest(),
+        "file_count": count,
+        "digest_format": "json-records-v1",
+    }
 
 
 def verify(args: argparse.Namespace) -> dict[str, object]:
@@ -52,6 +58,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
     checks.require(lock_digest == args.lock_digest, "Dependency lock digest differs.")
     report: dict[str, object] = {
         "source_revision": args.revision,
+        "public_bundle_digest": args.bundle_digest,
         "client_python": platform.python_version(),
         "client_sdk_version": importlib.metadata.version("mcp"),
         "platform": platform.system(),
@@ -90,6 +97,10 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         report["version_output"] = checks.run_command(
             ["--version"], env=env, cwd=cwd, command=command_text
         ).strip()
+        checks.require(
+            report["version_output"] == args.expected_version, "Standalone version differs."
+        )
+        report["expected_version"] = args.expected_version
         source = checks.run_cli(
             ["policies", "validate", "--source", "--format", "json"],
             env=env,
@@ -211,6 +222,7 @@ def main() -> None:
     parser.add_argument("--lockfile", type=Path, required=True)
     parser.add_argument("--lock-digest", required=True)
     parser.add_argument("--revision", required=True)
+    parser.add_argument("--expected-version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.command, args.bundle = args.command.resolve(), args.bundle.resolve()
