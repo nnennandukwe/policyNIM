@@ -2382,7 +2382,7 @@ def test_autocrlf_checkout_imports_public_bundle_with_source_matching(tmp_path: 
         expected_digest=(checkout / "bundle" / "generation.sha256").read_text().strip(),
         source_settings=settings,
     )
-    assert result.manifest.document_count == 15
+    assert result.manifest.document_count == 26
     for path in (checkout / "policies").rglob("*"):
         if path.is_file() and path.suffix in {".md", ".toml", ".txt"}:
             assert b"\r\n" not in path.read_bytes()
