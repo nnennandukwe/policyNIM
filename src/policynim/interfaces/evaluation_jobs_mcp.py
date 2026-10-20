@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable
 from typing import Annotated
@@ -23,28 +22,21 @@ from policynim.job_types import (
 )
 from policynim.services.authorization import AuthenticatedPrincipal
 from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
-from policynim.storage.evaluation_jobs import canonical_json
 from policynim.types import EvalSuite
-
-_REPORT_PART_SIZE = 128 * 1024
 
 
 def _report_parts(service: EvaluationJobService, job_id: str, principal: AuthenticatedPrincipal):
-    """Verify one retained owner report before describing its bounded transport fragments."""
+    """Validate the report manifest once and read its persisted transport part count."""
     stored = service.result(job_id, principal=principal)
-    serialized = canonical_json(stored.report.model_dump(mode="json"))
-    parts = [
-        serialized[index : index + _REPORT_PART_SIZE]
-        for index in range(0, len(serialized), _REPORT_PART_SIZE)
-    ]
-    return stored, parts
+    count = service.report_part(job_id, 0, principal=principal).part_count
+    return stored, count
 
 
 def report_manifest(
     service: EvaluationJobService, job_id: str, principal: AuthenticatedPrincipal
 ) -> EvaluationJobReportManifest:
     """Return logical part references without exceeding the SDK's default SSE event limit."""
-    stored, parts = _report_parts(service, job_id, principal)
+    stored, part_count = _report_parts(service, job_id, principal)
     info = service.inspect(job_id, principal=principal)
     report = stored.report
     return EvaluationJobReportManifest(
@@ -60,7 +52,7 @@ def report_manifest(
         usage=report.usage,
         expires_at=info.expires_at,
         part_uris=[
-            f"policynim://evaluation-jobs/{job_id}/report/{index}" for index in range(len(parts))
+            f"policynim://evaluation-jobs/{job_id}/report/{index}" for index in range(part_count)
         ],
     )
 
@@ -71,19 +63,7 @@ def report_part(
     """Read only a canonical bounded part index after fresh principal/owner checks."""
     if not part.isascii() or not part.isdigit() or len(part) > 6 or str(int(part)) != part:
         raise EvaluationJobError("invalid_report_part: Use a report URI returned by PolicyNIM.")
-    stored, parts = _report_parts(service, job_id, principal)
-    index = int(part)
-    if index >= len(parts):
-        raise EvaluationJobError("unknown_report_part: This report part doesn't exist.")
-    content = parts[index]
-    return EvaluationJobReportPart(
-        job_id=job_id,
-        part=index,
-        part_count=len(parts),
-        report_sha256=stored.sha256,
-        part_sha256="sha256:" + hashlib.sha256(content.encode()).hexdigest(),
-        content=content,
-    )
+    return service.report_part(job_id, int(part), principal=principal)
 
 
 def register_evaluation_jobs(

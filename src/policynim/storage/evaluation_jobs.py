@@ -19,12 +19,15 @@ from policynim.job_types import (
     EvaluationJobError,
     EvaluationJobInfo,
     EvaluationJobReport,
+    EvaluationJobReportPart,
     EvaluationJobSnapshot,
     EvaluationJobState,
     EvaluationJobUsage,
     StoredEvaluationJobReport,
 )
 from policynim.types import EvalCaseResult
+
+REPORT_PART_SIZE = 128 * 1024
 
 
 def canonical_json(value: object) -> str:
@@ -73,7 +76,7 @@ class EvaluationJobStore:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
             migration = (
                 "ALTER TABLE evaluation_jobs ADD COLUMN active_case_start_attempts "
@@ -88,6 +91,8 @@ class EvaluationJobStore:
                     "ALTER TABLE evaluation_jobs ADD COLUMN admission_finalized "
                     "INTEGER NOT NULL DEFAULT 0;"
                 )
+            if version in (1, 2, 3):
+                migration += "ALTER TABLE evaluation_jobs ADD COLUMN report_part_count INTEGER;"
             schema = f"""
                 CREATE TABLE IF NOT EXISTS evaluation_job_metadata (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL
@@ -112,6 +117,7 @@ class EvaluationJobStore:
                     worker_token TEXT, next_attempt_at REAL NOT NULL DEFAULT 0,
                     work_units INTEGER NOT NULL DEFAULT 1, admission_id TEXT,
                     admission_finalized INTEGER NOT NULL DEFAULT 0,
+                    report_part_count INTEGER,
                     UNIQUE(owner_id, idempotency_key)
                 );
                 CREATE TABLE IF NOT EXISTS evaluation_job_cases (
@@ -120,8 +126,13 @@ class EvaluationJobStore:
                     PRIMARY KEY(job_id, case_id),
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
+                CREATE TABLE IF NOT EXISTS evaluation_job_report_parts (
+                    job_id TEXT NOT NULL, part INTEGER NOT NULL, content TEXT NOT NULL,
+                    digest TEXT NOT NULL, PRIMARY KEY(job_id, part),
+                    FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
+                );
                 {migration}
-                PRAGMA user_version=3;
+                PRAGMA user_version=4;
             """
             for statement in schema.split(";"):
                 if statement.strip():
@@ -400,6 +411,7 @@ class EvaluationJobStore:
                 row["job_id"],
             ),
         )
+        self._write_report_parts(connection, row["job_id"], serialized)
         current = connection.execute(
             "SELECT * FROM evaluation_jobs WHERE job_id=?", (row["job_id"],)
         ).fetchone()
@@ -437,6 +449,79 @@ class EvaluationJobStore:
             if payload_digest(report.model_dump(mode="json")) != row["report_sha256"]:
                 raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
             return StoredEvaluationJobReport(report=report, sha256=row["report_sha256"])
+
+    def _write_report_parts(
+        self, connection: sqlite3.Connection, job_id: str, serialized: str
+    ) -> None:
+        """Commit bounded hashed transport parts with their canonical immutable report."""
+        parts = [
+            serialized[index : index + REPORT_PART_SIZE]
+            for index in range(0, len(serialized), REPORT_PART_SIZE)
+        ]
+        connection.execute("DELETE FROM evaluation_job_report_parts WHERE job_id=?", (job_id,))
+        connection.executemany(
+            "INSERT INTO evaluation_job_report_parts VALUES (?, ?, ?, ?)",
+            [
+                (job_id, index, content, "sha256:" + hashlib.sha256(content.encode()).hexdigest())
+                for index, content in enumerate(parts)
+            ],
+        )
+        connection.execute(
+            "UPDATE evaluation_jobs SET report_part_count=? WHERE job_id=?", (len(parts), job_id)
+        )
+
+    def report_part(self, job_id: str, owner_id: str, index: int) -> EvaluationJobReportPart:
+        """Read and hash one bounded part after fresh owner, retention and state checks."""
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            row = connection.execute(
+                "SELECT state,expires_at,result_expired,report_part_count,report_sha256 "
+                "FROM evaluation_jobs WHERE job_id=? AND owner_id=?",
+                (job_id, owner_id),
+            ).fetchone()
+            if row is None:
+                raise EvaluationJobError(
+                    "job_unavailable: This job wasn't found for this principal."
+                )
+            if self.clock() >= row["expires_at"] or row["result_expired"]:
+                raise EvaluationJobError("result_expired: The retained report has expired.")
+            if row["state"] not in TERMINAL_JOB_STATES:
+                raise EvaluationJobError(
+                    "result_pending: Inspect the job until it reaches a terminal state."
+                )
+            count = row["report_part_count"]
+            if count is not None:
+                if index >= count:
+                    raise EvaluationJobError("unknown_report_part: This report part doesn't exist.")
+                part = connection.execute(
+                    "SELECT content,digest FROM evaluation_job_report_parts "
+                    "WHERE job_id=? AND part=?",
+                    (job_id, index),
+                ).fetchone()
+                if (
+                    part is None
+                    or "sha256:" + hashlib.sha256(part["content"].encode()).hexdigest()
+                    != part["digest"]
+                ):
+                    raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
+                return EvaluationJobReportPart(
+                    job_id=job_id,
+                    part=index,
+                    part_count=count,
+                    report_sha256=row["report_sha256"],
+                    part_sha256=part["digest"],
+                    content=part["content"],
+                )
+        # Only historical schema1-3 reports need a one-time verified transport migration.
+        stored = self.result(job_id, owner_id)
+        serialized = canonical_json(stored.report.model_dump(mode="json"))
+        with self._transaction() as connection:
+            current = self._owned(connection, job_id, owner_id)
+            if current["result_expired"] or self.clock() >= current["expires_at"]:
+                raise EvaluationJobError("result_expired: The retained report has expired.")
+            if current["report_part_count"] is None:
+                self._write_report_parts(connection, job_id, serialized)
+        return self.report_part(job_id, owner_id, index)
 
     def recover_interrupted(self) -> list[EvaluationJobInfo]:
         """Only a new kernel-lock owner may call this; uncertain provider work never requeues."""
@@ -525,6 +610,15 @@ class EvaluationJobStore:
                 "worker_ownership_lost: Don't repeat provider work; inspect the job."
             )
         return row
+
+    def captured_snapshot(self, job_id: str, worker_token: str) -> EvaluationJobSnapshot:
+        """Validate accepted claims before admission without reading the large archive blob."""
+        with closing(self._connect()) as connection:
+            row = self._running(connection, job_id, worker_token)
+            snapshot = EvaluationJobSnapshot.model_validate_json(row["snapshot_json"])
+            if payload_digest(snapshot.model_dump(mode="json")) != row["snapshot_digest"]:
+                raise EvaluationJobError("snapshot_invalid: Preserve job storage for inspection.")
+            return snapshot
 
     def captured_inputs(
         self, job_id: str, worker_token: str
@@ -645,6 +739,9 @@ class EvaluationJobStore:
             for row in rows:
                 connection.execute("DELETE FROM evaluation_job_cases WHERE job_id=?", (row[0],))
                 connection.execute(
+                    "DELETE FROM evaluation_job_report_parts WHERE job_id=?", (row[0],)
+                )
+                connection.execute(
                     "UPDATE evaluation_jobs SET result_expired=1,snapshot_json=NULL,"
                     "report_json=NULL WHERE job_id=?",
                     (row[0],),
@@ -674,7 +771,7 @@ def inspect_job_backlog(path: Path) -> dict[str, int] | None:
         return None
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version != 3:
+        if version != 4:
             raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
         return {
             state: count

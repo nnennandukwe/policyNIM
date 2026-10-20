@@ -13,7 +13,11 @@ from policynim.services.generations import GenerationStore
 from policynim.services.index_store import create_index_store
 from policynim.settings import Settings
 from policynim.storage.evaluation_jobs import inspect_job_backlog
-from policynim.storage.index_readiness import IndexReadinessReport, inspect_index_readiness
+from policynim.storage.index_readiness import (
+    IndexReadinessReport,
+    inspect_index_readiness,
+    is_sqlite_access_error,
+)
 from policynim.storage.operation_store import OperationStore
 from policynim.types import EmbeddingIdentity
 
@@ -82,15 +86,23 @@ def _generation_readiness(settings: Settings) -> tuple[IndexReadinessReport, str
         finally:
             close_components(index_store)
     except GenerationError as exc:
-        cause = exc.__cause__
-        unavailable = isinstance(cause, OSError) and cause.errno in {
-            errno.EACCES,
-            errno.EPERM,
-            errno.EROFS,
-            errno.ENOSPC,
-            errno.EIO,
-            errno.EDQUOT,
-        }
+        cause: BaseException | None = exc
+        unavailable = False
+        seen: set[int] = set()
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            if isinstance(cause, sqlite3.Error) and is_sqlite_access_error(cause):
+                unavailable = True
+            elif isinstance(cause, OSError) and cause.errno in {
+                errno.EACCES,
+                errno.EPERM,
+                errno.EROFS,
+                errno.ENOSPC,
+                errno.EIO,
+                errno.EDQUOT,
+            }:
+                unavailable = True
+            cause = cause.__cause__
         return IndexReadinessReport(state="unreadable" if unavailable else "invalid"), None
     except OSError:
         return IndexReadinessReport(state="unreadable"), None

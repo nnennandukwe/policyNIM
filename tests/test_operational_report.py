@@ -739,3 +739,32 @@ def test_operational_report_inspects_managed_generation_without_legacy_fallback(
         assert report["active_generation"] == published.generation_id
         assert isinstance(report["indexed_chunks"], int) and report["indexed_chunks"] > 0
     assert not list((settings.generations_dir / "leases").rglob("*.lock"))
+
+
+@pytest.mark.parametrize(
+    "code", [sqlite3.SQLITE_CANTOPEN, sqlite3.SQLITE_IOERR, sqlite3.SQLITE_READONLY]
+)
+def test_report_classifies_wrapped_sqlite_access_errors_as_unreadable(
+    generation, tmp_path: Path, monkeypatch, code: int
+) -> None:
+    """Index inspection access errors stay separate from damaged generation content."""
+    from policynim.errors import GenerationError
+    from policynim.services import operational_report as module
+
+    settings, _, _ = generation
+    settings = settings.model_copy(update={"beta_auth_db_path": tmp_path / "operator.sqlite3"})
+    OperationStore(settings.beta_auth_db_path).close()
+
+    def inaccessible_index(*args, **kwargs):
+        """Inject the typed SQLite error surfaced by the public index factory."""
+        error = sqlite3.OperationalError("private-state-path")
+        error.sqlite_errorcode = code
+        try:
+            raise error
+        except sqlite3.Error as cause:
+            raise GenerationError("pin", "Index couldn't be read.") from cause
+
+    monkeypatch.setattr(module, "create_index_store", inaccessible_index)
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == "unreadable"
+    assert "private-state-path" not in json.dumps(report)

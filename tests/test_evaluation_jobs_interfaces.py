@@ -99,7 +99,9 @@ def test_authenticated_http_job_survives_disconnect_and_retains_owner_reports(
     )
     claims = token_claims()
     install_issuer(monkeypatch, settings, claims)
-    monkeypatch.setattr(mcp_jobs, "_REPORT_PART_SIZE", 1024)
+    from policynim.storage import evaluation_jobs as job_storage
+
+    monkeypatch.setattr(job_storage, "REPORT_PART_SIZE", 1024)
     started, release = Event(), Event()
     calls: list[str] = []
 
@@ -415,3 +417,77 @@ def test_sdk_job_worker_initialization_failure_is_sanitized(job_context, caplog)
     asyncio.run(exercise())
     assert sentinel not in caplog.text
     assert service.store.aggregate_counts() == {}
+
+
+def test_report_parts_read_bounded_persisted_fragments_without_full_revalidation(
+    job_context, monkeypatch
+) -> None:
+    """Each authenticated fragment read avoids reparsing and serializing the full report."""
+    service, suite, _ = job_context
+    accepted = service.submit(suite, idempotency_key="bounded-report", principal=principal())
+    service.cancel(accepted.job_id, principal=principal())
+    manifest = mcp_jobs.report_manifest(service, accepted.job_id, principal())
+    monkeypatch.setattr(service, "result", lambda *args, **kwargs: pytest.fail("full report read"))
+    parts = [
+        mcp_jobs.report_part(service, accepted.job_id, str(index), principal())
+        for index in range(len(manifest.part_uris))
+    ]
+    payload = "".join(part.content for part in parts)
+    assert "sha256:" + hashlib.sha256(payload.encode()).hexdigest() == manifest.report_sha256
+    with pytest.raises(service_module.EvaluationJobError, match="job_unavailable"):
+        mcp_jobs.report_part(service, accepted.job_id, "0", principal("another-owner"))
+
+
+def test_historical_report_parts_migrate_once_and_reject_corruption(
+    job_context, monkeypatch
+) -> None:
+    """Schema3 reports retain their original digest while transport parts gain bounded reads."""
+    import sqlite3
+
+    from policynim.storage.evaluation_jobs import EvaluationJobStore
+
+    service, suite, _ = job_context
+    accepted = service.submit(suite, idempotency_key="old-report", principal=principal())
+    service.cancel(accepted.job_id, principal=principal())
+    original = service.result(accepted.job_id, principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute("DROP TABLE evaluation_job_report_parts")
+        connection.execute("ALTER TABLE evaluation_jobs DROP COLUMN report_part_count")
+        connection.execute("PRAGMA user_version=3")
+    service.store = EvaluationJobStore(service.store.path)
+    first = service.report_part(accepted.job_id, 0, principal=principal())
+    assert first.report_sha256 == original.sha256
+    monkeypatch.setattr(service.store, "result", lambda *args: pytest.fail("legacy report reread"))
+    assert service.report_part(accepted.job_id, 0, principal=principal()) == first
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_job_report_parts SET content='tampered' WHERE job_id=? AND part=0",
+            (accepted.job_id,),
+        )
+    with pytest.raises(service_module.EvaluationJobError, match="report_invalid"):
+        service.report_part(accepted.job_id, 0, principal=principal())
+    monkeypatch.setattr(service.store, "clock", lambda: accepted.expires_at + 10000)
+    service.store.purge_expired()
+    with pytest.raises(service_module.EvaluationJobError, match="result_expired"):
+        service.report_part(accepted.job_id, 0, principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM evaluation_job_report_parts").fetchone()[0]
+            == 0
+        )
+
+
+def test_foreground_cli_rejects_an_existing_worker_before_announcing_start(
+    job_context, monkeypatch
+) -> None:
+    """The public worker command fails at startup while another worker owns the database."""
+    service, _, _ = job_context
+    worker = EvaluationJobWorker(service)
+    monkeypatch.setattr(cli_module, "_service", lambda: service)
+    worker.start()
+    try:
+        result = CliRunner().invoke(app, ["eval-jobs", "worker"])
+        assert result.exit_code == 1 and "worker_busy" in result.output
+        assert "Evaluation worker running" not in result.output
+    finally:
+        worker.close()

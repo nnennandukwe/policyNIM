@@ -724,6 +724,7 @@ def test_concurrent_schema_upgrade_keeps_accepted_jobs(
         db.execute("ALTER TABLE evaluation_jobs DROP COLUMN work_units")
         db.execute("ALTER TABLE evaluation_jobs DROP COLUMN admission_id")
         db.execute("ALTER TABLE evaluation_jobs DROP COLUMN admission_finalized")
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN report_part_count")
         db.execute(f"PRAGMA user_version={previous_version}")
     with ThreadPoolExecutor(max_workers=6) as pool:
         stores = list(pool.map(lambda _: EvaluationJobStore(service.store.path), range(6)))
@@ -733,7 +734,7 @@ def test_concurrent_schema_upgrade_keeps_accepted_jobs(
         assert restored.job_id == accepted.job_id
         assert restored.work_units == 1 and restored.admission_id is None
     with sqlite3.connect(service.store.path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
         names = [row[1] for row in db.execute("PRAGMA table_info(evaluation_jobs)")]
     assert names.count("active_case_start_attempts") == 1
 
@@ -922,6 +923,9 @@ def test_transient_pre_provider_admission_retries_without_duplicate_charge(
         raise OperationAdmissionError(code + ": Retry shortly.")
 
     with monkeypatch.context() as busy:
+        busy.setattr(
+            worker, "_restore", lambda *args: pytest.fail("archive restored before admission")
+        )
         busy.setattr(OperationAdmissionService, "run_accepted", reject)
         deferred = worker.run_once()
     assert deferred is not None and deferred.state == "queued" and deferred.failure_code == code
@@ -1032,6 +1036,11 @@ def test_terminal_report_commit_fault_preserves_cases_and_restart_outcome(
     stored = service.inspect(accepted.job_id, principal=principal())
     assert stored.completed_case_count == 1
     assert stored.state == ("running" if phase == "before_commit" else "completed")
+    with sqlite3.connect(service.store.path) as connection:
+        part_count = connection.execute(
+            "SELECT COUNT(*) FROM evaluation_job_report_parts WHERE job_id=?", (accepted.job_id,)
+        ).fetchone()[0]
+    assert (part_count > 0) == (phase == "after_commit")
     calls: list[str] = []
     restarted = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
     assert restarted.run_once() is None
@@ -1570,3 +1579,45 @@ def test_capture_cannot_charge_after_submitting_request_budget_ends(
     assert rejected.value.failure_class == stop_reason
     assert service.store.aggregate_counts() == {}
     assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 0
+
+
+def test_background_worker_claims_ownership_before_start_returns(generation, tmp_path) -> None:
+    """A second background worker rejects startup while the first owns even an idle queue."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, _, _ = job_setup(generation, tmp_path)
+    first = EvaluationJobWorker(service)
+    second = EvaluationJobWorker(EvaluationJobService(service.settings))
+    first.start()
+    try:
+        with pytest.raises(EvaluationJobError, match="worker_busy"):
+            second.start()
+    finally:
+        second.close()
+        first.close()
+
+
+def test_missing_bound_accounting_record_pauses_before_another_claim(generation, tmp_path) -> None:
+    """A replaced accounting database produces a visible pause and leaves queued work untouched."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    first = service.submit(suite, idempotency_key="missing-ledger", principal=principal())
+    service.store.cancel(first.job_id, first.owner_id)
+    second = service.submit(suite, idempotency_key="still-queued", principal=principal())
+    with sqlite3.connect(service.settings.beta_auth_db_path) as connection:
+        connection.execute(
+            "DELETE FROM operation_usage WHERE operation_id=?", (first.admission_id,)
+        )
+    worker = EvaluationJobWorker(service)
+    try:
+        with pytest.raises(OperationAdmissionError, match="accounting_incomplete"):
+            worker.run_once()
+        with pytest.raises(EvaluationJobError, match="accounting_incomplete"):
+            worker.require_admission_ready()
+        assert service.inspect(second.job_id, principal=principal()).state == "queued"
+    finally:
+        worker.close()

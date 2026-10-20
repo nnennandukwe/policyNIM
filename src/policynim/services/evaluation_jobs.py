@@ -8,7 +8,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable
-from contextlib import closing
+from contextlib import ExitStack, closing, nullcontext
 from functools import wraps
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,6 +26,7 @@ from policynim.job_types import (
     EvaluationJobError,
     EvaluationJobInfo,
     EvaluationJobLimits,
+    EvaluationJobReportPart,
     EvaluationJobSnapshot,
     EvaluationJobState,
     EvaluationJobUsage,
@@ -318,9 +319,23 @@ class EvaluationJobService:
                 operation_name="eval_submit",
                 outcome=outcome,
             )
+        except OperationAdmissionError as exc:
+            if str(exc).partition(":")[0] in {"acceptance_not_found", "acceptance_conflict"}:
+                raise OperationAdmissionError(
+                    "accounting_incomplete: The job accounting record is missing or mismatched. "
+                    "Preserve both databases, inspect accounting and restart after recovery."
+                ) from exc
+            raise
         finally:
             admission.store.close()
         self.store.mark_admission_finalized(job.job_id, job.admission_id)
+
+    @_job_storage_boundary
+    def report_part(
+        self, job_id: str, index: int, *, principal: AuthenticatedPrincipal
+    ) -> EvaluationJobReportPart:
+        """Read one stored bounded fragment with the same fresh authority as the full report."""
+        return self.store.report_part(job_id, self._owner(principal, "eval_result"), index)
 
     @_job_storage_boundary
     def result(
@@ -368,6 +383,9 @@ class EvaluationJobWorker:
         self.service, self.store = service, service.store
         self.evaluator_factory = evaluator_factory
         self._stop, self._lock = Event(), Lock()
+        self._execution_lock = Lock()
+        self._ownership = ExitStack()
+        self._owns_lock = False
         self._admission_paused = Event()
         self._thread: Thread | None = None
         self.worker_token = uuid4().hex
@@ -387,10 +405,20 @@ class EvaluationJobWorker:
                 raise EvaluationJobError(
                     "worker_closed: Create a new worker before accepting more work."
                 )
+            acquired = self._ownership.enter_context(try_exclusive_file_lock(self.lock_path))
+            if not acquired:
+                self._ownership.close()
+                raise EvaluationJobError("worker_busy: Another worker owns this job database.")
+            self._owns_lock = True
             self._thread = Thread(
                 target=self._loop, name="policynim-evaluation-worker", daemon=True
             )
-            self._thread.start()
+            try:
+                self._thread.start()
+            except BaseException:
+                self._owns_lock = False
+                self._ownership.close()
+                raise
 
     def close(self) -> None:
         """Stop admitting cases and drain active provider work before releasing clients."""
@@ -398,6 +426,9 @@ class EvaluationJobWorker:
         thread = self._thread
         if thread is not None:
             thread.join()
+        with self._lock:
+            self._owns_lock = False
+            self._ownership.close()
 
     def _loop(self) -> None:
         """Recover only after acquiring ownership and keep storage failures observable."""
@@ -430,7 +461,14 @@ class EvaluationJobWorker:
         """Execute at most one accepted job while holding the stable worker kernel lock."""
         self.require_admission_ready()
         try:
-            with try_exclusive_file_lock(self.lock_path) as acquired:
+            with (
+                self._execution_lock,
+                (
+                    nullcontext(True)
+                    if self._owns_lock
+                    else try_exclusive_file_lock(self.lock_path)
+                ) as acquired,
+            ):
                 if not acquired:
                     raise EvaluationJobError("worker_busy: Another worker owns this job database.")
                 self.store.recover_interrupted()
@@ -453,8 +491,7 @@ class EvaluationJobWorker:
         """Keep input restoration, admission, provider work and cleanup in one owned lifecycle."""
         signal = _CancellationSignal(self.store, job.job_id, self._stop)
         try:
-            snapshot, archive = self.store.captured_inputs(job.job_id, self.worker_token)
-            settings = self._restore(snapshot, archive)
+            snapshot = self.store.captured_snapshot(job.job_id, self.worker_token)
             remaining = job.deadline_at - self.store.clock()
             if remaining <= 0:
                 return self.store.finish(
@@ -490,6 +527,8 @@ class EvaluationJobWorker:
 
             def run_owned() -> None:
                 """Hold shared quota admission through every case and provider cleanup."""
+                _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
+                settings = self._restore(snapshot, archive)
                 clients = NVIDIAClients()
                 try:
                     with borrow_clients(clients), operation_scope(budget):
