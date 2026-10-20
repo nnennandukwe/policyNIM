@@ -364,7 +364,10 @@ async def _measure(
                 health_latencies.append((time.perf_counter() - start) * 1000)
                 try:
                     active_peak = max(
-                        active_peak, OperationStore.report(root / "auth.sqlite3").active_operations
+                        active_peak,
+                        (
+                            await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
+                        ).active_operations,
                     )
                 except sqlite3.Error:
                     cheap_outcomes["state_read_busy"] += 1
@@ -400,7 +403,7 @@ async def _measure(
                 pending = asyncio.create_task(request(0))
                 deadline = time.monotonic() + 5.0
                 while True:
-                    observed = OperationStore.report(root / "auth.sqlite3")
+                    observed = await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
                     intervention_started_with_active_work = observed.active_operations > 0
                     active_peak = max(active_peak, observed.active_operations)
                     if intervention_started_with_active_work or pending.done():
@@ -417,7 +420,9 @@ async def _measure(
                     await asyncio.gather(pending, return_exceptions=True)
                     deadline = time.monotonic() + 10.0
                     while True:
-                        observed = OperationStore.report(root / "auth.sqlite3")
+                        observed = await asyncio.to_thread(
+                            OperationStore.report, root / "auth.sqlite3"
+                        )
                         if observed.active_operations == 0:
                             drain_observation = "terminal_outcome_observed"
                             break
@@ -447,7 +452,7 @@ async def _measure(
                         "Synthetic probe sampling failed: " + type(failure).__name__
                     ) from None
         seconds = time.perf_counter() - started
-        report = OperationStore.report(root / "auth.sqlite3")
+        report = await asyncio.to_thread(OperationStore.report, root / "auth.sqlite3")
         outcomes = Counter(sample[1] for sample in samples)
         return {
             "scenario": scenario,

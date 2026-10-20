@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from policynim.storage.operation_lease import OperationOwner
+from policynim.storage.operation_lease import OperationOwner, inspect_owner_lease
 
 # Caller lifecycle outcome after worker drain; provider attempt results stay separate.
 OperationOutcome = Literal["completed", "failed", "cancelled", "interrupted"]
@@ -71,6 +71,10 @@ class HostedOperationReport(BaseModel):
     scope: Literal["local_single_instance"] = "local_single_instance"
     retained_rows: int
     active_operations: int
+    reserved_operations: int = 0
+    unreconciled_operations: int = 0
+    unknown_owner_operations: int = 0
+    active_state_basis: Literal["kernel_owner_lease_observation"] = "kernel_owner_lease_observation"
     outcomes: dict[str, int]
     latency_sample_count: int
     latency_sample_limit: int = 1000
@@ -326,6 +330,10 @@ class OperationStore:
                     "SELECT outcome, COUNT(*) FROM operation_usage GROUP BY outcome"
                 ).fetchall()
             )
+            owner_counts = connection.execute(
+                "SELECT owner_id, COUNT(*) FROM operation_usage "
+                "WHERE outcome = 'accepted' GROUP BY owner_id"
+            ).fetchall()
             samples = sorted(
                 row[0]
                 for row in connection.execute(
@@ -343,9 +351,15 @@ class OperationStore:
                 else None
             )
 
+        liveness = {"live": 0, "abandoned": 0, "unknown": 0}
+        for owner_id, count in owner_counts:
+            liveness[inspect_owner_lease(path, owner_id)] += count
         return HostedOperationReport(
             retained_rows=sum(outcomes.values()),
-            active_operations=outcomes.get("accepted", 0),
+            active_operations=liveness["live"],
+            reserved_operations=outcomes.get("accepted", 0),
+            unreconciled_operations=liveness["abandoned"],
+            unknown_owner_operations=liveness["unknown"],
             outcomes=outcomes,
             latency_sample_count=len(samples),
             latency_p50_ms=percentile(0.5),

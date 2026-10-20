@@ -59,8 +59,10 @@ from policynim.interfaces.mcp_authorization import (
 from policynim.operations import (
     OperationBudget,
     current_correlation_id,
+    emit_operation_event,
     operation_correlation,
     operation_scope,
+    safe_exception_diagnostics,
 )
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
@@ -575,6 +577,12 @@ async def _run_correlated_tool(
             raise ToolError(str(exc)) from exc
         if isinstance(exc, ToolError):
             raise
+        emit_operation_event(
+            level=logging.ERROR,
+            event="operation.unexpected_failure",
+            tool_name=tool_name,
+            **safe_exception_diagnostics(exc),
+        )
         raise ToolError(
             "internal_error: PolicyNIM couldn't complete this operation. "
             "Ask the operator to inspect structured logs for correlation "
@@ -930,6 +938,11 @@ def _register_beta_routes(
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
         except Exception as exc:
+            emit_operation_event(
+                level=logging.ERROR,
+                event="auth.callback_failure",
+                **safe_exception_diagnostics(exc),
+            )
             LOGGER.error(
                 "Hosted beta callback failed: unexpected_error, stage=unknown, class=%s. "
                 "Check identity-provider reachability and auth storage health.",

@@ -10,6 +10,7 @@ import stat
 import uuid
 import weakref
 from pathlib import Path
+from typing import Literal
 
 
 class OperationOwner:
@@ -91,3 +92,30 @@ def _lock(descriptor: int) -> None:
         import fcntl
 
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def inspect_owner_lease(database: Path, identity: str) -> Literal["live", "abandoned", "unknown"]:
+    """Observe an existing kernel lease without creating files or changing durable state."""
+    if not re.fullmatch(r"[0-9a-f]{32}", identity):
+        return "unknown"
+    path = database.with_name(database.name + ".owners") / (identity + ".lock")
+    mode = os.O_RDWR if os.name == "nt" else os.O_RDONLY
+    try:
+        descriptor = os.open(path, mode | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return "unknown"
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return "unknown"
+        try:
+            if os.name == "nt":
+                _lock(descriptor)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as exc:
+            return "live" if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK} else "unknown"
+        return "abandoned"
+    finally:
+        os.close(descriptor)

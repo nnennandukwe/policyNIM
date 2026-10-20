@@ -178,3 +178,17 @@ Readiness transport failures during intentional shutdown remain counted as
 `health_transport_failure`; they don't silently end the sampling series.
 Unexpected probe exceptions fail the harness with a sanitized exception class
 instead of producing a success receipt with incomplete probes.
+
+The report separates confirmed live-owner work (`active_operations`) from all
+reserved rows (`reserved_operations`), abandoned owners awaiting transactional
+recovery (`unreconciled_operations`) and unavailable ownership evidence
+(`unknown_owner_operations`). Observation acquires only existing kernel leases;
+it creates no owner files and doesn't mark rows recovered. Admission still counts
+all reserved rows until its own committed recovery, so observation can't free a slot.
+Load-generator report reads run in worker threads so SQLite waits don't block HTTP
+client timers on the asyncio event loop.
+
+Unexpected tool/callback diagnostics retain at most eight owned package locations
+(module, function and line) and four exception classes. They omit filenames,
+source lines, locals, exception messages and request/provider bodies. The innermost
+owned location helps identify a failure stage without exposing a raw traceback.

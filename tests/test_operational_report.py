@@ -334,6 +334,8 @@ def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
         }
     )
     failures: list[str | None] = []
+    diagnostics: list[dict[str, object]] = []
+    monkeypatch.setattr(mcp, "emit_operation_event", lambda **fields: diagnostics.append(fields))
 
     def fail(**arguments: object) -> dict[str, object]:
         """Inject a credential-bearing failure through actual HTTP dispatch."""
@@ -362,6 +364,16 @@ def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
     assert "internal_error" in response.text and "correlation" in response.text
     assert "private-token" not in response.text and "private-token" not in caplog.text
     assert "RuntimeError" in failures
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic["event"] == "operation.unexpected_failure"
+    assert diagnostic["exception_chain"] == ["RuntimeError"]
+    frames = cast(list[dict[str, object]], diagnostic["internal_frames"])
+    assert 1 <= len(frames) <= 8
+    assert all(str(frame["module"]).startswith("policynim.") for frame in frames)
+    assert all(set(frame) == {"module", "function", "line"} for frame in frames)
+    assert "private-token" not in json.dumps(diagnostic)
 
 
 @pytest.mark.parametrize("inspection_fails", [False, True])
@@ -469,6 +481,8 @@ def test_callback_storage_error_keeps_cause_class_without_payload(
     from starlette.testclient import TestClient
     from test_mcp import ControlledKeyRotationService, _self_serve_hosted_settings
 
+    diagnostics: list[dict[str, object]] = []
+    monkeypatch.setattr(mcp, "emit_operation_event", lambda **fields: diagnostics.append(fields))
     sentinel = "Authorization: Bearer private-token C:\\private\\state /Users/private/state"
 
     class FailingAccounts(ControlledKeyRotationService):
@@ -497,3 +511,49 @@ def test_callback_storage_error_keeps_cause_class_without_payload(
     assert "upstream" not in response.text and "unexpected_upstream" not in caplog.text
     assert sentinel not in caplog.text and sentinel not in response.text
     assert "private-token" not in caplog.text and "Traceback" not in caplog.text
+
+    assert diagnostics[0]["event"] == "auth.callback_failure"
+    assert any(
+        frame["function"] == "github_callback"
+        for frame in cast(list[dict[str, object]], diagnostics[0]["internal_frames"])
+    )
+    assert "private-token" not in json.dumps(diagnostics)
+
+
+def test_readonly_report_separates_live_crashed_and_unknown_ownership(tmp_path: Path) -> None:
+    """Observation doesn't call abandoned reservations running or mutate recovery state."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "auth.sqlite3"
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; "
+            "from policynim.storage.operation_store import OperationStore; "
+            "from policynim.services.operation_admission import admit_operation; import sys; "
+            "s=OperationStore(Path(sys.argv[1])); "
+            "admit_operation(s,principal_id='crashed',operation='policy_search',daily_limit=5,principal_limit=5,global_limit=5)",
+            str(path),
+        ],
+        check=True,
+    )
+    owners = list(path.with_name(path.name + ".owners").iterdir())
+    report = OperationStore.report(path)
+    assert report.active_operations == 0 and report.reserved_operations == 1
+    assert report.unreconciled_operations == 1 and report.unknown_owner_operations == 0
+    assert report.outcomes == {"accepted": 1}
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT outcome FROM operation_usage").fetchone()[0] == "accepted"
+    assert list(path.with_name(path.name + ".owners").iterdir()) == owners
+    if sys.platform != "win32":
+        import fcntl
+
+        with owners[0].open("rb") as observer:
+            fcntl.flock(observer.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            assert OperationStore.report(path).unreconciled_operations == 1
+    owners[0].unlink()
+    report = OperationStore.report(path)
+    assert report.active_operations == report.unreconciled_operations == 0
+    assert report.unknown_owner_operations == report.reserved_operations == 1
