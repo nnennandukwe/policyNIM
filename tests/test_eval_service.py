@@ -543,3 +543,18 @@ def test_eval_service_publish_to_ui_surfaces_phoenix_endpoint_and_log_path(
         service.publish_to_ui(result, port=8124)
 
     assert "phoenix.log" in str(exc_info.value)
+
+
+def test_missing_phoenix_command_explains_isolated_install_or_headless(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A real missing executable gives setup and headless recovery instructions."""
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "reports"))
+    with pytest.raises(PolicyNIMError, match="uv tool install") as caught:
+        service.start_ui()
+    assert "arize-phoenix==20.23.0" in str(caught.value)
+    assert "--headless" in str(caught.value)
+    assert isinstance(caught.value.__cause__, FileNotFoundError)

@@ -310,6 +310,13 @@ class EvalService:
                     stderr=subprocess.STDOUT,
                     env=env,
                 )
+        except FileNotFoundError as exc:
+            raise PolicyNIMError(
+                "Phoenix UI command wasn't found. Install its separate environment with "
+                "`uv tool install --python 3.11 arize-phoenix==20.23.0` and make its "
+                "bin directory available on PATH, or run evaluations with --headless. "
+                f"See {log_path.as_posix()} for details."
+            ) from exc
         except OSError as exc:
             raise PolicyNIMError(
                 f"Could not start Phoenix UI. See {log_path.as_posix()} for details."

@@ -1,0 +1,39 @@
+{
+  "observed_at": "2026-10-20T23:02:53.307033+00:00",
+  "auditor": "pip-audit 2.10.1",
+  "service": "pypi",
+  "python": "3.9.6",
+  "platform": "Darwin",
+  "scope": "Selected standard and supported-extra requirements evaluated on Python 3.11 macOS; no exploit or all-platform claim.",
+  "lock_sha256": "sha256:f7c1cfc394222fc394d2215feae6edff9b2b80b58d270f7db5cb2e3b0e2cf6a9",
+  "pyproject_sha256": "sha256:f032a7642a4501184f1c8dc1c9cb26a90563042b9306d4e5689deaa884457f0d",
+  "profiles": {
+    "standard": {
+      "requirements_sha256": "sha256:b6e8eb0013f68301006c83569580ec64e4a8245633621ffb27c6a09fd919ad49",
+      "receipt_sha256": "sha256:b5d84a4c245f6f6bcae85bc5e1189f6c73712cb9bbcc805b25eda609299b16b7",
+      "package_count": 79,
+      "affected_packages": []
+    },
+    "all-extras": {
+      "requirements_sha256": "sha256:c9f123cfa67e5f15bcac717b9223848628dad2b99fdbcea536460011ab8c0467",
+      "receipt_sha256": "sha256:1760fbee1d26476f03bd05a67f5dbb4757a6bdaa3131b679f624556ed616ccaa",
+      "package_count": 162,
+      "affected_packages": [
+        {
+          "name": "pillow",
+          "version": "12.3.0",
+          "advisory_ids": [
+            "CVE-2026-112895",
+            "CVE-2026-112400",
+            "CVE-2026-112397",
+            "CVE-2026-112896",
+            "CVE-2026-112897",
+            "CVE-2026-112395",
+            "CVE-2026-112404",
+            "CVE-2026-112899"
+          ]
+        }
+      ]
+    }
+  }
+}

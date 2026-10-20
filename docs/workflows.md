@@ -271,16 +271,9 @@ The optional `nvidia-eval` extra installs the pinned NeMo Evaluator SDK,
 paths. If the packages are not installed, the command fails with a
 `ConfigurationError` that names the missing extra.
 
-Install the in-project launcher stack only when you need launcher-managed
-evaluator runs:
-
-```bash
-uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev
-```
-
-The launcher extra pins `nemo-evaluator-launcher==0.2.4` and
-`nvidia-nat[eval]==1.6.0`. PolicyNIM keeps `httpx==0.27.2` to match that stack,
-and default CI does not sync the launcher extra.
+The optional NeMo launcher runs outside the PolicyNIM environment; see
+[installation profiles](runtime-install-profiles.md). It isn't a PolicyNIM backend
+or a bundled runtime dependency.
 
 Internal Guardrails-backed preflight generation is package-gated separately:
 
@@ -296,6 +289,17 @@ runs output rails over the generated draft JSON, and fails closed on blocked,
 malformed, or unsupported-citation output.
 
 ### 7. Run Evaluations
+
+Install the optional Phoenix UI command in a separate environment before using
+the default UI flow:
+
+```bash
+uv tool install --python 3.11 arize-phoenix==20.23.0
+```
+
+Make the tool bin directory available on PATH. See
+[installation profiles](runtime-install-profiles.md) for setup and migration.
+Use `policynim eval --headless` when a UI isn't needed.
 
 ```bash
 uv run policynim eval
