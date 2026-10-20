@@ -786,3 +786,35 @@ def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
     assert not thread.is_alive() and len(accepted) == 1
     assert service.submit(suite, idempotency_key="first", principal=principal()) == accepted[0]
     assert not service.settings.beta_auth_db_path.exists()
+
+
+def test_job_execution_mints_fresh_correlation_for_admission_and_provider(
+    generation, tmp_path: Path
+) -> None:
+    """A recovered worker context doesn't reuse its submitting caller's correlation identity."""
+    import sqlite3
+
+    from policynim.operations import current_correlation_id, operation_correlation
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    observed: list[str | None] = []
+    base = evaluator_factory([])
+
+    class Evaluator(base):
+        """Observe only the public execution context at the provider scoring seam."""
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """Keep evaluator behavior identical while recording its opaque context."""
+            observed.append(current_correlation_id())
+            return super().evaluate_case(suite, case_id, rerank_enabled=rerank_enabled)
+
+    with operation_correlation() as submitting:
+        service.submit(suite, idempotency_key="fresh-correlation", principal=principal())
+        result = EvaluationJobWorker(service, evaluator_factory=Evaluator).run_once()
+        assert result is not None and result.state == "completed"
+        assert current_correlation_id() == submitting
+    assert len(observed) == 1 and observed[0] is not None and observed[0] != submitting
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        persisted = db.execute("SELECT correlation_id FROM operation_usage").fetchone()[0]
+    assert persisted == observed[0]
