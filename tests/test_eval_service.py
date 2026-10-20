@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import types
 from pathlib import Path
 
@@ -505,9 +504,7 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
             self.logged_annotations.extend(span_annotations)
 
     clients: list[MockPhoenixClient] = []
-    mock_client_module = types.ModuleType("phoenix.client")
-    setattr(mock_client_module, "Client", MockPhoenixClient)
-    monkeypatch.setitem(sys.modules, "phoenix.client", mock_client_module)
+    monkeypatch.setattr("phoenix.client.Client", MockPhoenixClient)
 
     service.publish_to_ui(result, port=8123)
 
@@ -617,3 +614,113 @@ def test_phoenix_annotation_publish_preserves_failure_after_budget(monkeypatch, 
         _publish_phoenix_annotations(types.SimpleNamespace(spans=FailedSpans()), [])
     assert caught.value is failure
     assert len(calls) == (2 if status == 404 else 1)
+
+
+def _publication_spans() -> list[dict[str, object]]:
+    """Provide two independently identified report spans for publication recovery."""
+    return [
+        {
+            "name": f"report case {number}",
+            "context": {"span_id": f"{number:016x}", "trace_id": f"{number:032x}"},
+            "span_kind": "CHAIN",
+            "start_time": "2026-10-20T00:00:00Z",
+            "end_time": "2026-10-20T00:00:00Z",
+            "status_code": "OK",
+            "status_message": "",
+            "attributes": {"case": str(number), "result": "passed"},
+        }
+        for number in (1, 2)
+    ]
+
+
+def test_phoenix_publication_resumes_after_verified_existing_spans() -> None:
+    """A partial earlier publish doesn't prevent the remaining spans from being queued."""
+    from phoenix.client.exceptions import SpanCreationError
+
+    from policynim.services.eval import _publish_phoenix_spans
+
+    planned = _publication_spans()
+    writes = []
+    reads = []
+
+    class PartialPublication:
+        """Model an endpoint rejecting a batch containing one persisted span."""
+
+        def log_spans(self, *, project_identifier, spans):
+            """Reject duplicates before accepting the smaller remaining batch."""
+            assert project_identifier == "PolicyNIM Eval"
+            writes.append(spans)
+            if len(writes) == 1:
+                raise SpanCreationError(
+                    "duplicate",
+                    duplicate_spans=[{"span_id": "0000000000000001", "trace_id": "0" * 31 + "1"}],
+                    total_received=2,
+                    total_duplicates=1,
+                )
+
+        def get_spans(self, **kwargs):
+            """Return the prior span from the explicitly selected project and trace."""
+            reads.append(kwargs)
+            return [planned[0] | {"start_time": "2026-10-19T00:00:00+00:00"}]
+
+    _publish_phoenix_spans(types.SimpleNamespace(spans=PartialPublication()), planned)
+    assert writes == [planned, [planned[1]]]
+    assert reads == [
+        {
+            "project_identifier": "PolicyNIM Eval",
+            "trace_ids": ["0" * 31 + "1"],
+            "limit": 1,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "fault", ["changed_content", "missing", "wrong_trace", "invalid", "queued", "parent", "events"]
+)
+def test_phoenix_publication_never_accepts_conflicting_or_uncertain_duplicates(fault) -> None:
+    """Duplicate handling can't turn mismatched evidence or accepted uncertainty into success."""
+    from copy import deepcopy
+
+    from phoenix.client.exceptions import SpanCreationError
+
+    from policynim.services.eval import _publish_phoenix_spans
+
+    planned = _publication_spans()
+    stored = deepcopy(planned[0])
+    if fault == "changed_content":
+        stored["attributes"] = {"case": "1", "result": "failed"}
+    if fault == "parent":
+        stored["parent_id"] = "f" * 16
+    if fault == "events":
+        stored["events"] = [{"name": "other result"}]
+    failure = SpanCreationError(
+        "duplicate",
+        duplicate_spans=[
+            {
+                "span_id": "0000000000000001",
+                "trace_id": "f" * 32 if fault == "wrong_trace" else "0" * 31 + "1",
+            }
+        ],
+        total_received=2,
+        total_duplicates=1,
+        total_invalid=int(fault == "invalid"),
+        total_queued=int(fault == "queued"),
+    )
+    writes = []
+
+    class ConflictingPublication:
+        """Retain the exact failed batch rather than silently relabel evidence."""
+
+        def log_spans(self, **kwargs):
+            """Expose the original conflict without enqueueing a replacement."""
+            writes.append(kwargs)
+            raise failure
+
+        def get_spans(self, **kwargs):
+            """Return the conflicting or absent project-scoped span."""
+            return [] if fault == "missing" else [stored]
+
+    with pytest.raises(SpanCreationError) as caught:
+        _publish_phoenix_spans(types.SimpleNamespace(spans=ConflictingPublication()), planned)
+    assert caught.value is failure
+    assert len(writes) == 1
