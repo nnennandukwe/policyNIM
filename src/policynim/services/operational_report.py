@@ -40,6 +40,7 @@ def inspect_operational_report(settings: Settings) -> dict[str, object]:
     return {
         **report.model_dump(mode="json"),
         "index_state": readiness.state,
+        "generation_state": readiness.state,
         "index_build_id": readiness.identity.build_id if readiness.identity else None,
         "indexed_chunks": readiness.chunk_count,
         "active_generation": active_generation,

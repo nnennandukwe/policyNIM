@@ -2907,3 +2907,50 @@ def test_prune_stops_on_budget_rejection_without_misclassifying_objects(
     assert store.inspect().generation_id == active
     assert not list((store.root / "trash").iterdir())
     assert not list((store.root / "staging").iterdir())
+
+
+@pytest.mark.parametrize("operation", ["build", "activate", "rollback"])
+def test_mutation_during_final_activation_inspection_preserves_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Publication can't adopt a token first observed after inspected bytes changed."""
+    from policynim.errors import GenerationError
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    first = store.migrate(settings, index_path=index, rules_path=rules)
+    if operation != "build":
+        store.build(settings, MockEmbedder())
+    pointer = (store.root / "active.json").read_bytes()
+    original = GenerationStore._inspect
+    inspections = 0
+    changed: list[Path] = []
+
+    def inspect(self: GenerationStore, directory: Path, **kwargs: Any):
+        """Change rules after their validation on the final target inspection only."""
+        nonlocal inspections
+        snapshot = original(self, directory, **kwargs)
+        selected = (
+            directory.parent.name == "objects" and directory.name != first.generation_id
+            if operation == "build"
+            else directory == store.root / "objects" / first.generation_id
+        )
+        if selected:
+            inspections += 1
+            if inspections == (1 if operation == "build" else 3):
+                artifact = directory / "runtime_rules.json"
+                artifact.write_bytes(artifact.read_bytes() + b"damaged-during-inspection")
+                changed.append(artifact)
+        return snapshot
+
+    monkeypatch.setattr(GenerationStore, "_inspect", inspect)
+    with pytest.raises(GenerationError, match="Generation changed"):
+        if operation == "build":
+            store.build(settings, MockEmbedder())
+        elif operation == "activate":
+            store.activate(first.generation_id, expected_active=json.loads(pointer)["active"])
+        else:
+            store.rollback(expected_active=json.loads(pointer)["active"])
+    assert len(changed) == 1
+    assert (store.root / "active.json").read_bytes() == pointer
+    assert changed[0].read_bytes().endswith(b"damaged-during-inspection")

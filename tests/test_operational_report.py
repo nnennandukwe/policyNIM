@@ -703,3 +703,39 @@ def test_report_preserves_generation_when_job_store_is_unavailable(generation, t
         assert "private" not in json.dumps(report)
     finally:
         operations.close()
+
+
+@pytest.mark.parametrize("corrupt_pointer", [False, True])
+def test_operational_report_inspects_managed_generation_without_legacy_fallback(
+    tmp_path: Path, corrupt_pointer: bool
+) -> None:
+    """Report the selected generation and refuse to call a corrupt selection ready."""
+    from test_policy_generations import seed_legacy
+
+    from policynim.services.generations import GenerationStore
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        }
+    )
+    generation_store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    published = generation_store.migrate(settings, index_path=index, rules_path=rules)
+    operation_store = OperationStore(settings.beta_auth_db_path)
+    operation_store.close()
+    pointer = settings.generations_dir / "active.json"
+    if corrupt_pointer:
+        pointer.write_bytes(b"invalid-pointer")
+    before = pointer.read_bytes()
+    report = inspect_operational_report(settings)
+    assert pointer.read_bytes() == before
+    if corrupt_pointer:
+        assert report["generation_state"] == report["index_state"] == "invalid"
+        assert report["active_generation"] is None
+    else:
+        assert report["generation_state"] == report["index_state"] == "ready"
+        assert report["active_generation"] == published.generation_id
+        assert isinstance(report["indexed_chunks"], int) and report["indexed_chunks"] > 0
+    assert not list((settings.generations_dir / "leases").rglob("*.lock"))
