@@ -85,8 +85,13 @@ class EvaluationJobStore:
                 migration += (
                     "ALTER TABLE evaluation_jobs ADD COLUMN work_units INTEGER NOT NULL DEFAULT 1;"
                     "ALTER TABLE evaluation_jobs ADD COLUMN admission_id TEXT;"
+                    "ALTER TABLE evaluation_jobs ADD COLUMN admission_finalized "
+                    "INTEGER NOT NULL DEFAULT 0;"
                 )
             schema = f"""
+                CREATE TABLE IF NOT EXISTS evaluation_job_metadata (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS evaluation_job_archives (
                     generation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, archive BLOB NOT NULL
                 );
@@ -106,6 +111,7 @@ class EvaluationJobStore:
                     snapshot_json TEXT, report_json TEXT, usage_json TEXT NOT NULL,
                     worker_token TEXT, next_attempt_at REAL NOT NULL DEFAULT 0,
                     work_units INTEGER NOT NULL DEFAULT 1, admission_id TEXT,
+                    admission_finalized INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(owner_id, idempotency_key)
                 );
                 CREATE TABLE IF NOT EXISTS evaluation_job_cases (
@@ -120,6 +126,12 @@ class EvaluationJobStore:
             for statement in schema.split(";"):
                 if statement.strip():
                     connection.execute(statement)
+            connection.execute(
+                "INSERT OR IGNORE INTO evaluation_job_metadata VALUES (1, ?)", (uuid4().hex,)
+            )
+            self.store_id = connection.execute(
+                "SELECT store_id FROM evaluation_job_metadata WHERE singleton=1"
+            ).fetchone()[0]
             connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -160,6 +172,28 @@ class EvaluationJobStore:
         if row is None:
             raise EvaluationJobError("job_unavailable: This job isn't available to this principal.")
         return row
+
+    def pending_admission_finalizations(self, *, limit: int = 100) -> list[EvaluationJobInfo]:
+        """Reconcile terminal accounting from retained summaries even after payload quarantine."""
+        if not 1 <= limit <= 100:
+            raise ValueError("Finalization batches must contain 1-100 jobs.")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM evaluation_jobs WHERE state NOT IN ('queued','running') "
+                "AND admission_id IS NOT NULL AND admission_finalized=0 "
+                "ORDER BY finished_at, rowid LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._info(row) for row in rows]
+
+    def mark_admission_finalized(self, job_id: str, admission_id: str) -> None:
+        """Acknowledge a confirmed quota outcome without changing retained job evidence."""
+        with self._transaction() as connection:
+            connection.execute(
+                "UPDATE evaluation_jobs SET admission_finalized=1 WHERE job_id=? "
+                "AND admission_id=? AND state NOT IN ('queued','running')",
+                (job_id, admission_id),
+            )
 
     def find_submission(
         self, owner_id: str, idempotency_key: str, request_digest: str

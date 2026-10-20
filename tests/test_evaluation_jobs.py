@@ -719,9 +719,11 @@ def test_concurrent_schema_upgrade_keeps_accepted_jobs(
             db.execute("ALTER TABLE evaluation_jobs DROP COLUMN active_case_start_attempts")
         db.execute("ALTER TABLE evaluation_jobs DROP COLUMN work_units")
         db.execute("ALTER TABLE evaluation_jobs DROP COLUMN admission_id")
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN admission_finalized")
         db.execute(f"PRAGMA user_version={previous_version}")
     with ThreadPoolExecutor(max_workers=6) as pool:
         stores = list(pool.map(lambda _: EvaluationJobStore(service.store.path), range(6)))
+    assert {store.store_id for store in stores} == {service.store.store_id}
     for store in stores:
         restored = store.inspect(accepted.job_id, accepted.owner_id)
         assert restored.job_id == accepted.job_id
@@ -1270,3 +1272,17 @@ def test_unexpected_case_failure_has_safe_owned_location(generation, tmp_path, c
         assert "private-task-and-bearer-sentinel" not in caplog.text
     finally:
         worker.close()
+
+
+def test_job_store_namespace_is_stable_across_restart_and_relocation(tmp_path):
+    """Shared quota storage can't merge unrelated workspace keys or split a moved job store."""
+    import shutil
+
+    first = EvaluationJobStore(tmp_path / "first" / "jobs.sqlite3")
+    assert EvaluationJobStore(first.path).store_id == first.store_id
+    other = EvaluationJobStore(tmp_path / "other" / "jobs.sqlite3")
+    assert other.store_id != first.store_id
+    relocated = tmp_path / "relocated" / "jobs.sqlite3"
+    relocated.parent.mkdir()
+    shutil.copyfile(first.path, relocated)
+    assert EvaluationJobStore(relocated).store_id == first.store_id
