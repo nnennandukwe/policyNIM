@@ -4682,3 +4682,21 @@ def test_support_bundle_keeps_ambiguous_windows_directory_names_private(
     result = runner.invoke(app, ["support-bundle"])
     assert result.exit_code == 0
     assert "Client.env see docs" not in json.loads(result.stdout)["doctor"]["message"]
+
+
+@pytest.mark.parametrize("tag", ["file:", "SOURCE:"])
+def test_support_bundle_redacts_tagged_posix_paths_with_colon_directories(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tag: str
+) -> None:
+    """A diagnostic prefix can't make a POSIX directory look like a Windows drive."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {"status": "action_required", "message": f"Missing {tag}/opt/private/a:b/x"},
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    message = json.loads(result.stdout)["doctor"]["message"]
+    assert "private" not in message and "a:b" not in message
+    assert f"Missing {tag}" in message and "<local-path>" in message
