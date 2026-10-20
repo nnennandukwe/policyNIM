@@ -18,9 +18,9 @@
 
 PolicyNIM is a policy-aware engineering preflight layer for AI coding agents.
 
-It helps an agent retrieve grounded policy evidence, generate implementation
-guidance with citations attached, and fail closed when the available grounding
-is too weak to trust.
+It helps an agent retrieve policy evidence and review complete selected policy
+bodies with citations. It fails closed when complete source ownership or exact
+source references are unavailable.
 
 PolicyNIM currently ships with two main user-facing surfaces:
 
@@ -34,14 +34,16 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - NVIDIA-hosted embeddings and reranking for retrieval.
 - Local sqlite-vec storage for the retrievable policy index.
 - Task-aware policy routing with citation-preserving selected-policy packets.
-- Policy compilation into citation-backed planning and generation constraints.
-- Grounded preflight synthesis with compiled plan steps, citation validation, and
-  fail-closed fallback.
+- Source-extractive policy compilation and preflight: models select compact IDs,
+  then services quote whole pinned policy bodies with canonical citations.
+  [Output semantics and limits](docs/source-extractive-guidance.md) describe the
+  empty advisory fields, source budgets and required applicability review.
 - Opt-in preflight evidence traces that link chunks, selected policies, compiled
-  constraints, generated guidance, and conformance checks.
+  source quotations, and conformance checks.
 - Opt-in policy-backed regeneration for preflight and eval preflight cases,
   reusing the same compiled packet and typed conformance failures as retry
-  triggers.
+  triggers. Repeated attempts retain the same quoted source set; they can't
+  rewrite policy text or establish a policy repair.
 - Eval backend selection with optional policy-conformance scoring for compiled
   plans and preflight outputs, with compact traces embedded in eval result
   artifacts and local Phoenix reporting for non-headless runs.

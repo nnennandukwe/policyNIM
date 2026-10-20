@@ -1068,7 +1068,7 @@ def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
 
 
 def test_mcp_sanitizes_unexpected_failure_and_releases_capacity(monkeypatch) -> None:
-    """A crash cannot leak its message or keep subsequent operations blocked."""
+    """A crash can't leak its message or keep subsequent operations blocked."""
 
     class CrashingSearchService(MockSearchService):
         def search(self, request: SearchRequest) -> SearchResult:
@@ -1235,6 +1235,19 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
     monkeypatch,
 ) -> None:
     """Verify call tool logs failure class when policy preflight generator times out."""
+    from policynim.source_units import SourceCatalog, SourceUnit
+
+    authority = SourceCatalog(
+        (
+            SourceUnit(
+                "s1",
+                "AUTH-001",
+                "Auth Reviews",
+                "Cleanup must preserve revocation semantics.",
+                ("AUTH-1",),
+            ),
+        )
+    )
     events: list[dict[str, object]] = []
 
     class StaticEmbedder:
@@ -1336,10 +1349,11 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
 
     class StaticCompiler:
         def compile_policy_packet(self, request, selection_packet, context):
+            """Return the exact authored authentication source before the generator timeout."""
             return GeneratedCompiledPolicyDraft(
                 required_steps=[
                     GeneratedPolicyConstraint(
-                        statement="Use the retained auth policy.",
+                        statement="Cleanup must preserve revocation semantics.",
                         citation_ids=["AUTH-1"],
                     )
                 ]
@@ -1352,6 +1366,7 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
         mcp_module,
         "create_preflight_service",
         lambda settings: PreflightService(
+            source_catalog_resolver=lambda context: authority,
             embedder=StaticEmbedder(),
             index_store=StaticIndexStore(),
             reranker=StaticReranker(),
@@ -1884,7 +1899,7 @@ def test_key_regeneration_rejects_account_overlap_and_keeps_other_accounts_indep
 
 @pytest.mark.parametrize("failure_stage", ["account", "issue", "render"])
 def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, failure_stage) -> None:
-    """Account reads, issuance failures, and rendering failures cannot strand the guard."""
+    """Account reads, issuance failures, and rendering failures can't strand the guard."""
     service = ControlledKeyRotationService(block_first=False, failure_stage=failure_stage)
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
     if failure_stage == "render":
@@ -1919,7 +1934,7 @@ def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, fail
 def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
     monkeypatch, cancellation_kind
 ) -> None:
-    """Disconnect cancellation cannot permit another rotation while issuance still runs."""
+    """Disconnect cancellation can't permit another rotation while issuance still runs."""
     service = ControlledKeyRotationService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())

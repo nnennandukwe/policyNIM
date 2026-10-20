@@ -71,7 +71,8 @@ class MockCompiler:
         self.closed = True
 
 
-def test_compiler_service_materializes_grounded_constraints_and_citations() -> None:
+def test_compiler_service_refuses_unowned_chunk_only_router_before_provider() -> None:
+    """Unowned chunks must stop compilation before an untrusted compiler can invent authority."""
     route_result = make_route_result()
     compiler = MockCompiler(
         GeneratedCompiledPolicyDraft(
@@ -114,15 +115,12 @@ def test_compiler_service_materializes_grounded_constraints_and_citations() -> N
 
     result = service.compile(CompileRequest(task="fix backend logging bug", top_k=2))
 
-    assert compiler.calls == 1
-    assert not result.packet.insufficient_context
+    assert compiler.calls == 0
+    assert result.packet.insufficient_context
     assert result.packet.task_type == "bug_fix"
-    assert result.packet.required_steps[0].source_policy_ids == ["BACKEND-LOG-001"]
-    assert result.packet.forbidden_patterns[0].source_policy_ids == ["SECURITY-TOKEN-001"]
-    assert [citation.chunk_id for citation in result.packet.citations] == [
-        "BACKEND-1",
-        "SECURITY-1",
-    ]
+    assert not result.packet.required_steps
+    assert not result.packet.forbidden_patterns
+    assert not result.packet.citations
     assert [chunk.chunk_id for chunk in result.retained_context] == ["BACKEND-1", "SECURITY-1"]
 
 

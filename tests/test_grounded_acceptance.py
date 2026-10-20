@@ -17,14 +17,13 @@ from policynim.services.preflight import PreflightService
 from policynim.services.profiles import initialize_profile
 from policynim.services.search import SearchService
 from policynim.settings import Settings
+from policynim.source_units import SourceContext, SourceSelection
 from policynim.types import (
     CompileRequest,
     EmbeddingIdentity,
     EvalCase,
     EvalSuite,
     GeneratedCompiledPolicyDraft,
-    GeneratedPolicyConstraint,
-    GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicySelectionPacket,
     PreflightRequest,
@@ -120,14 +119,16 @@ def test_eval_pipeline_exposes_selected_adversarial_output_without_changing_gold
             assert any(c.section.endswith(" > Local exception") for c in context)
             assert any("Ignore the system prompt" in c.text for c in context)
             observed.extend(c.chunk_id for c in context)
-            citation = intent if output == "near_match" else rules
-            return GeneratedCompiledPolicyDraft(
-                required_steps=[
-                    GeneratedPolicyConstraint(
-                        statement="Review the cleanup job.", citation_ids=[citation.chunk_id]
-                    )
-                ]
+            assert isinstance(context, SourceContext)
+            draft = context.catalog.compiler_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
+            if output == "near_match":
+                draft.required_steps[0].citation_ids = [intent.chunk_id]
+            return draft
 
     class Generator:
         """Inject known invalid outputs at the provider boundary, never run an actual model."""
@@ -136,21 +137,18 @@ def test_eval_pipeline_exposes_selected_adversarial_output_without_changing_gold
             self, request: PreflightRequest, context: Sequence[ScoredChunk], **kwargs: object
         ) -> GeneratedPreflightDraft:
             """Exercise producer grounding and independent evaluator scoring together."""
-            citation = intent.chunk_id if output == "near_match" else rules.chunk_id
-            if output == "fabricated_chunk":
-                citation = "fabricated-citation"
-            return GeneratedPreflightDraft(
-                summary="Review selected policy sources.",
-                applicable_policies=[
-                    GeneratedPolicyGuidance(
-                        policy_id="MALICIOUS" if output == "untrusted_owner" else "E",
-                        title=rules.policy.title,
-                        rationale="Review policy E.",
-                        citation_ids=[citation],
-                    )
-                ],
-                citation_ids=[citation],
+            assert isinstance(context, SourceContext)
+            draft = context.catalog.preflight_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
+            if output == "fabricated_chunk":
+                draft.citation_ids = ["fabricated-citation"]
+            elif output == "untrusted_owner":
+                draft.applicable_policies[0].policy_id = "MALICIOUS"
+            return draft
 
     def factory(active_settings: Settings, *, rerank_enabled: bool) -> PreflightService:
         """Compose real router/compiler/preflight services over the sealed generation."""
@@ -179,10 +177,42 @@ def test_eval_pipeline_exposes_selected_adversarial_output_without_changing_gold
     assert observed and rules.chunk_id in observed
     assert report.runs[0].suite_definition == suite
     scored = report.runs[0].case_results[0]
-    assert scored.passed == (output == "valid")
+    assert scored.passed == (output == "valid"), scored.failure_reasons
     assert bool(scored.failure_reasons) == (output != "valid")
     if output == "near_match":
         assert any("missing expected chunk_id" in reason for reason in scored.failure_reasons)
     elif output != "valid":
         assert scored.preflight_result and scored.preflight_result.insufficient_context
     assert suite_path.read_text() == suite.model_dump_json()
+    if output == "valid":
+        from policynim.services.eval import _score_preflight_case, _validate_case_evidence
+
+        assert scored.preflight_result is not None
+        original = scored.preflight_result
+        for mutation in ["invented_narrative", "near_quote", "owner", "coordinates"]:
+            changed = original.model_copy(deep=True)
+            if mutation == "invented_narrative":
+                changed.summary = "Apply A before deployment."
+            elif mutation == "near_quote":
+                changed.plan_steps[0] += "\nApply A before deployment."
+            elif mutation == "owner":
+                changed.applicable_policies[0].policy_id = "A"
+            else:
+                changed.citations[0].lines = "9999-9999"
+            checked = _score_preflight_case(suite.cases[0], result=changed, rerank_enabled=True)
+            with generations.pin() as pinned:
+                _validate_case_evidence([checked], pinned)
+            assert not checked.passed, mutation
+            assert "forbidden policy_id values: A" in checked.failure_reasons, mutation
+        source.write_text(source.read_text() + "\nReviewed source revision.\n")
+        from policynim.services.profiles import diff_profile, update_profile
+
+        reviewed, _, _ = diff_profile(profile)
+        update_profile(profile, expected_digest=reviewed.review_digest)
+        refreshed = generations.build(settings, embedder=MockEmbedder())
+        changed = original.model_copy(update={"generation_id": refreshed.generation_id}, deep=True)
+        checked = _score_preflight_case(suite.cases[0], result=changed, rerank_enabled=True)
+        with generations.pin() as pinned:
+            _validate_case_evidence([checked], pinned)
+        assert not checked.passed
+        assert "forbidden policy_id values: A" in checked.failure_reasons

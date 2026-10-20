@@ -29,6 +29,7 @@ from policynim.services.profiles import initialize_profile
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings
+from policynim.source_units import SourceContext, SourceSelection
 from policynim.types import (
     CompileRequest,
     EmbeddingIdentity,
@@ -37,8 +38,6 @@ from policynim.types import (
     EvalSuite,
     GeneratedCompiledPolicyDraft,
     GeneratedPolicyConformanceDraft,
-    GeneratedPolicyConstraint,
-    GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PolicyConformanceRequest,
     PolicySelectionPacket,
@@ -76,31 +75,24 @@ class ControlledChat:
         context: Sequence[ScoredChunk],
     ) -> GeneratedCompiledPolicyDraft:
         """Bind one controlled requirement to the actual selected source chunk."""
-        return GeneratedCompiledPolicyDraft(
-            required_steps=[
-                GeneratedPolicyConstraint(
-                    statement="Review the selected policy.",
-                    citation_ids=[context[0].chunk_id],
-                )
-            ]
+        assert isinstance(context, SourceContext)
+        return context.catalog.compiler_draft(
+            SourceSelection(
+                source_ids=[unit.source_id for unit in context.catalog.units],
+                insufficient_context=False,
+            )
         )
 
     def generate_preflight(
         self, request: PreflightRequest, context: Sequence[ScoredChunk], **kwargs: object
     ) -> GeneratedPreflightDraft:
         """Copy canonical source ownership while retaining its real citation coordinates."""
-        source = context[0]
-        return GeneratedPreflightDraft(
-            summary="Review the selected policy.",
-            applicable_policies=[
-                GeneratedPolicyGuidance(
-                    policy_id=source.policy.policy_id,
-                    title=source.policy.title,
-                    rationale="Review this source.",
-                    citation_ids=[source.chunk_id],
-                )
-            ],
-            citation_ids=[source.chunk_id],
+        assert isinstance(context, SourceContext)
+        return context.catalog.preflight_draft(
+            SourceSelection(
+                source_ids=[unit.source_id for unit in context.catalog.units],
+                insufficient_context=False,
+            )
         )
 
 

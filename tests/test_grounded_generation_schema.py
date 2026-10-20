@@ -1,7 +1,8 @@
-"""Request-side ownership grammar, checked with an independent JSON Schema validator."""
+"""Compact source-selection grammar checked with an independent JSON Schema validator."""
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any, cast
 
@@ -11,11 +12,12 @@ from test_nvidia_generator import MockOpenAIClient
 
 from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
 from policynim.providers.nvidia import NVIDIAGenerator
+from policynim.source_units import SourceCatalog, SourceContext, SourceUnit
 from policynim.types import GeneratedPreflightDraft, PolicyMetadata, PreflightRequest, ScoredChunk
 
 
 def context() -> list[ScoredChunk]:
-    """Provide distinct owners so cross-policy binding errors can't pass accidentally."""
+    """Supply separate canonical owners with explicitly authored full source fixtures."""
     return [
         ScoredChunk(
             chunk_id=f"{policy_id}:required-rules",
@@ -34,9 +36,21 @@ def context() -> list[ScoredChunk]:
     ]
 
 
-def request_schema(chunks: list[ScoredChunk]) -> dict[str, Any]:
-    """Capture the exact schema sent by the actual NVIDIA generator adapter."""
-    client = MockOpenAIClient('{"summary":"Review sources.","insufficient_context":true}')
+def request_wire(chunks: list[ScoredChunk]) -> dict[str, Any]:
+    """Capture actual SDK options for a source-bound compact refusal payload."""
+    client = MockOpenAIClient('{"source_ids":[],"insufficient_context":true}')
+    catalog = SourceCatalog(
+        tuple(
+            SourceUnit(
+                f"s{index + 1}",
+                chunk.policy.policy_id,
+                chunk.policy.title,
+                "Review the retained rule.",
+                (chunk.chunk_id,),
+            )
+            for index, chunk in enumerate(chunks)
+        )
+    )
     generator = NVIDIAGenerator(
         api_key="fixture-key",
         model=NVIDIA_LIGHTNING_CHAT_MODEL,
@@ -45,64 +59,47 @@ def request_schema(chunks: list[ScoredChunk]) -> dict[str, Any]:
         max_retries=0,
         client=client,
     )
-    generator.generate_preflight(PreflightRequest(task="Review cleanup job"), chunks)
-    return cast(dict[str, Any], client.chat.completions.calls[0]["response_format"])["json_schema"][
-        "schema"
-    ]
+    generator.generate_preflight(
+        PreflightRequest(task="Review cleanup job"), SourceContext(tuple(chunks), catalog)
+    )
+    return cast(dict[str, Any], client.chat.completions.calls[0])
 
 
 @pytest.mark.parametrize(
     "mutation", ["chunk_as_policy", "section_as_title", "foreign_owner", "unknown_global"]
 )
 def test_request_schema_rejects_supported_metadata_failure(mutation: str) -> None:
-    """The provider grammar must rule out invalid owner metadata before generation."""
-    schema = request_schema(context())
+    """Models can't supply owner/title/citation prose through the internal selector grammar."""
+    schema = request_wire(context())["response_format"]["json_schema"]["schema"]
     Draft202012Validator.check_schema(schema)
-    response: dict[str, Any] = {
-        "summary": "Review cleanup job.",
-        "applicable_policies": [
-            {
-                "policy_id": "JOB",
-                "title": "Background Jobs",
-                "rationale": "Review the retained rule.",
-                "citation_ids": ["JOB:required-rules"],
-            }
-        ],
-        "citation_ids": ["JOB:required-rules", "SESSION:required-rules"],
-    }
+    response: dict[str, Any] = {"source_ids": ["s1"], "insufficient_context": False}
     validator = Draft202012Validator(schema)
     assert not list(validator.iter_errors(response))
     invalid = deepcopy(response)
-    policy = invalid["applicable_policies"][0]
     if mutation == "chunk_as_policy":
-        policy["policy_id"] = "JOB:required-rules"
+        invalid["source_ids"] = ["JOB:required-rules"]
     elif mutation == "section_as_title":
-        policy["title"] = "Background Jobs > Required Rules"
+        invalid["title"] = "Background Jobs > Required Rules"
     elif mutation == "foreign_owner":
-        policy["citation_ids"] = ["SESSION:required-rules"]
+        invalid["policy_id"] = "SESSION"
     else:
         invalid["citation_ids"] = ["unretained-citation"]
     assert list(validator.iter_errors(invalid))
 
 
 def test_context_schema_doesnt_mutate_public_types_or_bleed_between_requests() -> None:
-    """Keep the response contract stable while each request uses only its pinned owners."""
+    """Compact IDs are request-local and don't carry another request's source ownership."""
     original = GeneratedPreflightDraft.model_json_schema()
     chunks = context()
-    first = request_schema(chunks[:1])
-    second = request_schema(chunks[1:])
-    assert "JOB:required-rules" in str(first) and "SESSION:required-rules" not in str(first)
-    assert "SESSION:required-rules" in str(second) and "JOB:required-rules" not in str(second)
+    first = request_wire(chunks[:1])
+    second = request_wire(chunks[1:])
+    first_sources = json.loads(first["messages"][1]["content"])["sources"]
+    second_sources = json.loads(second["messages"][1]["content"])["sources"]
+    assert [source["policy_id"] for source in first_sources] == ["JOB"]
+    assert [source["policy_id"] for source in second_sources] == ["SESSION"]
     assert GeneratedPreflightDraft.model_json_schema() == original
-    empty = request_schema([])
-    Draft202012Validator.check_schema(empty)
-    assert not list(
-        Draft202012Validator(empty).iter_errors(
-            {
-                "summary": "No sources.",
-                "applicable_policies": [],
-                "citation_ids": [],
-                "insufficient_context": True,
-            }
-        )
-    )
+    for wire in [first, second]:
+        schema = wire["response_format"]["json_schema"]["schema"]
+        assert "summary" not in schema["properties"]
+        assert "applicable_policies" not in schema["properties"]
+        assert schema["properties"]["source_ids"]["items"]["enum"] == ["s1"]
