@@ -264,7 +264,7 @@ class PolicyRegenerationService:
                 conformance_result,
                 compiled_packet,
             )
-            if not next_triggers:
+            if not next_triggers or getattr(self._generator, "source_extractive", False) is True:
                 return _result(
                     request=request,
                     passed=False,

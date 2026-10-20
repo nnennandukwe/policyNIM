@@ -394,6 +394,8 @@ class NVIDIAGenerator(Generator):
             client=shared_client(settings),
         )
 
+    source_extractive = True
+
     @bounded_stage("generation")
     def generate_preflight(
         self,
@@ -403,7 +405,7 @@ class NVIDIAGenerator(Generator):
         compiled_packet: CompiledPolicyPacket | None = None,
         regeneration_context: RegenerationContext | None = None,
     ) -> GeneratedPreflightDraft:
-        """Generate a grounded preflight draft from retrieved context."""
+        """Select the compiled source set and materialize exact source quotations locally."""
         catalog = _require_source_catalog(context)
         if compiled_packet is not None:
             catalog = catalog.compiled_sources(compiled_packet)
@@ -514,7 +516,7 @@ class NVIDIAPolicyCompiler:
         selection_packet: PolicySelectionPacket,
         context: Sequence[ScoredChunk],
     ) -> GeneratedCompiledPolicyDraft:
-        """Compile a routed policy-selection packet into grounded constraints."""
+        """Select whole pinned sources and materialize their complete bodies locally."""
         catalog = _require_source_catalog(context)
         selection = _request_chat_completion(
             self._client,

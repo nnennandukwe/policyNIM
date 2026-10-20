@@ -163,6 +163,9 @@ Regeneration flow:
 Regeneration retains the unchanged compiled source set and complete source
 ownership. Attempt and typed-trigger records stay compatible, but each accepted
 attempt materializes the same quotations; it can't synthesize a corrected recipe.
+Explicit NVIDIA extractive mode, including its Guardrails wrapper, stops after a
+failed judgment with `no_material_trigger` rather than repeating paid calls.
+Custom providers retain their existing retry contract unless they opt into that mode.
 Provider and configuration failures remain explicit errors and don't trigger retries.
 
 Regeneration is intentionally not exposed through MCP. It is a CLI and eval

@@ -54,7 +54,9 @@ The router owns the index lease and its validated generation snapshot. Its compl
 
 Internal selectors will contain bounded lists of compact IDs, without free text or repeated body enums. The adapter will resolve these IDs to existing draft models, while service validation will independently compare every returned value against the same catalog. Source bodies retain full normalized Markdown content and conditions. Canonical chunk fingerprints will detect lost or mismatched ownership before dispatch, and pinned provenance will retain applicability/requirement-level input. Fixed output placement will prevent repeating a whole body across categories merely to fill every list.
 
-The existing80-chunk and256KiB serialized-context caps remain. Whole source units will have a 256 KiB budget; serialized public packet/result values will have a separate 1 MiB cap because they also retain discovery excerpts and citation metadata. No complete unit will be assembled by joining overlapping or incomplete chunks.
+The existing 80-chunk and 256-KiB serialized-context caps remain. Whole source units will have a 256 KiB budget; serialized public packet/result values will have a separate 1 MiB cap because they also retain discovery excerpts and citation metadata. No complete unit will be assembled by joining overlapping or incomplete chunks.
+
+Explicit NVIDIA extractive mode stops after one failed judgment with the existing `no_material_trigger` reason because another accepted attempt can't revise the selected bodies. Its Guardrails wrapper preserves that capability. Custom generators retain their retry behavior unless they explicitly opt into the same mode; public attempts and stop enums stay unchanged.
 
 ## Failure And Recovery Rules
 

@@ -489,3 +489,164 @@ def test_refused_custom_provider_references_never_escape_in_public_trace(tmp_pat
     assert "private-reference-" not in traced.model_dump_json()
     generation = next(step for step in traced.trace_steps if step.kind == "grounded_generation")
     assert generation.citation_ids == []
+
+
+def test_public_preflight_preserves_identical_bodies_for_distinct_source_owners(
+    tmp_path: Path,
+) -> None:
+    """Whole-body identity doesn't erase separate policies or their canonical references."""
+    from policynim.services.preflight import PreflightService
+    from policynim.types import PreflightRequest
+
+    settings, identity, _, _ = seed_legacy(tmp_path, ids=["A", "B"])
+    assert settings.corpus_dir is not None
+    shared = "# Shared\n\n## Rule\nKeep every condition and its exception together.\n"
+    for source in settings.corpus_dir.glob("*.md"):
+        frontmatter = source.read_text().split("---", 2)[1]
+        source.write_text("---" + frontmatter + "---\n" + shared)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    store.build(settings, MockEmbedder())
+    snapshot = store.pin()
+    compiler = PolicyCompilerService(
+        router=PolicyRouterService(
+            embedder=MockEmbedder(),
+            reranker=PreserveRanking(),
+            index_store=SQLiteVecIndexStore(
+                path=snapshot.index_path, embedding_identity=identity, generation_snapshot=snapshot
+            ),
+        ),
+        compiler=ExactCompiler(),
+    )
+    with PreflightService(compiler_service=compiler, generator=SourceGenerator()) as service:
+        result = service.preflight(PreflightRequest(task="Review shared rules", top_k=2))
+    assert not result.insufficient_context
+    assert {guidance.policy_id for guidance in result.applicable_policies} == {"A", "B"}
+    assert result.plan_steps == [snapshot.documents[0].body, snapshot.documents[1].body]
+    assert result.plan_steps[0] == result.plan_steps[1]
+    assert {citation.policy_id for citation in result.citations} == {"A", "B"}
+
+
+def test_near_limit_source_catalog_uses_separate_materialized_output_budget() -> None:
+    """Valid source input may add canonical metadata and repeat references in its output."""
+    from policynim.source_units import (
+        MAX_OUTPUT_BYTES,
+        MAX_SOURCE_BYTES,
+        SourceCatalog,
+        SourceSelection,
+        SourceUnit,
+    )
+
+    references = tuple(f"P:rule-{index}-" + "x" * 100 for index in range(80))
+    small = SourceCatalog((SourceUnit("s1", "P", "Policy", "x", references),))
+    overhead = len(small.prompt_payload().encode()) - 1
+    catalog = SourceCatalog(
+        (SourceUnit("s1", "P", "Policy", "x" * (MAX_SOURCE_BYTES - overhead), references),)
+    )
+    draft = catalog.preflight_draft(SourceSelection(source_ids=["s1"], insufficient_context=False))
+    assert len(catalog.prompt_payload().encode()) == MAX_SOURCE_BYTES
+    assert MAX_SOURCE_BYTES < len(draft.model_dump_json().encode()) < MAX_OUTPUT_BYTES
+    assert catalog.accepts_preflight(draft)
+
+
+@pytest.mark.parametrize("guardrails_enabled", [False, True])
+def test_extractive_regeneration_stops_without_redundant_sdk_or_judge_calls(
+    tmp_path: Path, guardrails_enabled: bool
+) -> None:
+    """An explicit extractive adapter can't revise a failed exact source set on retry."""
+    import json
+
+    import httpx
+    from openai import OpenAI
+    from test_policy_regeneration_service import (
+        MockConformanceService,
+        PassingRails,
+        make_conformance_result,
+    )
+
+    from policynim.nvidia_models import NVIDIA_LIGHTNING_CHAT_MODEL
+    from policynim.operations import OperationBudget, operation_scope
+    from policynim.providers.nvidia import NVIDIAGenerator
+    from policynim.providers.nvidia_guardrails import NeMoGuardrailsPreflightGenerator
+    from policynim.services.regeneration import PolicyRegenerationService
+    from policynim.types import PolicyConformanceMetric, PreflightRegenerationRequest
+
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        """Count actual SDK transport dispatch and return one bounded source selection."""
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "controlled-selection",
+                "object": "chat.completion",
+                "created": 0,
+                "model": NVIDIA_LIGHTNING_CHAT_MODEL,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {"source_ids": ["s1"], "insufficient_context": False}
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 2, "total_tokens": 10},
+            },
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(respond))
+    client = OpenAI(
+        api_key="fixture", base_url="https://example.invalid/v1", http_client=http_client
+    )
+    generator = NVIDIAGenerator(
+        api_key="fixture",
+        model=NVIDIA_LIGHTNING_CHAT_MODEL,
+        base_url="https://example.invalid/v1",
+        timeout_seconds=1,
+        max_retries=0,
+        client=client,
+    )
+    judge = MockConformanceService(
+        [
+            make_conformance_result(
+                passed=False,
+                metrics=[
+                    PolicyConformanceMetric(
+                        name="plan_completeness",
+                        score=0.0,
+                        passed=False,
+                        failure_reasons=["An applicability review is needed."],
+                    )
+                ],
+            ),
+            make_conformance_result(passed=True),
+        ]
+    )
+    active_generator = (
+        NeMoGuardrailsPreflightGenerator(base_generator=generator, rails=PassingRails())
+        if guardrails_enabled
+        else generator
+    )
+    budget = OperationBudget(max_provider_calls=4)
+    try:
+        with (
+            PolicyRegenerationService(
+                compiler_service=pinned_compiler(tmp_path),
+                generator=active_generator,
+                conformance_service=judge,
+            ) as service,
+            operation_scope(budget),
+        ):
+            result = service.regenerate(
+                PreflightRegenerationRequest(task="Review cleanup", top_k=2, max_regenerations=3)
+            )
+    finally:
+        client.close()
+    assert not result.passed and result.stop_reason == "no_material_trigger"
+    assert len(result.attempts) == len(requests) == len(judge.requests) == 1
+    assert budget.provider_attempts == 1 and budget.measured_tokens == 10
+    assert budget.unavailable_usage_attempts == 0

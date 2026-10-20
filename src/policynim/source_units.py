@@ -238,7 +238,9 @@ class SourceCatalog:
                 for unit in selected
             ],
             plan_steps=[unit.body for unit in selected],
-            citation_ids=list(dict.fromkeys(i for unit in selected for i in unit.citation_ids)),
+            citation_ids=list(
+                dict.fromkeys(citation_id for unit in selected for citation_id in unit.citation_ids)
+            ),
             insufficient_context=not selected,
         )
 
@@ -246,7 +248,7 @@ class SourceCatalog:
         """Validate every custom-provider statement with exact owner-bound source references."""
         if draft.insufficient_context:
             return False
-        if len(draft.model_dump_json().encode("utf-8")) > MAX_SOURCE_BYTES:
+        if len(draft.model_dump_json().encode("utf-8")) > MAX_OUTPUT_BYTES:
             return False
         if any(
             (
@@ -282,7 +284,7 @@ class SourceCatalog:
         self, draft: GeneratedPreflightDraft, *, allow_missing_references: bool = False
     ) -> bool:
         """Reject all free policy prose, altered metadata and incomplete whole-source outputs."""
-        if len(draft.model_dump_json().encode("utf-8")) > MAX_SOURCE_BYTES:
+        if len(draft.model_dump_json().encode("utf-8")) > MAX_OUTPUT_BYTES:
             return False
         if (
             draft.insufficient_context

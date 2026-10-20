@@ -21,7 +21,6 @@ from policynim.settings import Settings, get_settings
 from policynim.source_units import MAX_OUTPUT_BYTES, SourceCatalog, SourceContext
 from policynim.types import (
     Citation,
-    CompiledPolicyConstraint,
     CompiledPolicyPacket,
     CompileRequest,
     GeneratedPolicyGuidance,
@@ -328,7 +327,11 @@ def _grounding_refusal_code(
         return "empty_source_context"
     citation_ids = ordered_unique(
         draft.citation_ids
-        + [i for policy in draft.applicable_policies for i in policy.citation_ids]
+        + [
+            citation_id
+            for policy in draft.applicable_policies
+            for citation_id in policy.citation_ids
+        ]
     )
     if not citation_ids:
         return "missing_citations"
@@ -338,9 +341,15 @@ def _grounding_refusal_code(
     for policy in draft.applicable_policies:
         if not policy.citation_ids:
             continue
-        if any(context_by_id[i].policy.policy_id != policy.policy_id for i in policy.citation_ids):
+        if any(
+            context_by_id[citation_id].policy.policy_id != policy.policy_id
+            for citation_id in policy.citation_ids
+        ):
             return "policy_id_mismatch"
-        if any(context_by_id[i].policy.title != policy.title for i in policy.citation_ids):
+        if any(
+            context_by_id[citation_id].policy.title != policy.title
+            for citation_id in policy.citation_ids
+        ):
             return "policy_title_mismatch"
         supported_policy = True
     if not supported_policy:
@@ -363,7 +372,11 @@ def _validate_and_materialize_result(
     context_by_id = {chunk.chunk_id: chunk for chunk in context}
     citation_ids = ordered_unique(
         draft.citation_ids
-        + [i for policy in draft.applicable_policies for i in policy.citation_ids]
+        + [
+            citation_id
+            for policy in draft.applicable_policies
+            for citation_id in policy.citation_ids
+        ]
     )
     applicable_policies = [
         PolicyGuidance(
@@ -426,43 +439,19 @@ def _apply_compiled_packet_to_draft(
     draft: GeneratedPreflightDraft,
     compiled_packet: CompiledPolicyPacket,
 ) -> GeneratedPreflightDraft:
-    if compiled_packet.insufficient_context:
-        return draft
-
-    compiled_plan_steps = _constraint_statements(compiled_packet.required_steps)
-    compiled_guidance = _constraint_statements(
-        [
-            *compiled_packet.architectural_expectations,
-            *compiled_packet.style_constraints,
-        ]
-    )
-    compiled_review_flags = [
-        f"Avoid: {statement}"
-        for statement in _constraint_statements(compiled_packet.forbidden_patterns)
-    ]
-    compiled_tests = _constraint_statements(compiled_packet.test_expectations)
-    compiled_citation_ids = [citation.chunk_id for citation in compiled_packet.citations]
-    draft_citation_ids = draft.citation_ids or [
-        citation_id for policy in draft.applicable_policies for citation_id in policy.citation_ids
-    ]
-
+    """Fill only derived references after source validation; preserve one body per owner."""
     return draft.model_copy(
         update={
-            "plan_steps": ordered_unique([*compiled_plan_steps, *draft.plan_steps]),
-            "implementation_guidance": ordered_unique(
-                [*compiled_guidance, *draft.implementation_guidance]
-            ),
-            "review_flags": ordered_unique([*compiled_review_flags, *draft.review_flags]),
-            "tests_required": ordered_unique([*compiled_tests, *draft.tests_required]),
-            "citation_ids": ordered_unique([*draft_citation_ids, *compiled_citation_ids]),
+            "citation_ids": ordered_unique(
+                [
+                    citation_id
+                    for policy in draft.applicable_policies
+                    for citation_id in policy.citation_ids
+                ]
+                + [citation.chunk_id for citation in compiled_packet.citations]
+            )
         }
     )
-
-
-def _constraint_statements(
-    constraints: Sequence[CompiledPolicyConstraint],
-) -> list[str]:
-    return [constraint.statement for constraint in constraints]
 
 
 def _trace_step(
