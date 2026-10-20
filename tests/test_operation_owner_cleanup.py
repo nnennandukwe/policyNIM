@@ -69,8 +69,9 @@ def test_clean_close_retries_deferred_aliases_after_releasing_the_handle(
 
 
 @pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("queued", [False, True])
 def test_close_defers_without_raising_or_releasing_uncertain_ownership(
-    tmp_path: Path, completed: bool, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, completed: bool, queued: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An exclusive SQLite writer can't break shutdown or release an unverified active owner."""
     path = tmp_path / "auth.sqlite3"
@@ -84,6 +85,17 @@ def test_close_defers_without_raising_or_releasing_uncertain_ownership(
         global_limit=1,
     )
     assert accepted.operation_id is not None
+    if queued:
+        queued_acceptance = admit_operation(
+            store,
+            principal_id="queued-caller",
+            operation="evaluation_job",
+            daily_limit=5,
+            principal_limit=1,
+            global_limit=1,
+            active_slot=False,
+        )
+        assert queued_acceptance.operation_id is not None
     if completed:
         store.finish(accepted.operation_id, "completed")
     directory = path.with_name(path.name + ".owners")
@@ -98,4 +110,9 @@ def test_close_defers_without_raising_or_releasing_uncertain_ownership(
         store.finish(accepted.operation_id, "completed")
     store.close()
     assert list(directory.iterdir()) == []
+    if queued:
+        with sqlite3.connect(path) as reader:
+            assert reader.execute(
+                "SELECT outcome FROM operation_usage WHERE principal_id = 'queued-caller'"
+            ).fetchone() == ("accepted",)
     assert str(tmp_path) not in caplog.text

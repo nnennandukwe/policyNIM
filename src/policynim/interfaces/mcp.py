@@ -387,6 +387,9 @@ def _failure_class_from_error(exc: BaseException) -> str | None:
                 "admission_unavailable",
                 "admission_busy",
                 "accounting_incomplete",
+                "acceptance_conflict",
+                "acceptance_finalized",
+                "acceptance_not_found",
                 "server_shutting_down",
             }:
                 return code
@@ -1242,7 +1245,7 @@ def _render_beta_dashboard(
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
     )
     usage_text = (
-        f"{usage.request_count} / {usage.quota} accepted operations, {usage.remaining} remaining."
+        f"{usage.request_count} / {usage.quota} reserved work units, {usage.remaining} remaining."
     )
     usage_percent = _beta_usage_percent(usage)
     status_class = f"beta-status-pill beta-status-pill--{account.status}"
