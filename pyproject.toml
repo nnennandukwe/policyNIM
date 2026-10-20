@@ -56,7 +56,7 @@ nvidia-eval = [
   "nvidia-simple-evals==26.3",
 ]
 nvidia-eval-launcher = [
-  "nemo-evaluator-launcher==0.2.4",
+  "nemo-evaluator-launcher==0.2.6",
   "nvidia-nat[eval]==1.6.0",
 ]
 
