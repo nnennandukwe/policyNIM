@@ -125,3 +125,28 @@ def test_missing_generation_mcp_tool_keeps_safe_recovery_guidance(
     assert "preserve" in message.lower()
     assert str(tmp_path) not in message
     assert not settings.generations_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "command", [["search", "--query", "logging"], ["preflight", "--task", "logging"]]
+)
+def test_fresh_generation_cli_explains_ingest_before_inspection(
+    monkeypatch, tmp_path: Path, command: list[str]
+) -> None:
+    """First retrieval must explain how to create state before asking to inspect it."""
+    settings, _, _, _ = seed_legacy(tmp_path)
+    settings = settings.model_copy(update={"generations_dir": tmp_path / "fresh-generations"})
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    def forbid_provider(*args, **kwargs):
+        """A missing local generation must fail before provider construction."""
+        pytest.fail("Fresh generation constructed a provider.")
+
+    monkeypatch.setattr("policynim.providers.nvidia.OpenAI", forbid_provider)
+    result = CliRunner().invoke(cli.app, command)
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert "policynim ingest" in result.output
+    assert "policynim generation inspect" not in result.output
+    assert "verified bundle" in result.output
+    assert "migrate" in result.output
+    assert not settings.generations_dir.exists()

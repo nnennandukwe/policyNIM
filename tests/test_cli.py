@@ -4465,7 +4465,7 @@ def test_evidence_report_command_rejects_empty_output(
     )
 
     assert result.exit_code == 1
-    assert "must not be empty" in result.stderr
+    assert "can't be empty" in result.stderr
 
 
 def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) -> None:

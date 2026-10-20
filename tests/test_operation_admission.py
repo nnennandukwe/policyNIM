@@ -800,7 +800,7 @@ def test_uncertain_accounting_logs_safe_codes_and_operation_reference(
     events = [
         json.loads(record.getMessage())
         for record in caplog.records
-        if record.getMessage().startswith('{"event"')
+        if record.getMessage().startswith('{"')
     ]
     event = next(item for item in events if item["event"] == "operation.storage_failure")
     assert event["phase"] == "finish" and event["exception_class"] == "PermissionError"
@@ -919,3 +919,45 @@ def test_old_incomplete_publication_is_reaped_without_touching_recent_files(tmp_
     os.utime(old, (time.time() - 7200, time.time() - 7200))
     assert store.prune_owner_leases() == 1
     assert not old.exists() and recent.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shared observer and worker ownership protocol")
+def test_report_observer_doesnt_block_recovery_of_a_crashed_worker(tmp_path: Path) -> None:
+    """Read-only inspection can't turn proven dead work into a capacity rejection."""
+    import fcntl
+
+    settings = _settings(tmp_path, mcp_max_concurrent_operations=1)
+    service = OperationAdmissionService(settings)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; "
+            "from policynim.storage.operation_store import OperationStore; "
+            "from policynim.services.operation_admission import admit_operation; "
+            "store=OperationStore(Path(sys.argv[1])); "
+            "admit_operation(store,principal_id='crashed',operation='policy_search',"
+            "daily_limit=5,principal_limit=1,global_limit=1)",
+            str(settings.beta_auth_db_path),
+        ],
+        check=True,
+    )
+    with sqlite3.connect(settings.beta_auth_db_path) as connection:
+        owner = connection.execute(
+            "SELECT owner_id FROM operation_usage WHERE outcome='accepted'"
+        ).fetchone()[0]
+    lease = settings.beta_auth_db_path.with_name(settings.beta_auth_db_path.name + ".owners") / (
+        owner + ".lock"
+    )
+    with lease.open("rb") as observer:
+        fcntl.flock(observer.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        assert (
+            service.run(
+                lambda: "done",
+                principal=_principal(),
+                operation_name="policy_search",
+                cancelled=lambda: False,
+            )
+            == "done"
+        )
+    assert service.store.usage("crashed").interrupted == 1

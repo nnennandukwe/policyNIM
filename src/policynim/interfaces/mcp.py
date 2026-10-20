@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import json
 import logging
 import secrets
@@ -56,7 +57,14 @@ from policynim.interfaces.mcp_authorization import (
     OperationAuthorizationApp,
     record_authorization_failure,
 )
-from policynim.operations import OperationBudget, operation_scope
+from policynim.operations import (
+    OperationBudget,
+    current_correlation_id,
+    emit_operation_event,
+    operation_correlation,
+    operation_scope,
+    safe_exception_diagnostics,
+)
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -375,8 +383,10 @@ def _emit_hosted_event(
     upstream_failure_class: str | None,
     request_id: str | None,
 ) -> None:
+    """Emit fixed event fields with opaque correlation and no request or exception payload."""
     payload = {
         "event": event,
+        "correlation_id": current_correlation_id(),
         "auth_result": auth_result,
         "tool_name": tool_name,
         "latency_ms": latency_ms,
@@ -391,18 +401,35 @@ def _elapsed_ms(start_time: float) -> float:
 
 
 def _failure_class_from_error(exc: BaseException) -> str | None:
+    """Retain stable failure categories without copying exception messages into telemetry."""
     current: BaseException | None = exc
     while current is not None:
+        if isinstance(current, (OperationAdmissionError, ToolError)):
+            code = str(current).split(":", 1)[0]
+            if code in {
+                "server_busy",
+                "principal_busy",
+                "quota_exceeded",
+                "admission_unavailable",
+                "admission_busy",
+                "accounting_incomplete",
+                "acceptance_conflict",
+                "acceptance_finalized",
+                "acceptance_not_found",
+                "server_shutting_down",
+            }:
+                return code
         failure_class = getattr(current, "failure_class", None)
         if isinstance(failure_class, str) and failure_class:
             return failure_class
         current = current.__cause__ or current.__context__
-    return None
+    return type(exc).__name__
 
 
 def _request_id_from_context(ctx: Context) -> str | None:
+    """Hash caller-controlled identifiers so they can't smuggle private text into logs."""
     try:
-        return ctx.request_id
+        return hashlib.sha256(str(ctx.request_id).encode()).hexdigest()[:24]
     except ValueError:
         return None
 
@@ -534,6 +561,27 @@ async def _run_logged_tool(
     principal: AuthenticatedPrincipal | None = None,
     charge_usage: bool = True,
 ) -> dict[str, object]:
+    """Mint a content-free correlation ID shared by HTTP, admission and provider events."""
+    with operation_correlation():
+        return await _run_correlated_tool(
+            tool_name,
+            operation,
+            ctx=ctx,
+            executor=executor,
+            principal=principal,
+            charge_usage=charge_usage,
+        )
+
+
+async def _run_correlated_tool(
+    tool_name: str,
+    operation: Callable[[], dict[str, object]],
+    *,
+    ctx: Context,
+    executor: _ToolExecutor,
+    principal: AuthenticatedPrincipal | None = None,
+    charge_usage: bool = True,
+) -> dict[str, object]:
     """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
     auth_result = "authorized" if get_access_token() is not None else _HOSTED_AUTH_RESULT.get()
@@ -568,7 +616,20 @@ async def _run_logged_tool(
             raise ToolError(_safe_tool_error(exc)) from exc
         if isinstance(exc, _InvalidToolRequest):
             raise ToolError(str(exc)) from exc
-        raise
+        if isinstance(exc, ToolError):
+            raise
+        emit_operation_event(
+            level=logging.ERROR,
+            event="operation.unexpected_failure",
+            tool_name=tool_name,
+            **safe_exception_diagnostics(exc),
+        )
+        raise ToolError(
+            "internal_error: PolicyNIM couldn't complete this operation. "
+            "Ask the operator to inspect structured logs for correlation "
+            + str(current_correlation_id())
+            + "."
+        ) from None
 
     _emit_hosted_event(
         "mcp.tool",
@@ -951,13 +1012,21 @@ def _register_beta_routes(
             )
         except (PolicyNIMError, ProviderError) as exc:
             return _render_beta_landing(settings, message=str(exc), status_code=502)
-        except Exception:
-            LOGGER.exception("Unexpected hosted beta OAuth callback failure.")
+        except Exception as exc:
+            emit_operation_event(
+                level=logging.ERROR,
+                event="auth.callback_failure",
+                **safe_exception_diagnostics(exc),
+            )
+            LOGGER.error(
+                "Hosted beta callback failed: unexpected_error, stage=unknown, class=%s. "
+                "Check identity-provider reachability and auth storage health.",
+                type(exc).__name__,
+            )
             return _render_beta_landing(
                 settings,
                 message=(
-                    "GitHub sign-in failed due to an unexpected upstream error. "
-                    "Retry the sign-in flow."
+                    "GitHub sign-in failed due to an unexpected error. Retry the sign-in flow."
                 ),
                 status_code=502,
             )
@@ -1238,7 +1307,7 @@ def _render_beta_dashboard(
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
     )
     usage_text = (
-        f"{usage.request_count} / {usage.quota} accepted operations, {usage.remaining} remaining."
+        f"{usage.request_count} / {usage.quota} reserved work units, {usage.remaining} remaining."
     )
     usage_percent = _beta_usage_percent(usage)
     status_class = f"beta-status-pill beta-status-pill--{account.status}"
@@ -1406,7 +1475,8 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
             ) from exc
         record_operation_storage_failure(exc, phase="beta_auth_initialization")
         LOGGER.error(
-            "Hosted beta authentication is unavailable. Env-issued break-glass authentication "
+            "Hosted beta authentication is unavailable: storage_unavailable. "
+            "Env-issued break-glass authentication "
             "remains available, but protected operations still require healthy operation storage."
         )
         return None
@@ -1746,7 +1816,7 @@ def _run_streamable_http_app(
     """Serve the hosted HTTP app through uvicorn."""
     import uvicorn
 
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level, access_log=False)
     server = uvicorn.Server(config)
     server.run()
 
