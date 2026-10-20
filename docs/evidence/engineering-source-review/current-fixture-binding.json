@@ -3,6 +3,7 @@
   "scenario_sha256": "sha256:57c2d66352f56f18955431d96d558fdeb2183345ea6134bef82328466aac6990",
   "reviewed_semantic_payload_sha256": "sha256:361c8ae44b0ebfa1c7b16a8be9a72d76a2b7fba8086cd4a1b63e937ce8510e9e",
   "review_receipt_sha256": "sha256:341dc260cc0e31d891605122f2be9f4e6992cf29ee2382242a86c1f6f43e9e0a",
-  "metadata_change": "review_status annotation only; reviewed expectations unchanged",
-  "model_evaluated": false
+  "model_evaluated": false,
+  "reviewed_fixture_revision": "ecf3f1bebaf38529150ca1bef94d345280759b96",
+  "changes_since_reviewed_fixture": "review_status annotation only; five role clarifications were already included and independently rechecked in the referenced review"
 }

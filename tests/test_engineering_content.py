@@ -292,6 +292,7 @@ def test_authored_expectations_match_the_independent_source_review() -> None:
     full_bytes = (evidence / "full.json").read_bytes()
     binding = json.loads((evidence / "current-fixture-binding.json").read_text())
     assert binding["kind"] == "derived_current_fixture_binding"
+    assert binding["reviewed_fixture_revision"] == final["source_revision"]
     assert binding["scenario_sha256"] == (
         "sha256:"
         + hashlib.sha256((ROOT / "evals/engineering_scenarios.json").read_bytes()).hexdigest()
