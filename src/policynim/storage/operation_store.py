@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,26 @@ from pydantic import BaseModel, ConfigDict
 from policynim.storage.operation_lease import OperationOwner
 
 OperationOutcome = Literal["completed", "failed", "cancelled", "interrupted"]
+AdmissionRejection = Literal["principal_busy", "server_busy", "quota_exceeded", "invalid_token"]
+
+
+class CredentialState(BaseModel):
+    """Return stored key/account facts without making an authorization decision."""
+
+    model_config = ConfigDict(frozen=True)
+    account_id: int
+    account_status: str
+    revoked_at: str | None
+
+
+class OperationSnapshot(BaseModel):
+    """Expose one write-locked accounting snapshot to the service's admission policy."""
+
+    model_config = ConfigDict(frozen=True)
+    active: int
+    principal_active: int
+    daily_accepted: int
+    credential: CredentialState | None = None
 
 
 class OperationAdmission(BaseModel):
@@ -49,6 +70,15 @@ class OperationStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._owner = OperationOwner(path)
+        self._has_admitted = False
+        try:
+            self._initialize_schema()
+        except BaseException:
+            self._owner.close()
+            raise
+
+    def _initialize_schema(self) -> None:
+        """Initialize operation tables without leaving unused owner files on storage failure."""
         with closing(self._connect()) as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS operation_usage (
@@ -73,50 +103,50 @@ class OperationStore:
         """Open a bounded-wait connection with explicit transaction ownership."""
         return sqlite3.connect(self.path, timeout=0.1, isolation_level=None)
 
-    def admit(
+    def reserve(
         self,
         *,
         principal_id: str,
         operation: str,
-        daily_limit: int,
-        principal_limit: int,
-        global_limit: int,
-        beta_account_id: int | None = None,
+        decide: Callable[[OperationSnapshot], AdmissionRejection | None],
         credential_id: str | None = None,
         now: float | None = None,
     ) -> OperationAdmission:
-        """Commit exactly one charge only when authority and all limits permit it."""
+        """Read facts and insert a reservation under one transaction using a service decision."""
         timestamp = time.time() if now is None else now
         usage_date = datetime.fromtimestamp(timestamp, UTC).date().isoformat()
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            if beta_account_id is not None:
-                authorized = connection.execute(
-                    "SELECT 1 FROM accounts a JOIN api_keys k ON k.account_id = a.id "
-                    "WHERE a.id = ? AND a.status = 'active' "
-                    "AND k.key_hash = ? AND k.revoked_at IS NULL",
-                    (beta_account_id, credential_id),
+            credential = None
+            if credential_id is not None:
+                row = connection.execute(
+                    "SELECT a.id, a.status, k.revoked_at FROM accounts a "
+                    "JOIN api_keys k ON k.account_id = a.id WHERE k.key_hash = ?",
+                    (credential_id,),
                 ).fetchone()
-                if authorized is None:
-                    return OperationAdmission(rejection="invalid_token")
-            active = connection.execute(
-                "SELECT COUNT(*) FROM operation_usage WHERE outcome = 'accepted'"
-            ).fetchone()[0]
-            if active >= global_limit:
-                return OperationAdmission(rejection="server_busy")
-            principal_active = connection.execute(
-                "SELECT COUNT(*) FROM operation_usage "
-                "WHERE principal_id = ? AND outcome = 'accepted'",
-                (principal_id,),
-            ).fetchone()[0]
-            if principal_active >= principal_limit:
-                return OperationAdmission(rejection="principal_busy")
-            accepted = connection.execute(
-                "SELECT COUNT(*) FROM operation_usage WHERE principal_id = ? AND usage_date = ?",
-                (principal_id, usage_date),
-            ).fetchone()[0]
-            if accepted >= daily_limit:
-                return OperationAdmission(rejection="quota_exceeded")
+                if row is not None:
+                    credential = CredentialState(
+                        account_id=row[0], account_status=row[1], revoked_at=row[2]
+                    )
+            snapshot = OperationSnapshot(
+                active=connection.execute(
+                    "SELECT COUNT(*) FROM operation_usage WHERE outcome = 'accepted'"
+                ).fetchone()[0],
+                principal_active=connection.execute(
+                    "SELECT COUNT(*) FROM operation_usage "
+                    "WHERE principal_id = ? AND outcome = 'accepted'",
+                    (principal_id,),
+                ).fetchone()[0],
+                daily_accepted=connection.execute(
+                    "SELECT COUNT(*) FROM operation_usage "
+                    "WHERE principal_id = ? AND usage_date = ?",
+                    (principal_id, usage_date),
+                ).fetchone()[0],
+                credential=credential,
+            )
+            rejection = decide(snapshot)
+            if rejection is not None:
+                return OperationAdmission(rejection=rejection)
             operation_id = uuid.uuid4().hex
             connection.execute(
                 "INSERT INTO operation_usage VALUES (?, ?, ?, ?, 'accepted', ?, ?, NULL, ?)",
@@ -130,6 +160,7 @@ class OperationStore:
                     self._owner.identity,
                 ),
             )
+            self._has_admitted = True
             return OperationAdmission(operation_id=operation_id)
 
     def finish(self, operation_id: str, outcome: OperationOutcome) -> None:
@@ -156,6 +187,9 @@ class OperationStore:
 
     def close(self) -> None:
         """Release process ownership only after every accepted worker has drained."""
+        if not self._has_admitted:
+            self._owner.close()
+            return
         with closing(self._connect()) as connection:
             active = connection.execute(
                 "SELECT COUNT(*) FROM operation_usage WHERE owner_id = ? AND outcome = 'accepted'",

@@ -292,7 +292,7 @@ class ShellCommandActionRequest(RuntimeActionRequestBase):
     @classmethod
     def validate_command(cls, value: list[str]) -> list[str]:
         """Validate executable and argument boundaries without changing their contents."""
-        if not value[0]:
+        if not value[0].strip():
             raise ValueError("command executable must not be empty.")
         for index, item in enumerate(value):
             if "\x00" in item:

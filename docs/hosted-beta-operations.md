@@ -388,6 +388,8 @@ Hosted authentication doesn't consume operation allowance. Accepted expensive wo
 commits, before providers start. Later provider failure, cancellation or process loss
 keeps that charge: upstream usage may already exist. Invalid credentials, missing
 scopes, saturation and exhausted allowance start no provider and add no charge.
+A cancelled/expired worker is rejected before reservation, and cancellation is
+checked again with the write-locked snapshot; neither check charges usage.
 Initialization, discovery, public health, resources and job polling aren't expensive
 operations. Durable evaluation submission deduplication and worker integration belong
 to #101; polling or returning an existing submission must never create another charge.

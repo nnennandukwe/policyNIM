@@ -10,7 +10,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from policynim.services.authorization import AuthenticatedPrincipal
 from policynim.services.grounded_mcp import (
@@ -52,6 +52,15 @@ def register_grounded_capabilities(
         read_only_hint=True, destructive_hint=False, idempotent_hint=False, open_world_hint=True
     )
 
+    def validated_request(task: str, domain: str | None, top_k: int | None) -> CompileRequest:
+        """Reject malformed guidance input before an admitted operation can consume allowance."""
+        try:
+            return CompileRequest(task=task, domain=domain, top_k=resolve_top_k(top_k))
+        except ValidationError as exc:
+            error = exc.errors(include_input=False)[0]
+            location = ".".join(str(part) for part in error["loc"]) or "request"
+            raise ToolError(f"invalid_request: {location}: {error['msg']}.") from None
+
     @server.tool(name="policy_compile", annotations=annotations)
     async def compile_tool(
         task: Annotated[str, Field(description="The engineering task to compile policies for.")],
@@ -62,12 +71,13 @@ def register_grounded_capabilities(
     ) -> CompileResult:
         """Compile citation-backed constraints from the effective pinned policy generation."""
         principal = get_principal("policy_compile")
+        request = validated_request(task, domain, top_k)
 
         def operation() -> dict[str, object]:
             """Validate input and own the compiler graph inside shared admission."""
             return compile_policy(
                 get_settings(),
-                CompileRequest(task=task, domain=domain, top_k=resolve_top_k(top_k)),
+                request,
                 principal=principal,
             ).model_dump(mode="json")
 
@@ -83,12 +93,16 @@ def register_grounded_capabilities(
     ) -> PreflightEvidenceTraceResult:
         """Run preflight once and return the same run's compiled-packet evidence trace."""
         principal = get_principal("policy_preflight_evidence")
+        validated = validated_request(task, domain, top_k)
+        request = PreflightRequest(
+            task=validated.task, domain=validated.domain, top_k=validated.top_k
+        )
 
         def operation() -> dict[str, object]:
             """Materialize evidence from the single owned preflight run."""
             return preflight_evidence(
                 get_settings(),
-                PreflightRequest(task=task, domain=domain, top_k=resolve_top_k(top_k)),
+                request,
                 principal=principal,
             ).model_dump(mode="json")
 

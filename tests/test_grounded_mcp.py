@@ -567,3 +567,59 @@ def test_retained_resources_use_their_sealed_embedding_identity(generation, upda
     )
     with pytest.raises(GenerationError):
         create_index_store(changed)
+
+
+def test_invalid_guidance_does_not_charge_principal_allowance(
+    generation, monkeypatch, tmp_path
+) -> None:
+    """Qodo regression: request rejection happens before accepted-operation accounting."""
+    from policynim.services.authorization import AuthenticatedPrincipal
+
+    settings, _, generation_id = generation
+    settings = settings.model_copy(
+        update={
+            "beta_auth_db_path": tmp_path / "invalid-input-auth.sqlite3",
+            "mcp_principal_daily_operation_quota": 1,
+        }
+    )
+    monkeypatch.setattr(registration, "get_settings", lambda: settings)
+    calls: list[str] = []
+
+    def compile_fixture(*args, **kwargs):
+        """Record a genuinely valid admitted request after the invalid attempts."""
+        calls.append("compiled")
+        return CompileResult(
+            generation_id=generation_id, packet=traced_fixture(generation_id).compiled_packet
+        )
+
+    monkeypatch.setattr(registration, "compile_policy", compile_fixture)
+    caller = AuthenticatedPrincipal(
+        issuer="https://issuer.example",
+        subject="request-validation",
+        client_id="fixture",
+        scopes=frozenset({"policies:read", "policies:evaluate"}),
+        source="oauth",
+    )
+
+    async def exercise() -> None:
+        """Leave no accounting database after schema-invalid task/domain input."""
+        context = mcp_module._HOSTED_PRINCIPAL.set(caller)
+        try:
+            runtime = mcp_module._ToolExecutor(settings=settings)
+            server = mcp_module._register_tools(mcp_module._new_mcp_server(runtime))
+            async with Client(server) as client:
+                for name in ("policy_compile", "policy_preflight_evidence"):
+                    for arguments in ({"task": " "}, {"task": "review", "domain": " "}):
+                        rejected = await client.call_tool(name, arguments)
+                        assert rejected.is_error
+                        assert isinstance(rejected.content[0], TextContent)
+                        assert "invalid_request" in rejected.content[0].text
+                assert not settings.beta_auth_db_path.exists()
+                assert calls == []
+                accepted = await client.call_tool("policy_compile", {"task": "review"})
+                assert not accepted.is_error
+                assert calls == ["compiled"]
+        finally:
+            mcp_module._HOSTED_PRINCIPAL.reset(context)
+
+    asyncio.run(exercise())

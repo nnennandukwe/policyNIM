@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -136,6 +138,8 @@ def test_runtime_decision_matches_unmodified_arguments(
     [
         ([], "at least 1 item"),
         ([""], "executable must not be empty"),
+        (["   "], "executable must not be empty"),
+        (["\t\n"], "executable must not be empty"),
         (["bad\x00executable"], "NUL"),
         (_command("bad\x00argument"), "NUL"),
     ],
@@ -187,6 +191,45 @@ def test_shell_models_preserve_argument_contents(
     assert model.model_validate_json(request.model_dump_json()).command == command
     with pytest.raises(ValidationError):
         model.model_validate_json(_payload(Path.cwd(), []))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires the POSIX rm command.")
+def test_empty_operands_cant_bypass_destructive_command_screening(
+    runtime_settings: Settings, tmp_path: Path
+) -> None:
+    """Screen an empty-operand variant while preserving the exact execution request."""
+    target = tmp_path / "owned-target.txt"
+    target.write_text("Owned test data.")
+    command = ["rm", "", "-rf", target.name]
+    # Prove the actual command can remove its target despite reporting an
+    # empty-operand error; the test owns every affected path.
+    subprocess.run(command, cwd=tmp_path, capture_output=True, check=False, timeout=10)
+    assert not target.exists()
+    target.write_text("Owned test data.")
+
+    assert runtime_settings.corpus_dir is not None
+    source = runtime_settings.corpus_dir / "A.md"
+    source.write_text(source.read_text().replace('"^A$"', '"^rm -rf"'))
+    GenerationStore(
+        root=runtime_settings.generations_dir,
+        embedding=EmbeddingIdentity(
+            model=runtime_settings.nvidia_embed_model, endpoint=runtime_settings.nvidia_base_url
+        ),
+    ).build(runtime_settings, MockEmbedder())
+    result = CliRunner().invoke(
+        cli.app, ["runtime", "execute", "--input", "-"], input=_payload(tmp_path, command)
+    )
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["execution_outcome"] == "blocked"
+    assert target.read_text() == "Owned test data."
+    events = RuntimeEvidenceStore(
+        path=runtime_settings.runtime_evidence_db_path
+    ).list_session_events("argv-check")
+    assert [event.event_kind for event in events] == ["decision", "blocked"]
+    assert all(
+        isinstance(event.request, ShellCommandExecutionRequest) and event.request.command == command
+        for event in events
+    )
 
 
 def test_evidence_report_reads_legacy_nul_decision(

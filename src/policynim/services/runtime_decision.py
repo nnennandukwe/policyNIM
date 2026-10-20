@@ -258,9 +258,11 @@ def _ensure_index_ready(index_store: IndexStore) -> None:
 def _normalize_runtime_action(request: RuntimeActionRequest) -> _NormalizedRuntimeAction:
     """Normalize one runtime request into a deterministic matching target."""
     if isinstance(request, ShellCommandActionRequest):
+        rendered = shlex.join(request.command)
+        without_empty_operands = shlex.join(item for item in request.command if item != "")
         return _NormalizedRuntimeAction(
             kind=request.kind,
-            match_values=(shlex.join(request.command),),
+            match_values=tuple(dict.fromkeys((rendered, without_empty_operands))),
         )
     if isinstance(request, FileWriteActionRequest):
         return _NormalizedRuntimeAction(
@@ -367,7 +369,8 @@ def _rule_matches(
         return False
     if rule.action == "shell_command":
         return any(
-            re.search(pattern, normalized_request.match_values[0]) is not None
+            re.search(pattern, candidate) is not None
+            for candidate in normalized_request.match_values
             for pattern in rule.command_regexes
         )
     if rule.action == "file_write":

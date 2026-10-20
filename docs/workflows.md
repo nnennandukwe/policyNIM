@@ -547,10 +547,14 @@ retains direct-child termination; process-tree cleanup isn't guaranteed there.
 Shell `command` values are argument arrays passed directly to the process.
 PolicyNIM preserves each string, including surrounding whitespace and empty
 arguments after the executable. The array must contain a nonempty executable
-name, and no element may contain a NUL byte. Invalid commands are rejected
-before runtime decisions, process creation, or evidence writes. Command regex
-rules match the `shlex.join` rendering of the unchanged array; results and
-stored evidence retain that array. Existing evidence isn't rewritten; evidence
+name that isn't whitespace-only, and no element may contain a NUL byte. Invalid
+commands are rejected before runtime decisions, process creation, or evidence
+writes. Command regex
+rules screen both the `shlex.join` rendering of the unchanged array and a
+rendering with empty operands omitted. A match in either form applies the rule.
+This conservative check can deny a benign command whose empty operands matter;
+regex screening isn't semantic shell isolation. Execution, results, and stored
+evidence retain the original array. Existing evidence isn't rewritten; evidence
 reports can still read legacy NUL-containing decisions as incomplete executions.
 
 The runtime CLI flow is JSON-first and file- or stdin-driven:

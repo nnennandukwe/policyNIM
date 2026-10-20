@@ -223,6 +223,7 @@ class _ToolExecutor:
 
         def run_owned() -> _OperationResult:
             """Apply hosted accounting around the complete worker/service lifecycle."""
+            budget.remaining()
             if principal is not None:
                 if operation_name is None:
                     raise ValueError("Hosted work requires an operation name.")
@@ -235,6 +236,7 @@ class _ToolExecutor:
                     principal=principal,
                     operation_name=operation_name,
                     cancelled=budget.cancelled.is_set,
+                    check_ready=budget.remaining,
                 )
             return run_scoped()
 
