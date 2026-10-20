@@ -215,6 +215,12 @@ def test_discovery_scope_challenges_and_principal_propagation(
         assert rpc(client, "tools/list", token=None).status_code == 401
         assert client.get("/healthz").status_code == 503  # no index; no auth requirement
     denied.assert_not_called()
+    from policynim.services.operation_admission import principal_identity
+    from policynim.storage.operation_store import OperationStore
+
+    usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
+    assert usage.accepted == 1  # only search, never metadata/discovery/scope rejections
+    assert usage.completed == 1
     assert len(principals) == 1
     principal = principals[0]
     assert principal is not None
@@ -1003,7 +1009,7 @@ def test_introspection_total_deadline_and_recovery(tmp_path: Path) -> None:
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("rejection", ["suspended", "quota", "revoked"])
+@pytest.mark.parametrize("rejection", ["suspended", "revoked"])
 def test_known_local_key_denials_never_reach_the_issuer(tmp_path: Path, rejection: str) -> None:
     """Distinguish a rejected issued key from an unrecognized opaque issuer token."""
     settings = oauth_settings(
@@ -1111,3 +1117,40 @@ def test_partial_http_body_times_out_and_releases_auth_admission(
                 assert (await client.post("/mcp", json=message, headers=headers)).status_code == 200
 
     asyncio.run(exercise())
+
+
+def test_quota_exhaustion_keeps_http_discovery_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real HTTP flow charges search once while discovery and rejected work stay free."""
+    from policynim.services.operation_admission import principal_identity
+    from policynim.storage.operation_store import OperationStore
+
+    settings = oauth_settings(tmp_path, mcp_principal_daily_operation_quota=1)
+    install_issuer(monkeypatch, settings, token_claims())
+    calls: list[str] = []
+
+    def search(**arguments: object) -> dict[str, object]:
+        """Stand in only for accepted service/provider work."""
+        calls.append(str(arguments["query"]))
+        return SearchResult(query=str(arguments["query"]), top_k=5, hits=[]).model_dump(mode="json")
+
+    monkeypatch.setattr(mcp_module, "_run_policy_search", search)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        for _ in range(3):
+            assert rpc(client, "tools/list").status_code == 200
+        first = rpc(
+            client, "tools/call", {"name": "policy_search", "arguments": {"query": "first"}}
+        )
+        assert first.status_code == 200 and not first.json()["result"]["isError"]
+        denied = rpc(
+            client, "tools/call", {"name": "policy_search", "arguments": {"query": "second"}}
+        )
+        assert denied.status_code == 200 and denied.json()["result"]["isError"]
+        assert "00:00 UTC" in str(denied.json())
+        assert rpc(client, "tools/list").status_code == 200
+    assert calls == ["first"]
+    usage = OperationStore(settings.beta_auth_db_path).usage(principal_identity(ISSUER, "user-123"))
+    assert (usage.accepted, usage.completed) == (1, 1)

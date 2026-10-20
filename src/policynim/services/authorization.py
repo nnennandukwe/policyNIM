@@ -62,6 +62,7 @@ class AuthenticatedPrincipal:
     scopes: frozenset[str]
     source: Literal["oauth", "beta_key", "operator_key"]
     expires_at: int | None = None
+    credential_id: str | None = None
 
 
 def authorize_operation(principal: AuthenticatedPrincipal, operation: str) -> None:
@@ -101,6 +102,7 @@ def principal_from_access_token(token: AccessToken) -> AuthenticatedPrincipal:
         scopes=frozenset(token.scopes),
         source=source,
         expires_at=token.expires_at,
+        credential_id=claims.get("policynim_credential_id"),
     )
 
 
@@ -115,6 +117,9 @@ def legacy_principal(*, token: str, account_id: int | None = None) -> Authentica
         client_id="legacy-beta" if account_id is not None else "legacy-operator",
         scopes=frozenset(SUPPORTED_SCOPES),
         source="beta_key" if account_id is not None else "operator_key",
+        credential_id=hashlib.sha256(token.encode()).hexdigest()
+        if account_id is not None
+        else None,
     )
 
 
@@ -168,7 +173,11 @@ class IntrospectionTokenVerifier:
                     subject=principal.subject,
                     scopes=sorted(principal.scopes),
                     resource=self.resource,
-                    claims={"iss": principal.issuer, "policynim_source": principal.source},
+                    claims={
+                        "iss": principal.issuer,
+                        "policynim_source": principal.source,
+                        "policynim_credential_id": principal.credential_id,
+                    },
                 )
         issuer = self._settings.mcp_oauth_issuer_url
         client_id = self._settings.mcp_oauth_client_id

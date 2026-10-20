@@ -37,7 +37,7 @@ Hosted beta notes:
 
 - The server uses Python MCP SDK `2.2.0`, serving MCP `2026-07-28` and legacy
   clients over stateless HTTP. Beta API keys remain the authorization mechanism;
-  the SDK upgrade does not introduce standards-based MCP OAuth.
+  the SDK upgrade doesn't introduce standards-based MCP OAuth.
 - Set `POLICYNIM_MCP_PUBLIC_BASE_URL` to the deployed origin so MCP Host and
   Origin checks allow the public endpoint. Reverse proxies must preserve an
   allowed Host header; clients without an Origin header remain supported.
@@ -49,11 +49,11 @@ Hosted beta notes:
 - A server process admits one key-regeneration request per account at a time.
   An overlapping request receives HTTP `409`; wait for the first request and
   refresh `/beta` before trying again. Later deliberate rotations still revoke
-  the previous key. This guard does not coordinate independent server processes.
+  the previous key. This guard doesn't coordinate independent server processes.
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret
-- `POLICYNIM_TOKEN` is a client-side shell variable only. It is not a
+- `POLICYNIM_TOKEN` is a client-side shell variable only. It'sn't a
   PolicyNIM app setting
 - `POLICYNIM_MCP_BEARER_TOKENS` is optional and reserved for operator
   break-glass access on `/mcp`
@@ -110,7 +110,7 @@ GitHub Actions smoke:
   because NVIDIA embeddings, reranking, or grounded generation is temporarily
   unavailable
 - for transient timeout, connection, rate-limit, or server errors, retry after a short delay
-- HTTP 410 is classified as `endpoint_unavailable` and is not retried; verify
+- HTTP 410 is classified as `endpoint_unavailable` and isn't retried; verify
   the operation's model and endpoint configuration against the current NVIDIA
   catalog and follow [provider recovery](hosted-provider-recovery.md)
 - if the failure persists, the operator should inspect hosted MCP logs for
@@ -125,8 +125,8 @@ GitHub Actions smoke:
 
 ### Service Unavailable
 
-- if the hosted MCP URL does not respond, or `/healthz` returns `503`, the
-  hosted service or baked local index is not ready yet
+- if the hosted MCP URL doesn't respond, or `/healthz` returns `503`, the
+  hosted service or baked local index isn't ready yet
 - retry after the service becomes healthy. If you operate the service, check the
   Railway deploy state and `/healthz` first
 - if `/healthz` includes `Local index readiness could not be inspected`, use the
@@ -268,7 +268,8 @@ Important hosted behavior:
 - `/mcp` returns:
   - `401 {"error":"Unauthorized."}` for missing, invalid, or revoked bearer tokens
   - `403 {"error":"Account suspended."}` for suspended self-serve accounts
-  - `429 {"error":"Quota exceeded."}` when the UTC-day request quota is exhausted
+  - MCP tool error `quota_exceeded` when accepted-operation allowance is exhausted;
+    discovery remains usable, and the tool message gives the UTC reset time
 - hosted MCP logs emit one JSON object per line for auth rejects and tool calls,
   including `auth_result`, `tool_name`, `latency_ms`, and
   `upstream_failure_class`
@@ -305,7 +306,7 @@ uv run policynim beta-admin audit-log --event-type api_key_rotated --limit 10
 
 The audit log output is JSON, newest-first, and redacts secret-bearing detail
 keys. It may show API key prefixes because those are stored as recovery metadata;
-it must not expose full API keys, bearer tokens, or key hashes.
+it mustn't expose full API keys, bearer tokens, or key hashes.
 
 Optional checks stay explicitly opt-in:
 
@@ -378,3 +379,65 @@ They don't include task text, policy text, credentials, response bodies, or exce
 messages. Token counts describe responses that supplied usage; they aren't a bill
 or proof that failed attempts were free. Stage events and attempt events are separate
 measurements and shouldn't be added together as total latency.
+
+
+## Principal operation limits
+
+Hosted authentication doesn't consume operation allowance. Accepted expensive work
+(search and preflight) charges once when its admission transaction
+commits, before providers start. Later provider failure, cancellation or process loss
+keeps that charge: upstream usage may already exist. Invalid credentials, missing
+scopes, saturation and exhausted allowance start no provider and add no charge.
+Initialization, discovery, public health, resources and job polling aren't expensive
+operations. Durable evaluation submission deduplication and worker integration belong
+to #101; polling or returning an existing submission must never create another charge.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` | `10` | Global active work, held until worker cleanup finishes |
+| `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS_PER_PRINCIPAL` | `2` | Active work per authenticated issuer/subject |
+| `POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA` | `500` | Accepted operations per OAuth/operator principal per UTC day |
+| `POLICYNIM_BETA_DAILY_REQUEST_QUOTA` | `500` | Accepted operations per beta account per UTC day; historical name retained |
+| `POLICYNIM_BETA_AUTH_DB_PATH` | `data/runtime/auth.sqlite3` | Durable hosted account and operation state, including OAuth-only usage |
+
+All numeric limits must be positive. Settings retain constructor, environment and
+configured dotenv/default precedence. OAuth principal identity uses issuer plus
+subject, so switching clients doesn't reset usage. Beta identity uses the account,
+so key rotation doesn't reset it. Operator key replacement creates a new principal;
+operators must rotate keys deliberately and keep their aggregate provider budget.
+The portal's `accepted operations` count and remaining allowance use the new
+operation rows. Historical HTTP authentication counters remain preserved separately
+and aren't represented as provider work. This migration starts accepted-work usage
+from zero; it doesn't rewrite audit history.
+
+The service serializes key/account revalidation, daily quota and global/principal
+active limits with SQLite `BEGIN IMMEDIATE`. Authentication alone grants no future
+admission: key rotation, revocation and suspension are checked again at admission.
+No token or raw task/policy content is stored in operation rows. Rows contain a
+hashed principal identifier, random operation ID, operation name, timestamps, local
+process ID and outcome. Outcomes are completed, failed, cancelled or interrupted;
+accepted rows remain active until cleanup. Provider token usage remains `unknown`
+in this ledger; existing stage events report measured provider usage when supplied.
+Neither accepted-operation counts nor estimated usage imply financial billing.
+
+The supported topology is one instance with its persistent writable state volume.
+Each service holds a private kernel-backed owner lease alongside the database in
+`<database>.owners/`. Process exit releases that lease even when a restarted
+container reuses its PID. Startup marks accepted rows from unlocked prior owners
+interrupted without refunding usage. It preserves live owners and unknown/missing
+lease files. Back up the database and owner directory together; don't delete or
+replace lease files while the service runs. If ownership can't be proven, stop the
+service, preserve state and inspect abandoned rows before repairing them. These
+local filesystem locks aren't cross-host coordination; don't add replicas.
+Terminal writes retry SQLite lock contention for a bounded 1.5 seconds before
+reporting incomplete accounting. Active capacity stays reserved during that retry.
+
+MCP errors `server_busy` and `principal_busy` tell callers to retry after active work
+finishes. `quota_exceeded` tells them to retry after 00:00 UTC. Database lock/open
+failures return `admission_unavailable` before providers start: check the volume and
+writer locks before retrying. If recording a terminal outcome fails after accepted
+work, `accounting_incomplete` warns that work may have completed and advises against
+blind retries. The accepted row and charge stay intact; inspect and recover state.
+Keep the hosted SQLite file on the persistent volume, include it in backups, and
+monitor its size. This release doesn't establish a retention/capacity envelope;
+#103 owns measured operating limits and retention policy.

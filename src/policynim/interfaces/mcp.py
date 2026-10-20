@@ -76,6 +76,10 @@ from policynim.services.authorization import (
     principal_from_access_token,
 )
 from policynim.services.health import log_health_failure
+from policynim.services.operation_admission import (
+    OperationAdmissionError,
+    OperationAdmissionService,
+)
 from policynim.settings import Settings, get_settings
 from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
 from policynim.types import (
@@ -178,10 +182,18 @@ class _ToolExecutor:
         self._lock = Lock()
         self._budgets: set[OperationBudget] = set()
         self._closed = False
+        self._operation_usage: OperationAdmissionService | None = None
+        self._usage_lock = Lock()
         self._drained = Event()
         self._drained.set()
 
-    async def run(self, operation: Callable[[], _OperationResult]) -> _OperationResult:
+    async def run(
+        self,
+        operation: Callable[[], _OperationResult],
+        *,
+        principal: AuthenticatedPrincipal | None = None,
+        operation_name: str | None = None,
+    ) -> _OperationResult:
         """Admit one budget, borrow shared clients, and cooperatively cancel later stages."""
         from policynim.providers.lifecycle import borrow_clients
 
@@ -200,10 +212,27 @@ class _ToolExecutor:
             self._budgets.add(budget)
             self._drained.clear()
 
-        def run_owned() -> _OperationResult:
-            """Scope clients and the deadline to this worker's service graph."""
+        def run_scoped() -> _OperationResult:
+            """Keep cleanup and final deadline checks inside the recorded outcome."""
             with borrow_clients(self._clients), operation_scope(budget):
                 return operation()
+
+        def run_owned() -> _OperationResult:
+            """Apply hosted accounting around the complete worker/service lifecycle."""
+            if principal is not None:
+                if operation_name is None:
+                    raise ValueError("Hosted work requires an operation name.")
+                with self._usage_lock:
+                    if self._operation_usage is None:
+                        self._operation_usage = OperationAdmissionService(settings)
+                    usage = self._operation_usage
+                return usage.run(
+                    run_scoped,
+                    principal=principal,
+                    operation_name=operation_name,
+                    cancelled=budget.cancelled.is_set,
+                )
+            return run_scoped()
 
         try:
             return await _run_sync_until_complete(
@@ -227,6 +256,8 @@ class _ToolExecutor:
             """Keep the entire shutdown sequence owned even if its awaiting task is cancelled."""
             self._drained.wait()
             self._clients.close()
+            if self._operation_usage is not None:
+                self._operation_usage.store.close()
 
         with anyio.CancelScope(shield=True):
             await _run_sync_until_complete(drain_and_close)
@@ -469,13 +500,14 @@ async def _run_logged_tool(
     *,
     ctx: Context,
     executor: _ToolExecutor,
+    principal: AuthenticatedPrincipal | None = None,
 ) -> dict[str, object]:
     """Run admitted tool work and record its outcome without request content."""
     start_time = time.perf_counter()
     auth_result = "authorized" if get_access_token() is not None else _HOSTED_AUTH_RESULT.get()
     request_id = _request_id_from_context(ctx)
     try:
-        result = await executor.run(operation)
+        result = await executor.run(operation, principal=principal, operation_name=tool_name)
     except asyncio.CancelledError:
         _emit_hosted_event(
             "mcp.tool",
@@ -528,6 +560,8 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
             "Historical references never use a newer generation. Ask the operator to inspect "
             "the retained generations."
         )
+    if isinstance(exc, OperationAdmissionError):
+        return str(exc)
     if isinstance(exc, IndexCompatibilityError):
         return (
             "The policy index is incompatible or incomplete. Ask the operator to preserve "
@@ -635,6 +669,7 @@ def _register_tools(
             ),
             ctx=ctx,
             executor=executor,
+            principal=principal,
         )
         return PreflightResult.model_validate(result)
 
@@ -658,6 +693,7 @@ def _register_tools(
             ),
             ctx=ctx,
             executor=executor,
+            principal=principal,
         )
         return SearchResult.model_validate(result)
 
@@ -667,7 +703,12 @@ def _register_tools(
         name: str, operation: Callable[[], dict[str, object]], ctx: Context
     ) -> dict[str, object]:
         """Keep every grounded operation inside the existing budget and lifecycle."""
-        return await _run_logged_tool(name, operation, ctx=ctx, executor=executor)
+        principal = (
+            get_principal(name) if name in {"policy_compile", "policy_preflight_evidence"} else None
+        )
+        return await _run_logged_tool(
+            name, operation, ctx=ctx, executor=executor, principal=principal
+        )
 
     register_grounded_capabilities(
         server,
@@ -1150,7 +1191,9 @@ def _render_beta_dashboard(
     current_key_created = (
         account.api_key_created_at.isoformat() if account.api_key_created_at is not None else "N/A"
     )
-    usage_text = f"{usage.request_count} / {usage.quota} requests, {usage.remaining} remaining."
+    usage_text = (
+        f"{usage.request_count} / {usage.quota} accepted operations, {usage.remaining} remaining."
+    )
     usage_percent = _beta_usage_percent(usage)
     status_class = f"beta-status-pill beta-status-pill--{account.status}"
     codex_command = (

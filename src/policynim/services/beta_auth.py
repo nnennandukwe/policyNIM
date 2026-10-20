@@ -38,7 +38,7 @@ class _GitHubIdentity:
 
 
 class BetaAuthService:
-    """Own hosted beta account login, API-key issuance, and quota enforcement."""
+    """Own hosted beta login, API-key issuance and accepted-operation usage display."""
 
     def __init__(self, *, store: AuthStore, settings: Settings) -> None:
         self._store = store
@@ -95,7 +95,7 @@ class BetaAuthService:
 
     def get_portal_usage(self, account_id: int) -> BetaUsageSnapshot:
         """Return the current UTC-day usage for the dashboard."""
-        return self._store.get_usage_snapshot(
+        return self._store.get_operation_usage_snapshot(
             account_id=account_id,
             usage_date=self._utc_now().date(),
             quota=self._settings.beta_daily_request_quota,
@@ -153,27 +153,15 @@ class BetaAuthService:
         )
 
     def authenticate_api_key(self, *, token: str | None) -> BetaAuthDecision:
-        """Authenticate one hosted beta API key and enforce the daily request quota."""
+        """Authenticate a key without charging accepted-operation allowance."""
         if token is None or not token.strip():
             return BetaAuthDecision(status="unauthorized")
-
-        now = self._utc_now()
-        result = self._store.consume_quota_for_api_key(
-            key_hash=_hash_api_key(token.strip()),
-            usage_date=now.date(),
-            quota=self._settings.beta_daily_request_quota,
-            now=now,
-        )
-        if result.account is None:
+        account = self._store.authenticate_api_key(key_hash=_hash_api_key(token.strip()))
+        if account is None:
             return BetaAuthDecision(status="unauthorized")
-        if result.account.status != "active":
-            return BetaAuthDecision(status="suspended", source="api_key", account=result.account)
-        return BetaAuthDecision(
-            status="authorized" if result.quota_consumed else "quota_exceeded",
-            source="api_key",
-            account=result.account,
-            usage=result.usage,
-        )
+        if account.status != "active":
+            return BetaAuthDecision(status="suspended", source="api_key", account=account)
+        return BetaAuthDecision(status="authorized", source="api_key", account=account)
 
     def recognizes_api_key(self, *, token: str) -> bool:
         """Identify local credentials without authorizing them or consuming quota."""

@@ -12,15 +12,16 @@ service behavior, including a real local TCP connection, with a deterministic
 introspection endpoint double. They don't prove an external login/token flow.
 OAuth remains disabled on existing deployments until an operator configures it.
 OAuth-only mode doesn't initialize or require a beta authentication database.
-OAuth operation quotas aren't implemented yet. Don't enable public OAuth access
-until #98 supplies principal accounting; use a separately bounded model-request
-budget for operator-led issuer acceptance checks.
+Hosted operation quotas apply to OAuth principals and compatible beta/operator keys.
+External issuer acceptance still requires a bounded model-request budget and
+operator-owned issuer/client configuration.
 
-## Selected issuer and client configuration
+## Proposed issuer and client configuration
 
-The selected operator setup uses Keycloak's documented scope/audience mapping
+The implementation targets Keycloak's documented scope/audience mapping
 and a pre-registered native client using Authorization Code with PKCE S256.
-PolicyNIM implements RFC 7662 introspection against that Keycloak realm.
+PolicyNIM implements RFC 7662 introspection against a configured Keycloak realm.
+The operator hasn't selected or configured an issuer for production.
 It doesn't host login, issue tokens, proxy token exchanges, or register clients.
 
 Reviewed on October 15, 2026: MCP Python SDK **2.2.0** (pinned in the lockfile),
@@ -95,7 +96,7 @@ authenticates them. The configured limit can range from 1 to 256. It holds a slo
 through response cleanup and rejects excess requests with HTTP `429`,
 `error=auth_busy` and `Retry-After: 1` before contacting the issuer. Public health
 and metadata without an Authorization header remain accessible. This request cap operates separately from Foundation's model-operation cap and
-from the future principal usage accounting in #98.
+from principal accepted-operation accounting. See [operation limits](hosted-beta-operations.md#principal-operation-limits).
 
 ## Discovery and operation permissions
 
@@ -163,19 +164,18 @@ it doesn't obtain an MCP OAuth token.
 In compatibility mode, a bounded read-only lookup recognizes locally issued
 key hashes, including revoked keys, before any issuer request. Recognition grants
 no access; the existing transactional authenticator still checks revocation,
-account status and quota. Known denied keys never reach the issuer. Unknown opaque
+account status. Accepted-operation admission checks the key and account again in
+the same transaction that charges usage. Known denied keys never reach the issuer. Unknown opaque
 tokens, including ones starting with `pnm_`, can still be verified by the issuer.
 If local recognition storage fails, unrecognized tokens can continue to issuer
 verification; local authorization never succeeds from a failed lookup.
 
 In compatibility mode, beta key rotation revokes the previous key immediately;
-operator revoke and account suspension block subsequent authentication. The
-existing beta request counter still charges authenticated HTTP requests,
-including discovery; a denied compatibility key receives `401` in OAuth mode.
-Non-OAuth deployments retain their existing `403` suspension and `429` quota
-responses. OAuth tokens don't yet have principal quotas. Accepted-operation
-quotas, discovery/polling exemptions and concurrent accounting belong to
-[issue #98](https://github.com/nnennandukwe/policyNIM/issues/98).
+operator revoke and account suspension block subsequent authentication. Authentication and discovery don't charge quota in either mode. Hosted search,
+preflight and other expensive operation executions charge at admission, including
+work that later fails or is cancelled. Rotation preserves account usage.
+[Operation limits and recovery](hosted-beta-operations.md#principal-operation-limits)
+describe configuration, outcomes and the single-instance boundary.
 
 Portal logout clears the portal cookie; it doesn't revoke beta keys or issuer
 tokens. Revoke beta keys through the existing operator command or rotate them in
