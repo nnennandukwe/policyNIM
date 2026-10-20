@@ -10,13 +10,14 @@ reference that used to live in the root README.
 - `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
 - `policynim doctor [--format text|json]`
 - `policynim inventory [--format text|json]`
-- `policynim policies list|validate [--format text|json]`
+- `policynim policies list|validate [--source] [--format text|json]`
 - `policynim profile init <path> [--pack <directory>] [--id <name>]`
 - `policynim profile validate|preview|diff <path> [--format text|json]`
 - `policynim profile update <path> --expect-digest <review-digest>`
-- `policynim policies show <policy-id> [--format text|json]`
+- `policynim policies show <policy-id> [--source] [--format text|json]`
 - `policynim init`
 - `policynim ingest`
+- `policynim generation inspect|migrate|import|export|activate|rollback|prune --help`
 - `policynim dump-index [--count-only]`
 - `policynim search --query "..."`
 - `policynim route --task "..."`
@@ -53,8 +54,7 @@ reference that used to live in the root README.
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
 - `/beta` stays as the self-serve signup and key-management surface
 - hosted `streamable-http` startup fails fast when
-  `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
-  missing or empty
+  the complete configured generation is missing or invalid; startup never ingests
 
 `policynim init` writes the local config file interactively when you want the
 CLI to prompt for `NVIDIA_API_KEY` and an optional custom corpus directory.
@@ -71,8 +71,10 @@ or prior initialization. It reports unavailable counts as unknown and keeps loca
 inspection separate from remote deployment evidence. See
 [policy inventory and recovery](policy-inventory.md) for states and recovery.
 
-Use `policynim policies list`, `show <policy-id>`, and `validate` for a source-only
-catalog with pack identity, content revisions, and declared provenance. A
+Use `policynim policies list`, `show <policy-id>`, and `validate` for the active
+generation catalog, or add `--source` to inspect editable sources. Results expose
+scope and generation identity. See [generation operations](policy-generations.md)
+for migration, rollback, reader retention, and offline image bundles. A
 `pack.toml` manifest makes membership explicit; plain directories remain supported.
 See [policy packs](policy-packs.md) before authoring a manifest, and
 [local profiles](policy-profiles.md) to compose explicit packs with reviewed decisions.
@@ -109,8 +111,8 @@ What this does:
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
-- builds a new local SQLite index; refreshes require separate, absent index and
-  runtime-rules paths as described in [provider recovery](hosted-provider-recovery.md)
+- seals and validates a complete generation, then atomically activates it under
+  `POLICYNIM_GENERATIONS_DIR`; existing generations remain available for rollback
 
 Typical output includes the chunk count, document count, embedding model, and
 index location.
@@ -326,8 +328,9 @@ uv run policynim eval --mode live
 uv run policynim eval --mode live --backend nemo --headless
 ```
 
-`--mode live` requires `NVIDIA_API_KEY` and uses an isolated temporary index so
-it does not overwrite the normal runtime index.
+`--mode live` requires `NVIDIA_API_KEY` and a verified generation. One job lease
+retains the same generation across modes, cases, and regeneration attempts.
+Live evaluation never ingests; offline fixtures report `generation_id: null`.
 
 `--backend nemo` adds policy-conformance scoring for preflight eval cases. In
 offline mode it uses deterministic local fixtures; in live mode it reuses the
@@ -446,12 +449,9 @@ Hosted HTTP notes:
   still validated at startup
 - when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
   defaults to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
-- the baked-image workflow uses `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
-  as the fast path. Hosted startup only falls back to `policynim ingest` when
-  that local index is missing or empty
-- if that automatic rebuild path runs without a runtime `NVIDIA_API_KEY`, hosted
-  startup fails fast with an explicit recovery message instead of serving
-  traffic
+- the image imports its verified bundle into `POLICYNIM_GENERATIONS_DIR=/app/data/generations`
+- hosted startup requires a complete generation and never ingests or calls NVIDIA;
+  a missing or invalid object produces import/migration recovery guidance
 
 Example readiness check:
 
@@ -510,10 +510,15 @@ retains direct-child termination; process-tree cleanup isn't guaranteed there.
 Shell `command` values are argument arrays passed directly to the process.
 PolicyNIM preserves each string, including surrounding whitespace and empty
 arguments after the executable. The array must contain a nonempty executable
-name, and no element may contain a NUL byte. Invalid commands are rejected
-before runtime decisions, process creation, or evidence writes. Command regex
-rules match the `shlex.join` rendering of the unchanged array; results and
-stored evidence retain that array. Existing evidence isn't rewritten; evidence
+name that isn't whitespace-only, and no element may contain a NUL byte. Invalid
+commands are rejected before runtime decisions, process creation, or evidence
+writes. Command regex
+rules screen both the `shlex.join` rendering of the unchanged array and a
+rendering with empty or whitespace-only operands omitted. A match in either form
+applies the rule. This conservative check can deny a benign command whose blank
+operands matter;
+regex screening isn't semantic shell isolation. Execution, results, and stored
+evidence retain the original array. Existing evidence isn't rewritten; evidence
 reports can still read legacy NUL-containing decisions as incomplete executions.
 
 The runtime CLI flow is JSON-first and file- or stdin-driven:

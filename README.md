@@ -73,11 +73,14 @@ These new commands are available from this source checkout or a wheel built from
 it. The existing `v0.1.0` release predates them.
 
 ```bash
-uv run policynim policies list
-uv run policynim policies show SEC-AUTH-001
-uv run policynim policies validate --format json
+uv run policynim policies list --source
+uv run policynim policies show SEC-AUTH-001 --source
+uv run policynim policies validate --source --format json
 uv run policynim inventory --format json
 ```
+
+These examples inspect mutable sources with `--source`. Without that flag, catalog
+commands inspect the active generation when one exists.
 
 The catalog commands list policy IDs, source text, pack versions, and content
 revisions. Inventory inspects the selected Markdown sources and local SQLite index
@@ -174,8 +177,10 @@ Use [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md) for:
 
 Existing installations changing embedding models must follow the
 [source-preserving provider recovery runbook](docs/hosted-provider-recovery.md).
-Every ingestion build, including a same-model refresh, requires separate, absent
-index and runtime-rules output paths; existing installations are preserved.
+`policynim ingest` builds a complete immutable generation and atomically activates
+it. Existing standalone installations require explicit migration. See
+[policy generations](docs/policy-generations.md) for inspection, rollback,
+retention, and offline deployment bundles.
 
 ## Local Contributor Setup
 

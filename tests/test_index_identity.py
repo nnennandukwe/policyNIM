@@ -9,11 +9,11 @@ from typing import Any
 import pytest
 
 from policynim.errors import MissingIndexError
-from policynim.services.health import create_runtime_health_service, ensure_hosted_runtime_ready
+from policynim.services.health import RuntimeHealthService, ensure_hosted_runtime_ready
+from policynim.services.index_store import create_index_store
 from policynim.services.ingest import IngestService
 from policynim.services.search import SearchService
 from policynim.settings import Settings
-from policynim.storage import create_index_store
 from policynim.types import EmbeddedChunk, PolicyMetadata, SearchRequest
 
 NO_ENV: dict[str, Any] = {"_env_file": None}
@@ -27,6 +27,15 @@ def settings_for(path: Path, model: str = "test/model-a", **kwargs) -> Settings:
         nvidia_embed_model=model,
         nvidia_base_url="https://example.invalid/v1",
         **kwargs,
+    )
+
+
+def create_legacy_health_service(settings: Settings) -> RuntimeHealthService:
+    """Inspect standalone adapter fixtures without claiming managed runtime readiness."""
+    return RuntimeHealthService(
+        index_store=create_index_store(settings, legacy=True),
+        table_name="policy_chunks",
+        mcp_url=None,
     )
 
 
@@ -75,16 +84,16 @@ def metadata(path):
 def test_index_persists_model_identity_with_vectors(tmp_path):
     """Verify index persists model identity with vectors."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    create_index_store(settings).replace([chunk()])
+    create_index_store(settings, legacy=True).replace([chunk()])
     stored = metadata(settings.index_db_path)
     assert stored["schema_version"] == "2"
     assert stored["embedding_model"] == "test/model-a"
     assert stored["embedding_provider"] == "nvidia"
     assert stored["embedding_endpoint"] == "https://example.invalid/v1"
     assert stored["embedding_dimension"] == "2"
-    assert [c.chunk_id for c in create_index_store(settings).search([1.0, 0.0], top_k=1)] == [
-        "P:rules"
-    ]
+    assert [
+        c.chunk_id for c in create_index_store(settings, legacy=True).search([1.0, 0.0], top_k=1)
+    ] == ["P:rules"]
 
 
 @pytest.mark.parametrize(
@@ -95,7 +104,7 @@ def test_incompatible_index_blocks_query_and_readiness_without_embedding(tmp_pat
     """Verify incompatible index blocks query and readiness without embedding."""
     path = tmp_path / "index.sqlite3"
     settings = settings_for(path)
-    create_index_store(settings).replace([chunk()])
+    create_index_store(settings, legacy=True).replace([chunk()])
     if mutation == "same_dimension_model":
         settings = settings_for(path, "test/model-b")
     elif mutation == "endpoint":
@@ -113,18 +122,20 @@ def test_incompatible_index_blocks_query_and_readiness_without_embedding(tmp_pat
                 conn.execute("INSERT OR REPLACE INTO index_metadata VALUES (?, ?)", (key, value))
     before = path.read_bytes()
     embedder = SpyEmbedder()
-    service = SearchService(embedder=embedder, index_store=create_index_store(settings))
+    service = SearchService(
+        embedder=embedder, index_store=create_index_store(settings, legacy=True)
+    )
     with pytest.raises(MissingIndexError):
         service.search(SearchRequest(query="request identifiers"))
     assert embedder.calls == 0
-    assert create_runtime_health_service(settings).check().ready is False
+    assert create_legacy_health_service(settings).check().ready is False
     assert path.read_bytes() == before
 
 
 def test_legacy_index_remains_inspectable_but_cannot_be_reembedded_in_place(tmp_path):
     """Verify legacy index remains inspectable but cannot be reembedded in place."""
     settings = settings_for(tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([chunk()])
     with sqlite3.connect(settings.index_db_path) as conn:
         conn.execute("UPDATE index_metadata SET value='1' WHERE key='schema_version'")
@@ -139,9 +150,9 @@ def test_search_rechecks_identity_after_provider_returns(tmp_path):
     """Verify search rechecks identity after provider returns."""
     path = tmp_path / "index.sqlite3"
     settings = settings_for(path)
-    create_index_store(settings).replace([chunk()])
+    create_index_store(settings, legacy=True).replace([chunk()])
     other = tmp_path / "other.sqlite3"
-    create_index_store(settings_for(other, "test/model-b")).replace([chunk()])
+    create_index_store(settings_for(other, "test/model-b"), legacy=True).replace([chunk()])
 
     class ReplacingEmbedder(SpyEmbedder):
         def embed_query(self, text):
@@ -151,7 +162,7 @@ def test_search_rechecks_identity_after_provider_returns(tmp_path):
 
     with pytest.raises(MissingIndexError):
         SearchService(
-            embedder=ReplacingEmbedder(), index_store=create_index_store(settings)
+            embedder=ReplacingEmbedder(), index_store=create_index_store(settings, legacy=True)
         ).search(SearchRequest(query="request identifiers"))
 
 
@@ -164,7 +175,7 @@ def make_ingest(tmp_path, *, model="test/model-a", filename="index.sqlite3"):
     embedder = SpyEmbedder()
     service = IngestService(
         embedder=embedder,
-        index_store=create_index_store(settings),
+        index_store=create_index_store(settings, legacy=True),
         corpus_root=corpus,
         embedding_model=model,
         runtime_rules_artifact_path=tmp_path / f"{filename}.rules.json",
@@ -196,9 +207,9 @@ def test_rules_finalization_failure_leaves_candidate_unready(tmp_path, monkeypat
     with pytest.raises(OSError, match="injected"):
         service.run()
     assert settings.index_db_path.exists()
-    assert create_runtime_health_service(settings).check().ready is False
+    assert create_legacy_health_service(settings).check().ready is False
     with pytest.raises(MissingIndexError):
-        create_index_store(settings).search([1.0, 0.0], top_k=1)
+        create_index_store(settings, legacy=True).search([1.0, 0.0], top_k=1)
 
 
 def test_fresh_migration_cannot_overwrite_existing_rules(tmp_path):
@@ -216,10 +227,10 @@ def test_fresh_migration_cannot_overwrite_existing_rules(tmp_path):
 def test_startup_never_rebuilds_model_mismatch(tmp_path, monkeypatch):
     """Verify startup never rebuilds model mismatch."""
     path = tmp_path / "index.sqlite3"
-    create_index_store(settings_for(path)).replace([chunk()])
+    create_index_store(settings_for(path), legacy=True).replace([chunk()])
     calls = []
     monkeypatch.setattr(
-        "policynim.services.health.create_ingest_service", lambda *_: calls.append(1)
+        "policynim.services.ingest.create_ingest_service", lambda *_: calls.append(1)
     )
     with pytest.raises(Exception):
         ensure_hosted_runtime_ready(settings_for(path, "test/model-b"), rebuild_if_missing=True)
@@ -238,7 +249,7 @@ def test_runtime_actions_reject_incompatible_index(tmp_path, mutation, matched, 
 
     settings, ingestion, _ = make_ingest(tmp_path)
     ingestion.run()
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     rules_path = tmp_path / "index.sqlite3.rules.json"
     output = tmp_path / "output.txt"
     if matched:
@@ -276,7 +287,8 @@ def test_runtime_actions_reject_incompatible_index(tmp_path, mutation, matched, 
             }
         )
     decisions = RuntimeDecisionService(
-        index_store=create_index_store(settings), runtime_rules_artifact_path=rules_path
+        index_store=create_index_store(settings, legacy=True),
+        runtime_rules_artifact_path=rules_path,
     )
     request = FileWriteActionRequest(
         kind="file_write",
@@ -309,7 +321,7 @@ def test_hosted_readiness_does_not_rebuild_existing_index_after_inspection_failu
     settings = settings_for(
         tmp_path / "index.sqlite3", mcp_public_base_url="https://example.invalid"
     )
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([chunk()])
     original = settings.index_db_path.read_bytes()
     rebuilds = []
@@ -330,7 +342,7 @@ def test_hosted_readiness_does_not_rebuild_existing_index_after_inspection_failu
         rebuilds.append("rebuild")
 
     monkeypatch.setattr(health_module, "_check_hosted_runtime_health", unavailable_inspector)
-    monkeypatch.setattr(health_module, "_rebuild_hosted_runtime_index", record_rebuild)
+    monkeypatch.setattr("policynim.services.ingest.create_ingest_service", record_rebuild)
     with pytest.raises(ConfigurationError):
         ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
     assert rebuilds == []
@@ -344,10 +356,8 @@ def test_empty_schema_two_index_is_preserved_without_startup_ingestion(tmp_path,
 
     import sqlite_vec
 
-    from policynim.services import health as health_module
-
     settings = settings_for(tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([chunk()])
     with closing(sqlite3.connect(settings.index_db_path)) as connection:
         connection.enable_load_extension(True)
@@ -363,9 +373,9 @@ def test_empty_schema_two_index_is_preserved_without_startup_ingestion(tmp_path,
         """Record any unexpected attempt to contact the ingestion provider."""
         rebuilds.append("rebuild")
 
-    monkeypatch.setattr(health_module, "_rebuild_hosted_runtime_index", record_rebuild)
-    assert not create_runtime_health_service(settings).check().ready
-    with pytest.raises(MissingIndexError, match="contains no rows"):
+    monkeypatch.setattr("policynim.services.ingest.create_ingest_service", record_rebuild)
+    assert not create_legacy_health_service(settings).check().ready
+    with pytest.raises(Exception, match="generation migrate"):
         ensure_hosted_runtime_ready(settings, rebuild_if_missing=True)
     assert rebuilds == []
     assert settings.index_db_path.read_bytes() == original

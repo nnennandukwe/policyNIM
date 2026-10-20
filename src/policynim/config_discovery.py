@@ -26,6 +26,11 @@ class StandalonePaths:
     runtime_evidence_db_path: Path
     eval_workspace_dir: Path
 
+    @property
+    def generations_dir(self) -> Path:
+        """Keep immutable generation defaults under the same installed data root."""
+        return self.data_root / "generations"
+
 
 @dataclass(frozen=True)
 class ConfigDiscovery:
@@ -154,6 +159,7 @@ def build_init_config_contents(
     if include_data_paths:
         lines.extend(
             [
+                _env_assignment("POLICYNIM_GENERATIONS_DIR", standalone.generations_dir.as_posix()),
                 _env_assignment("POLICYNIM_INDEX_DB_PATH", standalone.index_db_path.as_posix()),
                 _env_assignment(
                     "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",

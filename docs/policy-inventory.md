@@ -1,7 +1,8 @@
 # Policy Inventory And Recovery
 
 Use inventory before configuring a model or rebuilding an installation. It reads
-policy sources and the local SQLite index without calling NVIDIA or changing files.
+policy sources and the local SQLite index without calling NVIDIA or changing
+policy content or activation. Managed inspection briefly holds a reader lease.
 
 ```bash
 policynim inventory
@@ -18,14 +19,16 @@ The `source` section describes the selected Markdown corpus: document count,
 unique policy IDs, and chunks that the current loader would produce. An empty
 readable corpus has observed zero counts. Missing, unreadable, or invalid sources
 have `status: unavailable` and `null` counts. Run
-`policynim policies validate --format json` for the exact source location or
+`policynim policies validate --source --format json` for the exact source location or
 manifest field that needs correction.
 
 The `index` section describes the configured local database: actual distinct
 policy IDs, actual chunks, stored embedding identity, and readiness state. An
 absent or unreadable database has unknown counts, rather than an inferred zero.
-Matching source and index counts don't prove identical content. Inventory doesn't
-claim generation consistency or remote deployment verification.
+Matching source and index counts don't prove identical content. When `generation_state` is `ready`, `index_scope` is `generation` and
+`generation_id` identifies the verified complete snapshot. Otherwise, raw standalone
+inspection uses `index_scope: legacy`; even a ready standalone database requires
+migration before runtime use. Inventory doesn't verify a remote deployment.
 
 When settings load, both `inventory --format json` and `doctor --format json`
 include the same typed index inspection, even before initialization. Doctor adds configuration, credentials, runtime-rules presence,
@@ -60,15 +63,16 @@ deleted by inspection.
 1. Preserve the old directory, existing SQLite files, and runtime-rules artifacts.
 2. Recover any policies that exist only in the old installation. Verify that
    `POLICYNIM_CORPUS_DIR` contains the authoritative Markdown corpus.
-3. Choose two unused candidate destinations: `POLICYNIM_INDEX_DB_PATH` for the
-   database and `POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH` for the compiled rules.
-4. Explicitly run `policynim ingest` with the required NVIDIA credentials. Run
-   inventory and doctor against those same settings before activating the candidate.
+3. Set `POLICYNIM_GENERATIONS_DIR` to an operator-owned generation store. For a
+   matching standalone SQLite/rules pair, run `policynim generation migrate`.
+4. Otherwise, explicitly run `policynim ingest` with authorized NVIDIA usage to
+   build and activate a complete generation from verified sources. Inspect its
+   generation ID with inventory and doctor.
 
 Ingestion uses NVIDIA and can incur usage. Diagnostics never trigger it. Read the
 [provider recovery runbook](hosted-provider-recovery.md) before changing models or
-activating candidates. Atomic multi-file generation activation belongs to the
-separate publication work; these commands don't provide that guarantee.
+activating candidates. Read [generation operations](policy-generations.md) for
+atomic activation, leases, import, rollback, and preservation boundaries.
 
 ## Hosted Evidence
 

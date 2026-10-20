@@ -204,3 +204,9 @@ On POSIX hosts, recovery and read-only reporting use compatible shared lease pro
 while workers retain exclusive ownership. A report observer can't delay committed
 crash recovery. Destructive retired-file cleanup still requires exclusive proof and
 can defer while an observer holds a lease. Other platforms retain conservative probes.
+
+Owner teardown closes its descriptor before removing matching final and temporary
+aliases, so a deferred sharing-denial cleanup can complete after release. If SQLite
+can't confirm that the owner's accepted rows have drained, shutdown logs a sanitized
+class and keeps the lease. Retry close after storage recovers or let process exit
+release ownership; an uncertain read never releases a potentially active worker.

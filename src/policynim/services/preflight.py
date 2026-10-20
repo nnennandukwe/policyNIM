@@ -189,6 +189,8 @@ def _preflight_output(
     retained_context: list[ScoredChunk],
     trace_steps: list[PolicyConformanceTraceStep] | None,
 ) -> PreflightResult | PreflightTraceResult:
+    """Attach the authoritative retrieval generation before returning guidance or its trace."""
+    result = result.model_copy(update={"generation_id": compiled_packet.generation_id})
     if trace_steps is None:
         return result
     return PreflightTraceResult(
@@ -201,7 +203,7 @@ def _preflight_output(
 
 def create_preflight_service(settings: Settings | None = None) -> PreflightService:
     """Build the default preflight service from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     compiler_service = create_policy_compiler_service(active_settings)
     try:
         generator = _create_default_generator(active_settings)

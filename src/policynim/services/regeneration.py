@@ -129,7 +129,9 @@ class PolicyRegenerationService:
         packet_id = compiled_policy_packet_id(compiled_packet)
 
         if compiled_packet.insufficient_context or not retained_context:
-            result = _insufficient_context_result(preflight_request)
+            result = _insufficient_context_result(preflight_request).model_copy(
+                update={"generation_id": compiled_packet.generation_id}
+            )
             trace_steps = _initial_trace_steps(compiled_packet)
             trace_result = _trace_result(
                 result=result,
@@ -182,6 +184,7 @@ class PolicyRegenerationService:
                 regeneration_context=regeneration_context,
                 trace_steps=trace_steps,
             )
+            result = result.model_copy(update={"generation_id": compiled_packet.generation_id})
             trace_result = _trace_result(
                 result=result,
                 compiled_packet=compiled_packet,
@@ -317,7 +320,7 @@ def create_policy_regeneration_service(
     backend: RegenerationBackend = "nemo",
 ) -> PolicyRegenerationService:
     """Build the default policy regeneration service from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     compiler_service: _PolicyCompilerService | None = None
     generator: Generator | None = None
     conformance_service: _PolicyConformanceService | None = None
@@ -463,10 +466,12 @@ def _result(
     compiled_packet_id: str,
     attempts: Sequence[RegenerationAttempt],
 ) -> PreflightRegenerationResult:
+    """Assemble the final regeneration result from its last attempt."""
     if not attempts:
         raise ValueError("regeneration result requires at least one attempt.")
     final_attempt = attempts[-1]
     return PreflightRegenerationResult(
+        generation_id=final_attempt.result.generation_id,
         request=request,
         passed=passed,
         stop_reason=stop_reason,

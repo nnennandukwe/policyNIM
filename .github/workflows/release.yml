@@ -286,5 +286,5 @@ jobs:
           path: dist
 
       - name: Publish to PyPI
-        # This Docker-based action publishes GHCR images under release tags, not commit SHA tags.
-        uses: pypa/gh-action-pypi-publish@v1.14.0 # 6733eb7d741f0b11ec6a39b58540dab7590f9b7d
+        # Dereferenced v1.14.0 commit; its matching GHCR commit image is published.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0

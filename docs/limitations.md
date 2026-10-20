@@ -30,9 +30,9 @@ constraints, not setup mistakes.
 - `/healthz` reports local index readiness only; it does not prove upstream NVIDIA
   availability.
 - Hosted startup now validates the configured local index before serving traffic
-  and only attempts ingestion when both the index and runtime-rules outputs are
-  absent. Existing empty, corrupt, incomplete, or incompatible outputs require an
-  explicit source-preserving rebuild into separate destinations.
+  and requires a complete verified generation. Startup never ingests or calls
+  NVIDIA. Existing standalone outputs require explicit migration or bundle import;
+  invalid artifacts remain preserved for diagnosis.
 - Hosted observability includes structured JSON logs for auth rejects, MCP tool
   calls, provider stages, attempts, failure classes, and measured or unknown token
   usage. There's no tracing or metrics pipeline yet.

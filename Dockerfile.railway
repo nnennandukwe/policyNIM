@@ -21,6 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     POLICYNIM_NVIDIA_TIMEOUT_SECONDS=${POLICYNIM_NVIDIA_TIMEOUT_SECONDS} \
     POLICYNIM_NVIDIA_MAX_RETRIES=${POLICYNIM_NVIDIA_MAX_RETRIES} \
     POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json \
+    POLICYNIM_GENERATIONS_DIR=/app/data/generations \
     POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3
 
 WORKDIR /app
@@ -32,14 +33,12 @@ COPY src ./src
 COPY policies ./policies
 COPY evals ./evals
 
-# Railway's Dockerfile builder rejects non-cache mounts, so its deploy-specific
-# Dockerfile still has to source the bake-time key from a build arg.
-ARG NVIDIA_API_KEY
+COPY artifacts/public-generation ./artifacts/public-generation
 
 RUN uv sync --frozen
-# ARG values are already in the build process environment. Do not expand the
-# credential into a RUN instruction, which Railway displays in build logs.
-RUN uv run --no-sync policynim ingest
+RUN uv run --no-sync policynim generation import artifacts/public-generation/generation.zip \
+    --expect-digest "$(cat artifacts/public-generation/generation.sha256)" \
+    --require-source-match --format json
 
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
@@ -58,6 +57,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     POLICYNIM_NVIDIA_TIMEOUT_SECONDS=${POLICYNIM_NVIDIA_TIMEOUT_SECONDS} \
     POLICYNIM_NVIDIA_MAX_RETRIES=${POLICYNIM_NVIDIA_MAX_RETRIES} \
     POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json \
+    POLICYNIM_GENERATIONS_DIR=/app/data/generations \
     POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3 \
     POLICYNIM_MCP_HOST=0.0.0.0 \
     PATH=/app/.venv/bin:$PATH
@@ -71,7 +71,6 @@ COPY --from=builder /app/evals /app/evals
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 COPY --from=builder /app/README.md /app/README.md
 COPY --from=builder /app/LICENSE /app/LICENSE
-COPY --from=builder /app/data/index.sqlite3 /app/data/index.sqlite3
-COPY --from=builder /app/data/runtime/runtime_rules.json /app/data/runtime/runtime_rules.json
+COPY --from=builder /app/data/generations /app/data/generations
 
 CMD ["policynim", "mcp", "--transport", "streamable-http"]

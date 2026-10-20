@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import Field
 
 from policynim.contracts import IndexStore
-from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.errors import IndexCompatibilityError
 from policynim.types import IndexIdentity, StrictModel
 
 IndexReadinessState = Literal[
@@ -77,27 +77,3 @@ def inspect_index_readiness(index_store: IndexStore) -> IndexReadinessReport:
         return IndexReadinessReport(state="unreadable")
     except Exception:
         return IndexReadinessReport(state="invalid")
-
-
-def require_index_ready(index_store: IndexStore, *, missing_message: str) -> None:
-    """Refuse unusable indexes before a service starts provider work."""
-    report = inspect_index_readiness(index_store)
-    if report.state == "ready":
-        return
-    if report.state in {"incompatible", "incomplete"}:
-        raise IndexCompatibilityError(report.reason)
-    if report.state == "missing":
-        raise MissingIndexError(missing_message)
-    if report.state == "unreadable":
-        raise MissingIndexError(
-            f"{report.reason} Preserve existing data. Run `policynim doctor` for recovery; "
-            "correct access or contention and don't rebuild to diagnose permissions.",
-            failure_class="index_unreadable",
-        )
-    raise MissingIndexError(
-        f"{report.reason} Preserve existing sources, index, and runtime rules. "
-        "Run `policynim doctor` for recovery. Run `policynim ingest` only from verified sources "
-        "into separate POLICYNIM_INDEX_DB_PATH and POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH "
-        "destinations; validate before activation.",
-        failure_class=f"index_{report.state}",
-    )

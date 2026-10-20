@@ -7,14 +7,14 @@ from typing import Literal
 
 from pydantic import Field
 
-from policynim.errors import InvalidPolicyDocumentError
+from policynim.errors import GenerationError, InvalidPolicyDocumentError
 from policynim.ingest.chunking import chunk_policy_documents
 from policynim.ingest.loader import load_policy_documents
-from policynim.runtime_paths import resolve_corpus_root
+from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
+from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.storage.index_readiness import IndexReadinessReport, inspect_index_readiness
-from policynim.types import StrictModel
+from policynim.types import GenerationID, StrictModel
 
 
 class SourceInventory(StrictModel):
@@ -38,6 +38,10 @@ class PolicyInventory(StrictModel):
     """Report this process's sources and local database, never an inferred remote inventory."""
 
     scope: Literal["local"] = "local"
+    generation_state: Literal["ready", "missing", "migration_required", "invalid"] = "missing"
+    generation_id: GenerationID | None = None
+    generation_reason: str | None = None
+    index_scope: Literal["generation", "legacy"] = "legacy"
     source: SourceInventory
     index: IndexReadinessReport
     index_path: Path
@@ -86,17 +90,51 @@ def inspect_source_inventory(settings: Settings) -> SourceInventory:
                 "Policy sources couldn't be loaded or validated. "
                 "Check POLICYNIM_PROFILE or POLICYNIM_CORPUS_DIR, "
                 "file permissions, UTF-8 Markdown, and unique policy IDs before rebuilding. "
-                "Run `policynim policies validate --format json` for exact source locations."
+                "Run `policynim policies validate --source --format json` "
+                "for exact source locations."
             ),
         )
 
 
 def inspect_policy_inventory(settings: Settings | None = None) -> PolicyInventory:
     """Inspect selected source files and one local index snapshot without requiring setup."""
-    active_settings = settings or get_settings()
-    store = create_index_store(active_settings)
-    return PolicyInventory(
-        source=inspect_source_inventory(active_settings),
-        index=inspect_index_readiness(store),
-        index_path=store.path,
-    )
+    active_settings = (settings or get_settings()).model_copy(deep=True)
+    source = inspect_source_inventory(active_settings)
+    try:
+        store = create_index_store(active_settings)
+    except GenerationError as exc:
+        root = resolve_runtime_path(active_settings.generations_dir)
+        invalid = (
+            active_settings.generation_id is not None
+            or (root / "active.json").exists()
+            or (root / "active.json").is_symlink()
+        )
+        legacy = create_index_store(active_settings, legacy=True)
+        try:
+            readiness = inspect_index_readiness(legacy)
+            return PolicyInventory(
+                source=source,
+                index=readiness,
+                index_path=legacy.path,
+                generation_state=(
+                    "invalid"
+                    if invalid
+                    else ("migration_required" if readiness.state == "ready" else "missing")
+                ),
+                generation_reason=str(exc),
+            )
+        finally:
+            legacy.close()
+    try:
+        snapshot = pinned_generation(store)
+        assert snapshot is not None
+        return PolicyInventory(
+            source=source,
+            index=inspect_index_readiness(store),
+            index_path=store.path,
+            generation_state="ready",
+            generation_id=snapshot.generation_id,
+            index_scope="generation",
+        )
+    finally:
+        store.close()

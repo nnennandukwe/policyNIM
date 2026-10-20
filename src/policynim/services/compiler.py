@@ -82,8 +82,11 @@ class PolicyCompilerService:
         selection_packet = route_result.packet
         if selection_packet.insufficient_context or not route_result.retained_context:
             return CompileResult(
-                packet=_insufficient_packet_from_selection(selection_packet),
+                packet=_insufficient_packet_from_selection(selection_packet).model_copy(
+                    update={"generation_id": route_result.generation_id}
+                ),
                 retained_context=route_result.retained_context,
+                generation_id=route_result.generation_id,
             )
 
         check_budget()
@@ -98,14 +101,15 @@ class PolicyCompilerService:
             generated_draft,
         )
         return CompileResult(
-            packet=compiled_packet,
+            packet=compiled_packet.model_copy(update={"generation_id": route_result.generation_id}),
             retained_context=route_result.retained_context,
+            generation_id=route_result.generation_id,
         )
 
 
 def create_policy_compiler_service(settings: Settings | None = None) -> PolicyCompilerService:
     """Build the default policy compiler service from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     router = create_policy_router_service(active_settings)
     try:
         compiler = _create_default_policy_compiler(active_settings)

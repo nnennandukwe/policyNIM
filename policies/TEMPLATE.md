@@ -56,7 +56,7 @@ State the engineering outcome this policy protects.
 1. Save a separate Markdown file with a unique `policy_id`.
 2. If the corpus has `pack.toml`, add a `[[policies]]` entry with that ID and its
    path relative to the pack directory. Only listed files enter the catalog.
-3. Run `policynim policies validate --format json`. Check `unlisted_markdown` for
-   files that aren't selected; a valid manifest doesn't automatically include them.
-4. Review `policynim policies show <policy-id>` before rebuilding into fresh index
-   and runtime-rules destinations. See `docs/policy-packs.md` for source metadata.
+3. Run `policynim policies validate --source --format json`. Check
+   `unlisted_markdown` for files that aren't selected; a valid manifest doesn't automatically include them.
+4. Review `policynim policies show <policy-id> --source` before rebuilding into
+   fresh index and runtime-rules destinations. See `docs/policy-packs.md` for source metadata.
