@@ -87,6 +87,7 @@ from policynim.types import (
     MIN_TOP_K,
     BetaAccount,
     BetaUsageSnapshot,
+    CompileRequest,
     HealthCheckResult,
     PreflightRequest,
     PreflightResult,
@@ -664,6 +665,10 @@ def _register_tools(
     ) -> PreflightResult:
         """Get citation-backed policy guidance, review flags and tests for a coding task."""
         principal = get_principal("policy_preflight")
+        try:
+            CompileRequest(task=task, domain=domain, top_k=_resolve_top_k(top_k))
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error("Preflight request", exc)) from exc
         result = await _run_logged_tool(
             "policy_preflight",
             lambda: _run_policy_preflight(
@@ -688,6 +693,10 @@ def _register_tools(
     ) -> SearchResult:
         """Search the policy corpus for relevant source chunks and their citations."""
         principal = get_principal("policy_search")
+        try:
+            SearchRequest(query=query, domain=domain, top_k=_resolve_top_k(top_k))
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error("Search request", exc)) from exc
         result = await _run_logged_tool(
             "policy_search",
             lambda: _run_policy_search(

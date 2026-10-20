@@ -560,6 +560,20 @@ class SearchRequest(StrictModel):
     domain: str | None = None
     top_k: TopK = DEFAULT_TOP_K
 
+    @field_validator("query", mode="before")
+    @classmethod
+    def validate_query(cls, value: object) -> str:
+        """Reject blank retrieval queries before provider work."""
+        return _validate_non_empty_string(value, field_name="query")
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def validate_domain(cls, value: object) -> str | None:
+        """Reject blank filters while preserving omitted filters."""
+        if value is None:
+            return None
+        return _validate_non_empty_string(value, field_name="domain")
+
 
 class SearchResult(StrictModel):
     """Search response shared by CLI and MCP."""
