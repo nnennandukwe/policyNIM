@@ -1237,3 +1237,36 @@ def test_background_worker_fault_has_safe_owned_location(generation, tmp_path, m
         assert worker._thread is not None and not worker._thread.is_alive()
     finally:
         worker.close()
+
+
+def test_unexpected_case_failure_has_safe_owned_location(generation, tmp_path, caplog):
+    """Terminal failure diagnostics preserve the worker boundary without task or bearer text."""
+    import json
+    import logging
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="unexpected-case", principal=principal())
+
+    def fail_factory(settings):
+        """Reject at evaluator construction before a provider can receive the accepted case."""
+        raise RuntimeError("private-task-and-bearer-sentinel")
+
+    worker = EvaluationJobWorker(service, evaluator_factory=fail_factory)
+    try:
+        with caplog.at_level(logging.ERROR):
+            result = worker.run_once()
+        assert result is not None and result.state == "failed"
+        assert result.failure_code == "evaluation_failure"
+        events = [
+            json.loads(record.message)
+            for record in caplog.records
+            if record.name == "policynim.operations"
+        ]
+        failure = next(event for event in events if event["event"] == "evaluation.job_failure")
+        assert failure["job_id"] == result.job_id
+        assert any(frame["function"] == "run_owned" for frame in failure["internal_frames"])
+        assert "private-task-and-bearer-sentinel" not in caplog.text
+    finally:
+        worker.close()

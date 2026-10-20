@@ -486,6 +486,13 @@ class EvaluationJobWorker:
                     getattr(exc, "code", None) or exc.failure_class or type(exc).__name__,
                 )
             else:
+                emit_operation_event(
+                    level=logging.ERROR,
+                    event="evaluation.job_failure",
+                    phase="worker_execution",
+                    job_id=job.job_id,
+                    **safe_exception_diagnostics(exc),
+                )
                 state, failure = "failed", "evaluation_failure"
             return self.store.finish(
                 job.job_id, self.worker_token, state, failure_code=failure, uncertain=True
