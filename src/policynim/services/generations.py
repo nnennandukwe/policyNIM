@@ -117,6 +117,14 @@ class TrashRecord(StrictModel):
     artifacts: dict[str, Digest]
 
 
+@dataclass(frozen=True)
+class GenerationReadiness:
+    """Small validated health identity without borrowed corpus or reader ownership."""
+
+    generation_id: str
+    chunk_count: int
+
+
 @dataclass
 class GenerationSnapshot:
     """One validated immutable object retained for its reader's entire lifetime."""
@@ -289,8 +297,9 @@ class _CachedGeneration:
     """One verified immutable object identity; cache entries never own reader handles."""
 
     token: ArtifactToken
-    snapshot: GenerationSnapshot
+    snapshot: GenerationSnapshot | None
     size: int
+    readiness: GenerationReadiness
 
 
 _VALIDATION_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
@@ -706,7 +715,7 @@ class GenerationStore:
                     _VALIDATION_CACHE.move_to_end(key)
                 else:
                     cached = None
-            if cached is not None:
+            if cached is not None and cached.snapshot is not None:
                 result = deepcopy(cached.snapshot)
                 if self._artifact_token(directory) != token:
                     raise GenerationError("inspect", "Generation changed while opening its reader.")
@@ -721,7 +730,7 @@ class GenerationStore:
                         _VALIDATION_CACHE.move_to_end(key)
                     else:
                         cached = None
-                if cached is not None:
+                if cached is not None and cached.snapshot is not None:
                     result = deepcopy(cached.snapshot)
                     if self._artifact_token(directory) != token:
                         raise GenerationError(
@@ -742,14 +751,19 @@ class GenerationStore:
                 )
                 with _CACHE_LOCK:
                     _VALIDATION_CACHE.pop(key, None)
-                    if size <= _CACHE_MAX_BYTES:
-                        while _VALIDATION_CACHE and (
-                            len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
-                            or sum(entry.size for entry in _VALIDATION_CACHE.values()) + size
-                            > _CACHE_MAX_BYTES
-                        ):
-                            _VALIDATION_CACHE.popitem(last=False)
-                        _VALIDATION_CACHE[key] = _CachedGeneration(token, snapshot, size)
+                    retained_size = size if size <= _CACHE_MAX_BYTES else 0
+                    while _VALIDATION_CACHE and (
+                        len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
+                        or sum(entry.size for entry in _VALIDATION_CACHE.values()) + retained_size
+                        > _CACHE_MAX_BYTES
+                    ):
+                        _VALIDATION_CACHE.popitem(last=False)
+                    _VALIDATION_CACHE[key] = _CachedGeneration(
+                        token,
+                        snapshot if retained_size else None,
+                        retained_size,
+                        GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count),
+                    )
             return deepcopy(snapshot)
 
     def _remove_failed_lease_directory(self, directory: Path, identity: tuple[int, int]) -> None:
@@ -772,6 +786,30 @@ class GenerationStore:
                 LOGGER.warning("Failed reader's lease-directory cleanup needs inspection.")
         except GenerationError:
             LOGGER.warning("Failed reader's lease-directory ownership needs inspection.")
+
+    def readiness(self, generation_id: str | None = None) -> GenerationReadiness:
+        """Reuse unchanged validated health metadata without cloning corpus or leasing readers."""
+        with self._locked():
+            selected = self._selected_id(generation_id, self._pointer())
+            directory = self.root / "objects" / selected
+            token = self._artifact_token(directory)
+            key = (str(directory.absolute()), selected, self.embedding.model_dump_json())
+            cached = None
+            if self._fault is None and all(item[-1] is not None for item in token):
+                with _CACHE_LOCK:
+                    candidate = _VALIDATION_CACHE.get(key)
+                    if candidate is not None and candidate.token == token:
+                        cached = candidate
+                        _VALIDATION_CACHE.move_to_end(key)
+            if cached is not None:
+                result = cached.readiness
+                if self._artifact_token(directory) != token:
+                    raise GenerationError(
+                        "inspect", "Generation changed during readiness inspection."
+                    )
+                return result
+        with self.pin(selected) as snapshot:
+            return GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count)
 
     def pin(
         self, generation_id: str | None = None, *, force_validation: bool = False
@@ -961,6 +999,8 @@ class GenerationStore:
             self._step("object_rename")
             (prepared.directory / ".owner").unlink(missing_ok=True)
             prepared.directory.rename(target)
+            self._step("object_directory_fsync")
+            _sync_directory(target)
             self._step("objects_fsync")
             _sync_directory(target.parent)
             self._step("staging_parent_fsync")
