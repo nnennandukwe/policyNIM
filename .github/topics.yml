@@ -1,0 +1,15 @@
+# PolicyNIM repository topic taxonomy.
+# Keep this list aligned with README positioning, PyPI keywords, and OSS
+# discoverability. Apply with scripts/sync_github_topics.py only from an
+# authenticated maintainer session.
+
+- ai-agents
+- cli
+- code-quality
+- mcp
+- model-context-protocol
+- nvidia-nim
+- policy
+- preflight
+- python
+- verification

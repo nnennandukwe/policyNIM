@@ -1,0 +1,12 @@
+# Current maintainer. Required review enforcement is configured separately in GitHub.
+* @nnennandukwe
+
+/.github/ @nnennandukwe
+/pyproject.toml @nnennandukwe
+/uv.lock @nnennandukwe
+/scripts/ @nnennandukwe
+/src/policynim/interfaces/ @nnennandukwe
+/src/policynim/services/authorization.py @nnennandukwe
+/src/policynim/storage/ @nnennandukwe
+/docs/release.md @nnennandukwe
+/SECURITY.md @nnennandukwe
