@@ -376,13 +376,32 @@ from pathlib import Path
 from policynim.services.authorization import AuthenticatedPrincipal
 from policynim.services.operation_admission import OperationAdmissionService
 from policynim.settings import Settings
-p = AuthenticatedPrincipal(issuer="https://issuer.example", subject="alice",client_id="test",
-    scopes=frozenset({"policies:read"}), source="oauth")
-s = OperationAdmissionService(Settings().model_copy(update={"beta_auth_db_path":Path(sys.argv[1])}))
-a = s.accept_work(principal=p,operation_name="policy_search",
-    reservation_key="a"*64,request_digest="b"*64,work_units=3)
-print(json.dumps({"operation_id":a.operation_id}),flush=True)
-s.run_accepted(lambda:os._exit(9),operation_id=a.operation_id,principal=p,operation_name="policy_search",cancelled=lambda:False)
+
+worker_principal = AuthenticatedPrincipal(
+    issuer="https://issuer.example",
+    subject="alice",
+    client_id="test",
+    scopes=frozenset({"policies:read"}),
+    source="oauth",
+)
+admission_service = OperationAdmissionService(
+    Settings().model_copy(update={"beta_auth_db_path": Path(sys.argv[1])})
+)
+accepted_work = admission_service.accept_work(
+    principal=worker_principal,
+    operation_name="policy_search",
+    reservation_key="a" * 64,
+    request_digest="b" * 64,
+    work_units=3,
+)
+print(json.dumps({"operation_id": accepted_work.operation_id}), flush=True)
+admission_service.run_accepted(
+    lambda: os._exit(9),
+    operation_id=accepted_work.operation_id,
+    principal=worker_principal,
+    operation_name="policy_search",
+    cancelled=lambda: False,
+)
 """
     result = subprocess.run(
         [sys.executable, "-c", code, str(tmp_path / "auth.sqlite3")],
@@ -483,9 +502,16 @@ def test_simultaneous_duplicate_acceptance_has_one_charge(tmp_path: Path) -> Non
 
 
 def test_queued_terminal_accounting_failure_pauses_new_acceptance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A failed reconciliation remains visible after storage recovers and blocks new work."""
+    import json
+    import logging
+
+    from policynim import operations
+
+    operations._LOG.addHandler(caplog.handler)
+    caplog.set_level(logging.ERROR)
     admission = service(tmp_path)
     accepted = accept(admission)
     with sqlite3.connect(admission.store.path) as connection:
@@ -505,6 +531,13 @@ def test_queued_terminal_accounting_failure_pauses_new_acceptance(
     with pytest.raises(OperationAdmissionError, match="accounting_incomplete"):
         accept(admission, "new", units=1)
     admission.store.close()
+    operations._LOG.removeHandler(caplog.handler)
+    events = [
+        json.loads(record.message) for record in caplog.records if record.message.startswith("{")
+    ]
+    failure = next(event for event in events if event.get("event") == "operation.storage_failure")
+    assert failure["phase"] == "finish" and failure["operation_id"] == accepted.operation_id
+    assert "private provider content" not in caplog.text
 
 
 def test_queued_acceptance_survives_real_submitter_exit(tmp_path: Path) -> None:
@@ -519,12 +552,25 @@ from pathlib import Path
 from policynim.services.authorization import AuthenticatedPrincipal
 from policynim.services.operation_admission import OperationAdmissionService
 from policynim.settings import Settings
-p = AuthenticatedPrincipal(issuer="https://issuer.example",subject="alice",client_id="test",
-    scopes=frozenset({"policies:read"}),source="oauth")
-s = OperationAdmissionService(Settings().model_copy(update={"beta_auth_db_path":Path(sys.argv[1])}))
-a = s.accept_work(principal=p,operation_name="policy_search",
-    reservation_key="a"*64,request_digest="b"*64,work_units=3)
-print(json.dumps({"operation_id":a.operation_id}),flush=True)
+
+worker_principal = AuthenticatedPrincipal(
+    issuer="https://issuer.example",
+    subject="alice",
+    client_id="test",
+    scopes=frozenset({"policies:read"}),
+    source="oauth",
+)
+admission_service = OperationAdmissionService(
+    Settings().model_copy(update={"beta_auth_db_path": Path(sys.argv[1])})
+)
+accepted_work = admission_service.accept_work(
+    principal=worker_principal,
+    operation_name="policy_search",
+    reservation_key="a" * 64,
+    request_digest="b" * 64,
+    work_units=3,
+)
+print(json.dumps({"operation_id": accepted_work.operation_id}), flush=True)
 os._exit(7)
 """
     result = subprocess.run(
