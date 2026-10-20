@@ -1,0 +1,81 @@
+schema_version = 1
+pack_id = "policynim.reliability"
+version = "0.3.0"
+
+[[policies]]
+policy_id = "ARCH-JOB-001"
+path = "background-job-design-rules.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "AWS: Timeouts, retries, and backoff with jitter"
+url = "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter"
+revision = "Published and last modified 2019-12-05"
+sections = ["Retries and backoff"]
+retrieved_on = 2026-10-20
+license = "Amazon Web Services copyright; cited commentary, no source text redistributed"
+attribution = "Marc Brooker; Amazon Web Services"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "BE-CONFIG-001"
+path = "config-validation-and-fail-closed.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP Secrets Management Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["2 General Secrets Management"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "REL-TIMEOUT-001"
+path = "deadlines-and-retries.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "AWS: Timeouts, retries, and backoff with jitter"
+url = "https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter"
+revision = "Published and last modified 2019-12-05"
+sections = ["Timeouts", "Retries and backoff", "Jitter"]
+retrieved_on = 2026-10-20
+license = "Amazon Web Services copyright; cited commentary, no source text redistributed"
+attribution = "Marc Brooker; Amazon Web Services"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "RFC 9110: HTTP Semantics"
+url = "https://www.rfc-editor.org/rfc/rfc9110.html"
+revision = "RFC 9110, June 2022"
+sections = ["10.2.3"]
+retrieved_on = 2026-10-20
+license = "IETF Trust Legal Provisions / BCP 78; no RFC text or code copied"
+attribution = "Roy Fielding, Mark Nottingham, Julian Reschke; IETF Trust, 2022"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "REL-OVERLOAD-001"
+path = "admission-and-backpressure.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Google SRE: Handling Overload"
+url = "https://sre.google/sre-book/handling-overload/"
+revision = "Site Reliability Engineering, 2016, chapter 21"
+sections = ["The Pitfalls of \"Queries per Second\"", "Per-Customer Limits", "Client-Side Throttling"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Alejandro Forero Cuervo; edited by Sarah Chavis; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

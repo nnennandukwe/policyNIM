@@ -1636,7 +1636,7 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
     )
-    assert payload["inventory"]["source"]["document_count"] == 15
+    assert payload["inventory"]["source"]["document_count"] == 26
     assert payload["index"]["state"] == "missing"
     assert "nvapi" not in result.stdout.lower()
 
