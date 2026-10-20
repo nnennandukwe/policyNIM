@@ -118,6 +118,7 @@ class EvaluationJobInfo(StrictModel):
     failure_code: str | None = None
     report_sha256: str | None = None
     result_expired: bool = False
+    next_attempt_at: float = 0
 
 
 class EvaluationJobReport(StrictModel):

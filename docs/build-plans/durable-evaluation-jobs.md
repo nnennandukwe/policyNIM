@@ -42,7 +42,7 @@ Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job st
 
 ## Canonical Contracts
 
-States: queued -> running -> completed | failed | cancelled | deadline_exceeded | budget_exhausted | interrupted. queued -> cancelled or deadline_exceeded is allowed without provider execution. Running cancellation is requested first; terminal state is recorded after provider work drains. Terminal jobs never execute again.
+States: queued -> running -> completed | failed | cancelled | deadline_exceeded | budget_exhausted | interrupted. queued -> cancelled or deadline_exceeded is allowed without provider execution. Running cancellation is requested first; terminal state is recorded after provider work drains. A transient capacity/admission-lock rejection can return running to queued only before any case or provider attempt starts; a persisted one-second retry never extends the original deadline. Terminal jobs never execute again.
 
 Submission requires an idempotency key scoped to issuer+subject. Identical key+snapshot returns the existing job; different inputs under that key return a conflict. Queue rejection starts no worker/provider work. Inspection/result/cancel always check current caller scope and owner. Unknown and other-owner IDs share a non-disclosing error.
 

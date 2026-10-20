@@ -465,6 +465,8 @@ class EvaluationJobWorker:
                 state, failure = "failed", str(exc).partition(":")[0]
                 if failure == "accounting_incomplete":
                     self._admission_paused.set()
+                elif failure in {"server_busy", "principal_busy", "admission_busy"}:
+                    return self.store.defer_admission(job.job_id, self.worker_token, failure)
             elif isinstance(exc, PolicyNIMError):
                 state, failure = (
                     "failed",

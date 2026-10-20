@@ -855,3 +855,104 @@ def test_worker_pauses_queue_after_quota_accounting_failure(
     assert service.inspect(queued.job_id, principal=principal()).state == "queued"
     assert calls == ["case-0", "closed"]
     worker.close()
+
+
+@pytest.mark.parametrize("code", ["server_busy", "principal_busy", "admission_busy"])
+def test_transient_pre_provider_admission_retries_without_duplicate_charge(
+    generation, tmp_path: Path, monkeypatch, code: str
+) -> None:
+    """Accepted work waits durably for capacity; no provider attempt or quota charge repeats."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import (
+        OperationAdmissionError,
+        OperationAdmissionService,
+    )
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [service.store.clock()]
+    monkeypatch.setattr(service.store, "clock", lambda: now[0])
+    accepted = service.submit(suite, idempotency_key="retry-capacity", principal=principal())
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+
+    def reject(*args, **kwargs):
+        """Inject only an admission outcome before the evaluator closure can run."""
+        raise OperationAdmissionError(code + ": Retry shortly.")
+
+    with monkeypatch.context() as busy:
+        busy.setattr(OperationAdmissionService, "run", reject)
+        deferred = worker.run_once()
+    assert deferred is not None and deferred.state == "queued" and deferred.failure_code == code
+    assert deferred.next_attempt_at == now[0] + 1
+    assert deferred.deadline_at == accepted.deadline_at
+    assert calls == [] and worker.run_once() is None
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 0
+    now[0] += 2
+    completed = worker.run_once()
+    assert completed is not None and completed.state == "completed"
+    assert completed.failure_code is None
+    assert calls == ["case-0", "closed"]
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.usage.provider_attempts == 1 and report.uncertain_case_id is None
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 1
+    worker.close()
+
+
+def test_storage_cant_defer_a_started_case(generation, tmp_path: Path) -> None:
+    """The storage transition itself forbids replay after a case was marked active."""
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="no-replay", principal=principal())
+    claimed = service.store.claim("test-worker")
+    assert claimed is not None
+    service.store.begin_case(accepted.job_id, "test-worker", suite.cases[0].case_id)
+    with pytest.raises(EvaluationJobError, match="unsafe_job_retry"):
+        service.store.defer_admission(accepted.job_id, "test-worker", "admission_busy")
+    assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+
+
+def test_real_principal_capacity_defers_accepted_job_until_owner_releases(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """Actual quota storage and kernel ownership keep a busy principal's job queued safely."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import (
+        OperationAdmissionService,
+        admit_operation,
+        principal_identity,
+    )
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.settings.mcp_max_concurrent_operations_per_principal = 1
+    now = [service.store.clock()]
+    monkeypatch.setattr(service.store, "clock", lambda: now[0])
+    caller = principal()
+    held = OperationAdmissionService(service.settings)
+    admitted = admit_operation(
+        held.store,
+        principal_id=principal_identity(caller.issuer, caller.subject),
+        operation="policy_search",
+        daily_limit=500,
+        principal_limit=1,
+        global_limit=10,
+    )
+    assert admitted.operation_id is not None
+    accepted = service.submit(suite, idempotency_key="actual-capacity", principal=caller)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        waiting = worker.run_once()
+        assert waiting is not None and waiting.state == "queued"
+        assert waiting.failure_code == "principal_busy" and calls == []
+        held.store.finish(admitted.operation_id, "completed")
+        now[0] += 2
+        finished = worker.run_once()
+        assert finished is not None and finished.state == "completed"
+        assert service.result(accepted.job_id, principal=caller).report.usage.provider_attempts == 1
+        assert calls == ["case-0", "closed"]
+    finally:
+        worker.close()
+        held.store.close()

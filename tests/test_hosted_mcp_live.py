@@ -86,6 +86,10 @@ def test_hosted_mcp_lists_tools_live() -> None:
             return {tool.name for tool in result.tools}
 
     assert asyncio.run(run()) == {
+        "eval_submit",
+        "eval_inspect",
+        "eval_cancel",
+        "eval_result",
         "policy_search",
         "policy_compile",
         "policy_preflight",

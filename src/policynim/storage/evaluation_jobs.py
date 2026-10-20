@@ -413,9 +413,10 @@ class EvaluationJobStore:
         """Claim the oldest eligible queued job before provider or generation-restore work."""
         with self._transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM evaluation_jobs WHERE state='queued' AND next_attempt_at<=? "
+                "SELECT * FROM evaluation_jobs WHERE state='queued' "
+                "AND (next_attempt_at<=? OR deadline_at<=?) "
                 "ORDER BY accepted_at, rowid LIMIT 1",
-                (self.clock(),),
+                (self.clock(), self.clock()),
             ).fetchone()
             if row is None:
                 return None
@@ -424,13 +425,44 @@ class EvaluationJobStore:
                     connection, row, "deadline_exceeded", failure_code="deadline_exhausted"
                 )
             connection.execute(
-                "UPDATE evaluation_jobs SET state='running',started_at=?,worker_token=? "
+                "UPDATE evaluation_jobs SET state='running',started_at=?,worker_token=?, "
+                "failure_code=NULL,next_attempt_at=0 "
                 "WHERE job_id=? AND state='queued'",
                 (self.clock(), worker_token, row["job_id"]),
             )
             return self._info(
                 connection.execute(
                     "SELECT * FROM evaluation_jobs WHERE job_id=?", (row["job_id"],)
+                ).fetchone()
+            )
+
+    def defer_admission(
+        self, job_id: str, worker_token: str, failure_code: str
+    ) -> EvaluationJobInfo:
+        """Retry only a proven pre-provider capacity rejection within its original deadline."""
+        if failure_code not in {"server_busy", "principal_busy", "admission_busy"}:
+            raise ValueError("Only transient pre-provider admission outcomes can defer.")
+        with self._transaction() as connection:
+            row = self._running(connection, job_id, worker_token)
+            usage = EvaluationJobUsage.model_validate_json(row["usage_json"])
+            if row["active_case_id"] or row["completed_case_count"] or usage.provider_attempts:
+                raise EvaluationJobError(
+                    "unsafe_job_retry: Don't replay started work; inspect the job's evidence."
+                )
+            if row["cancel_requested"]:
+                return self._finish(connection, row, "cancelled", failure_code="cancelled")
+            if row["deadline_at"] <= self.clock():
+                return self._finish(
+                    connection, row, "deadline_exceeded", failure_code="deadline_exhausted"
+                )
+            connection.execute(
+                "UPDATE evaluation_jobs SET state='queued',started_at=NULL,worker_token=NULL,"
+                "next_attempt_at=?,failure_code=? WHERE job_id=?",
+                (min(self.clock() + 1.0, row["deadline_at"]), failure_code, job_id),
+            )
+            return self._info(
+                connection.execute(
+                    "SELECT * FROM evaluation_jobs WHERE job_id=?", (job_id,)
                 ).fetchone()
             )
 
