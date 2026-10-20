@@ -52,6 +52,7 @@ class HostedOperationReport(BaseModel):
     outcomes: dict[str, int]
     latency_sample_count: int
     latency_sample_limit: int = 1000
+    latency_clock: Literal["persisted_utc_wall_timestamps"] = "persisted_utc_wall_timestamps"
     latency_window: Literal["most_recent_terminal_operations"] = "most_recent_terminal_operations"
     latency_p50_ms: float | None = None
     latency_p95_ms: float | None = None
@@ -289,8 +290,8 @@ class OperationStore:
             samples = sorted(
                 row[0]
                 for row in connection.execute(
-                    "SELECT MAX(0, (finished_at - started_at) * 1000) FROM operation_usage "
-                    "WHERE finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1000"
+                    "SELECT (finished_at - started_at) * 1000 FROM operation_usage "
+                    "WHERE finished_at >= started_at ORDER BY finished_at DESC LIMIT 1000"
                 ).fetchall()
             )
 

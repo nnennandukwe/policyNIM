@@ -49,6 +49,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert scenarios["saturation"]["outcomes"].get("server_busy", 0) >= 1
     assert scenarios["locked-database"]["outcomes"] == {"admission_unavailable": 12}
     assert scenarios["locked-database"]["operator_report"]["retained_rows"] == 1  # warmup only
+    assert scenarios["locked-database"]["provider_stage_counts"]["embed_query"] == 1
     for scenario in scenarios.values():
         assert scenario["observed_peak_active_operations"] <= 10
         assert scenario["cheap_probe_outcomes"].get("health_200", 0) > 0

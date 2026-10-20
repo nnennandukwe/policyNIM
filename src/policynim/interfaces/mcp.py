@@ -567,7 +567,14 @@ async def _run_correlated_tool(
             raise ToolError(_safe_tool_error(exc)) from exc
         if isinstance(exc, _InvalidToolRequest):
             raise ToolError(str(exc)) from exc
-        raise
+        if isinstance(exc, ToolError):
+            raise
+        raise ToolError(
+            "internal_error: PolicyNIM couldn't complete this operation. "
+            "Ask the operator to inspect structured logs for correlation "
+            + str(current_correlation_id())
+            + "."
+        ) from None
 
     _emit_hosted_event(
         "mcp.tool",

@@ -227,3 +227,132 @@ def test_rejection_and_untyped_failures_have_content_free_failure_classes() -> N
         )
         == "quota_exceeded"
     )
+
+
+def test_quota_schema_migration_preserves_accepted_allowance(tmp_path: Path) -> None:
+    """Adding telemetry correlation to #98's schema can't reset a caller's daily allowance."""
+    path = tmp_path / "auth.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE operation_usage (operation_id TEXT PRIMARY KEY, "
+            "principal_id TEXT, operation TEXT, usage_date TEXT, outcome TEXT, "
+            "process_id INTEGER, started_at REAL, finished_at REAL, owner_id TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO operation_usage VALUES "
+            "('old', 'alice', 'policy_search', ?, 'completed', 1, ?, ?, 'old-owner')",
+            (datetime.now(UTC).date().isoformat(), time.time(), time.time()),
+        )
+    store = OperationStore(path)
+    assert store.usage("alice").accepted == 1
+    assert (
+        store.admit(
+            principal_id="alice",
+            operation="policy_search",
+            daily_limit=1,
+            principal_limit=2,
+            global_limit=10,
+        ).rejection
+        == "quota_exceeded"
+    )
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT correlation_id FROM operation_usage").fetchone() == (
+            None,
+        )
+    store.close()
+
+
+def test_locked_retention_rolls_back_without_removing_history(tmp_path: Path) -> None:
+    """A writer lock leaves terminal history unchanged and permits a later cleanup retry."""
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    old = time.time() - 40 * 86400
+    accepted = store.admit(
+        principal_id="alice",
+        operation="policy_search",
+        daily_limit=5,
+        principal_limit=2,
+        global_limit=10,
+        now=old,
+    )
+    assert accepted.operation_id
+    store.finish(accepted.operation_id, "completed")
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("UPDATE operation_usage SET finished_at = ?", (old,))
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError):
+            store.prune(retention_days=30)
+    assert OperationStore.report(store.path).retained_rows == 1
+    assert store.prune(retention_days=30) == 1
+    assert OperationStore.report(store.path).retained_rows == 0
+    store.close()
+
+
+def test_reversed_wall_timestamps_arent_reported_as_zero_latency(tmp_path: Path) -> None:
+    """A clock adjustment produces an unavailable sample instead of a fabricated zero."""
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    accepted = store.admit(
+        principal_id="alice",
+        operation="policy_search",
+        daily_limit=5,
+        principal_limit=2,
+        global_limit=10,
+    )
+    assert accepted.operation_id
+    store.finish(accepted.operation_id, "completed")
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("UPDATE operation_usage SET finished_at = started_at - 1")
+    report = store.report(store.path)
+    assert report.latency_clock == "persisted_utc_wall_timestamps"
+    assert report.latency_sample_count == 0
+    assert report.latency_p50_ms is None
+    assert report.outcomes == {"completed": 1}
+    store.close()
+
+
+def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Redact unexpected service exceptions before the SDK's raw traceback logger sees them."""
+    from starlette.testclient import TestClient
+    from test_mcp_authorization import rpc
+
+    sentinel = "Authorization: Bearer private-token C:\\private\\task /Users/private/policy"
+    settings = Settings.model_validate(
+        {
+            "mcp_require_auth": True,
+            "mcp_public_base_url": "https://policy.example",
+            "mcp_bearer_tokens": ["fixture-key"],
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+            "index_db_path": tmp_path / "index.sqlite3",
+        }
+    )
+    failures: list[str | None] = []
+
+    def fail(**arguments: object) -> dict[str, object]:
+        """Inject a credential-bearing failure through actual HTTP dispatch."""
+        raise RuntimeError(sentinel)
+
+    def capture(event: str, **fields: object) -> None:
+        """Retain only the stable failure class for the assertion."""
+        value = fields.get("upstream_failure_class")
+        failures.append(str(value) if value is not None else None)
+
+    monkeypatch.setattr(mcp, "_run_policy_search", fail)
+    monkeypatch.setattr(mcp, "_emit_hosted_event", capture)
+    with (
+        caplog.at_level(logging.INFO),
+        TestClient(
+            mcp._build_streamable_http_app(settings), base_url="https://policy.example"
+        ) as client,
+    ):
+        response = rpc(
+            client,
+            "tools/call",
+            {"name": "policy_search", "arguments": {"query": "q"}},
+            token="fixture-key",
+        )
+    assert response.status_code == 200 and response.json()["result"]["isError"]
+    assert "internal_error" in response.text and "correlation" in response.text
+    assert "private-token" not in response.text and "private-token" not in caplog.text
+    assert "RuntimeError" in failures

@@ -17,8 +17,11 @@ policynim beta-admin operations
 
 The read-only JSON report contains active operations, retained completed/failed/
 cancelled/interrupted outcomes and nearest-rank p50/p95/p99 duration over the most
-recent 1,000 terminal operations. The duration covers admission through worker
-cleanup; it isn't an end-to-end client latency measurement. The report names that
+recent 1,000 terminal operations. The duration uses persisted UTC wall timestamps from admission through worker
+cleanup; it isn't an end-to-end client latency measurement. The report names
+that clock. Rows with reversed timestamps are excluded from latency samples;
+clock adjustments can still affect historical durations. Use the monotonic
+provider/tool logs and harness timings for latency diagnosis. The report names that
 sample window and count. It also reports local index state/build identity and
 configured active/retention limits. It doesn't create or migrate absent state.
 A missing or locked database produces a nonzero exit with state-volume recovery
@@ -37,9 +40,10 @@ removes active rows or today's usage, even if timestamps are inconsistent. Locke
 or failed cleanup rolls back with admission, preserving prior accounting. Run at
 least one accepted-operation admission after changing retention to apply it.
 Retained outcome counts describe the retained window; they aren't lifetime totals.
-Back up the database and its `.owners` directory together. Owner lease files are
-small recovery metadata and remain preserved; monitor volume use and remove only
-proven abandoned files during a stopped-service maintenance window.
+Back up the database and its `.owners` directory together. Active/recovery owner lease files stay preserved. Failed initialization and a
+drained service remove their unused lease files. Monitor remaining recovery
+metadata and remove only proven abandoned files during a stopped-service
+maintenance window.
 
 ## Query content-free events
 
@@ -67,7 +71,9 @@ Route logs through an operator-controlled sink with a documented retention polic
 use 30 days or less for this release and avoid unbounded indexed correlation labels.
 Uvicorn raw access logs are disabled so OAuth callback query codes aren't logged.
 Raw exception payloads/tracebacks aren't emitted for beta callback or auth-storage
-fallback failures. Public readiness remains sanitized and doesn't expose this report.
+fallback failures. Unexpected tool failures become a sanitized `internal_error`
+with an opaque correlation ID before the SDK can log the original traceback.
+Structured events retain the error class for diagnosis. Public readiness remains sanitized and doesn't expose this report.
 
 ## Run reproducible synthetic measurements
 
@@ -93,7 +99,8 @@ record returned hit counts. Synthetic vectors don't test retrieval quality.
 
 Reports include the source revision, dirty-state flag, harness digest, platform,
 CPU count, Python version, provider delay, configured/client concurrency, throughput,
-response outcomes, cheap discovery/readiness percentiles, sampled active peak,
+response outcomes, separate accepted/rejected latency percentiles, cheap
+discovery/readiness percentiles, sampled active peak,
 terminal ledger counts, sampled process RSS and process maximum RSS when available.
 RSS sampling uses POSIX `ps` during probes, so the harness supports macOS/Linux.
 The samples include setup/ingestion memory that remains resident; they can miss

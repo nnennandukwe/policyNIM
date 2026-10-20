@@ -389,7 +389,13 @@ async def _measure(
             "outcomes": dict(outcomes),
             "responses_per_second": round(len(samples) / seconds, 3),
             "successful_operations_per_second": round(outcomes["ok"] / seconds, 3),
-            "operation_latency_ms": _percentiles([sample[0] for sample in samples]),
+            "response_latency_ms": _percentiles([sample[0] for sample in samples]),
+            "accepted_operation_latency_ms": _percentiles(
+                [sample[0] for sample in samples if sample[1] == "ok"]
+            ),
+            "rejected_response_latency_ms": _percentiles(
+                [sample[0] for sample in samples if sample[1] != "ok"]
+            ),
             "discovery_latency_ms": _percentiles(cheap_latencies),
             "health_latency_ms": _percentiles(health_latencies),
             "cheap_probe_outcomes": dict(cheap_outcomes),
@@ -489,6 +495,13 @@ def main() -> None:
                 result["provider_stage_event_count"] = sum(
                     item.get("event") == "provider.operation" for item in events
                 )
+                result["provider_stage_counts"] = dict(
+                    Counter(
+                        item.get("stage")
+                        for item in events
+                        if item.get("event") == "provider.operation" and item.get("kind") == "stage"
+                    )
+                )
                 result["live_provider_usage"] = None
                 scenarios.append(result)
     report = {
@@ -510,12 +523,14 @@ def main() -> None:
             "distribution": args.distribution,
             "embedding_dimensions": 4,
             "embedding_model": "synthetic-orthogonal-4",
+            "tool": "policy_search",
             "reranker": None,
             "global_active_limit": 10,
             "principal_active_limit": 2,
         },
         "scenarios": scenarios,
         "limits": [
+            "Only search is measured; other tools require separate workload evidence.",
             "Synthetic vectors don't measure model quality or NVIDIA latency.",
             "Short local runs don't establish a production capacity envelope.",
             "Disconnect/server-shutdown outcomes depend on observed worker drain.",
