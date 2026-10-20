@@ -2989,6 +2989,7 @@ def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
 
     from policynim.interfaces.mcp import _build_streamable_http_app
     from policynim.services import generations
+    from policynim.storage import sqlite_vec
 
     settings, identity, index, rules = seed_legacy(tmp_path)
     settings = settings.model_copy(update={"generations_dir": tmp_path / "generations"})
@@ -3002,6 +3003,8 @@ def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
     original_copy, original_open = generations.deepcopy, os.open
     clones: list[str] = []
     lease_opens: list[str] = []
+    statements: list[str] = []
+    original_connect = sqlite_vec._connect
 
     def copy(value, memo=None):
         """Observe whole snapshot clones without changing the real ownership behavior."""
@@ -3015,16 +3018,28 @@ def test_warm_public_health_avoids_corpus_clones_while_probing_admission(
             lease_opens.append(str(path))
         return original_open(path, flags, mode, dir_fd=dir_fd)
 
+    def connect(path: Path, *, read_only: bool = False):
+        """Observe actual SQLite statements issued by warm public health requests."""
+        connection = original_connect(path, read_only=read_only)
+        connection.set_trace_callback(statements.append)
+        return connection
+
     with TestClient(_build_streamable_http_app(settings), base_url="http://localhost") as client:
         assert client.get("/healthz").status_code == 200
         monkeypatch.setattr(generations, "deepcopy", copy)
         monkeypatch.setattr(os, "open", open_file)
+        monkeypatch.setattr(sqlite_vec, "_connect", connect)
         for _ in range(3):
             response = client.get("/healthz")
             assert response.status_code == 200
             assert response.json()["generation_id"] == first.generation_id
         assert clones == []
         assert lease_opens
+        queries = [statement.upper() for statement in statements]
+        assert any("LIMIT 1" in query for query in queries)
+        assert not any(
+            "COUNT(" in query or " JOIN " in query or "PROVENANCE:" in query for query in queries
+        )
         artifact = store.root / "objects" / first.generation_id / "runtime_rules.json"
         artifact.write_bytes(artifact.read_bytes() + b"tampered")
         assert client.get("/healthz").status_code == 503

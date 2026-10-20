@@ -27,7 +27,13 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from policynim.contracts import Embedder
-from policynim.errors import ConfigurationError, GenerationError, PolicyNIMError, ProviderError
+from policynim.errors import (
+    ConfigurationError,
+    GenerationError,
+    MissingIndexError,
+    PolicyNIMError,
+    ProviderError,
+)
 from policynim.ingest.chunking import chunk_policy_documents
 from policynim.operations import ResourceStack, check_budget, close_components
 from policynim.services.catalog import CatalogPack, PolicyCatalog
@@ -847,18 +853,18 @@ class GenerationStore:
                         _VALIDATION_CACHE.move_to_end(key)
             if cached is not None:
                 result = cached.readiness
-                with closing(
-                    SQLiteVecIndexStore(
-                        path=directory / "index.sqlite3", embedding_identity=self.embedding
-                    )
-                ) as index:
-                    readiness = index.inspect_readiness()
-                if readiness.state != "ready":
+                try:
+                    with closing(
+                        SQLiteVecIndexStore(
+                            path=directory / "index.sqlite3", embedding_identity=self.embedding
+                        )
+                    ) as index:
+                        index.probe_readability()
+                except MissingIndexError as exc:
                     raise GenerationError(
-                        "read", readiness.reason + " Correct index access before retrying health."
-                    )
-                if readiness.chunk_count != result.chunk_count:
-                    raise GenerationError("read", "Generation index count changed during health.")
+                        "read",
+                        "Generation index couldn't be read. Correct access and retry health.",
+                    ) from exc
                 if self._artifact_token(directory) != token:
                     raise GenerationError(
                         "inspect", "Generation changed during readiness inspection."
