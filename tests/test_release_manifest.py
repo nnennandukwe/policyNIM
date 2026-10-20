@@ -45,6 +45,7 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
         "dependency_lock": "sha256:" + manifest.sha256(repo / "uv.lock"),
         "generation_id": hashlib.sha256(source_manifest).hexdigest(),
         "catalog_digest": catalog,
+        "public_bundle_digest": "sha256:" + manifest.sha256(bundle),
         "stdio": [
             {"protocol": protocol, "invalid_argument_rejected": True}
             for protocol in ["2026-07-28", "2025-11-25"]
@@ -108,6 +109,7 @@ def test_manifest_binds_download_bytes_and_its_own_checksum(release_assets) -> N
         ("dependency_lock", "sha256:" + "0" * 64),
         ("generation_id", "0" * 64),
         ("catalog_digest", "sha256:" + "0" * 64),
+        ("public_bundle_digest", "sha256:" + "0" * 64),
         ("version_output", "0.1.0"),
         ("runner_machine", "wrong-architecture"),
         ("http", [{"protocol": "2026-07-28", "invalid_argument_rejected": True}]),

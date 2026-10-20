@@ -35,7 +35,7 @@ def sha256(path: Path) -> str:
 
 
 def check_receipt(
-    receipt: dict, *, revision: str, lock: str, generation: str, catalog: str
+    receipt: dict, *, revision: str, lock: str, generation: str, catalog: str, bundle_digest: str
 ) -> None:
     """Require matching completed source and generation evidence for both protocols."""
     require(isinstance(receipt, dict), "Artifact receipt must be a JSON object.")
@@ -47,6 +47,7 @@ def check_receipt(
     require(recorded_lock == lock, "Artifact dependency lock differs.")
     require(receipt.get("generation_id") == generation, "Artifact generation differs.")
     require(receipt.get("catalog_digest") == catalog, "Artifact catalog differs.")
+    require(receipt.get("public_bundle_digest") == bundle_digest, "Artifact public bundle differs.")
     for transport in ("stdio", "http"):
         results = receipt.get(transport)
         require(isinstance(results, list) and len(results) == 2, "Protocol evidence is incomplete.")
@@ -109,7 +110,14 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
         receipt = json.loads(
             assets[f"standalone-evidence-{target}.json"].read_text(encoding="utf-8")
         )
-        check_receipt(receipt, revision=revision, lock=lock, generation=generation, catalog=catalog)
+        check_receipt(
+            receipt,
+            revision=revision,
+            lock=lock,
+            generation=generation,
+            catalog=catalog,
+            bundle_digest=bundle_digest,
+        )
         require(receipt.get("platform") == system, "Standalone operating system differs.")
         require(
             receipt.get("runner_machine") in machines, "Standalone runner architecture differs."
@@ -123,7 +131,14 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
         )
     for runtime in PYTHON_RUNTIMES:
         receipt = json.loads(assets[f"wheel-evidence-{runtime}.json"].read_text(encoding="utf-8"))
-        check_receipt(receipt, revision=revision, lock=lock, generation=generation, catalog=catalog)
+        check_receipt(
+            receipt,
+            revision=revision,
+            lock=lock,
+            generation=generation,
+            catalog=catalog,
+            bundle_digest=bundle_digest,
+        )
         require(isinstance(receipt.get("wheel"), dict), "Wheel receipt metadata is missing.")
         require(
             receipt["wheel"].get("package_version") == version, "Wheel package version differs."
