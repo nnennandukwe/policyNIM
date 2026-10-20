@@ -39,6 +39,8 @@ Invoke `policy_guided_review(task)` to prepare a review grounded in these tools 
 
 ## Compatibility and limits
 
+`PreflightResult.run_id` and `Citation.resource_uri` are optional strings. Clients must accept each field when it's absent, null or a string; legacy preflight responses can include null values. The companion coding workflow's strict response models support this contract in [merged PR #3](https://github.com/nnennandukwe/policynim-nemo-coding-workflow/pull/3), including unchanged roundtrips for older responses with absent fields. Use a client version containing that change before consuming these expanded responses.
+
 The server uses MCP SDK 2.2.0 and supports modern discovery plus legacy initialization. Offline integration checks cover resource reads and typed tool invocation through both client modes. Live provider quality, production capacity and production deployment require separate release evidence.
 
 These capabilities don't advertise the optional MCP Tasks extension. Application evaluation-job lifecycle and authenticated report retention belong to #101; Tasks interoperability remains separately gated by #102.
