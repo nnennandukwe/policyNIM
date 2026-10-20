@@ -386,6 +386,9 @@ def _failure_class_from_error(exc: BaseException) -> str | None:
                 "admission_unavailable",
                 "admission_busy",
                 "accounting_incomplete",
+                "acceptance_conflict",
+                "acceptance_finalized",
+                "acceptance_not_found",
                 "server_shutting_down",
             }:
                 return code
