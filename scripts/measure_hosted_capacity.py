@@ -366,6 +366,7 @@ async def _measure(
         active_peak = 0
         sampled_peak_rss = _sample_rss(process.pid)
         stop = asyncio.Event()
+        active_probe_observed = asyncio.Event()
 
         state_failures: Counter[str] = Counter()
         state_observations: Counter[str] = Counter()
@@ -399,20 +400,34 @@ async def _measure(
                 sampled = await asyncio.to_thread(_sample_rss, process.pid)
                 if sampled is not None:
                     sampled_peak_rss = max(sampled_peak_rss or 0, sampled)
+                before_probe = await observe_state("probe")
+                if before_probe is not None:
+                    active_peak = max(active_peak, before_probe.active_operations)
                 latency, outcome, _ = await _rpc(client, config["tokens"][0], discovery=True)
                 cheap_latencies.append(latency)
                 cheap_outcomes[outcome] += 1
                 start = time.perf_counter()
+                health_ok = False
                 try:
                     health = await client.get("/healthz")
                 except httpx.HTTPError:
                     cheap_outcomes["health_transport_failure"] += 1
                 else:
                     cheap_outcomes[f"health_{health.status_code}"] += 1
+                    health_ok = health.status_code == 200
                 health_latencies.append((time.perf_counter() - start) * 1000)
                 observed = await observe_state("probe")
                 if observed is not None:
                     active_peak = max(active_peak, observed.active_operations)
+                if (
+                    before_probe is not None
+                    and before_probe.active_operations > 0
+                    and observed is not None
+                    and observed.active_operations > 0
+                    and outcome == "ok"
+                    and health_ok
+                ):
+                    active_probe_observed.set()
                 await asyncio.sleep(0.01)
 
         samples: list[tuple[float, str, int]] = []
@@ -455,9 +470,7 @@ async def _measure(
                             or intervention_started_with_active_work
                         )
                         active_peak = max(active_peak, observed.active_operations)
-                    intervention_probe_observed = (
-                        cheap_outcomes["health_200"] > 0 and cheap_outcomes["ok"] > 0
-                    )
+                    intervention_probe_observed = active_probe_observed.is_set()
                     if (
                         intervention_started_with_active_work and intervention_probe_observed
                     ) or pending.done():

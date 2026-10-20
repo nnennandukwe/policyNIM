@@ -394,3 +394,70 @@ raise SystemExit(main())
         assert scenario["intervention"] == "SIGTERM_without_active_work_at_intervention"
         assert report["measurement_complete"] is False
     assert report["live_nvidia_calls"] == 0 and report["production_capacity_verified"] is False
+
+
+def test_probe_before_work_cant_satisfy_active_intervention_evidence(tmp_path: Path) -> None:
+    """Coordinate actual HTTP so the only healthy probe finishes before work starts."""
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "healthy-probe-before-work.json"
+    script = """
+import asyncio
+import runpy
+import sys
+import time
+namespace = runpy.run_path('scripts/measure_hosted_capacity.py')
+main = namespace['main']
+original_rpc = namespace['_rpc']
+original_sample = namespace['_sample_rss']
+original_measure = namespace['_measure']
+ready = None
+loop = None
+sample_calls = 0
+tool_calls = 0
+
+async def coordinated_measure(*args):
+    '''Set the event loop used by the real process sampler's thread.'''
+    global ready, loop
+    ready = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    return await original_measure(*args)
+
+async def coordinated_rpc(*args, **kwargs):
+    '''Start expensive work only after the first complete measured probe.'''
+    global tool_calls
+    if not kwargs.get('discovery', False):
+        tool_calls += 1
+        if tool_calls > 1:
+            await ready.wait()
+    return await original_rpc(*args, **kwargs)
+
+def coordinated_sample(pid):
+    '''Delay the second probe until actual work has already completed.'''
+    global sample_calls
+    sample_calls += 1
+    if sample_calls == 3:
+        loop.call_soon_threadsafe(ready.set)
+        time.sleep(1.0)
+    return original_sample(pid)
+
+main.__globals__.update(_rpc=coordinated_rpc, _sample_rss=coordinated_sample,
+                        _measure=coordinated_measure)
+sys.argv = ['measure', '--output', sys.argv[1], '--users', '1', '--chunks', '10',
+            '--requests-per-user', '1', '--provider-delay', '0.2', '--scenarios', 'shutdown']
+raise SystemExit(main())
+"""
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(output)],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=45,
+        check=False,
+    )
+    report = json.loads(output.read_text())
+    scenario = report["scenarios"][0]
+    assert scenario["cheap_probe_outcomes"].get("health_200", 0) > 0
+    assert scenario["active_work_observed_before_intervention"] is True
+    assert process.returncode == 1, scenario
+    assert scenario["intervention_probe_observed"] is False
+    assert report["measurement_complete"] is False
