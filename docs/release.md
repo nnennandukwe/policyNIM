@@ -57,6 +57,13 @@ outside this repository to run `scripts/verify_installed_package.py`. Supply the
 absolute wheel and public bundle paths with `--wheel` and `--bundle`, the trusted
 contents of `artifacts/public-generation/generation.sha256` with `--bundle-digest`,
 the source commit with `--revision`, and an output JSON path with `--output`.
+Also supply `--lockfile uv.lock`, `--lock-digest sha256:<digest>`, and
+`--requirements` pointing to the exported runtime requirements used for installation.
+CI exports with `uv export --locked --no-dev --no-emit-project`, installs those
+artifacts with required hashes, and installs the wheel without dependency resolution.
+The report records the lock digest, requirements digest and actual installed versions.
+Bootstrap installer packages are recorded separately when they weren't selected
+for the runtime installation.
 The verifier refuses an installation resolved back to a source checkout. It never
 calls model providers; protocol discovery doesn't establish live retrieval quality
 or Codex/Claude UI interoperability. Retain those acceptance results separately.
@@ -106,10 +113,3 @@ After the draft release artifacts pass local smoke tests, run the manual
 `Hosted Beta Smoke` workflow only when the deployed Railway beta and hosted MCP
 secrets are available. This is a deployment promotion check, not part of the
 offline release artifact build.
-
-The fresh-wheel verifier requires `--lockfile uv.lock` and `--lock-digest sha256:<digest>`,
-plus `--requirements` pointing to the exported runtime requirements used for installation.
-CI installs exported locked dependency artifacts with required hashes before installing
-the wheel without dependency resolution. Its report records the lock digest and actual
-installed versions and the requirements digest. Bootstrap installer packages are identified
-separately when they weren't selected for the runtime installation.

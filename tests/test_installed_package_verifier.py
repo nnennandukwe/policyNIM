@@ -25,6 +25,7 @@ def test_console_command_failure_reports_cause_without_credentials(
 
     def failed_command(arguments, **kwargs):
         """Simulate an installer-generated command that fails before module execution."""
+        assert kwargs["encoding"] == "utf-8"
         calls.append(arguments)
         return subprocess.CompletedProcess(
             arguments, 2, stdout="", stderr="ImportError missing_module secret-token"
@@ -127,3 +128,20 @@ def test_bootstrap_pip_uses_runtime_selection(monkeypatch, tmp_path: Path, selec
     else:
         report = verifier.check_dependencies(lock, digest, requirements)
         assert report["bootstrap_versions"] == {"pip": "24.0"}
+
+
+def test_installed_cli_reads_utf8_output_independently_of_locale(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The installed child uses UTF-8 even when the verifier's locale differs."""
+
+    def unicode_command(arguments, **kwargs):
+        """Model the UTF-8 output that Windows-1252 couldn't decode in CI."""
+        assert kwargs["encoding"] == "utf-8"
+        return subprocess.CompletedProcess(
+            arguments, 0, stdout="Usage: policynim → policy", stderr=""
+        )
+
+    monkeypatch.setattr(verifier, "installed_command", lambda: "/installed/bin/policynim")
+    monkeypatch.setattr(verifier.subprocess, "run", unicode_command)
+    assert "→" in verifier.run_command(["--help"], env={"PYTHONUTF8": "1"}, cwd=tmp_path)
