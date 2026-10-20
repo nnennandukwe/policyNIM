@@ -139,9 +139,9 @@ def test_installed_cli_reads_utf8_output_independently_of_locale(
         """Model the UTF-8 output that Windows-1252 couldn't decode in CI."""
         assert kwargs["encoding"] == "utf-8"
         return subprocess.CompletedProcess(
-            arguments, 0, stdout="Usage: policynim → policy", stderr=""
+            arguments, 0, stdout="Usage: policynim " + chr(0x2192) + " policy", stderr=""
         )
 
     monkeypatch.setattr(verifier, "installed_command", lambda: "/installed/bin/policynim")
     monkeypatch.setattr(verifier.subprocess, "run", unicode_command)
-    assert "→" in verifier.run_command(["--help"], env={"PYTHONUTF8": "1"}, cwd=tmp_path)
+    assert chr(0x2192) in verifier.run_command(["--help"], env={"PYTHONUTF8": "1"}, cwd=tmp_path)

@@ -567,3 +567,48 @@ def test_refusal_only_suite_marks_recall_as_not_applicable(tmp_path: Path) -> No
         rows=[],
     )
     assert report.read_text().count("not applicable") == 2
+
+
+@pytest.mark.parametrize("tampering", ["owner", "title", "missing-link"])
+def test_preflight_expected_policy_needs_its_own_source_evidence(
+    installed_generation, tampering: str
+) -> None:
+    """A required policy name can't borrow another policy's real chunk or title."""
+    settings, _ = installed_generation
+    with closing(create_index_store(settings)) as store:
+        first, *remaining = store.list_chunks()
+        second = next(
+            chunk for chunk in remaining if chunk.policy.policy_id != first.policy.policy_id
+        )
+    first_citation, second_citation = _eval_citation(first), _eval_citation(second)
+    case = EvalCase(
+        case_id="misattributed-guidance",
+        kind="preflight",
+        input="Review policy evidence",
+        expected_policy_ids=[first.policy.policy_id],
+        expected_chunk_ids=[first.chunk_id],
+    )
+    guidance = PolicyGuidance(
+        policy_id=first.policy.policy_id,
+        title="Forged title" if tampering == "title" else first.policy.title,
+        rationale="Follow this policy",
+        citation_ids=(
+            []
+            if tampering == "missing-link"
+            else [second.chunk_id if tampering == "owner" else first.chunk_id]
+        ),
+    )
+    scored = _score_preflight_case(
+        case,
+        result=PreflightResult(
+            task=case.input,
+            summary="Grounded review",
+            applicable_policies=[guidance],
+            citations=[first_citation, second_citation],
+        ),
+        rerank_enabled=True,
+    )
+    assert not scored.passed
+    assert scored.matched_policy_ids == []
+    assert scored.metrics.expected_policy_recall == 0
+    assert any("guidance evidence" in reason for reason in scored.failure_reasons)
