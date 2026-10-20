@@ -23,7 +23,7 @@ Applies to application-developer, service-operator. Select this policy when the 
 
 ## Required Rules
 
-- **LOG-1** Exclude secrets, tokens, authorization headers, reset links, private keys, and sensitive payloads; apply an explicit policy for personal data. Support: CS-LOG:Data to exclude.
+- **LOG-1** Exclude secrets, tokens, authorization headers, reset links, private keys, sensitive payloads, email addresses, phone numbers, and user-provided free text by default. Any personal-data exception needs an approved purpose, access controls, and retention limit. Support: CS-LOG:Data to exclude; PolicyNIM decision.
 - **LOG-2** Use structured operation, outcome, and safe correlation fields; include trace context when available without copying arbitrary request bodies. Support: OTEL-LOG:Trace Context Fields; OTEL-LOG:Field: Resource; PolicyNIM decision.
 - **LOG-3** Record terminal failures with safe cause and operator action; bound repeated events and review access and retention. Support: PolicyNIM decision.
 

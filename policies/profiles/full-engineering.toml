@@ -54,11 +54,11 @@ DATA-TRANSACTION-001 = "sha256:3888193d954ac3c19aeabde8e1f72c33418ad15c110174769
 path = "../reliability"
 pack_id = "policynim.reliability"
 version = "0.3.0"
-digest = "sha256:ca23dcd3b9dd085b96dad6b6fe20761919ba89cbd97eb8236160c2ba2ad1d007"
+digest = "sha256:ded88dcf56d14b5a2c69b046fb52a8932ecb41f8c765bc1ddee4654ebb22a003"
 
 [packs.policies]
 ARCH-JOB-001 = "sha256:89098d9459fd2570190a04ce879c9e6a27a35dadf64b19453240f17889536612"
-BE-CONFIG-001 = "sha256:fa69a6ae0d23fc50ddcdd2a651cc22e1d9579fb7901049b3f49aa966c20ad696"
+BE-CONFIG-001 = "sha256:f21f6b5015749ed508b7e0804613f8874b78a7b6e74c3528d84974cc4a2bb7d9"
 REL-OVERLOAD-001 = "sha256:5b7c50916529e2d2f1f4b085c63e722545dc2d748bd724444bd1f669819f7273"
 REL-TIMEOUT-001 = "sha256:9feccfb3e03f44f4c72ae63081b32232be7089bb2c2cae943808205f8d977bba"
 
@@ -66,10 +66,10 @@ REL-TIMEOUT-001 = "sha256:9feccfb3e03f44f4c72ae63081b32232be7089bb2c2cae94380820
 path = "../observability"
 pack_id = "policynim.observability"
 version = "0.3.0"
-digest = "sha256:fa3db297601ac7f4488b8c9ce60423dbbe022a11462aa7cec70077c5a3640974"
+digest = "sha256:a1ffcd6e6aa9f2bda322b13995f57d40ffb55fd42db3e2e3f902bff338e4b8e8"
 
 [packs.policies]
-BE-LOG-001 = "sha256:635d9759cc0b527e3d1293fffa75533e3e7493dc4ac87da7fc1125871d87290d"
+BE-LOG-001 = "sha256:abef6bd35e9be64662b740d065e198628eee6bab84e995e4e00adbab93d5a2fa"
 BE-TRACE-001 = "sha256:06b6c413239bf7efa8c36a760ec616c010ae00bd3ec2b800c753cb18fc044400"
 OBS-READINESS-001 = "sha256:ebba533b77ec44ed5b4b5b610c173da3715f05f4a1cd66cf7bcba9b093b32c45"
 

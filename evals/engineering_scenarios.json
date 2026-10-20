@@ -13,10 +13,10 @@
     "DATA-MIGRATE-001": "sha256:5117c6323765b889850766ee3a29d707b0d9f1c2c49d8361bba47537ecba48d6",
     "DATA-TRANSACTION-001": "sha256:5e54de69002bd3cd311a6e727c49d9cfa62f6a7c51fa7b4bc78cd6b84f764faf",
     "ARCH-JOB-001": "sha256:03a4f55d8972eee5e04e2be3cd4ae6112788d2937c4a2ddac48083f19cd17abe",
-    "BE-CONFIG-001": "sha256:50f4bdbafbd575e27c41c268c138f2f2f199fc5a375b0188ead6401e8c0003c2",
+    "BE-CONFIG-001": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
     "REL-TIMEOUT-001": "sha256:3e13a95e7a6cfa5d7bf83452ab60c947702ad57d0d20fcf56acfd9feabab1167",
     "REL-OVERLOAD-001": "sha256:6288d618eafe813c60a6210a7b88399e201efc510587b29b7197e307a2aa8bdd",
-    "BE-LOG-001": "sha256:a358240b274e5c129ad8a08555376df13207e3e9342c45dc4b5e61fb6c6f7edb",
+    "BE-LOG-001": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
     "BE-TRACE-001": "sha256:ec81092399e420e4d021aa5a866d64103065f3b3997923a961bc040f895810e6",
     "OBS-READINESS-001": "sha256:f6c7e82eb2b583b9f5a03028a0ad809a054397e14e0ef82f805fa632f03bca1d",
     "SUPPLY-BUILD-001": "sha256:4937794753e1032b19a46164c6f383493e82aa7fcee07ba45bbbb159f60f16bd",
@@ -780,12 +780,12 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:50f4bdbafbd575e27c41c268c138f2f2f199fc5a375b0188ead6401e8c0003c2",
+      "policy_revision": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
           "requirement_id": "CONFIG-1",
-          "quote": "Validate settings that affect security, correctness, or data integrity before accepting affected work; expose one testable configuration surface.",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup before accepting requests; expose one testable configuration surface.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -812,18 +812,18 @@
       "case_id": "be-config-001-violating",
       "kind": "violating",
       "role": "application-developer",
-      "input": "A missing signing secret enables unauthenticated access, or the startup error prints the secret value.",
+      "input": "An enabled service accepts requests and defers validation of its required authorization issuer until the first affected write.",
       "expected_policy_ids": [
         "BE-CONFIG-001"
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:50f4bdbafbd575e27c41c268c138f2f2f199fc5a375b0188ead6401e8c0003c2",
+      "policy_revision": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
           "requirement_id": "CONFIG-1",
-          "quote": "Validate settings that affect security, correctness, or data integrity before accepting affected work; expose one testable configuration surface.",
+          "quote": "Validate required settings that affect security, correctness, or data integrity at startup before accepting requests; expose one testable configuration surface.",
           "support": [
             "PolicyNIM decision"
           ]
@@ -856,10 +856,10 @@
         "BE-CONFIG-001"
       ],
       "policy_id": "BE-CONFIG-001",
-      "policy_revision": "sha256:50f4bdbafbd575e27c41c268c138f2f2f199fc5a375b0188ead6401e8c0003c2",
+      "policy_revision": "sha256:6f49aa8b74b45084b89407f0783a2266d83c1c5c442bc1929190c5c8fab3f301",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
-      "rationale": "Optional integrations can remain disabled when their settings are absent. Lazy validation is acceptable only before the first affected effect and when the degraded state is explicit."
+      "rationale": "Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup."
     },
     {
       "case_id": "rel-timeout-001-applicable",
@@ -1059,14 +1059,15 @@
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:a358240b274e5c129ad8a08555376df13207e3e9342c45dc4b5e61fb6c6f7edb",
+      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
       "expected_outcome": "apply_guidance",
       "expected_evidence": [
         {
           "requirement_id": "LOG-1",
-          "quote": "Exclude secrets, tokens, authorization headers, reset links, private keys, and sensitive payloads; apply an explicit policy for personal data.",
+          "quote": "Exclude secrets, tokens, authorization headers, reset links, private keys, sensitive payloads, email addresses, phone numbers, and user-provided free text by default. Any personal-data exception needs an approved purpose, access controls, and retention limit.",
           "support": [
-            "CS-LOG:Data to exclude"
+            "CS-LOG:Data to exclude",
+            "PolicyNIM decision"
           ]
         },
         {
@@ -1092,20 +1093,21 @@
       "case_id": "be-log-001-violating",
       "kind": "violating",
       "role": "application-developer",
-      "input": "The handler serializes an authorization header or raw user body into a debug event.",
+      "input": "Without an approved exception, a handler records email addresses, phone numbers, and raw user-provided free text in its logs.",
       "expected_policy_ids": [
         "BE-LOG-001"
       ],
       "out_of_scope_policy_ids": [],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:a358240b274e5c129ad8a08555376df13207e3e9342c45dc4b5e61fb6c6f7edb",
+      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
       "expected_outcome": "require_changes",
       "expected_evidence": [
         {
           "requirement_id": "LOG-1",
-          "quote": "Exclude secrets, tokens, authorization headers, reset links, private keys, and sensitive payloads; apply an explicit policy for personal data.",
+          "quote": "Exclude secrets, tokens, authorization headers, reset links, private keys, sensitive payloads, email addresses, phone numbers, and user-provided free text by default. Any personal-data exception needs an approved purpose, access controls, and retention limit.",
           "support": [
-            "CS-LOG:Data to exclude"
+            "CS-LOG:Data to exclude",
+            "PolicyNIM decision"
           ]
         },
         {
@@ -1137,7 +1139,7 @@
         "BE-LOG-001"
       ],
       "policy_id": "BE-LOG-001",
-      "policy_revision": "sha256:a358240b274e5c129ad8a08555376df13207e3e9342c45dc4b5e61fb6c6f7edb",
+      "policy_revision": "sha256:53c962527a90e872e06a560e4018160eb2f61914eb46aa393f45f6c5f06d3c85",
       "expected_outcome": "not_applicable",
       "expected_evidence": [],
       "rationale": "Redaction is defense in depth; prefer not collecting sensitive values. Sampling, retention, and identifiers need workload and privacy review; structured JSON alone doesn't prove safe logging."

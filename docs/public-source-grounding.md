@@ -28,8 +28,8 @@ which generation an existing index serves.
 `SEC-PUBLIC-ENDPOINT-002` retains its existing safe readiness-response guidance
 and unpinned legacy references to OWASP error/logging and Twelve-Factor config
 material. This change doesn't invent a reviewed revision or license for those
-legacy declarations. The architecture/backend policies above likewise retain
-their prior provenance until their sources are reviewed.
+legacy declarations. The moved architecture/backend policies now carry the
+reviewed, pinned references described in the engineering section above.
 
 ## Template Note
 

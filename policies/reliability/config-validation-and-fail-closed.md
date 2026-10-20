@@ -22,7 +22,7 @@ Applies to application-developer, service-operator. Select this policy when the 
 
 ## Required Rules
 
-- **CONFIG-1** Validate settings that affect security, correctness, or data integrity before accepting affected work; expose one testable configuration surface. Support: PolicyNIM decision.
+- **CONFIG-1** Validate required settings that affect security, correctness, or data integrity at startup before accepting requests; expose one testable configuration surface. Support: PolicyNIM decision.
 - **CONFIG-2** Document precedence, safe defaults, model identity, and the restart or reload behavior for changed settings. Support: PolicyNIM decision.
 - **CONFIG-3** Name invalid keys or shapes without printing secret values; test missing, malformed, and boundary inputs. Support: CS-SECRET:2 General Secrets Management; PolicyNIM decision.
 
@@ -36,7 +36,7 @@ Capture startup and reload outcomes for invalid settings, sanitized errors, unch
 
 ## Exceptions and Boundaries
 
-Optional integrations can remain disabled when their settings are absent. Lazy validation is acceptable only before the first affected effect and when the degraded state is explicit.
+Optional integrations can remain disabled when their settings are absent. Validate their required settings before explicit activation; enabled features can't defer required security, correctness, or data-integrity checks beyond startup.
 
 ## Examples
 
