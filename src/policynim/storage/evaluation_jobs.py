@@ -70,18 +70,18 @@ class EvaluationJobStore:
             os.close(descriptor)
 
         with closing(self._connect()) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version not in (0, 1, 2):
                 raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
-            connection.execute("PRAGMA journal_mode=WAL")
             migration = (
                 "ALTER TABLE evaluation_jobs ADD COLUMN active_case_start_attempts "
                 "INTEGER NOT NULL DEFAULT 0;"
                 if version == 1
                 else ""
             )
-            connection.executescript(f"""
-                BEGIN IMMEDIATE;
+            schema = f"""
                 CREATE TABLE IF NOT EXISTS evaluation_job_archives (
                     generation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, archive BLOB NOT NULL
                 );
@@ -110,8 +110,11 @@ class EvaluationJobStore:
                 );
                 {migration}
                 PRAGMA user_version=2;
-                COMMIT;
-            """)
+            """
+            for statement in schema.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+            connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
         """Use fresh handles so restart and concurrent callers never share transactions."""
