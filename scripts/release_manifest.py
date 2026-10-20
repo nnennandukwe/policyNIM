@@ -14,6 +14,11 @@ import zipfile
 from email.parser import BytesParser
 from pathlib import Path
 
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+
 PLATFORMS = {
     "linux-amd64": ("Linux", {"x86_64", "AMD64"}),
     "darwin-arm64": ("Darwin", {"arm64", "aarch64"}),
@@ -76,8 +81,74 @@ SDIST_INPUTS = (
 )
 
 
+def canonical_requirement(value: str) -> Requirement:
+    """Normalize package and extra names while retaining every version, URL and marker."""
+    requirement = Requirement(value)
+    requirement.name = canonicalize_name(requirement.name)
+    requirement.extras = {canonicalize_name(extra) for extra in requirement.extras}
+    return requirement
+
+
+def check_package_metadata(payload: bytes, project: dict, version: str) -> None:
+    """Match cross-platform dependencies and extras without evaluating host-only markers."""
+    require(len(payload) <= 1024 * 1024, "Package metadata is too large.")
+    metadata = BytesParser().parsebytes(payload)
+    for field in ("Name", "Version", "Requires-Python"):
+        require(len(metadata.get_all(field, [])) == 1, f"Package metadata {field} is ambiguous.")
+    require(
+        canonicalize_name(metadata["Name"]) == canonicalize_name(project["name"])
+        and metadata["Version"] == version,
+        "Package metadata identity differs.",
+    )
+    require(
+        SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(project["requires-python"]),
+        "Package metadata Requires-Python differs from pyproject.",
+    )
+    expected = {canonical_requirement(value) for value in project.get("dependencies", [])}
+    extras = project.get("optional-dependencies", {})
+    require(
+        {canonicalize_name(value) for value in metadata.get_all("Provides-Extra", [])}
+        == {canonicalize_name(value) for value in extras},
+        "Package metadata extras differ from pyproject.",
+    )
+    for extra, dependencies in extras.items():
+        for dependency in dependencies:
+            requirement = canonical_requirement(dependency)
+            extra_marker = f'extra == "{canonicalize_name(extra)}"'
+            requirement.marker = Marker(
+                f"({requirement.marker}) and {extra_marker}"
+                if requirement.marker is not None
+                else extra_marker
+            )
+            expected.add(requirement)
+    require(
+        {canonical_requirement(value) for value in metadata.get_all("Requires-Dist", [])}
+        == expected,
+        "Package metadata Requires-Dist differs from pyproject.",
+    )
+
+
+def check_wheel_metadata(archive_path: Path, project: dict, version: str) -> None:
+    """Require one bounded wheel metadata record matching the selected source contract."""
+    expected_name = f"policynim-{version}.dist-info/METADATA"
+    try:
+        archive_file = zipfile.ZipFile(archive_path)
+    except zipfile.BadZipFile as error:
+        raise ValueError("Wheel package metadata archive is invalid.") from error
+    with archive_file as archive:
+        names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        require(names == [expected_name], "Wheel package metadata is missing or ambiguous.")
+        require(
+            archive.getinfo(expected_name).file_size <= 1024 * 1024,
+            "Package metadata is too large.",
+        )
+        with archive.open(expected_name) as stream:
+            check_package_metadata(stream.read(1024 * 1024 + 1), project, version)
+
+
 def check_source_distribution(archive_path: Path, repo_root: Path, version: str) -> None:
     """Match every source-download file to the selected tracked package inputs."""
+    project = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     tracked = (
         subprocess.check_output(
             ["git", "-C", str(repo_root), "ls-files", "-z", "--", *SDIST_INPUTS]
@@ -104,11 +175,7 @@ def check_source_distribution(archive_path: Path, repo_root: Path, version: str)
             require(content is not None, "Source archive content is missing.")
             if name == "PKG-INFO":
                 require(member.size <= 1024 * 1024, "Source metadata is too large.")
-                metadata = BytesParser().parsebytes(content.read(1024 * 1024 + 1))
-                require(
-                    metadata["Name"] == "policynim" and metadata["Version"] == version,
-                    "Source package version differs.",
-                )
+                check_package_metadata(content.read(1024 * 1024 + 1), project, version)
             else:
                 source = repo_root / name
                 require(
@@ -156,6 +223,7 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
         "Missing release assets: " + ", ".join(sorted(required - assets.keys())),
     )
     require(assets.keys() <= required, "Unexpected release assets aren't accepted.")
+    check_wheel_metadata(assets[wheel], project["project"], version)
     check_source_distribution(assets[f"policynim-{version}.tar.gz"], repo_root, version)
     bundle = assets["policynim-public-generation.zip"]
     bundle_digest = assets["policynim-public-generation.sha256"].read_text(encoding="utf-8").strip()
@@ -187,6 +255,10 @@ def generate_manifest(*, asset_dir: Path, repo_root: Path, tag: str, revision: s
         require(receipt.get("version_output") == version, "Standalone package version differs.")
         suffix = "zip" if target == "windows-amd64" else "tar.gz"
         name = f"policynim-{tag}-{target}.{suffix}"
+        require(
+            receipt.get("archive_verified") is True,
+            "Standalone archive payload verification is missing.",
+        )
         require(
             receipt.get("archive") == {"name": name, "sha256": sha256(assets[name])},
             "Standalone archive differs from its receipt.",

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -25,7 +26,13 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
     """Build synthetic metadata joins; these fixtures aren't actual artifact acceptance."""
     repo = tmp_path / "source"
     repo.mkdir()
-    (repo / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
+    (repo / "pyproject.toml").write_text(
+        "[project]\nname = 'policynim'\nversion = '0.2.0'\n"
+        "requires-python = '>=3.11,<3.13'\n"
+        "dependencies = ['requests>=2; python_version < \"3.13\"']\n"
+        "[project.optional-dependencies]\n"
+        "feature = ['extra-lib>=1; sys_platform == \"win32\"']\n"
+    )
     (repo / "uv.lock").write_text("version = 1\n")
     assets = tmp_path / "assets"
     assets.mkdir()
@@ -36,13 +43,21 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
         "install.ps1",
     ]:
         (assets / name).write_bytes(name.encode())
+    package_metadata = (
+        b"Metadata-Version: 2.4\nName: policynim\nVersion: 0.2.0\n"
+        b"Requires-Python: <3.13,>=3.11\nProvides-Extra: feature\n"
+        b'Requires-Dist: requests>=2; python_version < "3.13"\n'
+        b'Requires-Dist: extra-lib>=1; sys_platform == "win32" and extra == "feature"\n'
+    )
+    with zipfile.ZipFile(assets / "policynim-0.2.0-py3-none-any.whl", "w") as archive:
+        archive.writestr("policynim-0.2.0.dist-info/METADATA", package_metadata)
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "pyproject.toml", "uv.lock"], check=True)
     with tarfile.open(assets / "policynim-0.2.0.tar.gz", "w:gz") as archive:
         for name in ["pyproject.toml", "uv.lock"]:
             archive.add(repo / name, arcname="policynim-0.2.0/" + name)
         info = tarfile.TarInfo("policynim-0.2.0/PKG-INFO")
-        payload = b"Metadata-Version: 2.4\nName: policynim\nVersion: 0.2.0\n"
+        payload = package_metadata
         info.size = len(payload)
         archive.addfile(info, io.BytesIO(payload))
     catalog = "sha256:" + "1" * 64
@@ -82,6 +97,7 @@ def release_assets(tmp_path: Path) -> tuple[Path, Path]:
                 "file_count": 1,
             },
             "archive": {"name": name, "sha256": manifest.sha256(assets / name)},
+            "archive_verified": True,
         }
         (assets / f"standalone-evidence-{target}.json").write_text(json.dumps(receipt))
     receipt = {
@@ -208,11 +224,15 @@ def test_source_archive_must_match_release_checkout(release_assets, fault: str) 
     if fault == "arbitrary-bytes":
         path.write_bytes(b"unverified source")
     else:
+        with tarfile.open(path, "r:gz") as original:
+            content = original.extractfile("policynim-0.2.0/PKG-INFO")
+            assert content is not None
+            package_metadata = content.read()
         with tarfile.open(path, "w:gz") as archive:
             files = {
                 "pyproject.toml": (repo / "pyproject.toml").read_bytes(),
                 "uv.lock": (repo / "uv.lock").read_bytes(),
-                "PKG-INFO": b"Name: policynim\nVersion: 0.2.0\n",
+                "PKG-INFO": package_metadata,
             }
             if fault == "missing-source":
                 del files["uv.lock"]
@@ -224,8 +244,130 @@ def test_source_archive_must_match_release_checkout(release_assets, fault: str) 
                 info = tarfile.TarInfo("policynim-0.2.0/" + name)
                 info.size = len(payload)
                 archive.addfile(info, io.BytesIO(payload))
-    with pytest.raises((ValueError, tarfile.TarError)):
+    expected_message = {
+        "missing-source": "Source archive omits package inputs",
+        "changed-source": "Source archive bytes differ",
+        "private-state": "Unexpected source archive file",
+    }.get(fault)
+    with pytest.raises((ValueError, tarfile.TarError), match=expected_message):
         manifest.generate_manifest(
             asset_dir=assets, repo_root=repo, tag="v0.2.0", revision="a" * 40
         )
     assert not (assets / "RELEASE_MANIFEST.json").exists()
+
+
+@pytest.mark.parametrize("distribution", ["wheel", "sdist"])
+@pytest.mark.parametrize("fault", ["dependency", "python", "extra", "marker"])
+def test_manifest_cli_rejects_changed_dependency_metadata(release_assets, distribution, fault):
+    """Actual publication rejects altered package contracts and permits a corrected retry."""
+    repo, assets = release_assets
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=release-test",
+            "-c",
+            "user.email=release-test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    revision = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    for receipt_path in assets.glob("*-evidence-*.json"):
+        receipt = json.loads(receipt_path.read_text())
+        receipt["source_revision"] = revision
+        receipt_path.write_text(json.dumps(receipt))
+    wheel = assets / "policynim-0.2.0-py3-none-any.whl"
+    target = wheel if distribution == "wheel" else assets / "policynim-0.2.0.tar.gz"
+    original = target.read_bytes()
+    replacements = {
+        "dependency": (b"requests>=2", b"requests>=999"),
+        "python": (b"Requires-Python: <3.13,>=3.11", b"Requires-Python: >=3.10"),
+        "extra": (b'extra == "feature"', b'extra == "other"'),
+        "marker": (b'python_version < "3.13"', b'sys_platform == "linux"'),
+    }
+    before, after = replacements[fault]
+    if distribution == "wheel":
+        with zipfile.ZipFile(io.BytesIO(original)) as archive:
+            entries = [(entry, archive.read(entry)) for entry in archive.infolist()]
+        with zipfile.ZipFile(target, "w") as archive:
+            for entry, content in entries:
+                archive.writestr(entry, content.replace(before, after))
+    else:
+        with tarfile.open(fileobj=io.BytesIO(original), mode="r:gz") as archive:
+            entries = []
+            for entry in archive:
+                content = archive.extractfile(entry)
+                assert content is not None
+                entries.append((entry, content.read()))
+        with tarfile.open(target, "w:gz") as archive:
+            for entry, content in entries:
+                if entry.name.endswith("/PKG-INFO"):
+                    content = content.replace(before, after)
+                entry.size = len(content)
+                archive.addfile(entry, io.BytesIO(content))
+
+    def invoke():
+        """Join real on-disk receipts through the public manifest command."""
+        for receipt_path in assets.glob("wheel-evidence-*.json"):
+            receipt = json.loads(receipt_path.read_text())
+            receipt["wheel"]["sha256"] = manifest.sha256(wheel)
+            receipt_path.write_text(json.dumps(receipt))
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                str(assets),
+                "--repo-root",
+                str(repo),
+                "--tag",
+                "v0.2.0",
+                "--source-sha",
+                revision,
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+    rejected = invoke()
+    assert rejected.returncode == 1, rejected.stdout + rejected.stderr
+    assert "metadata" in rejected.stderr.lower()
+    assert not (assets / "RELEASE_MANIFEST.json").exists()
+    target.write_bytes(original)
+    recovered = invoke()
+    assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+    assert (assets / "RELEASE_MANIFEST.json").is_file()
+
+
+def test_manifest_rejects_archive_hash_without_payload_execution(release_assets) -> None:
+    """Hashing an archive after compression can't impersonate running its payload."""
+    repo, assets = release_assets
+    path = assets / "standalone-evidence-linux-amd64.json"
+    receipt = json.loads(path.read_text())
+    receipt.pop("archive_verified", None)
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match="archive.*verif"):
+        manifest.generate_manifest(
+            asset_dir=assets, repo_root=repo, tag="v0.2.0", revision="a" * 40
+        )
+    assert not (assets / "RELEASE_MANIFEST.json").exists()
+
+
+def test_package_metadata_compares_canonical_names_and_full_markers() -> None:
+    """Equivalent spelling and header order preserve cross-platform dependency contracts."""
+    project = {
+        "name": "policyNIM",
+        "requires-python": ">=3.11,<3.13",
+        "dependencies": ['Demo-Package[Fast_Path]>=1; python_version < "3.13"'],
+    }
+    payload = (
+        b"Name: policynim\nVersion: 0.2.0\nRequires-Python: <3.13,>=3.11\n"
+        b'Requires-Dist: demo_package[fast-path]>=1; python_version < "3.13"\n'
+    )
+    manifest.check_package_metadata(payload, project, "0.2.0")
