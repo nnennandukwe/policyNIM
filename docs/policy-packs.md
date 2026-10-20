@@ -29,7 +29,7 @@ README files, templates, and author notes aren't policies. List and validation
 reports expose unselected files as `unlisted_markdown`; they aren't silently added.
 When copying `TEMPLATE.md` to create a new policy, register the new ID and path in
 the manifest before ingestion. The bundled
-`policynim.baseline@0.2.0` manifest selects 15 policies, including nine maintained
+`policynim.baseline@0.3.0` manifest selects 26 policies, including nine maintained
 security policies with pinned source metadata. Existing IDs remain stable. See
 the [security coverage matrix](security-mcp-coverage.md) for changes and notices.
 This source-pack version doesn't change the software/package version or establish
@@ -110,3 +110,7 @@ for explicit standalone migration, reader pinning, offline bundles, and rollback
 
 For baseline plus local additions, use a [pinned profile](policy-profiles.md).
 `POLICYNIM_CORPUS_DIR` keeps its replacement-directory behavior.
+
+## Engineering topics
+
+The [engineering coverage matrix](engineering-policy-coverage.md) maps six selectable topic packs and the full engineering profile to source sections, requirement evidence, and authored scenarios. The root aggregate and topic manifests reference the same policy bytes. Select the aggregate or a nonoverlapping set of topics; combining both repeats IDs.

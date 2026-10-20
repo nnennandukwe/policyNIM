@@ -46,14 +46,14 @@ inferred from bearer-key checks or mocked introspection.
 | --- | --- | --- |
 | `nvidia-guardrails` | `nemoguardrails[nvidia]==0.21.0` | Locked install and offline tests; internal adapter only. No live rail-quality claim. |
 | `nvidia-eval` | `nemo-evaluator==0.2.5`, `nvidia-nat-eval==1.6.0`, `nvidia-simple-evals==26.3` | Locked install and offline tests. Package-gated conformance adapters still use the configured NVIDIA judge endpoint. |
-| `nvidia-eval-launcher` | `nemo-evaluator-launcher==0.2.4`, `nvidia-nat[eval]==1.6.0` | Locked install and offline tests; no independent launcher workflow or live benchmark claim. |
+| External NeMo launcher | Separate upstream tool environment | Not bundled, served, or verified as a PolicyNIM runtime backend. |
 
 Verify the combined extra set with a fresh locked install, `uv pip check` and the
 offline suite on the final revision. Retain the platform, Python version, lock
 digest and package versions with that result. An earlier candidate's passing
 result can't satisfy this gate. Cross-platform extra compatibility needs its own
 receipts; installing the packages doesn't prove a live launcher workflow.
-`httpx==0.27.2` and `httpx2==2.6.0` remain explicit separate distributions in the
+`httpx==0.27.2` and `httpx2==2.12.0` remain explicit separate distributions in the
 reviewed lockfile. Don't silently replace either pin during release verification.
 
 ## Final release gate
