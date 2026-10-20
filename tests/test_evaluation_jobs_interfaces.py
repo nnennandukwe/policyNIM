@@ -633,3 +633,48 @@ def test_job_storage_startup_failure_keeps_authenticated_interactive_tools_avail
                         assert (await http.get(origin + "/healthz")).status_code == 200
 
     asyncio.run(exercise())
+
+
+def test_concurrent_lazy_job_recovery_keeps_one_server_owned_worker(tmp_path, monkeypatch):
+    """Concurrent recovery after unavailable startup can't orphan a second worker owner."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, BrokenBarrierError
+
+    from test_mcp_authorization import install_issuer, oauth_settings, token_claims
+
+    settings = oauth_settings(tmp_path)
+    install_issuer(monkeypatch, settings, token_claims())
+    service_module.EvaluationJobService(settings)
+    captured = []
+    created = []
+    barrier = Barrier(2)
+    register = mcp_jobs.register_evaluation_jobs
+
+    class Worker(EvaluationJobWorker):
+        """Hold construction long enough to exercise two concurrent recovery callers."""
+
+        def __init__(self, service):
+            """Keep the real storage/worker lifecycle around the synchronized race window."""
+            try:
+                barrier.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            super().__init__(service)
+            created.append(self)
+
+    def register_and_capture(*args, **kwargs):
+        """Retain the real server-owned lazy factory without replacing its implementation."""
+        captured.append(kwargs["get_worker"])
+        return register(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "EvaluationJobWorker", Worker)
+    monkeypatch.setattr(mcp_jobs, "register_evaluation_jobs", register_and_capture)
+    mcp_module._build_streamable_http_app(settings)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            observed = list(pool.map(lambda _: captured[0](), range(2)))
+        assert len(created) == 1
+        assert observed[0] is observed[1] is created[0]
+    finally:
+        for worker in created:
+            worker.close()

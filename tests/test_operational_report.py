@@ -335,6 +335,7 @@ def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
             "mcp_bearer_tokens": ["fixture-key"],
             "beta_auth_db_path": tmp_path / "auth.sqlite3",
             "index_db_path": tmp_path / "index.sqlite3",
+            "eval_workspace_dir": tmp_path / "evaluations",
         }
     )
     failures: list[str | None] = []
@@ -577,7 +578,7 @@ def test_report_marks_inaccessible_lease_metadata_unreadable(
 
 
 def test_callback_storage_error_keeps_cause_class_without_payload(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The real browser callback doesn't label unknown local failures as upstream failures."""
     from urllib.parse import parse_qs, urlsplit
@@ -600,7 +601,9 @@ def test_callback_storage_error_keeps_cause_class_without_payload(
     with (
         caplog.at_level(logging.ERROR),
         TestClient(
-            mcp._build_streamable_http_app(_self_serve_hosted_settings()),
+            mcp._build_streamable_http_app(
+                _self_serve_hosted_settings(eval_workspace_dir=tmp_path / "evaluations")
+            ),
             base_url="https://beta.example.com",
         ) as client,
     ):

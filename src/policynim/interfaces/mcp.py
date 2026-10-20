@@ -853,12 +853,15 @@ def _register_tools(
         from policynim.interfaces.evaluation_jobs_mcp import register_evaluation_jobs
         from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 
+        worker_creation_lock = Lock()
+
         def get_job_worker() -> EvaluationJobWorker:
             """Use one lazy server-owned job worker independently from request connections."""
-            if not isinstance(server.jobs, EvaluationJobWorker):
-                settings = executor._settings or get_settings()
-                server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
-            return server.jobs
+            with worker_creation_lock:
+                if not isinstance(server.jobs, EvaluationJobWorker):
+                    settings = executor._settings or get_settings()
+                    server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
+                return server.jobs
 
         register_evaluation_jobs(
             server,
