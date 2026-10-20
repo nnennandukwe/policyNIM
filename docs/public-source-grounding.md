@@ -1,9 +1,9 @@
 # Public-Source Grounding Notes
 
-The shipped PolicyNIM corpus is synthetic internal-style guidance derived from
-publicly available standards, guidance, and reference material. The goal is to
-make the repo feel like a realistic engineering handbook without copying
-proprietary internal documents.
+The PolicyNIM source corpus contains project guidance informed by public
+standards and references. Maintained security adaptations carry pinned sources
+and licenses; older policies keep unknown provenance fields where the original
+revision or reuse terms weren't recorded. No proprietary handbook is included.
 
 Each policy below maps the shipped document to its public grounding and explains
 how the repo uses that source material.
@@ -68,52 +68,18 @@ how the repo uses that source material.
 
 ## Security Policies
 
-### `SEC-AUTH-001`
+The maintained security expansion preserves `SEC-AUTH-001`, `SEC-SECRET-001`,
+and `SEC-SESSION-001`, and adds six focused application/MCP policies. See the
+[security coverage matrix](security-mcp-coverage.md) for exact editions, control
+references, role boundaries, paired scenarios, source notices, and omissions.
+Their adaptation metadata is declared in `policies/pack.toml`; it doesn't establish
+which generation an existing index serves.
 
-- Path: `policies/security/auth-sensitive-code-review-standard.md`
-- Public grounding:
-  - OWASP Authentication Cheat Sheet
-  - OWASP Session Management Cheat Sheet
-- Provenance note:
-  - The repo policy translates public authentication and session guidance into a
-    stricter code-review bar for auth-sensitive changes, with emphasis on threat
-    modeling and fail-closed behavior.
-
-### `SEC-SECRET-001`
-
-- Path: `policies/security/secrets-redaction-and-handling.md`
-- Public grounding:
-  - OWASP Secrets Management Cheat Sheet
-  - OWASP Logging Cheat Sheet
-- Provenance note:
-  - The repo policy combines public guidance on secret storage, redaction, and
-    safe diagnostics into one practical handling standard for application teams.
-
-### `SEC-PUBLIC-ENDPOINT-002`
-
-- Path: `policies/security/public-endpoint-safety.md`
-- Public grounding:
-  - OWASP Error Handling Cheat Sheet
-  - OWASP Logging Cheat Sheet
-  - The Twelve-Factor App config guidance
-- Provenance note:
-  - The repo policy adapts public error-handling, logging, and configuration
-    guidance into review expectations for public readiness endpoints and
-    operator-safe diagnostics.
-
-### `SEC-SESSION-001`
-
-- Path: `policies/security/session-lifetime-and-token-boundaries.md`
-- Public grounding:
-  - OWASP Authentication Cheat Sheet
-  - OWASP Session Management Cheat Sheet
-- Provenance note:
-  - The repo policy uses public session and token guidance to define bounded
-    lifetime, revocation, and error-handling rules for token-based systems.
-  - This document keeps its grounding in the body text rather than the
-    `grounded_in` frontmatter field. The provenance is still public and
-    explicit, but the metadata format is less normalized than the other shipped
-    policies.
+`SEC-PUBLIC-ENDPOINT-002` retains its existing safe readiness-response guidance
+and unpinned legacy references to OWASP error/logging and Twelve-Factor config
+material. This change doesn't invent a reviewed revision or license for those
+legacy declarations. The architecture/backend policies above likewise retain
+their prior provenance until their sources are reviewed.
 
 ## Template Note
 

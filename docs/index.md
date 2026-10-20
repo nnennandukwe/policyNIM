@@ -13,6 +13,8 @@ operations into separate pages so the root README can stay short.
   MCP, runtime/evidence, eval, and troubleshooting handbook
 - [hosted-beta-operations.md](hosted-beta-operations.md): hosted beta quickstart,
   recovery, container build flow, and Railway deployment notes
+- [hosted-authorization.md](hosted-authorization.md): external issuer foundation,
+  operation scopes, key migration, and remaining OAuth acceptance checks
 - [release.md](release.md): package, GitHub release, PyPI, and standalone
   installer release checklist
 
@@ -32,6 +34,9 @@ operations into separate pages so the root README can stay short.
 - [public-source-grounding.md](public-source-grounding.md): provenance notes for
   the shipped sample corpus
 
+- [policy-packs.md](policy-packs.md): versioned manifests, source catalogs, and provenance limits
+- [policy-inventory.md](policy-inventory.md): inspect source/index counts and recover old configurations without changing data
+
 ## Talks And Workflow Notes
 
 - [ai-engineer-miami-context-plane.md](ai-engineer-miami-context-plane.md):
@@ -43,3 +48,5 @@ operations into separate pages so the root README can stay short.
 
 - [../tests/README.md](../tests/README.md): current automated coverage and the
   opt-in live and Docker test knobs
+
+- [policy-profiles.md](policy-profiles.md): compose pinned local packs, inspect decisions, and review updates offline

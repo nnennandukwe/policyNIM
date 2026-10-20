@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from policynim.settings import Settings
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 RAILWAY_DOCKERFILE = REPO_ROOT / "Dockerfile.railway"
@@ -66,3 +68,37 @@ def test_hosted_operations_doc_explains_railway_dockerfile_split() -> None:
     assert "Railway only supports `--mount=type=cache`" in text
     assert "`Dockerfile.railway`" in text
     assert "`Dockerfile`" in text
+
+
+def test_ingestion_build_arguments_match_runtime_defaults_and_publish_rules() -> None:
+    """Verify ingestion build arguments match runtime defaults and publish rules."""
+    expected = {
+        "POLICYNIM_NVIDIA_EMBED_MODEL": Settings.model_fields["nvidia_embed_model"].default,
+        "POLICYNIM_NVIDIA_BASE_URL": Settings.model_fields["nvidia_base_url"].default,
+        "POLICYNIM_EMBED_BATCH_SIZE": str(Settings.model_fields["embed_batch_size"].default),
+        "POLICYNIM_NVIDIA_TIMEOUT_SECONDS": str(
+            Settings.model_fields["nvidia_timeout_seconds"].default
+        ),
+        "POLICYNIM_NVIDIA_MAX_RETRIES": str(Settings.model_fields["nvidia_max_retries"].default),
+    }
+    for path in (DOCKERFILE, RAILWAY_DOCKERFILE):
+        text = _read_text(path)
+        global_args, builder, runtime = text.split("FROM ${PYTHON_BASE_IMAGE}")
+        for name, value in expected.items():
+            assert f"ARG {name}={value}\n" in global_args
+            for stage in (builder, runtime):
+                assert f"ARG {name}\n" in stage
+                assert f"{name}=${{{name}}}" in stage
+        assert "uv run --no-sync policynim ingest" in builder
+        assert "COPY --from=builder /app/data/runtime/runtime_rules.json " in runtime
+        assert (
+            "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH=/app/data/runtime/runtime_rules.json" in runtime
+        )
+
+
+def test_railway_ingestion_command_does_not_expand_key_into_build_log() -> None:
+    """Keep the supported build ARG out of the displayed ingestion command."""
+    text = _read_text(RAILWAY_DOCKERFILE)
+    run_commands = [line for line in text.splitlines() if line.startswith("RUN ")]
+    assert all("NVIDIA_API_KEY" not in command for command in run_commands)
+    assert "RUN uv run --no-sync policynim ingest" in run_commands

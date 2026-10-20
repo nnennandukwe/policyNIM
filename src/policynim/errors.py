@@ -27,6 +27,21 @@ class MissingIndexError(PolicyNIMError):
     """Raised when the local retrieval index is missing or empty."""
 
 
+class IndexCompatibilityError(MissingIndexError):
+    """An index cannot be trusted with the selected embedding configuration."""
+
+    def __init__(
+        self, detail: str = "Index embedding identity is unknown or incompatible."
+    ) -> None:
+        """Attach source-preserving recovery instructions without stored index details."""
+        super().__init__(
+            detail + " Preserve existing sources, index, and runtime rules. Rebuild the complete "
+            "corpus with `policynim ingest` into separate POLICYNIM_INDEX_DB_PATH and "
+            "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations, then validate before activation.",
+            failure_class="index_incompatible",
+        )
+
+
 class RuntimeRulesArtifactMissingError(PolicyNIMError):
     """Raised when the compiled runtime-rules artifact is missing."""
 

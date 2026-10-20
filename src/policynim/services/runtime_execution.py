@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -297,13 +299,19 @@ def _run_shell_command(
 ) -> _ActionExecutionResult:
     start = time.perf_counter()
     try:
-        completed = subprocess.run(
+        with subprocess.Popen(
             request.command,
             cwd=request.cwd,
-            check=False,
-            capture_output=True,
-            timeout=timeout_seconds,
-        )
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=os.name == "posix",
+        ) as process:
+            try:
+                process.communicate(timeout=timeout_seconds)
+            except BaseException:
+                # A timeout or interruption must stop owned children before returning.
+                _stop_shell_process(process)
+                raise
     except subprocess.TimeoutExpired:
         return _ActionExecutionResult(
             succeeded=False,
@@ -320,10 +328,10 @@ def _run_shell_command(
             failure_class="os_error",
         )
     metadata = ShellCommandExecutionMetadata(
-        exit_code=completed.returncode,
+        exit_code=process.returncode,
         duration_ms=_elapsed_ms(start),
     )
-    if completed.returncode != 0:
+    if process.returncode != 0:
         return _ActionExecutionResult(
             succeeded=False,
             metadata=metadata,
@@ -333,6 +341,21 @@ def _run_shell_command(
         succeeded=True,
         metadata=metadata,
     )
+
+
+def _stop_shell_process(process: subprocess.Popen[bytes]) -> None:
+    """Stop the owned POSIX process group and reap the leader."""
+    try:
+        if os.name == "posix":
+            # Children can hold pipes open even after the leader has exited.
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+    # Output isn't returned. The Popen context closes the pipes; reading to EOF
+    # here could hang on an escaped descendant that inherited a pipe handle.
+    process.wait()
 
 
 def _run_file_write(request: FileWriteActionRequest) -> _ActionExecutionResult:

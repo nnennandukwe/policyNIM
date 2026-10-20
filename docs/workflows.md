@@ -9,6 +9,12 @@ reference that used to live in the root README.
 
 - `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
 - `policynim doctor [--format text|json]`
+- `policynim inventory [--format text|json]`
+- `policynim policies list|validate [--format text|json]`
+- `policynim profile init <path> [--pack <directory>] [--id <name>]`
+- `policynim profile validate|preview|diff <path> [--format text|json]`
+- `policynim profile update <path> --expect-digest <review-digest>`
+- `policynim policies show <policy-id> [--format text|json]`
 - `policynim init`
 - `policynim ingest`
 - `policynim dump-index [--count-only]`
@@ -60,6 +66,17 @@ Use `policynim doctor` when you want a local-only setup report that checks the
 config file, credentials, index path, runtime rules artifact, and MCP launch
 hints.
 
+Use `policynim inventory` to inspect source and indexed counts without an API key
+or prior initialization. It reports unavailable counts as unknown and keeps local
+inspection separate from remote deployment evidence. See
+[policy inventory and recovery](policy-inventory.md) for states and recovery.
+
+Use `policynim policies list`, `show <policy-id>`, and `validate` for a source-only
+catalog with pack identity, content revisions, and declared provenance. A
+`pack.toml` manifest makes membership explicit; plain directories remain supported.
+See [policy packs](policy-packs.md) before authoring a manifest, and
+[local profiles](policy-profiles.md) to compose explicit packs with reviewed decisions.
+
 ## Core Workflows
 
 ### 0. Initialize A Standalone Install
@@ -88,11 +105,12 @@ uv run policynim ingest
 
 What this does:
 
-- loads the bundled policy corpus, or the directory from `POLICYNIM_CORPUS_DIR`
+- resolves `POLICYNIM_PROFILE` when selected, otherwise loads the bundled corpus or `POLICYNIM_CORPUS_DIR`
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
-- rebuilds the local SQLite index
+- builds a new local SQLite index; refreshes require separate, absent index and
+  runtime-rules paths as described in [provider recovery](hosted-provider-recovery.md)
 
 Typical output includes the chunk count, document count, embedding model, and
 index location.
@@ -348,7 +366,48 @@ uv run policynim mcp --transport streamable-http
 ```
 
 Use `POLICYNIM_MCP_HOST` and `POLICYNIM_MCP_PORT` if you want something other
-than the default development bind `127.0.0.1:8000`.
+than the default development bind `127.0.0.1:8000`. When authentication is disabled,
+a concrete bind address also permits its exact HTTP authority. With
+`POLICYNIM_MCP_HOST=192.168.1.20` and `POLICYNIM_MCP_PORT=8000`,
+clients can use `http://192.168.1.20:8000/mcp` without setting a public origin.
+Other remote ports and hostnames are not implicitly trusted. Port 80 accepts
+both omitted and explicit `:80` forms.
+
+The host must be a bare IPv4 address, IPv6 address, or ASCII DNS hostname; use
+`POLICYNIM_MCP_PORT` for the port. IPv6 settings omit brackets (for example,
+`2001:db8::20`); client URLs include them (`http://[2001:db8::20]:8000/mcp`). Hosts
+are lowercased; IP literals permit their configured spelling and canonical form.
+A terminal DNS dot is preserved and must appear in the client authority.
+Empty hosts, URL syntax, wildcard DNS names, IPv6 zone identifiers, and legacy
+numeric IPv4 forms such as `127.1` are rejected. Use a standard dotted-decimal
+IPv4 address instead. The limited-broadcast address `255.255.255.255` and its
+IPv4-mapped IPv6 forms are also rejected; use a concrete interface or an explicit
+wildcard bind with a public origin. IPv4-mapped IPv6 bind syntax (for example,
+`::ffff:192.168.1.20`) is unsupported by the IPv6-only listener; set the equivalent
+IPv4 address (`192.168.1.20`) directly.
+
+Wildcard binds such as `0.0.0.0` or `::` grant no remote Host/Origin permissions.
+For remote access through a wildcard bind, explicitly set
+`POLICYNIM_MCP_PUBLIC_BASE_URL` to the client-facing origin, such as
+`http://192.168.1.20:8000` or `https://mcp.example.com`. Loopback access remains
+available without that setting. For a wildcard bind without a public origin,
+`policynim doctor` reports a local connection URL using `127.0.0.1` for IPv4 or
+`[::1]` for IPv6 at the configured port. Proxies and HTTPS endpoints also need
+their explicit public origin when it differs from the direct HTTP bind authority.
+Disallowed Host and Origin headers return HTTP 421 and 403 respectively, before
+MCP tool work. Correct the client authority or configure its public origin; do
+not disable rebinding protection.
+
+Both transports support MCP `2026-07-28` and legacy clients through the official
+Python SDK `2.2.0`. The existing tool names, arguments, and JSON payload fields
+remain available. Current clients discover the server with `server/discover`;
+legacy clients use initialization. HTTP does not require server-side MCP sessions.
+
+`POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` sets the per-server limit for expensive
+tool operations (default `10`, minimum `1`). When full, the server returns a tool
+error immediately; retry later. It does not queue another provider operation.
+Cancelling a request does not release capacity until its worker has finished
+cleanup. Health and discovery remain independent of this tool limit.
 
 Hosted HTTP notes:
 
@@ -361,6 +420,7 @@ Hosted HTTP notes:
 - to protect only the HTTP MCP route, set:
   - `POLICYNIM_MCP_REQUIRE_AUTH=true`
   - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://your-host`
+  - `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b` when self-serve signup is disabled
 - for self-serve hosted beta signup, also set:
   - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
   - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
@@ -370,8 +430,20 @@ Hosted HTTP notes:
 - `POLICYNIM_MCP_BEARER_TOKENS=token-a,token-b` is optional and reserved for
   operator break-glass access when self-serve auth is enabled
 - `POLICYNIM_MCP_PUBLIC_BASE_URL` must be a service origin, not a full `/mcp`
-  URL
-- `stdio` ignores the hosted auth settings completely
+  URL, and must not contain credentials, a query, or a fragment
+- Set that public origin for remote access through wildcard binds or a proxy,
+  including when bearer auth is disabled. Authentication always requires it.
+  Authenticated MCP Host and Origin checks allow loopback and that explicit
+  public origin; the concrete plaintext bind is not automatically trusted.
+  Without authentication, the concrete HTTP bind authority is also allowed.
+  `policynim doctor` prefers the public origin when reporting the MCP URL.
+  An absent Origin header is allowed for non-browser clients.
+  Proxy requests must preserve an allowed Host header. Authentication also covers
+  `/mcp` trailing-slash variants.
+- Host the HTTP app at the service root. ASGI `root_path` and mounted path prefixes
+  are rejected; generated MCP, beta, health, and OAuth URLs use the configured origin.
+- `stdio` does not enforce HTTP bearer authentication; configured settings are
+  still validated at startup
 - when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
   defaults to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
 - the baked-image workflow uses `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
@@ -426,6 +498,23 @@ That compiled artifact powers the runtime decision and execution services:
   records decision and execution events
 - `POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS` sets the default shell timeout for
   runtime execution
+
+On Linux and macOS, shell commands run in a separate process group. A timeout
+terminates that group before PolicyNIM returns `failed` with `failure_class=timeout`
+and stores the terminal evidence. An interruption also terminates the group, but
+propagates without recording a completed outcome. Check the action's effects
+before retrying: termination can't undo earlier writes or external requests.
+Descendants that deliberately leave the process group aren't covered. Windows
+retains direct-child termination; process-tree cleanup isn't guaranteed there.
+
+Shell `command` values are argument arrays passed directly to the process.
+PolicyNIM preserves each string, including surrounding whitespace and empty
+arguments after the executable. The array must contain a nonempty executable
+name, and no element may contain a NUL byte. Invalid commands are rejected
+before runtime decisions, process creation, or evidence writes. Command regex
+rules match the `shlex.join` rendering of the unchanged array; results and
+stored evidence retain that array. Existing evidence isn't rewritten; evidence
+reports can still read legacy NUL-containing decisions as incomplete executions.
 
 The runtime CLI flow is JSON-first and file- or stdin-driven:
 

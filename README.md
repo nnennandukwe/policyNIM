@@ -55,6 +55,43 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
 
+The MCP server supports protocol `2026-07-28` and legacy clients through the
+official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
+`POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` to bound expensive tool calls per server
+(default `10`). Excess calls receive a retry-later error. See the
+[MCP workflow](docs/workflows.md) for transport and public-origin configuration.
+
+The maintained source baseline includes application-security and MCP trust guidance
+with pinned references, role boundaries, and authored scenarios. See the
+[coverage matrix and source licenses](docs/security-mcp-coverage.md). Policy text
+has source-specific notices; software licensing remains separate. Source contents
+don't establish the hosted service's indexed generation.
+
+## Inspect Policies Without An API Key
+
+These new commands are available from this source checkout or a wheel built from
+it. The existing `v0.1.0` release predates them.
+
+```bash
+uv run policynim policies list
+uv run policynim policies show SEC-AUTH-001
+uv run policynim policies validate --format json
+uv run policynim inventory --format json
+```
+
+The catalog commands list policy IDs, source text, pack versions, and content
+revisions. Inventory inspects the selected Markdown sources and local SQLite index
+without setup, model credentials, network calls, or data changes.
+Source documents, source chunks, indexed policy IDs, and indexed chunks are
+reported separately. Unavailable counts stay `null` in JSON and `unknown` in text.
+The report describes this process's files; it doesn't inspect a remote deployment
+or prove that source content matches an existing index.
+
+Run `uv run policynim doctor` for setup checks and recovery instructions. A wheel
+built from this revision uses the direct `policynim` entrypoint. See the
+[local profile composition guide](docs/policy-profiles.md), [policy inventory and recovery guide](docs/policy-inventory.md) and
+[policy pack format](docs/policy-packs.md).
+
 ## What To Run First
 
 If you want the shortest path to a real preflight run, start with
@@ -135,6 +172,11 @@ Use [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md) for:
 - container build and local hosted-image checks
 - Railway deploy setup and smoke-test notes
 
+Existing installations changing embedding models must follow the
+[source-preserving provider recovery runbook](docs/hosted-provider-recovery.md).
+Every ingestion build, including a same-model refresh, requires separate, absent
+index and runtime-rules output paths; existing installations are preserved.
+
 ## Local Contributor Setup
 
 Use this path only if you want to run PolicyNIM from a local checkout.
@@ -207,6 +249,8 @@ Start here when you want the longer version of a specific path:
   runtime/evidence, and troubleshooting
 - [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md): hosted beta
   quickstart, recovery, container build flow, and Railway deploy notes
+- [docs/hosted-authorization.md](docs/hosted-authorization.md): external issuer
+  foundation, operation scopes, migration, and remaining OAuth acceptance checks
 - [docs/release.md](docs/release.md): CLI packaging, GitHub release, PyPI
   publish, and smoke-test checklist
 - [docs/architecture.md](docs/architecture.md): package boundaries, runtime flow,

@@ -65,8 +65,13 @@ class MockIndexStore:
         ]
         return candidates[:top_k]
 
-    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+    def validate_identity(self) -> None:
+        """The fixture represents a compatible index."""
+
+    def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
+        """Implement the test store's replacement protocol with a synthetic build receipt."""
         self._chunks = [ScoredChunk(**chunk.model_dump(exclude={"vector"})) for chunk in chunks]
+        return "test-build"
 
     def list_chunks(self) -> list[PolicyChunk]:
         return [PolicyChunk(**chunk.model_dump(exclude={"score"})) for chunk in self._chunks]

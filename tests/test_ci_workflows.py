@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 HOSTED_SMOKE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "hosted-smoke.yml"
@@ -61,8 +63,21 @@ def test_ci_pytest_gate_excludes_all_live_markers() -> None:
     """Ensure normal CI cannot discover live or Docker-only tests by accident."""
     text = _read_text(CI_WORKFLOW)
 
-    assert 'uv run pytest -q -m "not live and not docker_live"' in text
-    assert 'uv run pytest -q -m "not live"\n' not in text
+    pytest_commands = re.findall(r"run: (.*pytest.*)", text)
+    assert pytest_commands
+    for command in pytest_commands:
+        assert 'pytest -q -m "not live and not docker_live"' in command
+        assert "--no-sync" in command
+
+
+def test_ci_checks_supported_python_versions_from_locked_dependencies() -> None:
+    """Verify the SDK migration on both supported interpreters without resolving new versions."""
+    text = _read_text(CI_WORKFLOW)
+    assert 'python-version: ["3.11", "3.12"]' in text
+    assert "--python ${{ matrix.python-version }}" in text
+    sync_commands = re.findall(r"run: (.*uv sync.*)", text)
+    assert sync_commands
+    assert all("--locked" in command for command in sync_commands)
 
 
 def test_hosted_smoke_workflow_is_manual_and_secret_gated() -> None:
@@ -96,9 +111,9 @@ def test_release_workflow_runs_offline_verification_before_release_artifacts() -
         "tags:",
         '- "v*.*.*"',
         "uv lock --check",
-        "uv run ruff check .",
-        "uv run pyright",
-        'uv run pytest -q -m "not live and not docker_live"',
+        "uv run --no-sync ruff check .",
+        "uv run --no-sync pyright",
+        'uv run --no-sync pytest -q -m "not live and not docker_live"',
         "uv build --out-dir dist",
         "wheel-smoke:",
         "standalone-build:",
@@ -181,3 +196,15 @@ def test_release_workflow_rejects_mismatched_manual_versions() -> None:
     assert 'requested_version = requested.removeprefix("v")' in text
     assert "requested_version != project_version" in text
     assert "Release version mismatch:" in text
+
+
+def test_release_uses_locked_dependencies_without_implicit_resync() -> None:
+    """Release verification and standalone builds must use the reviewed lockfile."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for job in workflow["jobs"].values():
+        for step in job["steps"]:
+            for line in step.get("run", "").splitlines():
+                if "uv sync" in line:
+                    assert "--locked" in line
+                if "uv run" in line:
+                    assert "--no-sync" in line

@@ -53,13 +53,32 @@ class _HeadingToken(TypedDict):
 class MarkdownParser:
     """Markdown parser that tolerates imperfect frontmatter and heading structure."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, strict_metadata: bool = False) -> None:
+        """Configure Markdown parsing and optional manifest-owned metadata validation."""
         self._markdown = MarkdownIt("commonmark")
+        self._strict_metadata = strict_metadata
 
     def parse(self, source_path: str, text: str) -> ParsedDocument:
         """Normalize Markdown content and infer missing metadata."""
         normalized_text = text.lstrip("\ufeff")
         frontmatter, body, body_start_line = _split_frontmatter(normalized_text, source_path)
+        if self._strict_metadata:
+            allowed = {
+                "policy_id",
+                "title",
+                "doc_type",
+                "domain",
+                "tags",
+                "grounded_in",
+                "runtime_rules",
+            }
+            unknown = sorted(set(frontmatter) - allowed)
+            if unknown:
+                raise InvalidPolicyDocumentError(
+                    f"Policy document {source_path} has unsupported frontmatter keys: "
+                    f"{', '.join(unknown)}. Put provenance in pack.toml; "
+                    "composition settings aren't supported in this manifest schema."
+                )
         if not body.strip():
             raise InvalidPolicyDocumentError(
                 f"Policy document {source_path} does not contain usable Markdown content."

@@ -38,19 +38,19 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Sync dependencies
-        run: uv sync --group test --group dev
+        run: uv sync --locked --group test --group dev
 
       - name: Check lockfile
         run: uv lock --check
 
       - name: Run Ruff
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Run Pyright
-        run: uv run pyright
+        run: uv run --no-sync pyright
 
       - name: Run offline pytest
-        run: uv run pytest -q -m "not live and not docker_live"
+        run: uv run --no-sync pytest -q -m "not live and not docker_live"
 
       - name: Build Python distribution
         run: uv build --out-dir dist
@@ -147,10 +147,10 @@ jobs:
           PY
 
       - name: Sync release dependencies
-        run: uv sync --group release
+        run: uv sync --locked --group release
 
       - name: Build standalone bundle
-        run: uv run --group release pyinstaller --clean --noconfirm packaging/pyinstaller.spec
+        run: uv run --no-sync pyinstaller --clean --noconfirm packaging/pyinstaller.spec
 
       - name: Smoke standalone bundle
         shell: bash

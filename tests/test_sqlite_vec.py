@@ -9,14 +9,19 @@ from textwrap import dedent
 import pytest
 
 from policynim.errors import MissingIndexError
-from policynim.types import EmbeddedChunk, PolicyMetadata, SearchRequest
+from policynim.types import EmbeddedChunk, EmbeddingIdentity, PolicyMetadata, SearchRequest
 
 
 def test_sqlite_vec_store_replaces_and_searches_chunks(tmp_path: Path) -> None:
     """Store, count, list, and search embedded chunks from one SQLite file."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
     chunks = [
         make_chunk("BACKEND-1", domain="backend", vector=[1.0, 0.0]),
         make_chunk("SECURITY-1", domain="security", vector=[0.0, 1.0]),
@@ -35,7 +40,12 @@ def test_sqlite_vec_store_filters_search_by_domain(tmp_path: Path) -> None:
     """Keep the existing optional domain filter behavior."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
     store.replace(
         [
             make_chunk("BACKEND-1", domain="backend", vector=[1.0, 0.0]),
@@ -54,7 +64,12 @@ def test_sqlite_vec_store_domain_search_fills_top_k_after_nearer_other_domains(
     """Treat domain as a deterministic filter, not a limited-candidate heuristic."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
     store.replace(
         [
             *[
@@ -80,7 +95,12 @@ def test_sqlite_vec_store_round_trips_json_metadata(tmp_path: Path) -> None:
     """Preserve list metadata through SQLite JSON serialization."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
     store.replace(
         [
             make_chunk(
@@ -103,7 +123,12 @@ def test_sqlite_vec_store_rejects_empty_or_inconsistent_vectors(tmp_path: Path) 
     """Fail closed before creating a usable index for malformed embeddings."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
 
     with pytest.raises(MissingIndexError):
         store.replace([])
@@ -123,7 +148,12 @@ def test_sqlite_vec_store_failed_replace_preserves_existing_index(tmp_path: Path
     """A failed rebuild must not destroy the previous usable index."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
     store.replace([make_chunk("BACKEND-1", vector=[1.0, 0.0])])
 
     with pytest.raises(MissingIndexError):
@@ -138,7 +168,12 @@ def test_sqlite_vec_store_reports_missing_index_and_resets_sidecars(tmp_path: Pa
     """Missing and reset indexes must fail closed without stale SQLite sidecars."""
     from policynim.storage.sqlite_vec import SQLiteVecIndexStore
 
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
 
     assert store.exists() is False
     assert store.count() == 0
@@ -163,7 +198,12 @@ def test_sqlite_vec_store_rejects_directory_path_without_partial_index(tmp_path:
 
     index_path = tmp_path / "index.sqlite3"
     index_path.mkdir()
-    store = SQLiteVecIndexStore(path=index_path)
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=index_path,
+    )
 
     with pytest.raises(MissingIndexError, match="must not be a directory"):
         store.replace([make_chunk("BACKEND-1", vector=[1.0, 0.0])])
@@ -210,7 +250,12 @@ def test_sqlite_vec_store_supports_injected_ingest_and_search_round_trip(
         Security services should rotate session tokens.
         """,
     )
-    store = SQLiteVecIndexStore(path=tmp_path / "index.sqlite3")
+    store = SQLiteVecIndexStore(
+        embedding_identity=EmbeddingIdentity(
+            model="mock-embedder", endpoint="https://example.invalid/v1"
+        ),
+        path=tmp_path / "index.sqlite3",
+    )
 
     ingest_result = IngestService(
         embedder=RoundTripEmbedder(),

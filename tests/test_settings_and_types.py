@@ -135,6 +135,171 @@ def test_settings_still_allows_constructor_field_names() -> None:
     assert settings.mcp_port == 9001
 
 
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("127.0.0.1", "127.0.0.1"),
+        ("192.0.2.10", "192.0.2.10"),
+        ("0.0.0.0", "0.0.0.0"),
+        ("::", "::"),
+        ("::1", "::1"),
+        ("2001:0DB8:0000:0000:0000:0000:0000:0001", "2001:0db8:0000:0000:0000:0000:0000:0001"),
+        ("LOCALHOST", "localhost"),
+        ("Policy-Server.Example", "policy-server.example"),
+        ("Policy-Server.Example.", "policy-server.example."),
+        ("123.Policy.Example", "123.policy.example"),
+        ("XN--BCHER-KVA.Example", "xn--bcher-kva.example"),
+    ],
+)
+def test_mcp_host_normalizes_addresses_and_dns_names(
+    monkeypatch: pytest.MonkeyPatch, host: str, expected: str
+) -> None:
+    """Lowercase hosts consistently while preserving the configured address spelling."""
+    assert load_settings_without_env_file(mcp_host=host).mcp_host == expected
+    monkeypatch.setenv("POLICYNIM_MCP_HOST", host)
+    assert load_settings_without_env_file().mcp_host == expected
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "",
+        " ",
+        " localhost",
+        "localhost ",
+        "local host",
+        "localhost\n",
+        "[::1]",
+        "[::1]:8000",
+        "fe80::1%en0",
+        "https://policy.example",
+        "user@policy.example",
+        "policy.example/mcp",
+        "policy.example:8000",
+        "127.0.0.1:8000",
+        "*.example",
+        "policy.*",
+        ".",
+        ".policy.example",
+        "policy..example",
+        "policy.example..",
+        "-policy.example",
+        "policy-.example",
+        "policy_server.example",
+        # non-English test data
+        "b\u00fccher.example",
+        "a" * 64 + ".example",
+        ".".join(["a" * 63] * 4),
+        "127.1",
+        "127",
+        "2130706433",
+        "0177.0.0.1",
+        "0x7f000001",
+        "0x7f.0.0.1",
+        "127.0.0.1.",
+        "127.1.",
+        "256.0.0.1",
+        "255.255.255.255",
+        "4294967296",
+    ],
+)
+def test_mcp_host_rejects_ambiguous_or_malformed_bind_values(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    """Reject non-host syntax and numeric aliases with an actionable setting error."""
+    with pytest.raises(ValidationError, match="POLICYNIM_MCP_HOST") as direct_error:
+        load_settings_without_env_file(mcp_host=host)
+    assert "bare IPv4/IPv6 address or an ASCII DNS hostname" in str(direct_error.value)
+    assert "POLICYNIM_MCP_PORT" in str(direct_error.value)
+    monkeypatch.setenv("POLICYNIM_MCP_HOST", host)
+    with pytest.raises(ValidationError, match="POLICYNIM_MCP_HOST"):
+        load_settings_without_env_file()
+
+
+@pytest.mark.parametrize(
+    ("host", "ipv4_address"),
+    [
+        ("::ffff:127.0.0.1", "127.0.0.1"),
+        ("::FFFF:C000:0201", "192.0.2.1"),
+        ("0:0:0:0:0:FFFF:7f00:1", "127.0.0.1"),
+        ("::ffff:0:0", "0.0.0.0"),
+        ("::ffff:0.0.0.0", "0.0.0.0"),
+        ("::ffff:255.255.255.255", "255.255.255.255"),
+        ("::ffff:ffff:ffff", "255.255.255.255"),
+    ],
+)
+def test_mcp_host_rejects_ipv4_mapped_ipv6_with_ipv4_guidance(
+    monkeypatch: pytest.MonkeyPatch, host: str, ipv4_address: str
+) -> None:
+    """Reject unsupported mapped binds and identify an actionable IPv4 alternative."""
+    with pytest.raises(ValidationError, match="POLICYNIM_MCP_HOST") as direct_error:
+        load_settings_without_env_file(mcp_host=host)
+    error_message = str(direct_error.value)
+    assert "IPv4-mapped IPv6 bind addresses are not supported" in error_message
+    assert "equivalent IPv4 address" in error_message
+    assert ipv4_address in error_message
+    if ipv4_address == "255.255.255.255":
+        assert "choose 127.0.0.1 or 0.0.0.0 instead" in error_message
+    else:
+        assert f"Use the equivalent IPv4 address {ipv4_address}" in error_message
+
+    monkeypatch.setenv("POLICYNIM_MCP_HOST", host)
+    with pytest.raises(ValidationError, match="IPv4-mapped IPv6") as environment_error:
+        load_settings_without_env_file()
+    assert "POLICYNIM_MCP_HOST" in str(environment_error.value)
+    assert ipv4_address in str(environment_error.value)
+
+
+def test_mcp_host_preserves_constructor_environment_and_dotenv_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Normalize each winning source without changing the established precedence."""
+    env_file = tmp_path / "host.env"
+    write_env_file(env_file, POLICYNIM_MCP_HOST="Dotenv.Example.")
+    settings_type = cast(Any, Settings)
+    monkeypatch.delenv("POLICYNIM_MCP_HOST", raising=False)
+    assert settings_type(_env_file=env_file).mcp_host == "dotenv.example."
+    monkeypatch.setenv("POLICYNIM_MCP_HOST", "Environment.Example.")
+    assert settings_type(_env_file=env_file).mcp_host == "environment.example."
+    assert (
+        settings_type(_env_file=env_file, mcp_host="Constructor.Example.").mcp_host
+        == "constructor.example."
+    )
+
+
+def test_mcp_operation_limit_defaults_and_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow an explicit positive limit while preserving the default admission capacity."""
+    monkeypatch.delenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS", raising=False)
+    assert load_settings_without_env_file().mcp_max_concurrent_operations == 10
+    configured = load_settings_without_env_file(mcp_max_concurrent_operations=2)
+    assert configured.mcp_max_concurrent_operations == 2
+
+
+def test_mcp_operation_limit_environment_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read the prefixed variable and let direct construction override it."""
+    monkeypatch.setenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS", "4")
+    assert load_settings_without_env_file().mcp_max_concurrent_operations == 4
+    configured = load_settings_without_env_file(mcp_max_concurrent_operations=3)
+    assert configured.mcp_max_concurrent_operations == 3
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "", "1.5", "unlimited"])
+def test_mcp_operation_limit_rejects_invalid_environment(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Reject malformed limits rather than silently disabling admission control."""
+    monkeypatch.setenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS", value)
+    with pytest.raises(ValidationError, match="mcp_max_concurrent_operations"):
+        load_settings_without_env_file()
+
+
+@pytest.mark.parametrize("origin", ["https://user:secret@example.com", "https://user@example.com"])
+def test_mcp_public_origin_rejects_user_information(origin: str) -> None:
+    """Keep credentials out of the public origin used in health and transport security."""
+    with pytest.raises(ValidationError, match="must not include credentials"):
+        load_settings_without_env_file(mcp_public_base_url=origin)
+
+
 def test_settings_normalizes_nvidia_chat_model_names() -> None:
     settings = load_settings_without_env_file(nvidia_chat_model=" nvidia/model#variant ")
 

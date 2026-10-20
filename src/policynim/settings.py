@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
+import socket
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, cast
+from urllib.parse import urlsplit
 
 from pydantic import (
     AliasChoices,
     AnyHttpUrl,
     Field,
+    SecretStr,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -26,7 +32,7 @@ from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
-from policynim.types import DEFAULT_TOP_K, TopK
+from policynim.types import DEFAULT_TOP_K, TopK, normalize_provider_endpoint
 
 
 class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
@@ -65,6 +71,7 @@ class Settings(BaseSettings):
     nvidia_api_key: str | None = Field(default=None, validation_alias="NVIDIA_API_KEY")
     policynim_env: str = Field(default="development", validation_alias="POLICYNIM_ENV")
     corpus_dir: Path | None = None
+    profile: Path | None = None
     index_db_path: Path = Field(
         default=Path("data/index.sqlite3"),
         validation_alias=AliasChoices("POLICYNIM_INDEX_DB_PATH", "POLICYNIM_LANCEDB_URI"),
@@ -75,13 +82,16 @@ class Settings(BaseSettings):
     eval_workspace_dir: Path = Path("data/evals/workspace")
     default_top_k: TopK = DEFAULT_TOP_K
     embed_batch_size: Annotated[int, Field(ge=1)] = 32
-    nvidia_chat_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
-    nvidia_embed_model: str = "nvidia/llama-nemotron-embed-1b-v2"
-    nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-1b-v2"
+    nvidia_chat_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
+    nvidia_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_retrieval_base_url: str = "https://ai.api.nvidia.com/v1/retrieval"
-    nvidia_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
-    nvidia_max_retries: Annotated[int, Field(ge=0)] = 2
+    nvidia_timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 30.0
+    nvidia_max_retries: Annotated[int, Field(ge=0, le=10)] = 2
+    operation_timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 120.0
+    nvidia_retry_initial_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 0.5
+    nvidia_retry_max_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 8.0
     mcp_host: str = "127.0.0.1"
     mcp_port: Annotated[
         int,
@@ -91,9 +101,17 @@ class Settings(BaseSettings):
             validation_alias=AliasChoices("POLICYNIM_MCP_PORT", "PORT"),
         ),
     ] = 8000
+    mcp_max_concurrent_operations: Annotated[int, Field(ge=1)] = 10
     mcp_require_auth: bool = False
     mcp_bearer_tokens: Annotated[list[str], NoDecode] = Field(default_factory=list)
     mcp_public_base_url: AnyHttpUrl | None = None
+    mcp_oauth_issuer_url: str | None = None
+    mcp_oauth_client_id: str | None = None
+    mcp_oauth_client_secret: SecretStr | None = None
+    mcp_oauth_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 5.0
+    mcp_oauth_max_concurrent_requests: Annotated[int, Field(ge=1, le=256)] = 64
+    mcp_oauth_request_body_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 30.0
+    mcp_oauth_allow_legacy_keys: bool = False
     beta_signup_enabled: bool = False
     beta_auth_db_path: Path = Path("data/runtime/auth.sqlite3")
     beta_session_secret: str | None = None
@@ -110,6 +128,7 @@ class Settings(BaseSettings):
         env_prefix="POLICYNIM_",
         extra="ignore",
         populate_by_name=True,
+        hide_input_in_errors=True,
     )
 
     @classmethod
@@ -156,24 +175,48 @@ class Settings(BaseSettings):
                 raise ValueError("POLICYNIM_CONFIG_FILE must point to an existing env file.")
         return value
 
-    @field_validator("nvidia_chat_model", mode="before")
+    @field_validator(
+        "nvidia_chat_model", "nvidia_embed_model", "nvidia_rerank_model", mode="before"
+    )
     @classmethod
-    def validate_nvidia_chat_model(cls, value: Any) -> Any:
-        """Reject chat model names that cannot safely identify one provider model."""
+    def validate_nvidia_model(cls, value: Any, info: ValidationInfo) -> Any:
+        """Keep request and persisted model identities consistent for explicit overrides."""
+        setting = f"POLICYNIM_{info.field_name or 'nvidia_model'}".upper()
         if isinstance(value, str):
             normalized = value.strip()
             if not normalized:
-                raise ValueError("POLICYNIM_NVIDIA_CHAT_MODEL must not be empty.")
+                raise ValueError(f"{setting} must not be empty.")
             if any(character in normalized for character in "\r\n"):
-                raise ValueError("POLICYNIM_NVIDIA_CHAT_MODEL must not contain line breaks.")
+                raise ValueError(f"{setting} must not contain line breaks.")
             return normalized
         return value
+
+    @field_validator("nvidia_base_url", "nvidia_retrieval_base_url")
+    @classmethod
+    def validate_nvidia_endpoint(cls, value: str) -> str:
+        """Reject credential-bearing or cleartext provider endpoints before client creation."""
+        return normalize_provider_endpoint(value)
 
     @field_validator("corpus_dir", mode="before")
     @classmethod
     def normalize_empty_corpus_dir(cls, value: Any) -> Any:
         """Treat empty configured corpus values as unset."""
         return _normalize_optional_setting(value)
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def validate_profile_path(cls, value: Any) -> Any:
+        """Keep an explicit empty profile from silently falling back to public sources."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("POLICYNIM_PROFILE must name a profile file or be unset.")
+        return value
+
+    @model_validator(mode="after")
+    def exclusive_source_selection(self) -> Settings:
+        """Reject ambiguous profile and legacy replacement-directory selection."""
+        if self.profile is not None and self.corpus_dir is not None:
+            raise ValueError("Set only one of POLICYNIM_PROFILE and POLICYNIM_CORPUS_DIR.")
+        return self
 
     @field_validator("index_db_path", mode="before")
     @classmethod
@@ -182,6 +225,60 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             raise ValueError("POLICYNIM_INDEX_DB_PATH must not be empty.")
         return value
+
+    @field_validator("mcp_host", mode="before")
+    @classmethod
+    def validate_mcp_host(cls, value: Any) -> str:
+        """Normalize supported bare bind hosts and reject ambiguous or unsupported forms."""
+        remedy = (
+            "POLICYNIM_MCP_HOST must be a bare IPv4/IPv6 address or an ASCII DNS hostname. "
+            "Use 127.0.0.1, ::1, or policy.example; set POLICYNIM_MCP_PORT separately."
+        )
+        if (
+            not isinstance(value, str)
+            or not value
+            or not value.isascii()
+            or any(character.isspace() for character in value)
+            or "%" in value
+        ):
+            raise ValueError(remedy)
+
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            address = None
+        if address is not None:
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+                mapped_address = str(address.ipv4_mapped)
+                mapped_remedy = f"Use the equivalent IPv4 address {mapped_address} directly."
+                if mapped_address == "255.255.255.255":
+                    mapped_remedy = (
+                        f"The equivalent IPv4 address {mapped_address} is also unsupported; "
+                        "choose 127.0.0.1 or 0.0.0.0 instead."
+                    )
+                raise ValueError(
+                    remedy + " IPv4-mapped IPv6 bind addresses are not supported. " + mapped_remedy
+                )
+            if str(address) == "255.255.255.255":
+                raise ValueError(remedy + " Broadcast addresses are not supported.")
+            return value.lower()
+
+        normalized = value.lower()
+        dns_name = normalized.removesuffix(".")
+        if (
+            len(dns_name) > 253
+            or re.fullmatch(r"[0-9.]+", dns_name) is not None
+            or any(
+                re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                for label in dns_name.split(".")
+            )
+        ):
+            raise ValueError(remedy)
+        try:
+            socket.inet_aton(dns_name)
+        except OSError:
+            return normalized
+        raise ValueError(remedy + " Legacy numeric IPv4 aliases are not supported.")
 
     @field_validator("mcp_bearer_tokens", mode="before")
     @classmethod
@@ -261,6 +358,8 @@ class Settings(BaseSettings):
     def validate_hosted_mcp_settings(self) -> Settings:
         """Validate hosted-only MCP settings without affecting stdio defaults."""
         if self.mcp_public_base_url is not None:
+            if self.mcp_public_base_url.username or self.mcp_public_base_url.password:
+                raise ValueError("POLICYNIM_MCP_PUBLIC_BASE_URL must not include credentials.")
             if self.mcp_public_base_url.path not in ("", "/"):
                 raise ValueError(
                     "POLICYNIM_MCP_PUBLIC_BASE_URL must be a service origin like "
@@ -271,7 +370,58 @@ class Settings(BaseSettings):
                     "POLICYNIM_MCP_PUBLIC_BASE_URL must not include a query string or fragment."
                 )
 
-        if self.mcp_require_auth and not self.mcp_bearer_tokens and not self.beta_signup_enabled:
+        if self.mcp_oauth_issuer_url is not None:
+            issuer = self.mcp_oauth_issuer_url
+            try:
+                AnyHttpUrl(issuer)
+            except ValidationError:
+                raise ValueError(
+                    "POLICYNIM_MCP_OAUTH_ISSUER_URL must be a valid HTTPS URL."
+                ) from None
+            parsed = urlsplit(issuer)
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or any(character.isspace() for character in issuer)
+                or issuer.endswith("/")
+            ):
+                raise ValueError(
+                    "POLICYNIM_MCP_OAUTH_ISSUER_URL must be an HTTPS Keycloak realm URL "
+                    "without credentials, query, fragment or trailing slash."
+                )
+            if not self.mcp_require_auth:
+                raise ValueError("OAuth requires POLICYNIM_MCP_REQUIRE_AUTH=true.")
+            if not self.mcp_oauth_client_id or not self.mcp_oauth_client_id.strip():
+                raise ValueError("Set POLICYNIM_MCP_OAUTH_CLIENT_ID for token introspection.")
+            if (
+                self.mcp_oauth_client_secret is None
+                or not self.mcp_oauth_client_secret.get_secret_value().strip()
+            ):
+                raise ValueError("Set POLICYNIM_MCP_OAUTH_CLIENT_SECRET for token introspection.")
+            if self.mcp_public_base_url is None or self.mcp_public_base_url.scheme != "https":
+                raise ValueError("OAuth requires an HTTPS POLICYNIM_MCP_PUBLIC_BASE_URL.")
+            if self.beta_signup_enabled and not self.mcp_oauth_allow_legacy_keys:
+                raise ValueError(
+                    "Disable POLICYNIM_BETA_SIGNUP_ENABLED before disabling OAuth legacy keys. "
+                    "The beta portal issues legacy keys, not OAuth access tokens."
+                )
+        elif (
+            self.mcp_oauth_client_id is not None
+            or self.mcp_oauth_client_secret is not None
+            or self.mcp_oauth_allow_legacy_keys
+        ):
+            raise ValueError("Set POLICYNIM_MCP_OAUTH_ISSUER_URL before OAuth client settings.")
+
+        if (
+            self.mcp_require_auth
+            and not self.mcp_bearer_tokens
+            and not self.beta_signup_enabled
+            and self.mcp_oauth_issuer_url is None
+        ):
             raise ValueError(
                 "POLICYNIM_MCP_BEARER_TOKENS must be set when POLICYNIM_MCP_REQUIRE_AUTH is true "
                 "and self-serve beta signup is disabled."

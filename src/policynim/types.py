@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -32,6 +33,121 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def normalize_provider_endpoint(value: str) -> str:
+    """Require credential-free HTTPS and canonicalize the embedding-space endpoint."""
+    try:
+        value = value.strip()
+        if "\\" in value or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        ):
+            raise ValueError
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError
+        # urlsplit alone accepts malformed hostnames; use the same validated URL
+        # spelling for persisted identity and every provider client.
+        parts = urlsplit(str(AnyHttpUrl(value)))
+        if not parts.hostname:
+            raise ValueError
+    except ValueError:
+        raise ValueError(
+            "Provider endpoint must use a valid HTTPS URL, without credentials or query data."
+        ) from None
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = parts.port
+    if port is not None and port != (443 if parts.scheme == "https" else 80):
+        host += f":{port}"
+    return urlunsplit((parts.scheme, host, parts.path.rstrip("/"), "", ""))
+
+
+class EmbeddingIdentity(StrictModel):
+    """Credential-free identity of one embedding space, independent of vector length."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    provider: Literal["nvidia"] = "nvidia"
+    model: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        """Require a nonempty, single-line model identifier and normalize whitespace."""
+        value = value.strip()
+        if not value or any(character in value for character in "\r\n"):
+            raise ValueError("Embedding model must be nonempty and single-line.")
+        return value
+
+    @field_validator("endpoint")
+    @classmethod
+    def normalize_endpoint(cls, value: str) -> str:
+        """Canonicalize the credential-free HTTPS endpoint stored with vectors."""
+        return normalize_provider_endpoint(value)
+
+
+class IndexIdentity(StrictModel):
+    """Persisted model, shape, and completion evidence for one database build."""
+
+    embedding: EmbeddingIdentity
+    dimension: int = Field(gt=0)
+    build_id: str = Field(min_length=1)
+    complete: bool
+
+
+class PolicySource(StrictModel):
+    """A declared reference whose missing revision and attribution remain explicit."""
+
+    title: str = Field(min_length=1)
+    url: AnyHttpUrl
+    revision: str | None = Field(default=None, min_length=1)
+    sections: list[str] = Field(default_factory=list)
+    retrieved_on: date | None = None
+    license: str | None = Field(default=None, min_length=1)
+    attribution: str | None = Field(default=None, min_length=1)
+    change_notice: str | None = Field(default=None, min_length=1)
+
+    @field_validator("title", "revision", "license", "attribution", "change_notice")
+    @classmethod
+    def reject_blank_source_text(cls, value: str | None) -> str | None:
+        """Preserve unknown values while rejecting whitespace presented as provenance."""
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("Source text mustn't be blank.")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def reject_source_credentials(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        """Reject embedded credentials instead of exposing them through the catalog."""
+        if value.username or value.password:
+            raise ValueError("Source URLs mustn't contain credentials.")
+        return value
+
+
+class PolicyProvenance(StrictModel):
+    """Bind authored bytes to a declared pack and explicit authority limits."""
+
+    content_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    pack_id: str | None = None
+    pack_version: str | None = None
+    requirement_level: Literal["required", "recommended", "informational", "unknown"] = "unknown"
+    applicability: list[str] = Field(default_factory=list)
+    grounding_kind: Literal[
+        "upstream_requirement", "adaptation", "project_recommendation", "legacy_unknown"
+    ] = "legacy_unknown"
+    sources: list[PolicySource] = Field(default_factory=list)
+
+
 class PolicyMetadata(StrictModel):
     """Describes a normalized policy document."""
 
@@ -41,6 +157,7 @@ class PolicyMetadata(StrictModel):
     domain: str
     tags: list[str] = Field(default_factory=list)
     grounded_in: list[str] = Field(default_factory=list)
+    provenance: PolicyProvenance | None = None
 
 
 class PolicyChunk(StrictModel):
@@ -172,11 +289,13 @@ class ShellCommandActionRequest(RuntimeActionRequestBase):
     @field_validator("command")
     @classmethod
     def validate_command(cls, value: list[str]) -> list[str]:
-        """Require at least one non-empty shell argument."""
-        normalized: list[str] = []
-        for item in value:
-            normalized.append(_validate_non_empty_string(item, field_name="command item"))
-        return normalized
+        """Validate executable and argument boundaries without changing their contents."""
+        if not value[0]:
+            raise ValueError("command executable must not be empty.")
+        for index, item in enumerate(value):
+            if "\x00" in item:
+                raise ValueError(f"command item {index} must not contain NUL bytes.")
+        return value
 
 
 class FileWriteActionRequest(RuntimeActionRequestBase):
@@ -232,16 +351,8 @@ class ShellCommandExecutionRequest(RuntimeExecutionRequestBase):
     """Sanitized execution request for one shell command."""
 
     kind: Literal["shell_command"]
+    # Evidence readers must preserve historical argv, even if new actions would reject it.
     command: list[str] = Field(min_length=1)
-
-    @field_validator("command")
-    @classmethod
-    def validate_command(cls, value: list[str]) -> list[str]:
-        """Require at least one non-empty shell argument."""
-        normalized: list[str] = []
-        for item in value:
-            normalized.append(_validate_non_empty_string(item, field_name="command item"))
-        return normalized
 
 
 class FileWriteExecutionRequest(RuntimeExecutionRequestBase):
@@ -605,12 +716,15 @@ class IngestResult(StrictModel):
     """Summary of one completed ingest run."""
 
     corpus_path: str
+    profile_path: str | None = None
+    source_roots: list[str] = Field(default_factory=list)
     index_uri: str
     table_name: str
     embedding_model: str
     document_count: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
     embedding_dimension: int = Field(ge=1)
+    catalog_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class HealthCheckResult(StrictModel):
@@ -671,6 +785,16 @@ class BetaUsageSnapshot(StrictModel):
     request_count: int = Field(ge=0)
     quota: int = Field(ge=1)
     remaining: int = Field(ge=0)
+
+
+class ApiKeyQuotaResult(StrictModel):
+    """Account and quota facts observed or written by one committed transaction."""
+
+    model_config = ConfigDict(frozen=True)
+
+    account: BetaAccount | None
+    usage: BetaUsageSnapshot | None
+    quota_consumed: bool
 
 
 class BetaIssuedApiKey(StrictModel):

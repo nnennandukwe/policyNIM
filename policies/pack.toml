@@ -1,0 +1,330 @@
+schema_version = 1
+pack_id = "policynim.baseline"
+version = "0.2.0"
+
+[[policies]]
+policy_id = "ARCH-API-001"
+path = "architecture/api-versioning-guidance.md"
+
+[[policies]]
+policy_id = "ARCH-JOB-001"
+path = "architecture/background-job-design-rules.md"
+
+[[policies]]
+policy_id = "BE-LOG-001"
+path = "backend/backend-logging-standard.md"
+
+[[policies]]
+policy_id = "BE-CONFIG-001"
+path = "backend/config-validation-and-fail-closed.md"
+
+[[policies]]
+policy_id = "BE-TRACE-001"
+path = "backend/request-correlation-and-tracing-standard.md"
+
+[[policies]]
+policy_id = "SEC-AUTH-001"
+path = "security/auth-sensitive-code-review-standard.md"
+requirement_level = "required"
+applicability = ["application-server", "mcp-server", "mcp-proxy", "deployment-operator"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-AUTHZ"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x17-V8-Authorization.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["8.1.1", "8.2.1", "8.2.2", "8.2.3", "8.3.1", "8.4.1"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-LOG"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x25-V16-Security-Logging-and-Error-Handling.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["16.2.5", "16.3.1", "16.3.2", "16.4.1", "16.5.1", "16.5.3"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP Authorization Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Authorization_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["Deny by Default", "Validate the Permissions on Every Request"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "SEC-PUBLIC-ENDPOINT-002"
+path = "security/public-endpoint-safety.md"
+
+[[policies]]
+policy_id = "SEC-SECRET-001"
+path = "security/secrets-redaction-and-handling.md"
+requirement_level = "required"
+applicability = ["application-server", "mcp-client", "mcp-server", "mcp-proxy", "deployment-operator"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-DATA"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x23-V14-Data-Protection.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["14.1.1", "14.1.2", "14.2.1", "14.2.3", "14.2.6"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-LOG"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x25-V16-Security-Logging-and-Error-Handling.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["16.2.5", "16.3.1", "16.3.2", "16.4.1", "16.5.1", "16.5.3"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP Logging Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Logging_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["Data to exclude"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP Secrets Management Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Secrets_Management_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["2 General Secrets Management"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "SEC-SESSION-001"
+path = "security/session-lifetime-and-token-boundaries.md"
+requirement_level = "required"
+applicability = ["application-server", "mcp-server", "mcp-proxy"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-DATA"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x23-V14-Data-Protection.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["14.1.1", "14.1.2", "14.2.1", "14.2.3", "14.2.6"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-SESSION"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x16-V7-Session-Management.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["7.1.1", "7.2.1", "7.2.4", "7.3.1", "7.3.2", "7.4.1", "7.4.2"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Security Best Practices"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/docs/2026-07-28/tutorials/security/security_best_practices.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["Confused Deputy Problem", "Token Passthrough", "Server-Side Request Forgery (SSRF)", "State Handle Hijacking", "Local MCP Server Compromise", "OAuth Authorization URL Validation", "stdio Transport Security in Proxy Scenarios", "Scope Minimization"]
+retrieved_on = 2026-10-15
+license = "CC-BY-4.0; retained contribution licensing limits in licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "SEC-INPUT-001"
+path = "security/input-output-validation.md"
+requirement_level = "required"
+applicability = ["application-server", "mcp-client", "mcp-server", "mcp-proxy"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-ENCODE"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x10-V1-Encoding-and-Sanitization.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["1.1.2", "1.2.1", "1.2.4", "1.2.5", "1.3.6"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-INPUT"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x11-V2-Validation-and-Business-Logic.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["2.1.1", "2.2.1", "2.2.2"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Tools"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/specification/2026-07-28/server/tools.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["User Interaction Model", "Tool", "Output Schema", "Security Considerations"]
+retrieved_on = 2026-10-15
+license = "Apache-2.0 with retained MIT contributions; see licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "SEC-EGRESS-001"
+path = "security/ssrf-and-egress.md"
+requirement_level = "required"
+applicability = ["application-server", "mcp-client", "mcp-proxy", "deployment-operator"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-ENCODE"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x10-V1-Encoding-and-Sanitization.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["1.1.2", "1.2.1", "1.2.4", "1.2.5", "1.3.6"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "OWASP Server Side Request Forgery Prevention Cheat Sheet"
+url = "https://github.com/OWASP/CheatSheetSeries/blob/72865b1e3b5754246a101778dc00b37f9c233373/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md"
+revision = "72865b1e3b5754246a101778dc00b37f9c233373"
+sections = ["Case 1 - Application can send request only to identified and trusted applications", "Case 2 - Application can send requests to ANY external IP address or domain name"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP Cheat Sheet Series contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Security Best Practices"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/docs/2026-07-28/tutorials/security/security_best_practices.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["Confused Deputy Problem", "Token Passthrough", "Server-Side Request Forgery (SSRF)", "State Handle Hijacking", "Local MCP Server Compromise", "OAuth Authorization URL Validation", "stdio Transport Security in Proxy Scenarios", "Scope Minimization"]
+retrieved_on = 2026-10-15
+license = "CC-BY-4.0; retained contribution licensing limits in licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "MCP-AUTH-001"
+path = "security/mcp-token-audience-and-scopes.md"
+requirement_level = "required"
+applicability = ["mcp-client", "mcp-server", "mcp-proxy"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-TOKEN"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x18-V9-Self-contained-Tokens.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["9.1.1", "9.1.2", "9.1.3", "9.2.1", "9.2.2", "9.2.3"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Authorization"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/specification/2026-07-28/basic/authorization/index.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["Authorization Flow Steps", "Scope Selection Strategy", "Access Token Usage", "Token Handling", "Error Handling", "Step-Up Authorization Flow"]
+retrieved_on = 2026-10-15
+license = "Apache-2.0 with retained MIT contributions; see licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Security Best Practices"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/docs/2026-07-28/tutorials/security/security_best_practices.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["Confused Deputy Problem", "Token Passthrough", "Server-Side Request Forgery (SSRF)", "State Handle Hijacking", "Local MCP Server Compromise", "OAuth Authorization URL Validation", "stdio Transport Security in Proxy Scenarios", "Scope Minimization"]
+retrieved_on = 2026-10-15
+license = "CC-BY-4.0; retained contribution licensing limits in licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "MCP-CONSENT-001"
+path = "security/mcp-consent-and-delegation.md"
+requirement_level = "required"
+applicability = ["mcp-client", "mcp-proxy"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Security Best Practices"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/docs/2026-07-28/tutorials/security/security_best_practices.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["Confused Deputy Problem", "Token Passthrough", "Server-Side Request Forgery (SSRF)", "State Handle Hijacking", "Local MCP Server Compromise", "OAuth Authorization URL Validation", "stdio Transport Security in Proxy Scenarios", "Scope Minimization"]
+retrieved_on = 2026-10-15
+license = "CC-BY-4.0; retained contribution licensing limits in licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Tools"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/specification/2026-07-28/server/tools.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["User Interaction Model", "Tool", "Output Schema", "Security Considerations"]
+retrieved_on = 2026-10-15
+license = "Apache-2.0 with retained MIT contributions; see licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "MCP-TRUST-001"
+path = "security/mcp-server-and-process-trust.md"
+requirement_level = "required"
+applicability = ["mcp-client", "mcp-proxy", "deployment-operator"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "OWASP ASVS 5.0.0 ASVS-DEPENDENCY"
+url = "https://github.com/OWASP/ASVS/blob/5cf9b032440be53ce345ab3c130fda46ba1ce7a2/5.0/en/0x24-V15-Secure-Coding-and-Architecture.md"
+revision = "5cf9b032440be53ce345ab3c130fda46ba1ce7a2"
+sections = ["15.1.1", "15.1.2", "15.2.1", "15.2.4"]
+retrieved_on = 2026-10-15
+license = "CC-BY-SA-4.0"
+attribution = "OWASP ASVS contributors, version 5.0.0"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Security Best Practices"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/docs/2026-07-28/tutorials/security/security_best_practices.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["Confused Deputy Problem", "Token Passthrough", "Server-Side Request Forgery (SSRF)", "State Handle Hijacking", "Local MCP Server Compromise", "OAuth Authorization URL Validation", "stdio Transport Security in Proxy Scenarios", "Scope Minimization"]
+retrieved_on = 2026-10-15
+license = "CC-BY-4.0; retained contribution licensing limits in licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."
+
+[[policies]]
+policy_id = "MCP-CONTENT-001"
+path = "security/untrusted-tool-and-resource-content.md"
+requirement_level = "required"
+applicability = ["mcp-client", "mcp-server", "mcp-proxy"]
+grounding_kind = "adaptation"
+
+[[policies.sources]]
+title = "MCP 2026-07-28 Tools"
+url = "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5f5440bb26a62e2cf3440b92da5a667efa03b267/docs/specification/2026-07-28/server/tools.mdx"
+revision = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
+sections = ["User Interaction Model", "Tool", "Output Schema", "Security Considerations"]
+retrieved_on = 2026-10-15
+license = "Apache-2.0 with retained MIT contributions; see licenses/MCP-UPSTREAM.txt"
+attribution = "Model Context Protocol contributors"
+change_notice = "PolicyNIM adaptation: selected controls restated as role-specific review guidance; project decisions are labeled. No certification claim."

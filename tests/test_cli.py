@@ -10,9 +10,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock, Mock, sentinel
 
 import pytest
 from click import unstyle
+from mcp import MCPError
+from mcp.types import ListToolsResult, Tool
 from typer.testing import CliRunner
 
 from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
@@ -88,9 +91,9 @@ def write_env_file(path: Path, **values: str) -> None:
 
 def write_ready_sqlite_index(path: Path) -> None:
     """Write a minimal populated PolicyNIM sqlite-vec index for doctor tests."""
-    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+    from policynim.storage import create_index_store
 
-    SQLiteVecIndexStore(path=path).replace(
+    create_index_store(Settings(index_db_path=path)).replace(
         [
             EmbeddedChunk(
                 chunk_id="DOCTOR-READY-1",
@@ -1610,9 +1613,11 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     assert payload["status"] == "action_required"
     assert payload["runtime_mode"] == "standalone"
     assert payload["config"]["expected_init_config_file"] == str(config_root / "config.env")
-    assert payload["next_steps"] == [
+    assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
-    ]
+    )
+    assert payload["inventory"]["source"]["document_count"] == 15
+    assert payload["index"]["state"] == "missing"
     assert "nvapi" not in result.stdout.lower()
 
 
@@ -1653,7 +1658,129 @@ def test_doctor_reports_ready_checkout_and_mcp_hints(
         ),
     }
     assert payload["mcp"]["streamable_http_url"] == "http://127.0.0.1:8000/mcp"
+    assert payload["mcp"]["max_concurrent_operations"] == 10
     assert "nvapi-test-key" not in result.stdout
+
+
+def test_doctor_reports_configured_mcp_operation_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Expose the effective admission limit in machine and human diagnostics."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS="3",
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout)["mcp"]["max_concurrent_operations"] == 3
+    assert text_result.exit_code == 0
+    assert "- concurrent operations: 3" in text_result.stdout
+
+
+@pytest.mark.parametrize("host", ["::1", "2001:db8::1"])
+def test_doctor_formats_ipv6_http_authorities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    host: str,
+) -> None:
+    """Print usable IPv6 MCP URLs in JSON and human-readable diagnostics."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_HOST=host,
+        POLICYNIM_MCP_PORT="8123",
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    expected_url = f"http://[{host}]:8123/mcp"
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout)["mcp"]["streamable_http_url"] == expected_url
+    assert text_result.exit_code == 0
+    assert f"- streamable-http: {expected_url}" in text_result.stdout
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "client_host"),
+    [
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "[::1]"),
+        ("0:0:0:0:0:0:0:0", "[::1]"),
+        ("192.0.2.20", "192.0.2.20"),
+        ("mcp.example", "mcp.example"),
+    ],
+)
+def test_doctor_uses_connectable_host_for_direct_mcp_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bind_host: str,
+    client_host: str,
+) -> None:
+    """Use loopback for wildcard binds while preserving concrete client authorities."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_HOST=bind_host,
+        POLICYNIM_MCP_PORT="8123",
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    expected_url = f"http://{client_host}:8123/mcp"
+    assert json_result.exit_code == 0
+    assert json.loads(json_result.stdout)["mcp"]["streamable_http_url"] == expected_url
+    assert text_result.exit_code == 0
+    assert f"- streamable-http: {expected_url}" in text_result.stdout
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "public_origin", "auth_required", "expected_url"),
+    [
+        ("10.23.45.6", "https://policy.example", True, "https://policy.example/mcp"),
+        ("0.0.0.0", "https://policy.example:9443/", True, "https://policy.example:9443/mcp"),
+        ("127.0.0.1", "http://policy.example:8123", False, "http://policy.example:8123/mcp"),
+    ],
+)
+def test_doctor_prefers_configured_public_mcp_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bind_host: str,
+    public_origin: str,
+    auth_required: bool,
+    expected_url: str,
+) -> None:
+    """Show the client endpoint instead of an internal bind URL in both output formats."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(
+        checkout_root / ".env",
+        NVIDIA_API_KEY="nvapi-test-key",
+        POLICYNIM_MCP_HOST=bind_host,
+        POLICYNIM_MCP_PORT="8123",
+        POLICYNIM_MCP_PUBLIC_BASE_URL=public_origin,
+        POLICYNIM_MCP_REQUIRE_AUTH=str(auth_required).lower(),
+        POLICYNIM_MCP_BEARER_TOKENS='["doctor-fixture-token"]',
+    )
+
+    json_result = runner.invoke(app, ["doctor", "--format", "json"])
+    text_result = runner.invoke(app, ["doctor"])
+
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.stdout)
+    assert payload["mcp"]["streamable_http_url"] == expected_url
+    assert payload["mcp"]["auth_required"] is auth_required
+    assert text_result.exit_code == 0
+    assert f"- streamable-http: {expected_url}" in text_result.stdout
+    assert "doctor-fixture-token" not in json_result.stdout + text_result.stdout
 
 
 def test_doctor_source_checkout_recovery_uses_uv_run_commands(
@@ -1670,7 +1797,9 @@ def test_doctor_source_checkout_recovery_uses_uv_run_commands(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert (
-        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
+        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact. "
+        "If either output exists, choose separate POLICYNIM_INDEX_DB_PATH and "
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
     ) in payload["next_steps"]
     assert (
         "Run `policynim ingest` to build the local policy index and runtime rules artifact."
@@ -1708,16 +1837,9 @@ def test_doctor_flags_invalid_sqlite_index_file(
     assert local_index_check == {
         "name": "local_index_path",
         "status": "action_required",
-        "message": (
-            "Configured local SQLite index file is not a populated PolicyNIM sqlite-vec index."
-        ),
+        "message": ("The local index isn't a readable PolicyNIM sqlite-vec database."),
     }
-    assert payload["next_steps"] == [
-        (
-            "Run `uv run policynim ingest` to build the local policy index "
-            "and runtime rules artifact."
-        )
-    ]
+    assert "separate POLICYNIM_INDEX_DB_PATH" in " ".join(payload["next_steps"])
 
 
 def test_doctor_flags_legacy_lancedb_directory_index_path(
@@ -1750,10 +1872,12 @@ def test_doctor_flags_legacy_lancedb_directory_index_path(
             "Set POLICYNIM_INDEX_DB_PATH to a SQLite file path such as data/index.sqlite3."
         ),
     }
-    assert (
-        "Replace deprecated `POLICYNIM_LANCEDB_URI` with "
-        "`POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
-    ) in payload["next_steps"]
+    recovery = " ".join(payload["next_steps"])
+    assert "Replace deprecated `POLICYNIM_LANCEDB_URI`" in recovery
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH" in recovery
+    assert "legacy-only policy content" in recovery
+    assert "Preserve the old directory" in recovery
+    assert "uv run policynim ingest" in recovery
     assert (
         "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact."
         not in payload["next_steps"]
@@ -1784,9 +1908,11 @@ def test_doctor_flags_canonical_directory_index_path(
     )
     assert local_index_check["status"] == "action_required"
     assert "points to a directory" in local_index_check["message"]
-    assert (
-        "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run `uv run policynim ingest`."
-    ) in payload["next_steps"]
+    recovery = " ".join(payload["next_steps"])
+    assert "Set a fresh `POLICYNIM_INDEX_DB_PATH`" in recovery
+    assert "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH" in recovery
+    assert "authoritative Markdown sources" in recovery
+    assert "uv run policynim ingest" in recovery
     assert "POLICYNIM_LANCEDB_URI" not in " ".join(payload["next_steps"])
 
 
@@ -1978,7 +2104,7 @@ def test_support_bundle_does_not_label_installed_cwd_as_repo_root(
     assert payload["first_run"]["runtime_mode"] == "standalone"
     assert "<repo-root>" not in payload["redaction"]["path_markers"]
     assert str(workspace) not in result.stdout
-    assert "workspace" not in result.stdout
+    assert payload["doctor"]["paths"]["eval_workspace_dir"] == "<data-dir>/evals/workspace"
 
 
 def test_support_bundle_redacts_custom_absolute_runtime_paths(
@@ -3448,6 +3574,93 @@ def test_mcp_smoke_failure_text_prints_recovery_steps(
     assert "policynim ingest" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("tool_names", "expected_status", "missing_tools"),
+    [
+        (["policy_search", "policy_preflight"], "ok", []),
+        (["policy_search"], "error", ["policy_preflight"]),
+    ],
+)
+def test_mcp_stdio_smoke_discovers_sdk_tools_with_float_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tool_names: list[str],
+    expected_status: str,
+    missing_tools: list[str],
+) -> None:
+    """Keep discovery reports and client cleanup compatible with SDK 2."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    @asynccontextmanager
+    async def fake_stdio_client(*args: object, **kwargs: object):
+        """Supply inert streams for successful and incomplete discovery scenarios."""
+        yield sentinel.read_stream, sentinel.write_stream
+
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    session.list_tools.return_value = ListToolsResult(
+        tools=[Tool(name=name, input_schema={"type": "object"}) for name in tool_names]
+    )
+    session_factory = Mock(return_value=session)
+    monkeypatch.setattr(cli_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(cli_module, "ClientSession", session_factory)
+
+    report = asyncio.run(cli_module._run_mcp_stdio_smoke(timeout_seconds=7.5))
+
+    session_factory.assert_called_once_with(
+        sentinel.read_stream, sentinel.write_stream, read_timeout_seconds=7.5
+    )
+    session.initialize.assert_awaited_once_with()
+    session.list_tools.assert_awaited_once_with()
+    session.__aexit__.assert_awaited_once()
+    assert report["status"] == expected_status
+    assert report["tools"] == sorted(tool_names)
+    assert report["missing_tools"] == missing_tools
+    if missing_tools:
+        assert "mcp-config --target local-stdio" in " ".join(cast(list[str], report["next_steps"]))
+    else:
+        assert "next_steps" not in report
+
+
+@pytest.mark.parametrize("failure_stage", ["initialize", "list_tools"])
+@pytest.mark.parametrize("failure_kind", ["protocol", "timeout"])
+def test_mcp_stdio_smoke_reports_sdk_failures_and_closes_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_stage: str,
+    failure_kind: str,
+) -> None:
+    """Preserve recovery output when a connected client cannot complete discovery."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+
+    @asynccontextmanager
+    async def fake_stdio_client(*args: object, **kwargs: object):
+        """Keep transport setup successful while the session fails during discovery."""
+        yield sentinel.read_stream, sentinel.write_stream
+
+    failure = (
+        MCPError(-32603, "Discovery unavailable")
+        if failure_kind == "protocol"
+        else TimeoutError("Discovery timed out")
+    )
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    getattr(session, failure_stage).side_effect = failure
+    monkeypatch.setattr(cli_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(cli_module, "ClientSession", Mock(return_value=session))
+
+    report = asyncio.run(cli_module._run_mcp_stdio_smoke(timeout_seconds=1.0))
+
+    assert report["status"] == "error"
+    assert report["tools"] == []
+    assert report["missing_tools"] == ["policy_preflight", "policy_search"]
+    assert type(failure).__name__ in str(report["message"])
+    assert "policynim doctor" in " ".join(cast(list[str], report["next_steps"]))
+    session.__aexit__.assert_awaited_once()
+    if failure_stage == "initialize":
+        session.list_tools.assert_not_awaited()
+
+
 def test_mcp_stdio_smoke_exception_report_includes_recovery_steps(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -4250,3 +4463,96 @@ def test_evidence_report_command_surfaces_missing_session_errors(monkeypatch) ->
 
     assert result.exit_code == 1
     assert "missing-session" in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["legacy", "model", "incomplete", "compatible"])
+def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_path, mutation):
+    """Verify doctor reports index identity without provider calls."""
+    import sqlite3
+
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    path = checkout / "data" / "index.sqlite3"
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="doctor-secret-sentinel")
+    write_ready_sqlite_index(path)
+    with sqlite3.connect(path) as conn:
+        if mutation != "compatible":
+            key, value = {
+                "legacy": ("schema_version", "1"),
+                "model": ("embedding_model", "another/same-dimension-model"),
+                "incomplete": ("ingest_complete", "false"),
+            }[mutation]
+            conn.execute("UPDATE index_metadata SET value=? WHERE key=?", (value, key))
+    before = path.read_bytes()
+    monkeypatch.setattr(
+        "policynim.providers.nvidia.OpenAI",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("doctor must stay offline")),
+    )
+    result = runner.invoke(app, ["doctor", "--format", "json"])
+    assert result.exit_code == 0
+    report = json.loads(result.stdout)
+    check = next(entry for entry in report["checks"] if entry["name"] == "local_index_path")
+    assert check["status"] == ("ok" if mutation == "compatible" else "action_required")
+    assert report["index"]["compatible"] is (mutation == "compatible")
+    if mutation == "compatible":
+        assert report["index"]["identity"]["embedding"]["model"] == Settings().nvidia_embed_model
+        assert report["index"]["identity"]["dimension"] == 2
+    else:
+        assert "separate" in " ".join(report["next_steps"])
+    assert "doctor-secret-sentinel" not in result.stdout
+    assert path.read_bytes() == before
+
+
+def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tmp_path):
+    """Use the real ingest command to reject corrupt data with operator guidance."""
+    from test_index_identity import SpyEmbedder
+
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    path = checkout / "data" / "index.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"private-corrupt-index-sentinel")
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="secret-key-sentinel")
+    embedder = SpyEmbedder()
+    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", lambda _: embedder)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "separate" in result.stderr
+    assert "sentinel" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert embedder.calls == 0 and embedder.closed
+    assert path.read_bytes() == b"private-corrupt-index-sentinel"
+
+
+@pytest.mark.parametrize(
+    "setting", ["POLICYNIM_NVIDIA_BASE_URL", "POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL"]
+)
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://user:password-sentinel@example.invalid/v1",
+        "https://example.invalid/v1?key=key-sentinel",
+    ],
+)
+def test_invalid_provider_endpoint_does_not_echo_credentials(
+    monkeypatch, tmp_path, setting, endpoint
+):
+    """Reject endpoint configuration through the real CLI without echoing its input."""
+    checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+    write_env_file(checkout / ".env", NVIDIA_API_KEY="configured-key-sentinel")
+    monkeypatch.setenv(setting, endpoint)
+
+    def client_must_not_be_created(**kwargs):
+        """Fail if invalid settings reach provider client construction."""
+        raise AssertionError("Provider client must not be created")
+
+    monkeypatch.setattr("policynim.providers.nvidia.OpenAI", client_must_not_be_created)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "sentinel" not in result.stderr
+    assert endpoint not in result.stderr
+    assert "input_value" not in result.stderr
+    assert "Provider client must not be created" not in result.stderr
+    assert "endpoint" in result.stderr.lower() or "credentials" in result.stderr.lower()

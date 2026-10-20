@@ -94,8 +94,12 @@ class PolicyConformanceEvaluator(Protocol):
 class IndexStore(Protocol):
     """Stores and searches policy chunks."""
 
-    def replace(self, chunks: Sequence[EmbeddedChunk]) -> None:
+    def replace(self, chunks: Sequence[EmbeddedChunk], *, complete: bool = True) -> str:
         """Replace the local index contents with embedded chunks."""
+        ...
+
+    def validate_identity(self) -> None:
+        """Reject incomplete or incompatible embedding identity before provider calls."""
         ...
 
     def exists(self) -> bool:

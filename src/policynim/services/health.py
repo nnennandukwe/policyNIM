@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from pathlib import Path
 
 from policynim.contracts import IndexStore
-from policynim.errors import ConfigurationError
+from policynim.errors import ConfigurationError, IndexCompatibilityError
 from policynim.services.ingest import create_ingest_service
 from policynim.settings import Settings, get_settings
 from policynim.storage import create_index_store
+from policynim.storage.index_readiness import inspect_index_readiness
 from policynim.types import HealthCheckResult
 
 LOGGER = logging.getLogger(__name__)
@@ -32,25 +34,29 @@ class RuntimeHealthService:
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
         try:
-            if not self._index_store.exists():
+            readiness = inspect_index_readiness(self._index_store)
+            if readiness.state == "missing":
                 return self._not_ready(f"Local index table {self._table_name!r} does not exist.")
-
-            row_count = self._index_store.count()
-            if row_count <= 0:
+            if readiness.state == "empty":
                 return self._not_ready(
                     f"Local index table {self._table_name!r} exists but contains no rows."
                 )
-
+            if readiness.state != "ready":
+                return self._not_ready(readiness.reason)
             return HealthCheckResult(
                 status="ok",
                 ready=True,
                 table_name=self._table_name,
-                row_count=row_count,
+                row_count=readiness.chunk_count or 0,
                 mcp_url=self._mcp_url,
                 reason=None,
             )
+        except IndexCompatibilityError:
+            return self._not_ready(
+                "Local index embedding identity is incompatible or ingestion is incomplete."
+            )
         except Exception as exc:
-            LOGGER.exception("Runtime health check failed.")
+            log_health_failure("Runtime health check failed.", exc)
             return self._not_ready(format_health_failure_reason(exc))
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
@@ -92,7 +98,12 @@ def ensure_hosted_runtime_ready(
     if result.ready:
         return
 
-    if rebuild_if_missing:
+    index_exists = index_store.path.exists()
+    if rebuild_if_missing and index_exists:
+        # Existing unknown/mismatched data must never trigger a paid implicit migration.
+        index_store.validate_identity()
+
+    if rebuild_if_missing and not index_exists:
         _rebuild_hosted_runtime_index(
             active_settings,
             index_path=index_store.path,
@@ -161,7 +172,8 @@ def _rebuild_hosted_runtime_index(
         summary,
     )
     try:
-        result = create_ingest_service(settings).run()
+        with create_ingest_service(settings) as service:
+            result = service.run()
     except Exception as exc:
         rebuild_reason = f"Automatic hosted-index rebuild failed: {type(exc).__name__}: {exc}."
         raise ConfigurationError(
@@ -187,22 +199,25 @@ def _derive_mcp_url(settings: Settings) -> str | None:
 
 
 def format_health_failure_reason(exc: Exception) -> str:
-    """Return an operator-safe reason for readiness inspection failures."""
-    if isinstance(exc, OSError):
-        message = _single_line_message(exc.strerror)
-        if message:
-            return f"Local index readiness could not be inspected: {type(exc).__name__}: {message}."
-    return f"Local index readiness could not be inspected: {type(exc).__name__}."
+    """Return only an error class and numeric errno, never untrusted exception text."""
+    detail = type(exc).__name__
+    if isinstance(exc, OSError) and isinstance(exc.errno, int):
+        detail += f" (errno {exc.errno})"
+    return f"Local index readiness couldn't be inspected: {detail}."
 
 
-def _single_line_message(message: str | None) -> str | None:
-    """Return a compact sanitized exception message, if one is available."""
-    if message is None:
-        return None
-    message = " ".join(message.split()).strip().rstrip(".")
-    if message:
-        return message
-    return None
+def log_health_failure(message: str, exc: Exception) -> None:
+    """Keep diagnostic call sites while excluding source lines and exception payloads."""
+    locations = " -> ".join(
+        f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}"
+        for frame in traceback.extract_tb(exc.__traceback__)
+    )
+    LOGGER.error(
+        "%s %s Traceback locations: %s",
+        message,
+        format_health_failure_reason(exc),
+        locations or "unavailable",
+    )
 
 
 def _format_hosted_runtime_error(*, index_path: Path | str, table_name: str, reason: str) -> str:

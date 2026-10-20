@@ -4,25 +4,32 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+import math
+import random
+import time
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from types import TracebackType
 from typing import Any
 
 import httpx
 from openai import (
     APIConnectionError,
+    APIResponseValidationError,
     APIStatusError,
     APITimeoutError,
     AuthenticationError,
     BadRequestError,
     OpenAI,
-    RateLimitError,
 )
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 
 from policynim.contracts import Embedder, Generator, Reranker
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.operations import bounded_stage, check_budget, current_budget, emit_operation_event
+from policynim.providers.lifecycle import shared_client
 from policynim.settings import Settings
 from policynim.types import (
     CompiledPolicyConstraint,
@@ -36,6 +43,7 @@ from policynim.types import (
     PreflightRequest,
     RegenerationContext,
     ScoredChunk,
+    normalize_provider_endpoint,
 )
 
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -56,15 +64,30 @@ class NVIDIAEmbedder(Embedder):
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create an embedder with either an owned or injected SDK client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
 
+        base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._batch_size = batch_size
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -74,7 +97,11 @@ class NVIDIAEmbedder(Embedder):
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAEmbedder:
@@ -86,6 +113,10 @@ class NVIDIAEmbedder(Embedder):
             batch_size=settings.embed_batch_size,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
     def close(self) -> None:
@@ -94,7 +125,8 @@ class NVIDIAEmbedder(Embedder):
             _close_client(self._client)
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed policy chunk text in batches."""
+        """Embed policy text with one deadline per batch unless a caller supplies a budget."""
+        check_budget()
         normalized = [_normalize_text(text, field_name="document text") for text in texts]
         if not normalized:
             return []
@@ -105,83 +137,50 @@ class NVIDIAEmbedder(Embedder):
             embeddings.extend(self._request_embeddings(batch, input_type="passage"))
         return embeddings
 
+    @bounded_stage("embedding_query")
     def embed_query(self, text: str) -> list[float]:
         """Embed one search query."""
         normalized = _normalize_text(text, field_name="query")
         embeddings = self._request_embeddings([normalized], input_type="query")
         return embeddings[0]
 
+    @bounded_stage("embedding_batch")
     def _request_embeddings(
         self,
         texts: Sequence[str],
         *,
         input_type: str,
     ) -> list[list[float]]:
-        for attempt in range(self._max_retries + 1):
-            try:
-                response = self._client.embeddings.create(
-                    model=self._model,
-                    input=list(texts),
-                    encoding_format="float",
-                    extra_body={
-                        "input_type": input_type,
-                        "truncate": "NONE",
-                    },
-                )
-                return _validate_embeddings_response(response.data, expected_count=len(texts))
-            except AuthenticationError as exc:
-                raise _auth_error("embeddings") from exc
-            except BadRequestError as exc:
-                raise ProviderError(
-                    f"NVIDIA embeddings request was rejected: {exc}",
-                    failure_class="bad_request",
-                ) from exc
-            except RateLimitError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="rate_limit",
-                ) from exc
-            except APIStatusError as exc:
-                if exc.status_code in {401, 403}:
-                    raise _auth_error("embeddings") from exc
-                if exc.status_code == 429:
-                    if attempt < self._max_retries:
-                        continue
-                    raise ProviderError(
-                        "NVIDIA embeddings request failed after retries.",
-                        failure_class="rate_limit",
-                    ) from exc
-                if _should_retry_status(exc.status_code) and attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    f"NVIDIA embeddings request failed with status {exc.status_code}.",
-                    failure_class="http_status",
-                ) from exc
-            except APITimeoutError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="timeout",
-                ) from exc
-            except APIConnectionError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA embeddings request failed after retries.",
-                    failure_class="connection",
-                ) from exc
-            except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError(
-                    "Unexpected NVIDIA embeddings failure.",
-                    failure_class="unexpected",
-                ) from exc
+        """Request passage or query vectors with bounded retries and sanitized failures."""
 
-        raise ProviderError(
-            "NVIDIA embeddings request failed after retries.",
-            failure_class="unexpected",
+        def send(timeout: float) -> Any:
+            """Send one embedding attempt with a request-local timeout."""
+            return self._client.embeddings.create(
+                model=self._model,
+                input=list(texts),
+                encoding_format="float",
+                extra_body={"input_type": input_type, "truncate": "NONE"},
+                timeout=timeout,
+            )
+
+        return _request_with_retry(
+            send,
+            validate=lambda response: _validate_embeddings_response(
+                getattr(response, "data", None), expected_count=len(texts)
+            ),
+            operation="embeddings",
+            model_setting="EMBED",
+            endpoint_setting="BASE_URL",
+            **self._request_options(),
+        )
+
+    def _request_options(self) -> dict[str, Any]:
+        """Keep retries and request timeouts separate from client defaults."""
+        return dict(
+            max_retries=self._max_retries,
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
 
 
@@ -197,14 +196,29 @@ class NVIDIAReranker(Reranker):
         timeout_seconds: float,
         max_retries: int,
         client: httpx.Client | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a reranker with either an owned or injected HTTP client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for reranking.")
 
+        base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = httpx.Client(
@@ -228,6 +242,10 @@ class NVIDIAReranker(Reranker):
             base_url=settings.nvidia_retrieval_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings, retrieval=True),
         )
 
     def __enter__(self) -> NVIDIAReranker:
@@ -246,6 +264,7 @@ class NVIDIAReranker(Reranker):
         if self._owns_client:
             self._client.close()
 
+    @bounded_stage("reranking")
     def rerank(
         self,
         query: str,
@@ -264,71 +283,46 @@ class NVIDIAReranker(Reranker):
             "passages": [{"text": candidate.text} for candidate in candidates],
             "truncate": "END",
         }
-        response = self._request_ranking(payload)
-        scores = _extract_rerank_scores(response, expected_count=len(candidates))
-
-        ranked = [
-            candidate.model_copy(update={"score": float(score)})
-            for candidate, score in zip(candidates, scores, strict=True)
+        scores = self._request_ranking(payload, expected_count=len(candidates))
+        ranked = sorted(zip(candidates, scores, strict=True), key=lambda row: row[1], reverse=True)
+        return [
+            candidate.model_copy(update={"score": _rerank_score(score, model=self._model)})
+            for candidate, score in ranked[:top_k]
         ]
-        ranked.sort(
-            key=lambda chunk: chunk.score if chunk.score is not None else float("-inf"),
-            reverse=True,
-        )
-        return ranked[:top_k]
 
-    def _request_ranking(self, payload: dict[str, object]) -> Any:
+    def _request_ranking(self, payload: dict[str, object], *, expected_count: int) -> list[float]:
+        """Request passage rankings and classify failures without exposing response bodies."""
         endpoint = f"{self._model}/reranking"
-        for attempt in range(self._max_retries + 1):
+
+        def send(timeout: float) -> Any:
+            """Read and close one response before retrying or returning."""
+            response = self._client.post(endpoint, json=payload, timeout=timeout)
             try:
-                response = self._client.post(endpoint, json=payload)
                 response.raise_for_status()
                 return response.json()
-            except httpx.HTTPStatusError as exc:
-                status_code = exc.response.status_code
-                if status_code in {401, 403}:
-                    raise _auth_error("reranking") from exc
-                if status_code == 429:
-                    if attempt < self._max_retries:
-                        continue
-                    raise ProviderError(
-                        "NVIDIA reranking request failed after retries.",
-                        failure_class="rate_limit",
-                    ) from exc
-                if _should_retry_status(status_code) and attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    f"NVIDIA reranking request failed with status {status_code}.",
-                    failure_class="http_status",
-                ) from exc
-            except httpx.ConnectError as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA reranking request failed after retries.",
-                    failure_class="connection",
-                ) from exc
-            except (httpx.ReadTimeout, httpx.TimeoutException) as exc:
-                if attempt < self._max_retries:
-                    continue
-                raise ProviderError(
-                    "NVIDIA reranking request failed after retries.",
-                    failure_class="timeout",
-                ) from exc
-            except json.JSONDecodeError as exc:
-                raise ProviderError(
-                    "NVIDIA reranking response was not valid JSON.",
-                    failure_class="invalid_response",
-                ) from exc
-            except Exception as exc:  # pragma: no cover - defensive guard.
-                raise ProviderError(
-                    "Unexpected NVIDIA reranking failure.",
-                    failure_class="unexpected",
-                ) from exc
+            finally:
+                _close_client(response)
 
-        raise ProviderError(
-            "NVIDIA reranking request failed after retries.",
-            failure_class="unexpected",
+        def validate(response: Any) -> list[float]:
+            """Classify malformed scores inside the attempt diagnostic boundary."""
+            scores = _extract_rerank_scores(response, expected_count=expected_count)
+            if not all(math.isfinite(score) for score in scores):
+                raise ProviderError(
+                    "NVIDIA reranking response returned a non-finite score.",
+                    failure_class="invalid_response",
+                )
+            return scores
+
+        return _request_with_retry(
+            send,
+            validate=validate,
+            operation="reranking",
+            model_setting="RERANK",
+            endpoint_setting="RETRIEVAL_BASE_URL",
+            max_retries=self._max_retries,
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
 
 
@@ -344,14 +338,29 @@ class NVIDIAGenerator(Generator):
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a generator with either an owned or injected SDK client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for grounded generation.")
 
+        base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -361,7 +370,11 @@ class NVIDIAGenerator(Generator):
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAGenerator:
@@ -372,8 +385,13 @@ class NVIDIAGenerator(Generator):
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
+    @bounded_stage("generation")
     def generate_preflight(
         self,
         request: PreflightRequest,
@@ -389,14 +407,17 @@ class NVIDIAGenerator(Generator):
             compiled_packet=compiled_packet,
             regeneration_context=regeneration_context,
         )
-        content = _request_chat_completion(
+        return _request_chat_completion(
             self._client,
             model=self._model,
             messages=messages,
             max_retries=self._max_retries,
             operation="grounded generation",
+            parse=_parse_generation_draft,
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
-        return _parse_generation_draft(content)
 
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
@@ -416,14 +437,29 @@ class NVIDIAPolicyCompiler:
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a policy compiler with either an owned or injected SDK client."""
         api_key = api_key.strip()
         if not api_key:
             raise ConfigurationError("NVIDIA_API_KEY is required for policy compilation.")
 
+        base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -433,7 +469,11 @@ class NVIDIAPolicyCompiler:
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAPolicyCompiler:
@@ -444,8 +484,13 @@ class NVIDIAPolicyCompiler:
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
+    @bounded_stage("compilation")
     def compile_policy_packet(
         self,
         request: CompileRequest,
@@ -454,14 +499,17 @@ class NVIDIAPolicyCompiler:
     ) -> GeneratedCompiledPolicyDraft:
         """Compile a routed policy-selection packet into grounded constraints."""
         messages = _build_policy_compiler_messages(request, selection_packet, context)
-        content = _request_chat_completion(
+        return _request_chat_completion(
             self._client,
             model=self._model,
             messages=messages,
             max_retries=self._max_retries,
             operation="policy compilation",
+            parse=_parse_compiled_policy_draft,
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
-        return _parse_compiled_policy_draft(content)
 
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
@@ -481,6 +529,9 @@ class NVIDIAPolicyConformanceEvaluator:
         timeout_seconds: float,
         max_retries: int,
         client: OpenAI | Any | None = None,
+        operation_timeout_seconds: float = 120.0,
+        retry_initial_seconds: float = 0.5,
+        retry_max_seconds: float = 8.0,
     ) -> None:
         """Create a conformance evaluator with either an owned or injected client."""
         api_key = api_key.strip()
@@ -489,8 +540,20 @@ class NVIDIAPolicyConformanceEvaluator:
                 "NVIDIA_API_KEY is required for policy conformance evaluation."
             )
 
+        base_url = _require_provider_endpoint(base_url)
+        _validate_request_limits(
+            timeout_seconds,
+            max_retries,
+            operation_timeout_seconds,
+            retry_initial_seconds,
+            retry_max_seconds,
+        )
         self._model = model
         self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
+        self._retry_initial_seconds = retry_initial_seconds
+        self._retry_max_seconds = retry_max_seconds
         self._owns_client = client is None
         if client is None:
             self._client = OpenAI(
@@ -500,7 +563,11 @@ class NVIDIAPolicyConformanceEvaluator:
                 max_retries=0,
             )
         else:
-            self._client = client
+            self._client = (
+                client.with_options(max_retries=0)
+                if isinstance(client, OpenAI) and client.max_retries != 0
+                else client
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NVIDIAPolicyConformanceEvaluator:
@@ -511,22 +578,30 @@ class NVIDIAPolicyConformanceEvaluator:
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.nvidia_timeout_seconds,
             max_retries=settings.nvidia_max_retries,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
+            retry_initial_seconds=settings.nvidia_retry_initial_seconds,
+            retry_max_seconds=settings.nvidia_retry_max_seconds,
+            client=shared_client(settings),
         )
 
+    @bounded_stage("conformance")
     def evaluate_policy_conformance(
         self,
         request: PolicyConformanceRequest,
     ) -> GeneratedPolicyConformanceDraft:
         """Judge final and optional trajectory adherence for a preflight trace."""
         messages = _build_policy_conformance_messages(request)
-        content = _request_chat_completion(
+        return _request_chat_completion(
             self._client,
             model=self._model,
             messages=messages,
             max_retries=self._max_retries,
             operation="policy conformance evaluation",
+            parse=lambda content: _parse_policy_conformance_draft(content, request),
+            timeout_seconds=self._timeout_seconds,
+            retry_initial_seconds=self._retry_initial_seconds,
+            retry_max_seconds=self._retry_max_seconds,
         )
-        return _parse_policy_conformance_draft(content, request)
 
     def close(self) -> None:
         """Release the owned OpenAI client when supported by the SDK."""
@@ -541,71 +616,212 @@ def _request_chat_completion(
     messages: list[ChatCompletionMessageParam],
     max_retries: int,
     operation: str,
-) -> str:
+    parse: Callable[[str], Any],
+    timeout_seconds: float = 30.0,
+    retry_initial_seconds: float = 0.5,
+    retry_max_seconds: float = 8.0,
+) -> Any:
+    """Request structured chat output and sanitize provider failures."""
+    options: dict[str, Any] = {"temperature": 0, "top_p": 1}
+    if model == "nvidia/nemotron-3-super-120b-a12b":
+        options = {
+            "temperature": 1,
+            "top_p": 0.95,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
+
+    def send(timeout: float) -> Any:
+        """Send one chat attempt without mutating the shared SDK client."""
+        return client.chat.completions.create(
+            model=model, messages=messages, timeout=timeout, **options
+        )
+
+    return _request_with_retry(
+        send,
+        validate=lambda response: parse(_extract_chat_content(response, operation=operation)),
+        operation=operation,
+        model_setting="CHAT",
+        endpoint_setting="BASE_URL",
+        max_retries=max_retries,
+        timeout_seconds=timeout_seconds,
+        retry_initial_seconds=retry_initial_seconds,
+        retry_max_seconds=retry_max_seconds,
+    )
+
+
+def _validate_request_limits(
+    timeout: float,
+    retries: int,
+    operation_timeout: float,
+    initial: float,
+    maximum: float,
+) -> None:
+    """Reject invalid direct adapter settings before allocating a client."""
+    if any(
+        not math.isfinite(value) or value <= 0
+        for value in (timeout, operation_timeout, initial, maximum)
+    ):
+        raise ConfigurationError("Provider timeouts and retry delays must be finite and positive.")
+    if type(retries) is not int or not 0 <= retries <= 10:
+        raise ConfigurationError("NVIDIA retries must be an integer from 0 to 10.")
+
+
+def _request_with_retry(
+    send: Callable[[float], Any],
+    *,
+    operation: str,
+    model_setting: str,
+    endpoint_setting: str,
+    max_retries: int,
+    timeout_seconds: float,
+    retry_initial_seconds: float,
+    retry_max_seconds: float,
+    validate: Callable[[Any], Any] | None = None,
+) -> Any:
+    """Classify failures and bound every attempt and delay by the shared deadline."""
+    budget = current_budget()
     for attempt in range(max_retries + 1):
+        timeout = min(timeout_seconds, budget.remaining())
+        start = time.monotonic()
+        failure: str | None = None
+        usage: int | None = None
+        retry_error: Exception | None = None
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-                top_p=1,
-            )
-            return _extract_chat_content(response, operation=operation)
+            response = send(timeout)
+            response_usage = getattr(response, "usage", None)
+            total = getattr(response_usage, "total_tokens", None)
+            usage = total if type(total) is int and total >= 0 else None
+            budget.remaining()
+            validated = validate(response) if validate is not None else response
+            budget.remaining()
+            return validated
+        except (APIResponseValidationError, json.JSONDecodeError) as exc:
+            failure = "invalid_response"
+            raise ProviderError(
+                f"NVIDIA {operation} response was invalid.", failure_class=failure
+            ) from exc
         except AuthenticationError as exc:
+            failure = "auth"
             raise _auth_error(operation) from exc
         except BadRequestError as exc:
+            failure = "bad_request"
             raise ProviderError(
-                f"NVIDIA {operation} request was rejected: {exc}",
-                failure_class="bad_request",
+                f"NVIDIA {operation} request was rejected. "
+                "Check the model and input configuration.",
+                failure_class=failure,
             ) from exc
-        except RateLimitError as exc:
-            if attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed after retries.",
-                failure_class="rate_limit",
-            ) from exc
-        except APIStatusError as exc:
-            if exc.status_code in {401, 403}:
+        except (APIStatusError, httpx.HTTPStatusError) as exc:
+            status = (
+                exc.status_code if isinstance(exc, APIStatusError) else exc.response.status_code
+            )
+            failure = "rate_limit" if status == 429 else "http_status"
+            if status == 410:
+                failure = "endpoint_unavailable"
+                raise _endpoint_unavailable(operation, model_setting, endpoint_setting) from exc
+            if status in {401, 403}:
+                failure = "auth"
                 raise _auth_error(operation) from exc
-            if exc.status_code == 429:
-                if attempt < max_retries:
-                    continue
+            if not _should_retry_status(status):
                 raise ProviderError(
-                    f"NVIDIA {operation} request failed after retries.",
-                    failure_class="rate_limit",
+                    f"NVIDIA {operation} request failed with status {status}.",
+                    failure_class=failure,
                 ) from exc
-            if _should_retry_status(exc.status_code) and attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed with status {exc.status_code}.",
-                failure_class="http_status",
-            ) from exc
-        except APITimeoutError as exc:
-            if attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed after retries.",
-                failure_class="timeout",
-            ) from exc
-        except APIConnectionError as exc:
-            if attempt < max_retries:
-                continue
-            raise ProviderError(
-                f"NVIDIA {operation} request failed after retries.",
-                failure_class="connection",
-            ) from exc
-        except ProviderError:
+            retry_error = exc
+        except (APITimeoutError, httpx.TimeoutException) as exc:
+            failure, retry_error = "timeout", exc
+        except (APIConnectionError, httpx.TransportError) as exc:
+            failure, retry_error = "connection", exc
+        except ProviderError as exc:
+            failure = exc.failure_class
             raise
-        except Exception as exc:  # pragma: no cover - defensive guard.
+        except Exception as exc:
+            failure = "unexpected"
             raise ProviderError(
-                f"Unexpected NVIDIA {operation} failure.",
-                failure_class="unexpected",
+                f"Unexpected NVIDIA {operation} failure.", failure_class=failure
             ) from exc
+        except BaseException:
+            failure = "interrupted"
+            raise
+        finally:
+            emit_operation_event(
+                kind="attempt",
+                stage=operation,
+                attempt=attempt + 1,
+                failure_class=failure,
+                latency_ms=round((time.monotonic() - start) * 1000, 3),
+                usage_tokens=usage,
+                usage_status="measured" if usage is not None else "unknown",
+            )
+        assert retry_error is not None
+        budget.remaining()
+        if attempt >= max_retries:
+            raise ProviderError(
+                f"NVIDIA {operation} request failed after retries.", failure_class=failure
+            ) from retry_error
+        retry_after = _retry_after_seconds(retry_error)
+        exponential = min(retry_max_seconds, retry_initial_seconds * 2 ** min(attempt, 30))
+        delay = random.uniform(exponential / 2, exponential)
+        if retry_after is not None:
+            # Never shorten a provider's requested delay to fit the local cap.
+            if retry_after > retry_max_seconds:
+                if retry_after >= budget.remaining():
+                    budget.wait(retry_after)
+                raise ProviderError(
+                    "Provider retry delay exceeds the configured wait limit. Retry later.",
+                    failure_class="retry_after_limit",
+                ) from retry_error
+            delay = max(delay, retry_after)
+        budget.wait(delay)
+    raise AssertionError("Retry loop must return or raise.")
 
-    raise ProviderError(
-        f"NVIDIA {operation} request failed after retries.",
-        failure_class="unexpected",
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Parse delta seconds or an HTTP date without trusting malformed headers."""
+    response = getattr(exc, "response", None)
+    raw = getattr(response, "headers", {}).get("retry-after")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (ValueError, TypeError):
+        try:
+            date = parsedate_to_datetime(raw)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=UTC)
+            seconds = (date - datetime.now(UTC)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
+
+
+def _require_provider_endpoint(base_url: str) -> str:
+    """Validate direct adapter construction as well as environment-backed settings."""
+    try:
+        return normalize_provider_endpoint(base_url)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "NVIDIA endpoints must use HTTPS without URL credentials, query parameters, "
+            "or fragments. Verify POLICYNIM_NVIDIA_BASE_URL and "
+            "POLICYNIM_NVIDIA_RETRIEVAL_BASE_URL."
+        ) from exc
+
+
+def _endpoint_unavailable(
+    operation: str, model_setting: str, endpoint_setting: str
+) -> ProviderError:
+    """Describe HTTP 410 without exposing upstream bodies or configured credentials."""
+    recovery = (
+        " Rebuild the complete corpus into separate index and runtime-rules paths when changing "
+        "the embedding model; preserve the old index and sources."
+        if model_setting == "EMBED"
+        else ""
+    )
+    return ProviderError(
+        f"NVIDIA {operation} endpoint is unavailable (HTTP 410); do not retry unchanged requests. "
+        f"Verify POLICYNIM_NVIDIA_{model_setting}_MODEL and POLICYNIM_NVIDIA_{endpoint_setting} "
+        "against the current NVIDIA API catalog. For Docker ingestion, configure build arguments "
+        "separately from runtime service variables." + recovery,
+        failure_class="endpoint_unavailable",
     )
 
 
@@ -628,23 +844,41 @@ def _normalize_text(text: str, *, field_name: str) -> str:
 
 
 def _validate_embeddings_response(
-    data: Sequence[Any],
+    data: object,
     *,
     expected_count: int,
 ) -> list[list[float]]:
+    """Require one finite, consistently sized vector for each requested input."""
+    if not isinstance(data, list):
+        raise ProviderError(
+            "NVIDIA embeddings response did not contain embedding data.",
+            failure_class="invalid_response",
+        )
     if len(data) != expected_count:
         raise ProviderError(
             "NVIDIA embeddings response count did not match the number of inputs.",
             failure_class="invalid_response",
         )
 
-    embeddings: list[list[float]] = []
+    embeddings: dict[int, list[float]] = {}
     dimension: int | None = None
     for item in data:
-        embedding = list(getattr(item, "embedding", []))
-        if not embedding:
+        index = getattr(item, "index", None)
+        if type(index) is not int or index < 0 or index >= expected_count or index in embeddings:
             raise ProviderError(
-                "NVIDIA embeddings response returned an empty vector.",
+                "NVIDIA embeddings response returned invalid or duplicate input indices.",
+                failure_class="invalid_response",
+            )
+        try:
+            embedding = [float(value) for value in item.embedding]
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ProviderError(
+                "NVIDIA embeddings response returned an invalid vector.",
+                failure_class="invalid_response",
+            ) from exc
+        if not embedding or not all(math.isfinite(value) for value in embedding):
+            raise ProviderError(
+                "NVIDIA embeddings response returned an empty or non-finite vector.",
                 failure_class="invalid_response",
             )
         if dimension is None:
@@ -654,9 +888,19 @@ def _validate_embeddings_response(
                 "NVIDIA embeddings response returned mixed vector dimensions.",
                 failure_class="invalid_response",
             )
-        embeddings.append([float(value) for value in embedding])
+        embeddings[index] = embedding
 
-    return embeddings
+    return [embeddings[index] for index in range(expected_count)]
+
+
+def _rerank_score(logit: float, *, model: str) -> float:
+    """Apply NVIDIA's documented sigmoid for the selected model, preserving custom scores."""
+    if model != "nvidia/llama-nemotron-rerank-vl-1b-v2":
+        return logit
+    if logit >= 0:
+        return 1.0 / (1.0 + math.exp(-logit))
+    exponent = math.exp(logit)
+    return exponent / (1.0 + exponent)
 
 
 def _extract_rerank_scores(payload: Any, *, expected_count: int) -> list[float]:
@@ -768,7 +1012,8 @@ def _build_generation_messages(
         "}\n"
         "Rules:\n"
         "- Cite only by chunk_id values that appear in the provided context.\n"
-        "- Do not invent new chunk IDs.\n"
+        "- Do not invent new chunk IDs. A policy_id is not a citation. Copy the entire "
+        "chunk_id, including any colon and section suffix, from Allowed citation_ids.\n"
         "- If the evidence is insufficient, set insufficient_context to true and "
         "keep the lists empty.\n"
         "- When compiled policy constraints are provided, use them as the main "
@@ -791,6 +1036,8 @@ def _build_generation_messages(
         f"{compiled_constraints}\n"
         "Regeneration context:\n"
         f"{_format_regeneration_context(regeneration_context)}\n"
+        "Allowed citation_ids (copy exactly):\n"
+        f"{json.dumps([chunk.chunk_id for chunk in context])}\n"
         "Retrieved context:\n"
         f"{_format_generation_context(context)}"
     )
@@ -851,6 +1098,8 @@ def _build_policy_compiler_messages(
         "Rules:\n"
         "- Cite only by chunk_id values that appear in the provided retained context.\n"
         "- Do not invent chunk IDs, policy IDs, files, or requirements.\n"
+        "- A policy_id is not a citation. Copy the entire chunk_id, including any "
+        "colon and section suffix, from Allowed citation_ids.\n"
         "- Include a constraint only when the retained evidence directly supports it.\n"
         "- If evidence is weak or unsupported, set insufficient_context to true and "
         "leave every constraint list empty.\n"
@@ -863,6 +1112,8 @@ def _build_policy_compiler_messages(
         f"Task type: {selection_packet.task_type}\n"
         "Selected policy packet:\n"
         f"{selection_packet.model_dump_json(indent=2)}\n"
+        "Allowed citation_ids (copy exactly):\n"
+        f"{json.dumps([chunk.chunk_id for chunk in context])}\n"
         "Retained context:\n"
         f"{_format_generation_context(context)}"
     )

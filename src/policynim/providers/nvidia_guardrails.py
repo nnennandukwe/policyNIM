@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from policynim.contracts import Generator
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.operations import bounded_stage
 from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.settings import Settings
 from policynim.types import (
@@ -28,7 +29,7 @@ from policynim.types import (
 _NEMO_GUARDRAILS_DISTRIBUTION = "nemoguardrails"
 _NVIDIA_GUARDRAILS_EXTRA = "nvidia-guardrails"
 _NVIDIA_GUARDRAILS_INSTALL_HINT = "uv sync --extra nvidia-guardrails"
-_DEFAULT_GUARDRAILS_MODEL = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+_DEFAULT_GUARDRAILS_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 _MODEL_PLACEHOLDER = "__POLICYNIM_NVIDIA_CHAT_MODEL__"
 _ASSET_ROOT = ("templates", "nvidia_guardrails", "preflight_output")
 _CONFIG_ASSET = "config.yml"
@@ -56,7 +57,10 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         rail_type_output: Any | None = None,
         owns_rails: bool = False,
         model: str | None = None,
+        operation_timeout_seconds: float = 120.0,
     ) -> None:
+        """Own output rails and inherit the configured outer operation timeout."""
+        self._operation_timeout_seconds = operation_timeout_seconds
         if rails is None:
             try:
                 rails, rail_type_output = _create_default_output_rails(
@@ -85,12 +89,14 @@ class NeMoGuardrailsPreflightGenerator(Generator):
                 rails=rails,
                 rail_type_output=rail_type_output,
                 owns_rails=True,
+                operation_timeout_seconds=settings.operation_timeout_seconds,
             )
         except Exception:
             _close_component(base_generator)
             _close_component(rails)
             raise
 
+    @bounded_stage("guardrails_generation")
     def generate_preflight(
         self,
         request: PreflightRequest,
@@ -122,7 +128,9 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         if self._owns_rails:
             _close_component(self._rails)
 
+    @bounded_stage("output_rails")
     def _check_output_rails(self, draft: GeneratedPreflightDraft) -> str:
+        """Run output rails only while the inherited operation budget permits it."""
         content = json.dumps(draft.model_dump(mode="json"), sort_keys=True)
         rail_types = [self._rail_type_output] if self._rail_type_output is not None else None
         try:

@@ -10,9 +10,10 @@ import re
 import shlex
 import sys
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
+from ipaddress import ip_address
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryFile
 from typing import Annotated, Literal, NoReturn, cast
@@ -25,8 +26,14 @@ from pydantic import TypeAdapter, ValidationError
 
 import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
-from policynim.errors import ConfigurationError, MissingIndexError, PolicyNIMError
+from policynim.errors import (
+    ConfigurationError,
+    IndexCompatibilityError,
+    MissingIndexError,
+    PolicyNIMError,
+)
 from policynim.interfaces.mcp import run_server
+from policynim.interfaces.profile_cli import app as profile_app
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
     create_beta_auth_service,
@@ -43,8 +50,9 @@ from policynim.services import (
     create_runtime_execution_service,
     create_search_service,
 )
+from policynim.services.catalog import build_policy_catalog
+from policynim.services.inventory import inspect_policy_inventory
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import (
     MAX_TOP_K,
     CompileRequest,
@@ -93,6 +101,113 @@ evidence_app = typer.Typer(
 app.add_typer(beta_admin_app, name="beta-admin")
 app.add_typer(runtime_app, name="runtime")
 app.add_typer(evidence_app, name="evidence")
+policies_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Inspect and validate policy sources without model credentials or network calls.",
+)
+app.add_typer(policies_app, name="policies")
+
+
+app.add_typer(profile_app, name="profile")
+
+
+@policies_app.command("list")
+def policies_list(
+    output_format: Annotated[
+        Literal["text", "json"], typer.Option("--format", help="Catalog output: text or json.")
+    ] = "text",
+) -> None:
+    """List source policy IDs and pack versions; use show for individual content revisions."""
+    try:
+        catalog = build_policy_catalog()
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format)
+    if output_format == "json":
+        typer.echo(catalog.model_dump_json(indent=2))
+        return
+    typer.echo(f"Source catalog: {catalog.effective_count} policies; {catalog.digest}")
+    typer.echo("Indexed generation: unknown (source inspection only)")
+    for entry in catalog.policies:
+        provenance = entry.policy.provenance
+        pack = (
+            f"{provenance.pack_id}@{provenance.pack_version}"
+            if provenance is not None and provenance.pack_id is not None
+            else "legacy directory (pack unknown)"
+        )
+        typer.echo(
+            f"{entry.policy.policy_id}  {entry.state}  {entry.policy.domain}  {pack}  "
+            f"{entry.policy.title}"
+        )
+    if catalog.unlisted_markdown:
+        typer.echo(
+            f"Unlisted Markdown: {len(catalog.unlisted_markdown)} file(s) aren't selected. "
+            "Run `policynim policies validate --format json` for their paths."
+        )
+
+
+@policies_app.command("show")
+def policies_show(
+    policy_id: Annotated[str, typer.Argument(help="Exact policy ID from `policies list`.")],
+    output_format: Annotated[
+        Literal["text", "json"], typer.Option("--format", help="Policy output: text or json.")
+    ] = "text",
+) -> None:
+    """Show one policy's source text, content digest, and declared provenance."""
+    try:
+        entry = build_policy_catalog().show(policy_id)
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format)
+    if output_format == "json":
+        typer.echo(entry.model_dump_json(indent=2))
+        return
+    typer.echo(f"{entry.policy.policy_id}: {entry.policy.title}")
+    typer.echo(f"Source: {entry.path}; state: {entry.state}")
+    if entry.reason is not None:
+        typer.echo(f"Decision: {entry.reason}")
+    if entry.policy.provenance is not None:
+        typer.echo(f"Revision: {entry.policy.provenance.content_digest}")
+        typer.echo(f"Grounding: {entry.policy.provenance.grounding_kind}")
+    typer.echo(entry.body)
+
+
+@policies_app.command("validate")
+def policies_validate(
+    output_format: Annotated[
+        Literal["text", "json"], typer.Option("--format", help="Validation output: text or json.")
+    ] = "text",
+) -> None:
+    """Validate manifest, membership, source metadata, and policy IDs without embedding."""
+    try:
+        catalog = build_policy_catalog()
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format)
+    result = {
+        "status": "ok",
+        "scope": "source",
+        "catalog_digest": catalog.digest,
+        "authored_count": catalog.authored_count,
+        "effective_count": catalog.effective_count,
+        "indexed_count": None,
+        "unlisted_markdown": catalog.unlisted_markdown,
+    }
+    if output_format == "json":
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        typer.echo(f"Valid source catalog: {catalog.effective_count} policies; {catalog.digest}")
+        typer.echo(
+            "Validation checks structure and declared metadata; it doesn't certify compliance."
+        )
+        if catalog.unlisted_markdown:
+            typer.echo("Unlisted Markdown (not selected): " + ", ".join(catalog.unlisted_markdown))
+
+
+def _catalog_error(error: PolicyNIMError, output_format: str) -> NoReturn:
+    """Keep validation failures machine-readable with a nonzero command exit."""
+    if output_format == "json":
+        typer.echo(json.dumps({"status": "error", "scope": "source", "message": str(error)}))
+        raise typer.Exit(code=1)
+    _exit_with_error(str(error))
 
 
 @app.callback()
@@ -253,9 +368,51 @@ def doctor(
         typer.echo(line)
 
 
+@app.command(help="Inspect source policies and local indexed counts without setup or NVIDIA calls.")
+def inventory(
+    output_format: Annotated[
+        Literal["text", "json"],
+        typer.Option("--format", help="Inventory output format: text or json."),
+    ] = "text",
+) -> None:
+    """Keep source inventory separate from the observed local database."""
+    try:
+        report = inspect_policy_inventory()
+    except PolicyNIMError as exc:
+        _exit_with_error(_cli_error_message(exc))
+    if output_format == "json":
+        typer.echo(report.model_dump_json(indent=2))
+        return
+    typer.echo("PolicyNIM inventory (local process; remote deployment isn't inspected)")
+    source = report.source
+    if source.profile_path is not None:
+        typer.echo(f"Source profile: {source.profile_path}")
+        for source_root in source.roots:
+            typer.echo(f"Source directory: {source_root}")
+    else:
+        typer.echo(f"Source directory: {source.root or 'unavailable'}")
+    typer.echo(f"Source documents: {_inventory_count(source.document_count)}")
+    typer.echo(f"Source policy IDs: {_inventory_count(source.policy_count)}")
+    typer.echo(f"Source chunks: {_inventory_count(source.chunk_count)}")
+    if source.reason:
+        typer.echo(source.reason)
+    typer.echo(f"Index path: {report.index_path}")
+    typer.echo(f"Index state: {report.index.state}")
+    typer.echo(f"Indexed policy IDs: {_inventory_count(report.index.policy_count)}")
+    typer.echo(f"Indexed chunks: {_inventory_count(report.index.chunk_count)}")
+    typer.echo(report.index.reason)
+    if report.index.state != "ready":
+        typer.echo("Next: run `policynim doctor` for source-preserving recovery guidance.")
+
+
+def _inventory_count(count: int | None) -> str:
+    """Render unknown values without implying an observed empty inventory."""
+    return "unknown" if count is None else str(count)
+
+
 @app.command()
 def ingest() -> None:
-    """Build the local policy index from the shipped corpus."""
+    """Build a policy index and runtime rules at unused output paths."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
@@ -271,6 +428,8 @@ def ingest() -> None:
     typer.echo(f"Indexed {result.chunk_count} chunks from {result.document_count} documents.")
     typer.echo(f"Model: {result.embedding_model}")
     typer.echo(f"Index: {result.index_uri} (table: {result.table_name})")
+    if result.catalog_digest is not None:
+        typer.echo(f"Source catalog: {result.catalog_digest}")
 
 
 @app.command(
@@ -2516,7 +2675,7 @@ async def _run_mcp_stdio_smoke(
                 async with ClientSession(
                     read_stream,
                     write_stream,
-                    read_timeout_seconds=timedelta(seconds=timeout_seconds),
+                    read_timeout_seconds=timeout_seconds,
                 ) as session:
                     await session.initialize()
                     tool_result = await session.list_tools()
@@ -2717,10 +2876,7 @@ def _build_doctor_report() -> dict[str, object]:
     if config_discovery.standalone_setup_missing():
         message = f"Run `policynim init` to create {expected_config_file}."
         checks.append({"name": "setup", "status": "action_required", "message": message})
-        report["status"] = "action_required"
-        report["checks"] = checks
-        report["next_steps"] = [message]
-        return report
+        next_steps.append(message)
 
     try:
         settings = get_settings()
@@ -2771,9 +2927,13 @@ def _build_doctor_report() -> dict[str, object]:
         "eval_workspace_dir": resolve_runtime_path(settings.eval_workspace_dir).as_posix(),
     }
 
+    inventory = inspect_policy_inventory(settings)
+    report["inventory"] = inventory.model_dump(mode="json")
+    report["index"] = inventory.index.model_dump(mode="json")
+    readiness = inventory.index
     legacy_lancedb_alias_configured = _doctor_legacy_lancedb_alias_configured(discovery)
-    index_recovery_step_added = False
-    if index_path.is_dir():
+    index_recovery_step_added = readiness.state not in {"ready", "missing"}
+    if readiness.state == "directory":
         checks.append(
             {
                 "name": "local_index_path",
@@ -2790,38 +2950,35 @@ def _build_doctor_report() -> dict[str, object]:
                 legacy_lancedb_alias_configured=legacy_lancedb_alias_configured
             )
         )
-        index_recovery_step_added = True
-    elif index_path.exists():
-        if _doctor_local_index_ready(settings):
-            checks.append(
-                {
-                    "name": "local_index_path",
-                    "status": "ok",
-                    "message": "A populated local SQLite index exists.",
-                }
-            )
-        else:
-            checks.append(
-                {
-                    "name": "local_index_path",
-                    "status": "action_required",
-                    "message": (
-                        "Configured local SQLite index file is not a populated "
-                        "PolicyNIM sqlite-vec index."
-                    ),
-                }
-            )
-            next_steps.append(_doctor_ingest_next_step())
-            index_recovery_step_added = True
     else:
         checks.append(
             {
                 "name": "local_index_path",
-                "status": "action_required",
-                "message": "No local index path exists yet.",
+                "status": "ok" if readiness.state == "ready" else "action_required",
+                "message": readiness.reason,
             }
         )
-        next_steps.append(_doctor_ingest_next_step())
+        if readiness.state == "missing":
+            next_steps.append(_doctor_ingest_next_step())
+        elif readiness.state == "unreadable":
+            next_steps.append(
+                "Check read permissions on the configured index and its parent directory, "
+                "then rerun doctor. Preserve existing data; don't rebuild to diagnose permissions."
+            )
+        elif readiness.state != "ready":
+            next_steps.append(str(IndexCompatibilityError(readiness.reason)))
+    if inventory.source.status != "ok":
+        checks.append(
+            {
+                "name": "policy_sources",
+                "status": "action_required",
+                "message": inventory.source.reason or "Policy sources are unavailable.",
+            }
+        )
+        next_steps.append(
+            "Run `policynim policies validate --format json` for the exact source error. "
+            "Recover authoritative Markdown sources and set POLICYNIM_CORPUS_DIR before rebuilding."
+        )
 
     if runtime_rules_path.exists():
         checks.append(
@@ -2843,12 +3000,27 @@ def _build_doctor_report() -> dict[str, object]:
         if not index_recovery_step_added and ingest_next_step not in next_steps:
             next_steps.append(ingest_next_step)
 
+    http_host = settings.mcp_host
+    try:
+        bind_address = ip_address(http_host)
+    except ValueError:
+        bind_address = None
+    if bind_address is not None and bind_address.is_unspecified:
+        http_host = "127.0.0.1" if bind_address.version == 4 else "::1"
+    if ":" in http_host:
+        http_host = f"[{http_host}]"
+    http_base_url = (
+        str(settings.mcp_public_base_url).rstrip("/")
+        if settings.mcp_public_base_url is not None
+        else f"http://{http_host}:{settings.mcp_port}"
+    )
     report["mcp"] = {
         "stdio_command": _doctor_mcp_command("mcp --transport stdio"),
         "smoke_command": _doctor_mcp_command("mcp-smoke --format json"),
         "local_stdio_config_commands": _doctor_mcp_config_commands(),
-        "streamable_http_url": f"http://{settings.mcp_host}:{settings.mcp_port}/mcp",
+        "streamable_http_url": f"{http_base_url}/mcp",
         "auth_required": settings.mcp_require_auth,
+        "max_concurrent_operations": settings.mcp_max_concurrent_operations,
     }
     if not next_steps:
         search_command = _doctor_cli_command('search --query "refresh token cleanup" --top-k 5')
@@ -2884,29 +3056,23 @@ def _doctor_ingest_next_step() -> str:
     """Return the standard ingest recovery step for doctor output."""
     return (
         f"Run `{_doctor_cli_command('ingest')}` to build the local policy index "
-        "and runtime rules artifact."
+        "and runtime rules artifact. If either output exists, choose separate "
+        "POLICYNIM_INDEX_DB_PATH and POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
     )
-
-
-def _doctor_local_index_ready(settings: Settings) -> bool:
-    """Return whether the configured local SQLite index is ready for runtime use."""
-    try:
-        return create_index_store(settings).exists()
-    except Exception:
-        return False
 
 
 def _doctor_index_directory_next_step(*, legacy_lancedb_alias_configured: bool) -> str:
     """Return recovery guidance for SQLite index paths that point at directories."""
-    if legacy_lancedb_alias_configured:
-        return (
-            "Replace deprecated `POLICYNIM_LANCEDB_URI` with "
-            f"`POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run "
-            f"`{_doctor_cli_command('ingest')}`."
-        )
+    setting_hint = (
+        "Replace deprecated `POLICYNIM_LANCEDB_URI` with a fresh `POLICYNIM_INDEX_DB_PATH` "
+        if legacy_lancedb_alias_configured
+        else "Set a fresh `POLICYNIM_INDEX_DB_PATH` "
+    )
     return (
-        "Set `POLICYNIM_INDEX_DB_PATH=data/index.sqlite3`, then run "
-        f"`{_doctor_cli_command('ingest')}`."
+        setting_hint + "and a separate POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destination. "
+        "Preserve the old directory and runtime rules. Recover any legacy-only policy content "
+        "and verify POLICYNIM_CORPUS_DIR contains the authoritative Markdown sources before "
+        f"running `{_doctor_cli_command('ingest')}`; validate the candidate before activation."
     )
 
 
@@ -3013,6 +3179,23 @@ def _render_doctor_report(report: dict[str, object]) -> list[str]:
                 lines.append(
                     f"- {check.get('name')}: {check.get('status')} - {check.get('message')}"
                 )
+    inventory = report.get("inventory")
+    if isinstance(inventory, dict):
+        source = inventory.get("source", {})
+        index = inventory.get("index", {})
+        lines.append("")
+        lines.append("Inventory (local process):")
+        if isinstance(source, dict):
+            documents = source.get("document_count")
+            chunks = source.get("chunk_count")
+            lines.append(f"- source documents: {documents if documents is not None else 'unknown'}")
+            lines.append(f"- source chunks: {chunks if chunks is not None else 'unknown'}")
+        if isinstance(index, dict):
+            policies = index.get("policy_count")
+            chunks = index.get("chunk_count")
+            lines.append(f"- index state: {index.get('state')}")
+            lines.append(f"- indexed policy IDs: {policies if policies is not None else 'unknown'}")
+            lines.append(f"- indexed chunks: {chunks if chunks is not None else 'unknown'}")
     mcp = report["mcp"]
     if isinstance(mcp, dict) and mcp:
         lines.append("")
@@ -3026,6 +3209,7 @@ def _render_doctor_report(report: dict[str, object]) -> list[str]:
             for client, command in config_commands.items():
                 lines.append(f"- {client} config: {command}")
         lines.append(f"- streamable-http: {mcp.get('streamable_http_url')}")
+        lines.append(f"- concurrent operations: {mcp.get('max_concurrent_operations')}")
     next_steps = report["next_steps"]
     if isinstance(next_steps, list) and next_steps:
         lines.append("")
@@ -3041,9 +3225,15 @@ def _path_text(path: Path | None) -> str | None:
 
 
 def _cli_error_message(error: PolicyNIMError) -> str:
+    """Render controlled errors with the recovery guidance appropriate to their class."""
     if config_discovery.standalone_setup_missing() and _looks_like_missing_local_setup_error(error):
         return _missing_setup_message()
-    if isinstance(error, MissingIndexError) and _is_standalone_local_runtime():
+    if (
+        isinstance(error, MissingIndexError)
+        and not isinstance(error, IndexCompatibilityError)
+        and error.failure_class is None
+        and _is_standalone_local_runtime()
+    ):
         return _STANDALONE_MISSING_INDEX_MESSAGE
     return str(error)
 
