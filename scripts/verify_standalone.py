@@ -97,6 +97,10 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         report["version_output"] = checks.run_command(
             ["--version"], env=env, cwd=cwd, command=command_text
         ).strip()
+        checks.require(
+            report["version_output"] == args.expected_version, "Standalone version differs."
+        )
+        report["expected_version"] = args.expected_version
         source = checks.run_cli(
             ["policies", "validate", "--source", "--format", "json"],
             env=env,
@@ -218,6 +222,7 @@ def main() -> None:
     parser.add_argument("--lockfile", type=Path, required=True)
     parser.add_argument("--lock-digest", required=True)
     parser.add_argument("--revision", required=True)
+    parser.add_argument("--expected-version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.command, args.bundle = args.command.resolve(), args.bundle.resolve()

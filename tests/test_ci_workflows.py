@@ -430,3 +430,15 @@ def test_standalone_upload_excludes_committed_generation_sources() -> None:
         step["run"] for step in job["steps"] if step["name"] == "Bind standalone receipt to archive"
     )
     assert 'Path("standalone-archives").iterdir()' in binding
+
+
+def test_standalone_verification_requires_requested_release_version() -> None:
+    """A stale binary can't pass a version-tagged standalone build gate."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["standalone-build"]["steps"]
+        if "scripts/verify_standalone.py" in step.get("run", "")
+    )
+    assert '"--expected-version"' in command
+    assert 'os.environ["RELEASE_TAG"].removeprefix("v")' in command
