@@ -30,7 +30,12 @@ from policynim.job_types import (
     EvaluationJobUsage,
     StoredEvaluationJobReport,
 )
-from policynim.operations import OperationBudget, operation_correlation, operation_scope
+from policynim.operations import (
+    OperationBudget,
+    emit_operation_event,
+    operation_correlation,
+    operation_scope,
+)
 from policynim.providers.lifecycle import NVIDIAClients, borrow_clients
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import AuthenticatedPrincipal, authorize_operation
@@ -437,6 +442,9 @@ class EvaluationJobWorker:
             admission = OperationAdmissionService(self.service.settings)
             try:
                 with operation_correlation():
+                    emit_operation_event(
+                        event="evaluation.job", job_id=job.job_id, phase="admission"
+                    )
                     admission.run(
                         run_owned,
                         principal=_principal(snapshot.authorization),

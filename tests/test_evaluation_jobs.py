@@ -795,11 +795,14 @@ def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
 
 
 def test_job_execution_mints_fresh_correlation_for_admission_and_provider(
-    generation, tmp_path: Path
+    generation, tmp_path: Path, caplog
 ) -> None:
     """A recovered worker context doesn't reuse its submitting caller's correlation identity."""
+    import json
+    import logging
     import sqlite3
 
+    from policynim import operations
     from policynim.operations import current_correlation_id, operation_correlation
     from policynim.services.evaluation_jobs import EvaluationJobWorker
 
@@ -815,15 +818,33 @@ def test_job_execution_mints_fresh_correlation_for_admission_and_provider(
             observed.append(current_correlation_id())
             return super().evaluate_case(suite, case_id, rerank_enabled=rerank_enabled)
 
-    with operation_correlation() as submitting:
-        service.submit(suite, idempotency_key="fresh-correlation", principal=principal())
-        result = EvaluationJobWorker(service, evaluator_factory=Evaluator).run_once()
-        assert result is not None and result.state == "completed"
-        assert current_correlation_id() == submitting
+    operations._LOG.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.INFO), operation_correlation() as submitting:
+            accepted = service.submit(
+                suite, idempotency_key="fresh-correlation", principal=principal()
+            )
+            result = EvaluationJobWorker(service, evaluator_factory=Evaluator).run_once()
+            assert result is not None and result.state == "completed"
+            assert current_correlation_id() == submitting
+    finally:
+        operations._LOG.removeHandler(caplog.handler)
     assert len(observed) == 1 and observed[0] is not None and observed[0] != submitting
     with sqlite3.connect(service.settings.beta_auth_db_path) as db:
         persisted = db.execute("SELECT correlation_id FROM operation_usage").fetchone()[0]
     assert persisted == observed[0]
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.getMessage().startswith("{")
+    ]
+    event = next(item for item in events if item["event"] == "evaluation.job")
+    assert event == {
+        "event": "evaluation.job",
+        "correlation_id": persisted,
+        "job_id": accepted.job_id,
+        "phase": "admission",
+    }
 
 
 def test_worker_pauses_queue_after_quota_accounting_failure(
