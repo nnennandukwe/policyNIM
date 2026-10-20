@@ -32,6 +32,7 @@ from policynim.errors import (
     MissingIndexError,
     PolicyNIMError,
 )
+from policynim.interfaces.evaluation_jobs_cli import job_app
 from policynim.interfaces.generation_cli import app as generation_app
 from policynim.interfaces.mcp import run_server
 from policynim.interfaces.profile_cli import app as profile_app
@@ -118,6 +119,9 @@ app.add_typer(policies_app, name="policies")
 
 app.add_typer(profile_app, name="profile")
 app.add_typer(generation_app, name="generation")
+
+
+app.add_typer(job_app, name="eval-jobs")
 
 
 @policies_app.command("list")

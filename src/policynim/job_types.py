@@ -141,3 +141,31 @@ class StoredEvaluationJobReport(StrictModel):
 
     report: EvaluationJobReport
     sha256: str
+
+
+class EvaluationJobReportManifest(StrictModel):
+    """Bounded MCP report discovery with verified logical part links."""
+
+    job_id: str
+    state: EvaluationJobState
+    generation_id: GenerationID
+    suite_digest: str
+    configuration_digest: str
+    snapshot_digest: str
+    report_sha256: str
+    completed_case_ids: list[str]
+    unfinished_case_ids: list[str]
+    usage: EvaluationJobUsage
+    expires_at: float
+    part_uris: list[str]
+
+
+class EvaluationJobReportPart(StrictModel):
+    """One bounded ASCII JSON fragment; concatenate parts to recover the hashed report JSON."""
+
+    job_id: str
+    part: int = Field(ge=0)
+    part_count: int = Field(ge=1)
+    report_sha256: str
+    part_sha256: str
+    content: str
