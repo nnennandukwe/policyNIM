@@ -321,8 +321,8 @@ class EvaluationJobWorker:
         while not self._stop.is_set():
             try:
                 result = self.run_once()
+                self.store.purge_expired()
                 if result is None:
-                    self.store.purge_expired()
                     self._stop.wait(0.5)
             except Exception as exc:
                 # No request, provider body, caller identity or source text is logged.

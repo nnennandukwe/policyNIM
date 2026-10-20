@@ -71,10 +71,16 @@ class EvaluationJobStore:
 
         with closing(self._connect()) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
             connection.execute("PRAGMA journal_mode=WAL")
-            connection.executescript("""
+            migration = (
+                "ALTER TABLE evaluation_jobs ADD COLUMN active_case_start_attempts "
+                "INTEGER NOT NULL DEFAULT 0;"
+                if version == 1
+                else ""
+            )
+            connection.executescript(f"""
                 BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS evaluation_job_archives (
                     generation_id TEXT PRIMARY KEY, digest TEXT NOT NULL, archive BLOB NOT NULL
@@ -88,7 +94,8 @@ class EvaluationJobStore:
                     suite_digest TEXT NOT NULL, configuration_digest TEXT NOT NULL,
                     snapshot_digest TEXT NOT NULL, case_count INTEGER NOT NULL,
                     completed_case_count INTEGER NOT NULL DEFAULT 0,
-                    active_case_id TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    active_case_id TEXT, active_case_start_attempts INTEGER NOT NULL DEFAULT 0,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
                     failure_code TEXT, report_sha256 TEXT,
                     result_expired INTEGER NOT NULL DEFAULT 0,
                     snapshot_json TEXT, report_json TEXT, usage_json TEXT NOT NULL,
@@ -101,7 +108,8 @@ class EvaluationJobStore:
                     PRIMARY KEY(job_id, case_id),
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
-                PRAGMA user_version=1;
+                {migration}
+                PRAGMA user_version=2;
                 COMMIT;
             """)
 
@@ -316,7 +324,13 @@ class EvaluationJobStore:
             unfinished_case_ids=[
                 case.case_id for case in snapshot.suite.cases if case.case_id not in completed_ids
             ],
-            uncertain_case_id=row["active_case_id"] if uncertain else None,
+            uncertain_case_id=(
+                row["active_case_id"]
+                if uncertain
+                and EvaluationJobUsage.model_validate_json(row["usage_json"]).provider_attempts
+                > row["active_case_start_attempts"]
+                else None
+            ),
             failure_code=failure_code,
             usage=EvaluationJobUsage.model_validate_json(row["usage_json"]),
             case_artifact_hashes={item["case_id"]: item["digest"] for item in results},
@@ -470,7 +484,13 @@ class EvaluationJobStore:
                 raise EvaluationJobError("case_already_completed: Never repeat a completed case.")
 
             connection.execute(
-                "UPDATE evaluation_jobs SET active_case_id=? WHERE job_id=?", (case_id, job_id)
+                "UPDATE evaluation_jobs SET active_case_id=?,active_case_start_attempts=? "
+                "WHERE job_id=?",
+                (
+                    case_id,
+                    EvaluationJobUsage.model_validate_json(row["usage_json"]).provider_attempts,
+                    job_id,
+                ),
             )
 
     def save_case(self, job_id: str, worker_token: str, result: EvalCaseResult) -> None:
@@ -573,7 +593,7 @@ def inspect_job_backlog(path: Path) -> dict[str, int] | None:
         raise EvaluationJobError("job_store_invalid: Job storage can't be a symlink.")
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version != 1:
+        if version != 2:
             raise EvaluationJobError("job_store_version: Upgrade the worker before retrying.")
         return {
             state: count

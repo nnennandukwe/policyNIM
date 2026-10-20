@@ -38,7 +38,7 @@ Out of scope: native Tasks, distributed scheduling, exact provider replay, autom
 
 ## Dependencies And Settings
 
-Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 1. Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
+Reuse locked Python 3.11/3.12, SQLite, MCP and existing NVIDIA providers. Job state lives under the existing eval workspace in a private SQLite database; schema version 2 (migrating the development version 1 baseline). Queue limit, max cases, deadline, call budget and retention have bounded service defaults, with explicit CLI flags. Secret settings aren't serialized. Pinned generation archives are content-addressed SQLite blobs, committed with accepted specs and restored only into an owned private generation store.
 
 ## Canonical Contracts
 

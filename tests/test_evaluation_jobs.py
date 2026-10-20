@@ -229,6 +229,7 @@ def test_provider_budget_exhaustion_retains_completed_case(generation, tmp_path)
     calls: list[str] = []
     result = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once()
     assert result is not None and result.state == "budget_exhausted"
+    assert service.result(accepted.job_id, principal=principal()).report.uncertain_case_id is None
     report = service.result(accepted.job_id, principal=principal()).report
     assert [item.case_id for item in report.completed_cases] == ["case-0"]
     assert report.unfinished_case_ids == ["case-1"]
@@ -622,3 +623,45 @@ def test_operator_backlog_read_doesnt_create_storage_or_expose_callers(
     assert inspect_job_backlog(service.store.path) == {"queued": 1}
     service.cancel(accepted.job_id, principal=principal())
     assert inspect_job_backlog(service.store.path) == {"cancelled": 1}
+
+
+def test_busy_worker_prunes_expired_payloads_before_queue_becomes_empty(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """Retention cleanup still runs while another accepted job's queued."""
+    import sqlite3
+    from threading import Event
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    expired = service.submit(suite, idempotency_key="expired", principal=principal())
+    service.cancel(expired.job_id, principal=principal())
+    with sqlite3.connect(service.store.path) as db:
+        db.execute("UPDATE evaluation_jobs SET expires_at=0 WHERE job_id=?", (expired.job_id,))
+    service.submit(suite, idempotency_key="first", principal=principal())
+    waiting = service.submit(suite, idempotency_key="second", principal=principal())
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    purge = service.store.purge_expired
+    cleaned = Event()
+
+    def stop_after_cleanup() -> int:
+        """Stop after the first real cleanup while retaining a second queued job."""
+        count = purge()
+        worker._stop.set()
+        cleaned.set()
+        return count
+
+    monkeypatch.setattr(service.store, "purge_expired", stop_after_cleanup)
+    worker.start()
+    try:
+        assert cleaned.wait(5)
+    finally:
+        worker.close()
+    with sqlite3.connect(service.store.path) as db:
+        snapshot = db.execute(
+            "SELECT snapshot_json FROM evaluation_jobs WHERE job_id=?", (expired.job_id,)
+        ).fetchone()[0]
+    assert snapshot is None
+    assert service.inspect(waiting.job_id, principal=principal()).state == "queued"
