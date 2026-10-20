@@ -169,11 +169,11 @@ def _duplicate_taxonomy(path: Path, duplicate_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("duplicate_name", ["type/bug", " type/bug "])
+@pytest.mark.parametrize("duplicate_name", ["type/bug", " type/bug ", "TYPE/BUG"])
 def test_label_taxonomy_rejects_repeated_normalized_names(
     tmp_path: Path, duplicate_name: str
 ) -> None:
-    """The loader can't return a taxonomy that would plan multiple writes to one label."""
+    """The loader rejects repeated names before planning multiple writes to one label."""
     module = _script("labels")
     taxonomy = tmp_path / "labels.yml"
     _duplicate_taxonomy(taxonomy, duplicate_name)
@@ -185,7 +185,7 @@ def test_label_taxonomy_rejects_repeated_normalized_names(
     sys.platform == "win32", reason="Exercises a POSIX executable process boundary."
 )
 @pytest.mark.parametrize("mode", ["dry-run", "live", "apply"])
-@pytest.mark.parametrize("duplicate_name", ["type/bug", " type/bug "])
+@pytest.mark.parametrize("duplicate_name", ["type/bug", " type/bug ", "TYPE/BUG"])
 def test_duplicate_taxonomy_stops_public_cli_before_any_github_process(
     tmp_path: Path, mode: str, duplicate_name: str
 ) -> None:
@@ -208,7 +208,7 @@ def test_duplicate_taxonomy_stops_public_cli_before_any_github_process(
         "    print('[]')\n"
         "elif sys.argv[1:3] == ['label', 'create']:\n"
         "    previous = [call for call in calls[:-1] if call[:2] == ['label', 'create']]\n"
-        "    if any(call[2] == sys.argv[3] for call in previous):\n"
+        "    if any(call[2].casefold() == sys.argv[3].casefold() for call in previous):\n"
         "        sys.stderr.write('label already exists after prior create')\n"
         "        sys.exit(1)\n"
     )
@@ -237,3 +237,16 @@ def test_duplicate_taxonomy_stops_public_cli_before_any_github_process(
     assert not receipt.exists(), "GitHub invocations: " + receipt.read_text()
     assert result.returncode == 1
     assert "Duplicate label name" in result.stderr and not result.stdout
+
+
+@pytest.mark.parametrize(("color", "action"), [("000000", "noop"), ("ffffff", "update")])
+def test_label_plan_matches_existing_case_variants_without_creating_again(
+    color: str, action: str
+) -> None:
+    """Desired casing can't turn an existing GitHub label identity into another create."""
+    module = _script("labels")
+    desired = [{"name": "TYPE/BUG", "color": color, "description": "Bug reports."}]
+    existing = [{"name": "type/bug", "color": "000000", "description": "Bug reports."}]
+    plan = module.plan_label_sync(desired, existing)
+    assert len(plan) == 1 and plan[0]["action"] == action
+    assert plan[0]["name"] == "TYPE/BUG"
