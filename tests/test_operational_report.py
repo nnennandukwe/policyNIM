@@ -93,8 +93,10 @@ def test_report_latency_sample_is_bounded(tmp_path: Path) -> None:
     today = datetime.now(UTC).date().isoformat()
     with sqlite3.connect(store.path) as connection:
         connection.executemany(
-            "INSERT INTO operation_usage VALUES (?, 'identity', 'policy_search', ?, "
-            "'completed', 1, 0, ?, NULL)",
+            "INSERT INTO operation_usage (operation_id, principal_id, operation, usage_date, "
+            "outcome, process_id, started_at, finished_at, owner_id) "
+            "VALUES (?, 'identity', 'policy_search', ?, "
+            "'completed', 1, 0, ?, 'fixture-owner')",
             [(str(index), today, float(index)) for index in range(1200)],
         )
     report = store.report(store.path)

@@ -418,3 +418,119 @@ def test_late_provider_result_records_failure(
             await executor.close()
 
     asyncio.run(scenario())
+
+
+def test_first_use_storage_failure_has_sanitized_recovery(tmp_path: Path) -> None:
+    """An unwritable first-use path rejects before work with the documented admission error."""
+    bad_parent = tmp_path / "not-a-directory"
+    bad_parent.write_text("preserve")
+
+    async def scenario() -> None:
+        """Exercise lazy construction through the actual executor before storage exists."""
+        executor = _ToolExecutor(
+            settings=_settings(tmp_path, beta_auth_db_path=bad_parent / "state.sqlite3")
+        )
+        try:
+            with pytest.raises(OperationAdmissionError, match="admission_unavailable") as caught:
+                await executor.run(
+                    lambda: pytest.fail("Provider started"),
+                    principal=_principal(),
+                    operation_name="policy_search",
+                )
+            assert "database locks" in str(caught.value)
+            assert str(bad_parent) not in str(caught.value)
+            assert bad_parent.read_text() == "preserve"
+        finally:
+            await executor.close()
+
+    asyncio.run(scenario())
+
+
+def test_reused_pid_recovers_only_abandoned_kernel_owner(tmp_path: Path) -> None:
+    """PID reuse can't strand dead-owner rows or release another live owner's work."""
+    path = tmp_path / "operations.sqlite3"
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; "
+            "from policynim.storage.operation_store import OperationStore; "
+            "import sys; s=OperationStore(Path(sys.argv[1])); "
+            "s.admit(principal_id='previous', operation='policy_search', "
+            "daily_limit=10, principal_limit=2, global_limit=10)",
+            str(path),
+        ],
+        check=True,
+    )
+    # Reproduce container PID reuse while preserving the exited process's kernel owner identity.
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE operation_usage SET process_id = ?", (os.getpid(),))
+    live = OperationStore(path)
+    current = live.admit(
+        principal_id="live",
+        operation="policy_search",
+        daily_limit=10,
+        principal_limit=2,
+        global_limit=10,
+    )
+    assert current.operation_id
+    replacement = OperationStore(path)
+    assert replacement.recover_interrupted() == 1
+    assert live.usage("live").active == 1
+    assert live.usage("previous").interrupted == 1
+    assert replacement.recover_interrupted() == 0
+    live.finish(current.operation_id, "completed")
+    live.close()
+    replacement.close()
+
+
+def test_transient_finish_lock_retries_without_stranding_capacity(tmp_path: Path) -> None:
+    """A writer lock longer than admission's timeout doesn't strand completed work."""
+    store = OperationStore(tmp_path / "operations.sqlite3")
+    accepted = store.admit(
+        principal_id="alice",
+        operation="policy_search",
+        daily_limit=5,
+        principal_limit=1,
+        global_limit=1,
+    )
+    assert accepted.operation_id
+    with sqlite3.connect(store.path) as connection, ThreadPoolExecutor(max_workers=1) as executor:
+        connection.execute("BEGIN IMMEDIATE")
+        pending = executor.submit(store.finish, accepted.operation_id, "completed")
+        import time
+
+        time.sleep(0.25)
+        assert not pending.done()
+        connection.commit()
+        pending.result(timeout=3)
+    usage = store.usage("alice")
+    assert (usage.accepted, usage.active, usage.completed) == (1, 0, 1)
+    assert store.admit(
+        principal_id="alice",
+        operation="policy_search",
+        daily_limit=5,
+        principal_limit=1,
+        global_limit=1,
+    ).operation_id
+
+
+@pytest.mark.parametrize(
+    "name", ["mcp_max_concurrent_operations_per_principal", "mcp_principal_daily_operation_quota"]
+)
+def test_principal_limit_configuration_requires_positive_values(name: str) -> None:
+    """Reject zero/negative limits before constructing hosted runtime state."""
+    from pydantic import ValidationError
+
+    for value in [0, -1]:
+        with pytest.raises(ValidationError):
+            Settings.model_validate({name: value})
+
+
+def test_principal_limit_environment_names_match_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Load the documented principal limits through the real environment boundary."""
+    monkeypatch.setenv("POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS_PER_PRINCIPAL", "3")
+    monkeypatch.setenv("POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA", "42")
+    settings = Settings()
+    assert settings.mcp_max_concurrent_operations_per_principal == 3
+    assert settings.mcp_principal_daily_operation_quota == 42

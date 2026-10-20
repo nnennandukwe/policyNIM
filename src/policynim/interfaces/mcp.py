@@ -262,6 +262,8 @@ class _ToolExecutor:
             """Keep the entire shutdown sequence owned even if its awaiting task is cancelled."""
             self._drained.wait()
             self._clients.close()
+            if self._operation_usage is not None:
+                self._operation_usage.store.close()
 
         with anyio.CancelScope(shield=True):
             await _run_sync_until_complete(drain_and_close)

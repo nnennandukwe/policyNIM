@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from policynim.storage.operation_lease import OperationOwner
+
 OperationOutcome = Literal["completed", "failed", "cancelled", "interrupted"]
 
 
@@ -66,6 +68,7 @@ class OperationStore:
         """Create only operation tables, leaving legacy account tables unchanged."""
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._owner = OperationOwner(path)
         with closing(self._connect()) as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS operation_usage (
@@ -78,6 +81,7 @@ class OperationStore:
                     process_id INTEGER NOT NULL,
                     started_at REAL NOT NULL,
                     finished_at REAL,
+                    owner_id TEXT NOT NULL,
                     correlation_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS operation_usage_principal_day
@@ -149,8 +153,8 @@ class OperationStore:
             operation_id = uuid.uuid4().hex
             connection.execute(
                 "INSERT INTO operation_usage (operation_id, principal_id, operation, usage_date, "
-                "outcome, process_id, started_at, finished_at, correlation_id) "
-                "VALUES (?, ?, ?, ?, 'accepted', ?, ?, NULL, ?)",
+                "outcome, process_id, started_at, finished_at, owner_id, correlation_id) "
+                "VALUES (?, ?, ?, ?, 'accepted', ?, ?, NULL, ?, ?)",
                 (
                     operation_id,
                     principal_id,
@@ -158,20 +162,44 @@ class OperationStore:
                     usage_date,
                     os.getpid(),
                     timestamp,
+                    self._owner.identity,
                     correlation_id,
                 ),
             )
             return OperationAdmission(operation_id=operation_id)
 
     def finish(self, operation_id: str, outcome: OperationOutcome) -> None:
-        """Transition an owned accepted row once, retaining its original charge."""
-        with closing(self._connect()) as connection, connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "UPDATE operation_usage SET outcome = ?, finished_at = ? "
-                "WHERE operation_id = ? AND outcome = 'accepted' AND process_id = ?",
-                (outcome, time.time(), operation_id, os.getpid()),
-            )
+        """Retry bounded transient writer contention without refunding accepted work."""
+        for attempt in range(10):
+            try:
+                with closing(self._connect()) as connection, connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "UPDATE operation_usage SET outcome = ?, finished_at = ? "
+                        "WHERE operation_id = ? AND outcome = 'accepted' AND owner_id = ?",
+                        (outcome, time.time(), operation_id, self._owner.identity),
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                if (
+                    not isinstance(code, int)
+                    or code & 0xFF not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+                    or attempt == 9
+                ):
+                    raise
+                time.sleep(0.05)
+
+    def close(self) -> None:
+        """Release process ownership only after every accepted worker has drained."""
+        with closing(self._connect()) as connection:
+            active = connection.execute(
+                "SELECT COUNT(*) FROM operation_usage WHERE owner_id = ? AND outcome = 'accepted'",
+                (self._owner.identity,),
+            ).fetchone()[0]
+        if active:
+            return  # Preserve ownership until process exit or successful terminal recovery.
+        self._owner.close()
 
     def usage(self, principal_id: str, *, now: float | None = None) -> OperationUsage:
         """Read the current UTC day's accepted work and separate outcome counts."""
@@ -197,22 +225,18 @@ class OperationStore:
         """Release abandoned local-process slots without refunding their accepted work."""
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            processes = connection.execute(
-                "SELECT DISTINCT process_id FROM operation_usage WHERE outcome = 'accepted'"
+            owners = connection.execute(
+                "SELECT DISTINCT owner_id FROM operation_usage WHERE outcome = 'accepted'"
             ).fetchall()
             recovered = 0
-            for (process_id,) in processes:
-                try:
-                    os.kill(process_id, 0)
-                except ProcessLookupError:
+            for (owner_id,) in owners:
+                if self._owner.abandoned(owner_id):
                     cursor = connection.execute(
                         "UPDATE operation_usage SET outcome = 'interrupted', finished_at = ? "
-                        "WHERE process_id = ? AND outcome = 'accepted'",
-                        (time.time(), process_id),
+                        "WHERE owner_id = ? AND outcome = 'accepted'",
+                        (time.time(), owner_id),
                     )
                     recovered += cursor.rowcount
-                except PermissionError:
-                    continue
             return recovered
 
     @staticmethod

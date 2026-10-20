@@ -40,7 +40,7 @@ Public seams are admission service, beta authentication/portal and MCP executor.
 
 ## Component Design
 
-Storage receives typed identity/limit values, never HTTP objects. Service owns scope validation and maps storage rejection to sanitized caller guidance. Executor owns the active worker and finishes the persisted outcome only after provider cleanup. SQLite COMMIT of an accepted row is the charge point. Rows transition accepted -> completed/failed/cancelled; process loss leaves accepted rows requiring explicit startup recovery to interrupted. Recovery never refunds accepted work.
+Storage receives typed identity/limit values, never HTTP objects. Service owns scope validation and maps storage rejection to sanitized caller guidance. Executor owns the active worker and finishes the persisted outcome only after provider cleanup. SQLite COMMIT of an accepted row is the charge point. Rows transition accepted -> completed/failed/cancelled; process loss releases a private kernel-backed owner lease and startup recovers its accepted rows to interrupted. Recovery never refunds accepted work.
 
 ## Failure And Recovery Rules
 
@@ -51,7 +51,7 @@ Storage receives typed identity/limit values, never HTTP objects. Service owns s
 | Provider failure | Accepted charge retained, outcome failed; caller retries under allowance. |
 | Cancellation/shutdown | Worker drains; outcome cancelled; active capacity releases after cleanup. |
 | Outcome persistence failure | Preserve accepted row and charge, reject further admission until operator recovery; don't misreport provider success as refunded work. |
-| Process loss | Explicit startup recovery marks previous accepted rows interrupted; no refund. One process owns this recovery. |
+| Process loss | Explicit startup recovery marks previous accepted rows interrupted; no refund. Kernel-backed owner leases prove workers can no longer run, including reused container PIDs. |
 
 Invariants: accepted totals never exceed configured daily limits; active rows never exceed principal/global limits; rejected/unauthorized work never starts a provider; rotation never resets an account's usage; only accepted rows transition outcomes. Filesystem durability follows SQLite's supported guarantees; disk failure after a commit can't establish whether a client observed the response.
 
