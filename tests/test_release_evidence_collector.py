@@ -354,11 +354,14 @@ def provenance_receipt(selection: dict, assets: Path) -> dict:
 @pytest.mark.parametrize(
     "fault", [None, "source", "workflow", "subject", "unverified", "failed", "contradictory"]
 )
+@pytest.mark.parametrize("include_artifact_check", [True, False])
 def test_provenance_receipt_is_bound_to_every_recomputed_subject(
-    candidate, tmp_path: Path, fault
+    candidate, tmp_path: Path, fault, include_artifact_check: bool
 ) -> None:
     """A supplied provenance label can't bypass source/workflow or complete subject matching."""
     path, selection, assets = candidate
+    if not include_artifact_check:
+        selection["required_checks"] = []
     selection["required_checks"].append({"id": "provenance", "kind": "provenance"})
     path.write_text(json.dumps(selection))
     receipt = provenance_receipt(selection, assets)
@@ -378,7 +381,7 @@ def test_provenance_receipt_is_bound_to_every_recomputed_subject(
     receipt_path.write_text(json.dumps(receipt))
     process, report = run_collector(path, assets, "--provenance-receipt", str(receipt_path))
     assert process.returncode == (0 if fault is None else 1)
-    result = report["checks"][1]
+    result = report["checks"][-1]
     assert result["producer_authenticated"] is False
     if fault == "failed":
         assert (
@@ -513,6 +516,41 @@ def test_published_schema_rejects_empty_execution_requirements(candidate) -> Non
     selection["required_checks"].append(requirement)
     with pytest.raises(JSONSchemaValidationError):
         Draft202012Validator(schema).validate(selection)
+
+
+def test_execution_only_cli_doesnt_hash_unselected_artifacts(candidate, tmp_path: Path) -> None:
+    """Supplying an asset directory doesn't expand an execution-only selection's work."""
+    path, selection, assets = candidate
+    selection["required_checks"] = [client_requirement()]
+    path.write_text(json.dumps(selection))
+    receipt = tmp_path / "client.json"
+    receipt.write_text(json.dumps(execution_receipt(selection)))
+    script = """
+import sys
+sys.path.insert(0, 'scripts')
+import collect_release_evidence as collector
+
+def reject_unselected_hash(*args, **kwargs):
+    '''Fail on actual artifact hashing during the execution-only CLI path.'''
+    raise AssertionError('Unselected artifact hashing occurred.')
+
+collector.file_digest = reject_unselected_hash
+sys.argv = ['collector', '--selection', sys.argv[1], '--artifact-dir', sys.argv[2],
+            '--execution-receipt', sys.argv[3]]
+raise SystemExit(collector.main())
+"""
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(path), str(assets), str(receipt)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr
+    report = json.loads(process.stdout)
+    assert report["decision"] == "evidence_consistent"
+    assert [check["kind"] for check in report["checks"]] == ["client"]
 
 
 def test_artifact_hashing_uses_the_selected_size_bound(candidate) -> None:

@@ -550,7 +550,11 @@ def collect(
             report["input_errors"].append(
                 {"input": f"declaration-{index + 1}", "error_class": type(exc).__name__}
             )
-    artifacts = artifact_facts(artifact_dir, selection.expected)
+    artifacts = (
+        artifact_facts(artifact_dir, selection.expected)
+        if any(check.kind in {"artifacts", "provenance"} for check in selection.required_checks)
+        else {}
+    )
     for requirement in selection.required_checks:
         if requirement.kind == "artifacts":
             result = artifacts.copy()
