@@ -12,7 +12,11 @@ import pytest
 
 
 def _coordinate_first_workload_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Hold only the first child's second synthetic query for two actual active observations."""
+    """Hold one synthetic query through active snapshots bracketing a real health response."""
+    from threading import Lock
+
+    import httpx
+
     from policynim.storage.operation_store import OperationStore
 
     bootstrap = tmp_path / "coordinated-provider.py"
@@ -49,8 +53,11 @@ namespace["_serve"](Path(config))
         encoding="utf-8",
     )
     original_report = OperationStore.report
+    original_get = httpx.AsyncClient.get
     first_root: Path | None = None
-    active_observations = 0
+    active_before_health = False
+    health_returned = False
+    probe_lock = Lock()
 
     class ControlledProcess(subprocess.Popen[str]):
         """Keep the real process class contract while routing one fixture through its gate."""
@@ -65,17 +72,120 @@ namespace["_serve"](Path(config))
             super().__init__(command, *args, **kwargs)
 
     def report(path: Path):
-        """Publish the gate only after two real snapshots retain accepted workload capacity."""
-        nonlocal active_observations
+        """Release only after an actual response lies between two active snapshots."""
+        nonlocal active_before_health, health_returned
         observed = original_report(path)
-        if path.parent == first_root and observed.active_operations > 0:
-            active_observations += 1
-            if active_observations >= 2:
-                (path.parent / "provider-probe-observed").touch()
+        if path.parent == first_root:
+            with probe_lock:
+                if active_before_health and health_returned and observed.active_operations > 0:
+                    (path.parent / "provider-probe-observed").touch()
+                active_before_health = observed.active_operations > 0
+                health_returned = False
         return observed
+
+    async def get(client, *args, **kwargs):
+        """Mark a successful health response without replacing its real transport or payload."""
+        nonlocal health_returned
+        response = await original_get(client, *args, **kwargs)
+        if args and str(args[0]) == "/healthz" and response.status_code == 200:
+            with probe_lock:
+                health_returned = True
+        return response
 
     monkeypatch.setattr(subprocess, "Popen", ControlledProcess)
     monkeypatch.setattr(OperationStore, "report", staticmethod(report))
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+
+def test_provider_gate_waits_for_one_bracketed_probe_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep work active through the post-snapshot when two cycles share active observations."""
+    import asyncio
+    import runpy
+    import threading
+    import time
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    actual_report = OperationStore.report
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    coordinated_report = OperationStore.report
+    original_post, original_get = httpx.AsyncClient.post, httpx.AsyncClient.get
+    zero_observed = threading.Event()
+    ledger_paths: list[Path] = []
+    active_trace: list[int] = []
+    calls, health_calls = 0, 0
+
+    def report(path: Path):
+        """Retain actual public snapshots and start the request only after an empty pre-probe."""
+        observed = coordinated_report(path)
+        if not ledger_paths:
+            ledger_paths.append(path)
+        active_trace.append(observed.active_operations)
+        if observed.active_operations == 0:
+            zero_observed.set()
+        return observed
+
+    async def post(client, *args, **kwargs):
+        """Delay submission until the first cycle's real pre-probe has no active work."""
+        nonlocal calls
+        if kwargs.get("json", {}).get("method") == "tools/call":
+            calls += 1
+            if calls > 1:
+                deadline = time.monotonic() + 5
+                while not zero_observed.is_set():
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.005)
+        return await original_post(client, *args, **kwargs)
+
+    async def get(client, *args, **kwargs):
+        """Force a zero/active first cycle and pause the next response beyond provider delay."""
+        nonlocal health_calls
+        response = await original_get(client, *args, **kwargs)
+        if calls > 1:
+            health_calls += 1
+            if health_calls == 1:
+                deadline = time.monotonic() + 5
+                while (
+                    await asyncio.to_thread(actual_report, ledger_paths[0])
+                ).active_operations == 0:
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.005)
+            elif health_calls == 2:
+                await asyncio.sleep(0.25)
+        return response
+
+    monkeypatch.setattr(OperationStore, "report", staticmethod(report))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "bracketed-capacity.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    scenario = json.loads(output.read_text())["scenarios"][0]
+    assert active_trace[:3] == [0, 1, 1]
+    assert scenario["outcomes"] == {"ok": 1}
+    assert status == 0, {"active_trace": active_trace, "scenario": scenario}
+    assert scenario["paired_active_work_probe_observed"] is True
 
 
 @pytest.mark.parametrize(
