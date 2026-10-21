@@ -1186,6 +1186,7 @@ def test_compile_command_closes_service_when_it_errors(monkeypatch) -> None:
 
 
 def test_eval_command_prints_json(monkeypatch) -> None:
+    """Check the typed offline summary and help keep case payloads out of default JSON."""
     service = MockEvalService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_eval_service",
@@ -1636,7 +1637,7 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
     )
-    assert payload["inventory"]["source"]["document_count"] == 15
+    assert payload["inventory"]["source"]["document_count"] == 26
     assert payload["index"]["state"] == "missing"
     assert "nvapi" not in result.stdout.lower()
 
@@ -2717,7 +2718,7 @@ def test_route_help_mentions_task_type_override() -> None:
     assert result.exit_code == 0
     assert "--task-type" in help_output
     assert "Discovery hits," in help_output
-    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
+    assert "selected-policy context" in " ".join(help_output.replace(chr(0x2502), " ").split())
 
 
 def test_compile_help_mentions_task_type_override() -> None:
@@ -2728,7 +2729,7 @@ def test_compile_help_mentions_task_type_override() -> None:
     assert result.exit_code == 0
     assert "--task-type" in help_output
     assert "Discovery hits," in help_output
-    assert "selected-policy context" in " ".join(help_output.replace("│", " ").split())
+    assert "selected-policy context" in " ".join(help_output.replace(chr(0x2502), " ").split())
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:

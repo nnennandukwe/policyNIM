@@ -380,12 +380,11 @@ SDK migration references: [official migration guide](https://py.sdk.modelcontext
 and [protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/).
 
 The SDK's [tagged package manifest](https://raw.githubusercontent.com/modelcontextprotocol/python-sdk/v2.2.0/pyproject.toml)
-requires HTTPX2. [Pydantic maintains HTTPX2 and HTTPcore2](https://github.com/pydantic/httpx2/tree/v2.6.0);
-the pinned `2.6.0` wheels have PyPI publishing attestations from that repository.
-PolicyNIM retains HTTPX `0.27.2` for NVIDIA's optional evaluator dependencies and
-pins HTTPX2 `2.6.0` to keep compatibility with their AnyIO `4.9.0` constraint.
-See the [HTTPX2](https://pypi.org/project/httpx2/2.6.0/#files) and
-[HTTPcore2](https://pypi.org/project/httpcore2/2.6.0/#files) artifact provenance.
+requires HTTPX2. PolicyNIM pins HTTPX `0.27.2` and HTTPX2 `2.12.0` as
+separate distributions. The MCP SDK uses HTTPX2; existing NVIDIA HTTP adapters
+use HTTPX. AnyIO `4.14.2` supports this locked graph. The optional NeMo launcher
+is installed outside the main environment because its LeptonAI dependency caps
+AnyIO below that version; see [installation profiles](runtime-install-profiles.md).
 
 ### Hosted HTTP Endpoint
 

@@ -518,3 +518,214 @@ def test_schema4_fragment_drift_cant_replace_the_canonical_report(job_context) -
         connection.execute("PRAGMA user_version=4")
     service.store = EvaluationJobStore(service.store.path)
     assert service.report_part(accepted.job_id, 0, principal=principal()) == original
+
+
+@pytest.mark.parametrize("version", [3, 4, 5])
+def test_retained_report_hash_uses_original_case_json_before_new_defaults(
+    job_context, version: int
+) -> None:
+    """Typed reader defaults mustn't replace the retained bytes or their independent digest."""
+    import sqlite3
+
+    from policynim.storage.evaluation_jobs import EvaluationJobStore, canonical_json
+
+    service, suite, _ = job_context
+    accepted = service.submit(
+        suite, idempotency_key=f"legacy-shape-{version}", principal=principal()
+    )
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    try:
+        finished = worker.run_once()
+        assert finished is not None and finished.state == "completed"
+    finally:
+        worker.close()
+    with sqlite3.connect(service.store.path) as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT report_json FROM evaluation_jobs WHERE job_id=?", (accepted.job_id,)
+            ).fetchone()[0]
+        )
+        for result in payload["completed_cases"]:
+            for added in (
+                "preflight_result",
+                "actual_citations",
+                "search_result",
+                "forbidden_policy_ids",
+            ):
+                assert added in result
+                del result[added]
+        original = canonical_json(payload)
+        digest = "sha256:" + hashlib.sha256(original.encode()).hexdigest()
+        connection.execute(
+            "UPDATE evaluation_jobs SET report_json=?,report_sha256=?,report_part_count=NULL "
+            "WHERE job_id=?",
+            (original, digest, accepted.job_id),
+        )
+        if version == 3:
+            connection.execute("ALTER TABLE evaluation_jobs DROP COLUMN report_part_count")
+        connection.execute(f"PRAGMA user_version={version}")
+    service.store = EvaluationJobStore(service.store.path)
+    stored = service.result(accepted.job_id, principal=principal())
+    assert stored.sha256 == digest
+    assert stored.report.completed_cases[0].actual_citations == []
+    part = service.report_part(accepted.job_id, 0, principal=principal())
+    assert part.content == original
+    assert part.report_sha256 == digest
+    assert part.part_sha256 == digest
+    with sqlite3.connect(service.store.path) as connection:
+        assert (
+            connection.execute(
+                "SELECT report_json FROM evaluation_jobs WHERE job_id=?", (accepted.job_id,)
+            ).fetchone()[0]
+            == original
+        )
+
+
+@pytest.mark.parametrize("failure", ["workspace", "schema"])
+def test_job_storage_startup_failure_keeps_authenticated_interactive_tools_available(
+    tmp_path, monkeypatch, failure
+):
+    """Broken evaluation storage doesn't prevent real HTTP preflight and search requests."""
+    import sqlite3
+
+    import httpx2
+    from fixtures.mcp_fixture_server import offline_services
+    from mcp.client.streamable_http import streamable_http_client
+    from test_mcp_authorization import install_issuer, oauth_settings, token_claims
+    from test_mcp_protocol import _serve_http
+
+    from policynim.storage.evaluation_jobs import EvaluationJobStore
+
+    workspace = tmp_path / "private-job-path-sentinel"
+    if failure == "workspace":
+        workspace.write_text("retained-owner-data")
+    else:
+        path = workspace / "jobs/jobs.sqlite3"
+        EvaluationJobStore(path)
+        with sqlite3.connect(path) as connection:
+            connection.execute("PRAGMA user_version=999")
+    settings = oauth_settings(tmp_path, eval_workspace_dir=workspace)
+    install_issuer(monkeypatch, settings, token_claims())
+
+    async def exercise():
+        """Connect through TCP, issuer verification and the installed MCP dispatcher."""
+        with offline_services(settings):
+            application = mcp_module._build_streamable_http_app(settings)
+            async with _serve_http(application) as origin:
+                async with httpx2.AsyncClient(
+                    headers={"Authorization": "Bearer fixture"}, trust_env=False
+                ) as http:
+                    async with Client(
+                        streamable_http_client(origin + "/mcp", http_client=http)
+                    ) as client:
+                        assert {"policy_search", "policy_preflight"} <= {
+                            tool.name for tool in (await client.list_tools()).tools
+                        }
+                        for name, arguments in (
+                            ("policy_search", {"query": "review"}),
+                            ("policy_preflight", {"task": "review"}),
+                        ):
+                            result = await client.call_tool(name, arguments)
+                            assert result.is_error is False
+                        rejected = await client.call_tool("eval_inspect", {"job_id": "missing"})
+                        assert rejected.is_error
+                        assert "private-job-path-sentinel" not in str(rejected)
+                        assert (await http.get(origin + "/healthz")).status_code == 200
+
+    asyncio.run(exercise())
+
+
+def test_concurrent_lazy_job_recovery_keeps_one_server_owned_worker(tmp_path, monkeypatch):
+    """Concurrent recovery after unavailable startup can't orphan a second worker owner."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, BrokenBarrierError
+
+    from test_mcp_authorization import install_issuer, oauth_settings, token_claims
+
+    settings = oauth_settings(tmp_path)
+    install_issuer(monkeypatch, settings, token_claims())
+    service_module.EvaluationJobService(settings)
+    captured = []
+    created = []
+    barrier = Barrier(2)
+    register = mcp_jobs.register_evaluation_jobs
+
+    class Worker(EvaluationJobWorker):
+        """Hold construction long enough to exercise two concurrent recovery callers."""
+
+        def __init__(self, service):
+            """Keep the real storage/worker lifecycle around the synchronized race window."""
+            try:
+                barrier.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            super().__init__(service)
+            created.append(self)
+
+    def register_and_capture(*args, **kwargs):
+        """Retain the real server-owned lazy factory without replacing its implementation."""
+        captured.append(kwargs["get_worker"])
+        return register(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "EvaluationJobWorker", Worker)
+    monkeypatch.setattr(mcp_jobs, "register_evaluation_jobs", register_and_capture)
+    mcp_module._build_streamable_http_app(settings)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            observed = list(pool.map(lambda _: captured[0](), range(2)))
+        assert len(created) == 1
+        assert observed[0] is observed[1] is created[0]
+    finally:
+        for worker in created:
+            worker.close()
+
+
+def test_sdk_submission_returns_accepted_handle_with_another_worker_owner(job_context) -> None:
+    """A real competing execution lease can't erase a committed submission from the caller."""
+    from mcp.server import MCPServer
+
+    from policynim.storage.file_lock import try_exclusive_file_lock
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_context
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    server = MCPServer("external job worker fixture")
+
+    async def run_tool(name, operation, ctx):
+        """Use SDK request validation and the actual durable submission boundary."""
+        return operation()
+
+    mcp_jobs.register_evaluation_jobs(
+        server, get_principal=lambda _: principal(), get_worker=lambda: worker, run_tool=run_tool
+    )
+
+    async def exercise() -> None:
+        """Repeated accepted submissions keep the same inspectable handle and one charge."""
+        async with Client(server) as client:
+            results = [
+                await client.call_tool(
+                    "eval_submit",
+                    {"suite": suite.model_dump(mode="json"), "idempotency_key": "external-owner"},
+                )
+                for _ in range(2)
+            ]
+            assert all(not result.is_error for result in results)
+            handles = [
+                EvaluationJobInfo.model_validate(result.structured_content) for result in results
+            ]
+            assert handles[0].job_id == handles[1].job_id
+            assert service.inspect(handles[0].job_id, principal=principal()).state == "queued"
+
+    try:
+        with try_exclusive_file_lock(worker.lock_path) as acquired:
+            assert acquired
+            asyncio.run(exercise())
+        assert calls == []
+        report = OperationStore.report(service.settings.beta_auth_db_path)
+        assert report.retained_rows == 1
+        completed = worker.run_once()
+        assert completed is not None and completed.state == "completed"
+        assert calls == ["case-0", "closed"]
+    finally:
+        worker.close()

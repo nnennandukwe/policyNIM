@@ -9,6 +9,7 @@ import json
 import logging
 import secrets
 import socket
+import sqlite3
 import sys
 import time
 from collections.abc import AsyncIterator, Callable
@@ -66,6 +67,7 @@ from policynim.operations import (
     operation_scope,
     safe_exception_diagnostics,
 )
+from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_asset_path, resolve_template_root
 from policynim.services import (
     BetaAuthService,
@@ -853,12 +855,15 @@ def _register_tools(
         from policynim.interfaces.evaluation_jobs_mcp import register_evaluation_jobs
         from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 
+        worker_creation_lock = Lock()
+
         def get_job_worker() -> EvaluationJobWorker:
             """Use one lazy server-owned job worker independently from request connections."""
-            if not isinstance(server.jobs, EvaluationJobWorker):
-                settings = executor._settings or get_settings()
-                server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
-            return server.jobs
+            with worker_creation_lock:
+                if not isinstance(server.jobs, EvaluationJobWorker):
+                    settings = executor._settings or get_settings()
+                    server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
+                return server.jobs
 
         register_evaluation_jobs(
             server,
@@ -903,9 +908,20 @@ def _new_mcp_server(
         if settings is not None and server.jobs_enabled:
             from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 
-            if not isinstance(server.jobs, EvaluationJobWorker):
-                server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
-            server.jobs.start()
+            try:
+                if not isinstance(server.jobs, EvaluationJobWorker):
+                    server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
+                server.jobs.start()
+            except (PolicyNIMError, OSError, sqlite3.Error) as exc:
+                emit_operation_event(
+                    level=logging.ERROR,
+                    event="evaluation.worker_unavailable",
+                    phase="startup",
+                    **safe_exception_diagnostics(exc),
+                )
+                if server.jobs is not None:
+                    await _run_sync_until_complete(server.jobs.close)
+                    server.jobs = None
         try:
             yield {}
         finally:
@@ -1185,15 +1201,17 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
 
 
 def _derive_mcp_url(settings: Settings) -> str | None:
+    """Return the optional configured MCP route without changing origin validation."""
     if settings.mcp_public_base_url is None:
         return None
-    return str(settings.mcp_public_base_url).rstrip("/") + "/mcp"
+    return public_route_url(settings.mcp_public_base_url, "/mcp")
 
 
 def _derive_beta_url(settings: Settings) -> str | None:
+    """Return the optional configured portal route for existing templates."""
     if settings.mcp_public_base_url is None:
         return None
-    return str(settings.mcp_public_base_url).rstrip("/") + _BETA_PATH
+    return public_route_url(settings.mcp_public_base_url, _BETA_PATH)
 
 
 def _beta_asset_path(filename: str) -> Path:
@@ -1522,17 +1540,33 @@ def _build_beta_auth_service(settings: Settings) -> BetaAuthService | None:
     try:
         return create_beta_auth_service(settings)
     except Exception as exc:
+        # Only owned categories can cross the startup boundary; never copy raw errors.
+        storage_code = next(
+            (
+                code
+                for code in ("auth_storage_unsafe", "auth_storage_unavailable")
+                if isinstance(exc, ConfigurationError) and str(exc).startswith(code + ":")
+            ),
+            "storage_unavailable",
+        )
+        recovery = (
+            " Inspect service ownership, permissions and file aliases."
+            if storage_code == "auth_storage_unsafe"
+            else ""
+        )
         if settings.beta_signup_enabled or not settings.mcp_bearer_tokens:
             raise ConfigurationError(
-                "Hosted beta auth initialization failed. Check "
+                f"{storage_code}: Hosted beta auth initialization failed.{recovery} Check "
                 "`POLICYNIM_BETA_AUTH_DB_PATH`, GitHub OAuth settings, "
                 "and the writable auth volume."
             ) from exc
         record_operation_storage_failure(exc, phase="beta_auth_initialization")
         LOGGER.error(
-            "Hosted beta authentication is unavailable: storage_unavailable. "
+            "Hosted beta authentication is unavailable: %s.%s "
             "Env-issued break-glass authentication "
-            "remains available, but protected operations still require healthy operation storage."
+            "remains available, but protected operations still require healthy operation storage.",
+            storage_code,
+            recovery,
         )
         return None
 

@@ -441,8 +441,8 @@ def test_conformance_actual_wire_matches_reported_configuration_and_rejects_fore
         assert config.output_mode == "default"
 
 
-def test_historical_run_readability_preserves_case_serialization_hashes() -> None:
-    """Backward-default run metadata doesn't alter retained historical case JSON digests."""
+def test_report_metadata_preserves_case_hashes_from_its_immediate_predecessor() -> None:
+    """Scope digest compatibility to the fixture generated before report metadata."""
     import hashlib
 
     fixture = json.loads(

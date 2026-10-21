@@ -12,6 +12,7 @@ from threading import Thread
 from unittest.mock import Mock
 
 import httpx
+import httpx2
 import pytest
 import uvicorn
 from pydantic import ValidationError
@@ -93,7 +94,7 @@ def rpc(
     method: str,
     params: dict[str, object] | None = None,
     token: str | None = "issuer-access-token",
-) -> httpx.Response:
+) -> httpx2.Response:
     """Send an actual JSON-RPC request through the HTTP app and SDK dispatcher."""
     headers = {
         "Accept": "application/json, text/event-stream",

@@ -135,6 +135,17 @@ class EvaluationJobStore:
                     FOREIGN KEY(job_id) REFERENCES evaluation_jobs(job_id)
                 );
                 {migration}
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_state
+                    ON evaluation_jobs(state,next_attempt_at,accepted_at);
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_pending_finalization
+                    ON evaluation_jobs(finished_at)
+                    WHERE state NOT IN ('queued','running')
+                        AND admission_id IS NOT NULL AND admission_finalized=0;
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_expiring_payloads
+                    ON evaluation_jobs(expires_at)
+                    WHERE state NOT IN ('queued','running') AND result_expired=0;
+                CREATE INDEX IF NOT EXISTS evaluation_jobs_retained_generations
+                    ON evaluation_jobs(generation_id) WHERE result_expired=0;
                 PRAGMA user_version=5;
             """
             for statement in schema.split(";"):
@@ -240,6 +251,36 @@ class EvaluationJobStore:
                     "queue_full: No job was accepted. Retry after active work finishes."
                 )
 
+    def _verified_archive_digest(
+        self, connection: sqlite3.Connection, generation_id: str
+    ) -> str | None:
+        """Hash retained archive bytes in bounded reads before trusting their metadata."""
+        row = connection.execute(
+            "SELECT rowid AS archive_rowid,digest FROM evaluation_job_archives "
+            "WHERE generation_id=?",
+            (generation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        digest = hashlib.sha256()
+        with connection.blobopen(
+            "evaluation_job_archives", "archive", row["archive_rowid"], readonly=True
+        ) as archive:
+            if len(archive) > 256 * 1024 * 1024:
+                raise EvaluationJobError("archive_invalid: Preserve job storage for inspection.")
+            while chunk := archive.read(64 * 1024):
+                digest.update(chunk)
+        verified = "sha256:" + digest.hexdigest()
+        if verified != row["digest"]:
+            raise EvaluationJobError("archive_invalid: Preserve job storage for inspection.")
+        return verified
+
+    def retained_archive_digest(self, generation_id: str) -> str | None:
+        """Expose a verified reusable capture without loading its BLOB into Python memory."""
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            return self._verified_archive_digest(connection, generation_id)
+
     def submit(
         self,
         *,
@@ -247,7 +288,7 @@ class EvaluationJobStore:
         idempotency_key: str,
         request_digest: str,
         snapshot: EvaluationJobSnapshot,
-        archive: bytes,
+        archive: bytes | None,
         accept_work: Callable[[], tuple[str, int]] | None = None,
     ) -> EvaluationJobInfo:
         """Commit an accepted snapshot and its archive atomically after bounded deduplication."""
@@ -269,20 +310,21 @@ class EvaluationJobStore:
                 raise EvaluationJobError(
                     "queue_full: No job was accepted. Retry after active work finishes."
                 )
-            digest = archive_digest(archive)
-            if digest != snapshot.generation_archive_digest:
-                raise EvaluationJobError("archive_invalid: Generation capture failed validation.")
-            connection.execute(
-                "INSERT OR IGNORE INTO evaluation_job_archives VALUES (?,?,?)",
-                (snapshot.generation_id, digest, archive),
-            )
-            retained = connection.execute(
-                "SELECT digest FROM evaluation_job_archives WHERE generation_id=?",
-                (snapshot.generation_id,),
-            ).fetchone()
-            if retained[0] != digest:
+            if archive is not None:
+                digest = archive_digest(archive)
+                if digest != snapshot.generation_archive_digest:
+                    raise EvaluationJobError(
+                        "archive_invalid: Generation capture failed validation."
+                    )
+                connection.execute(
+                    "INSERT OR IGNORE INTO evaluation_job_archives VALUES (?,?,?)",
+                    (snapshot.generation_id, digest, archive),
+                )
+            retained = self._verified_archive_digest(connection, snapshot.generation_id)
+            if retained != snapshot.generation_archive_digest:
                 raise EvaluationJobError(
-                    "archive_invalid: Preserve the job database for inspection."
+                    "archive_invalid: Preserve the job database for inspection; "
+                    "retry capture if retention removed an unreferenced archive."
                 )
             admission_id, work_units = accept_work() if accept_work else (None, 1)
             now = self.clock()
@@ -448,9 +490,14 @@ class EvaluationJobStore:
                     "report_unavailable: Job artifacts failed validation. "
                     "Preserve job storage for operator inspection."
                 )
-            report = EvaluationJobReport.model_validate_json(row["report_json"])
-            if payload_digest(report.model_dump(mode="json")) != row["report_sha256"]:
+            serialized = row["report_json"]
+            if (
+                not isinstance(serialized, str)
+                or "sha256:" + hashlib.sha256(serialized.encode()).hexdigest()
+                != row["report_sha256"]
+            ):
                 raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
+            report = EvaluationJobReport.model_validate_json(serialized)
             return StoredEvaluationJobReport(report=report, sha256=row["report_sha256"])
 
     def _write_report_parts(
@@ -540,13 +587,19 @@ class EvaluationJobStore:
                     content=text,
                 )
         # Only historical schema1-4 reports need a one-time verified transport migration.
-        stored = self.result(job_id, owner_id)
-        serialized = canonical_json(stored.report.model_dump(mode="json"))
+        self.result(job_id, owner_id)
         with self._transaction() as connection:
             current = self._owned(connection, job_id, owner_id)
             if current["result_expired"] or self.clock() >= current["expires_at"]:
                 raise EvaluationJobError("result_expired: The retained report has expired.")
             if current["report_part_count"] is None:
+                serialized = current["report_json"]
+                if (
+                    not isinstance(serialized, str)
+                    or "sha256:" + hashlib.sha256(serialized.encode()).hexdigest()
+                    != current["report_sha256"]
+                ):
+                    raise EvaluationJobError("report_invalid: Preserve job storage for inspection.")
                 self._write_report_parts(connection, job_id, serialized)
         return self.report_part(job_id, owner_id, index)
 
@@ -597,9 +650,14 @@ class EvaluationJobStore:
     def defer_admission(
         self, job_id: str, worker_token: str, failure_code: str
     ) -> EvaluationJobInfo:
-        """Retry only a proven pre-provider capacity rejection within its original deadline."""
-        if failure_code not in {"server_busy", "principal_busy", "admission_busy"}:
-            raise ValueError("Only transient pre-provider admission outcomes can defer.")
+        """Retry a proven pre-provider capacity rejection or stop within its original deadline."""
+        if failure_code not in {
+            "server_busy",
+            "principal_busy",
+            "admission_busy",
+            "worker_stopped",
+        }:
+            raise ValueError("Only proven pre-provider capacity or worker stop outcomes can defer.")
         with self._transaction() as connection:
             row = self._running(connection, job_id, worker_token)
             usage = EvaluationJobUsage.model_validate_json(row["usage_json"])

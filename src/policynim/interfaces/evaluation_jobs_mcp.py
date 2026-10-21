@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from typing import Annotated
 
@@ -20,6 +21,7 @@ from policynim.job_types import (
     EvaluationJobReportManifest,
     EvaluationJobReportPart,
 )
+from policynim.operations import emit_operation_event, safe_exception_diagnostics
 from policynim.services.authorization import AuthenticatedPrincipal
 from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
 from policynim.types import EvalSuite
@@ -104,7 +106,17 @@ def register_evaluation_jobs(
                     deadline_seconds=deadline_seconds, max_provider_calls=max_provider_calls
                 ),
             )
-            worker.start()
+            try:
+                worker.start()
+            except Exception as exc:
+                # Submission is durable already; retain its handle even if this process
+                # can't acquire or start execution. Another worker can own the queue.
+                emit_operation_event(
+                    level=logging.ERROR,
+                    event="evaluation.worker_start_unavailable",
+                    job_id=accepted.job_id,
+                    **safe_exception_diagnostics(exc),
+                )
             return accepted.model_dump(mode="json")
 
         result = await run_tool("eval_submit", operation, ctx)

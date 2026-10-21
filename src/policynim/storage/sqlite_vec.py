@@ -137,6 +137,34 @@ class SQLiteVecIndexStore(IndexStore):
         with self._reader_lock, closing(self._require_connection()) as conn:
             self._validate_identity(conn)
 
+    def probe_readability(self) -> None:
+        """Probe one row after caller-verified identity; retain full integrity checks."""
+        with self._reader_lock:
+            self._require_open()
+            try:
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    self._require_open()
+                    if (
+                        conn.execute(f"SELECT rowid FROM {_CHUNKS_TABLE} LIMIT 1").fetchone()
+                        is None
+                    ):
+                        raise IndexCompatibilityError(
+                            "The validated index contains no readable rows."
+                        )
+            except (sqlite3.DatabaseError, OSError) as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(code, int) and code & 0xFF in {
+                    sqlite3.SQLITE_CORRUPT,
+                    sqlite3.SQLITE_NOTADB,
+                }:
+                    raise IndexCompatibilityError(
+                        "The validated index is invalid or corrupt."
+                    ) from exc
+                raise MissingIndexError(
+                    "The validated index couldn't be read. "
+                    "Check runtime resources and access; inspect it before retrying."
+                ) from exc
+
     def inspect_readiness(self) -> IndexReadinessReport:
         """Read counts and identity from one snapshot without changing existing data."""
         with self._reader_lock:

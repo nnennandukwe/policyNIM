@@ -219,10 +219,23 @@ class EvaluationJobService:
             capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
         )
         os.close(descriptor)
-        with try_exclusive_file_lock(capture_lock) as acquired:
+        global_capture_lock = self.store.path.with_suffix(".capture.lock")
+        descriptor = os.open(
+            global_capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+        )
+        os.close(descriptor)
+        with (
+            try_exclusive_file_lock(capture_lock) as acquired,
+            try_exclusive_file_lock(global_capture_lock) as global_acquired,
+        ):
             if not acquired:
                 raise EvaluationJobError(
                     "principal_busy: Another submission is capturing this principal's inputs. "
+                    "Retry later with the same idempotency key."
+                )
+            if not global_acquired:
+                raise EvaluationJobError(
+                    "server_busy: Another submission is capturing generation inputs. "
                     "Retry later with the same idempotency key."
                 )
             existing = self.store.find_submission(owner, idempotency_key, request_digest)
@@ -257,12 +270,15 @@ class EvaluationJobService:
                     )
                 finally:
                     allowance.store.close()
-                with TemporaryDirectory(
-                    prefix="job-capture-", dir=self.store.path.parent
-                ) as directory:
-                    path = Path(directory) / "generation.zip"
-                    digest = generation_store.export_bundle(path, snapshot.generation_id)
-                    archive = path.read_bytes()
+                archive: bytes | None = None
+                digest = self.store.retained_archive_digest(snapshot.generation_id)
+                if digest is None:
+                    with TemporaryDirectory(
+                        prefix="job-capture-", dir=self.store.path.parent
+                    ) as directory:
+                        path = Path(directory) / "generation.zip"
+                        digest = generation_store.export_bundle(path, snapshot.generation_id)
+                        archive = path.read_bytes()
                 captured = EvaluationJobSnapshot(
                     generation_id=snapshot.generation_id,
                     generation_archive_digest=digest,
@@ -298,6 +314,11 @@ class EvaluationJobService:
                 archive=archive,
                 accept_work=accept_work,
             )
+
+    @_job_storage_boundary
+    def prune_expired(self) -> int:
+        """Run operator retention with the same storage-failure boundary as other job actions."""
+        return self.store.purge_expired()
 
     @_job_storage_boundary
     def inspect(self, job_id: str, *, principal: AuthenticatedPrincipal) -> EvaluationJobInfo:
@@ -368,9 +389,15 @@ class _CancellationSignal(Event):
 
     def is_set(self) -> bool:
         """Don't let a request continue after the persisted caller cancellation becomes visible."""
-        return (
-            super().is_set() or self.stop.is_set() or self.store.cancellation_requested(self.job_id)
-        )
+        if super().is_set() or self.stop.is_set():
+            return True
+        try:
+            return self.store.cancellation_requested(self.job_id)
+        except (sqlite3.Error, OSError) as exc:
+            raise ProviderError(
+                "Job cancellation state couldn't be read; preserve job storage for inspection.",
+                failure_class="storage_failure",
+            ) from exc
 
     def wait(self, timeout: float | None = None) -> bool:
         """Keep provider retry waits responsive to cancellation from a different process."""
@@ -445,10 +472,13 @@ class EvaluationJobWorker:
 
     def _loop(self) -> None:
         """Recover only after acquiring ownership and keep storage failures observable."""
+        next_cleanup = 0.0
         while not self._stop.is_set() and not self._admission_paused.is_set():
             try:
                 result = self.run_once()
-                self.store.purge_expired()
+                if time.monotonic() >= next_cleanup:
+                    next_cleanup = time.monotonic() + 60.0
+                    self.service.prune_expired()
                 if result is None:
                     self._stop.wait(0.5)
             except Exception as exc:
@@ -503,6 +533,7 @@ class EvaluationJobWorker:
     def _execute(self, job: EvaluationJobInfo) -> EvaluationJobInfo:
         """Keep input restoration, admission, provider work and cleanup in one owned lifecycle."""
         signal = _CancellationSignal(self.store, job.job_id, self._stop)
+        execution_started = False
         try:
             snapshot = self.store.captured_snapshot(job.job_id, self.worker_token)
             remaining = job.deadline_at - self.store.clock()
@@ -542,26 +573,49 @@ class EvaluationJobWorker:
 
             def run_owned() -> None:
                 """Hold shared quota admission through every case and provider cleanup."""
-                _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
-                settings = self._restore(snapshot, archive)
-                clients = NVIDIAClients()
-                try:
-                    with borrow_clients(clients), operation_scope(budget):
-                        with closing(self.evaluator_factory(settings)) as evaluator:
-                            for case in snapshot.suite.cases:
-                                budget.remaining()
-                                self.store.begin_case(job.job_id, self.worker_token, case.case_id)
-                                result = evaluator.evaluate_case(
-                                    snapshot.suite,
-                                    case.case_id,
-                                    rerank_enabled=snapshot.configuration.rerank_enabled,
-                                )
-                                self.store.save_case(job.job_id, self.worker_token, result)
-                                budget.remaining()
-                finally:
-                    clients.close()
+                nonlocal execution_started
+                execution_started = True
+                with operation_scope(budget):
+                    budget.remaining()
+                    _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
+                    budget.remaining()
+                    settings = self._restore(snapshot, archive)
+                    budget.remaining()
+                    clients = NVIDIAClients()
+                    try:
+                        with borrow_clients(clients):
+                            with closing(self.evaluator_factory(settings)) as evaluator:
+                                for case in snapshot.suite.cases:
+                                    budget.remaining()
+                                    self.store.begin_case(
+                                        job.job_id, self.worker_token, case.case_id
+                                    )
+                                    result = evaluator.evaluate_case(
+                                        snapshot.suite,
+                                        case.case_id,
+                                        rerank_enabled=snapshot.configuration.rerank_enabled,
+                                    )
+                                    self.store.save_case(job.job_id, self.worker_token, result)
+                                    budget.remaining()
+                    finally:
+                        clients.close()
 
             admission = OperationAdmissionService(self.service.settings)
+            accounting_cancelled = False
+            accounting_interrupted = False
+
+            def observe_interruption() -> bool:
+                """Keep the exact operator-stop decision used by terminal accounting."""
+                nonlocal accounting_interrupted
+                accounting_interrupted = self._stop.is_set()
+                return accounting_interrupted
+
+            def observe_cancellation() -> bool:
+                """Keep the exact cancellation decision used by terminal admission accounting."""
+                nonlocal accounting_cancelled
+                accounting_cancelled = self.store.cancellation_requested(job.job_id)
+                return accounting_cancelled
+
             try:
                 with operation_correlation():
                     emit_operation_event(
@@ -572,7 +626,8 @@ class EvaluationJobWorker:
                             run_owned,
                             principal=_principal(snapshot.authorization),
                             operation_name="eval_submit",
-                            cancelled=signal.is_set,
+                            cancelled=observe_cancellation,
+                            interrupted=observe_interruption,
                             check_ready=budget.remaining,
                         )
                     else:
@@ -581,13 +636,36 @@ class EvaluationJobWorker:
                             operation_id=job.admission_id,
                             principal=_principal(snapshot.authorization),
                             operation_name="eval_submit",
-                            cancelled=signal.is_set,
+                            cancelled=observe_cancellation,
+                            interrupted=observe_interruption,
                             check_ready=budget.remaining,
                         )
             finally:
                 admission.store.close()
+            if accounting_cancelled or accounting_interrupted:
+                return self.store.finish(
+                    job.job_id,
+                    self.worker_token,
+                    "interrupted" if accounting_interrupted else "cancelled",
+                    failure_code="worker_stopped" if accounting_interrupted else "cancelled",
+                )
             return self.store.finish(job.job_id, self.worker_token, "completed")
         except Exception as exc:
+            if isinstance(exc, OperationAdmissionError):
+                admission_failure = str(exc).partition(":")[0]
+                if admission_failure == "accounting_incomplete":
+                    self._admission_paused.set()
+                elif admission_failure in {"server_busy", "principal_busy", "admission_busy"}:
+                    return self.store.defer_admission(
+                        job.job_id, self.worker_token, admission_failure
+                    )
+            if (
+                self._stop.is_set()
+                and not execution_started
+                and isinstance(exc, ProviderError)
+                and exc.failure_class == "cancelled"
+            ):
+                return self.store.defer_admission(job.job_id, self.worker_token, "worker_stopped")
             if self._stop.is_set():
                 state: EvaluationJobState = "interrupted"
                 failure = "worker_stopped"
@@ -597,6 +675,7 @@ class EvaluationJobWorker:
                     "cancelled": "cancelled",
                     "deadline_exhausted": "deadline_exceeded",
                     "budget_exhausted": "budget_exhausted",
+                    "storage_failure": "interrupted",
                 }
                 state = states.get(failure, "failed")
             elif isinstance(exc, (OSError, sqlite3.Error)):

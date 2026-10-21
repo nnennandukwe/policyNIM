@@ -80,6 +80,8 @@ def test_hosted_healthz_reports_ready_index_live() -> None:
 
 
 def test_hosted_mcp_lists_tools_live() -> None:
+    """Check the hosted endpoint advertises the authenticated application tools."""
+
     async def run() -> set[str]:
         async with _authenticated_session() as session:
             result = await session.list_tools()
