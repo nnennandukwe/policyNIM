@@ -399,6 +399,7 @@ def test_service_permission_guards_precede_all_dependencies() -> None:
         MockGenerator,
         MockPolicyCompiler,
         MockReranker,
+        fixture_catalog,
     )
     from test_preflight_service import (
         MockIndexStore as PreflightIndexStore,
@@ -424,6 +425,7 @@ def test_service_permission_guards_precede_all_dependencies() -> None:
     compiler = MockPolicyCompiler(GeneratedCompiledPolicyDraft(insufficient_context=True))
     generator = MockGenerator(GeneratedPreflightDraft(summary="unused"))
     preflight = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         generator=generator,
         compiler=compiler,
         embedder=PreflightEmbedder(),

@@ -326,12 +326,14 @@ def test_preflight_has_one_budget_and_never_starts_a_later_stage(
         MockIndexStore,
         MockPolicyCompiler,
         MockReranker,
+        fixture_catalog,
+        fixture_draft,
         make_chunk,
     )
 
     from policynim.operations import OperationBudget, current_budget, operation_scope
     from policynim.services.preflight import PreflightService
-    from policynim.types import GeneratedPolicyGuidance, GeneratedPreflightDraft, PreflightRequest
+    from policynim.types import PreflightRequest
 
     clock = Clock()
     budget = OperationBudget(10, clock=clock)
@@ -342,20 +344,7 @@ def test_preflight_has_one_budget_and_never_starts_a_later_stage(
     index = MockIndexStore([chunk])
     reranker = MockReranker()
     compiler = MockPolicyCompiler()
-    generator = MockGenerator(
-        GeneratedPreflightDraft(
-            summary="Use logging.",
-            citation_ids=["BACKEND-1"],
-            applicable_policies=[
-                GeneratedPolicyGuidance(
-                    policy_id="BACKEND-LOG-001",
-                    title="Logging",
-                    rationale="Apply logging rules.",
-                    citation_ids=["BACKEND-1"],
-                )
-            ],
-        )
-    )
+    generator = MockGenerator(fixture_draft([chunk]))
     stages = []
     seen_budgets = []
 
@@ -386,6 +375,7 @@ def test_preflight_has_one_budget_and_never_starts_a_later_stage(
     ]:
         wrap(owner, method, stage)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=embedder,
         index_store=index,
         reranker=reranker,

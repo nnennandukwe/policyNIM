@@ -69,7 +69,12 @@ def register_grounded_capabilities(
         *,
         ctx: Context,
     ) -> CompileResult:
-        """Compile citation-backed constraints from the effective pinned policy generation."""
+        """Compile complete selected policy sources from the pinned policy generation.
+
+        Default responses quote whole policy bodies, including conditions and examples.
+        Review applicability before treating quoted text as an implementation requirement.
+        Source fidelity doesn't establish source trust or runtime policy compliance.
+        """
         principal = get_principal("policy_compile")
         request = validated_request(task, domain, top_k)
 
@@ -91,7 +96,12 @@ def register_grounded_capabilities(
         *,
         ctx: Context,
     ) -> PreflightEvidenceTraceResult:
-        """Run preflight once and return the same run's compiled-packet evidence trace."""
+        """Run preflight once and retain its compiled-source evidence trace.
+
+        Default responses quote whole policy bodies, including conditions and examples.
+        Review applicability before treating quoted text as an implementation requirement.
+        Source fidelity doesn't establish source trust or runtime policy compliance.
+        """
         principal = get_principal("policy_preflight_evidence")
         validated = validated_request(task, domain, top_k)
         request = PreflightRequest(

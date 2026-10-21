@@ -17,6 +17,7 @@ from policynim.services.index_store import (
     require_index_ready,
 )
 from policynim.settings import Settings, get_settings
+from policynim.source_units import SourceCatalog
 from policynim.types import (
     PolicyMetadata,
     PolicySelectionPacket,
@@ -114,8 +115,15 @@ class PolicyRouterService:
         self._embedder = embedder
         self._index_store = index_store
         snapshot = pinned_generation(index_store)
+        self._snapshot = snapshot
         self._generation_id = snapshot.generation_id if snapshot else None
         self._reranker = reranker
+
+    def source_catalog(self, context: Sequence[ScoredChunk]) -> SourceCatalog:
+        """Bind complete selected bodies to this router's held generation only."""
+        return SourceCatalog.from_documents(
+            self._snapshot.documents if self._snapshot is not None else (), context
+        )
 
     def __enter__(self) -> PolicyRouterService:
         return self

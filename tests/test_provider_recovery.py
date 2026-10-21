@@ -14,7 +14,8 @@ from openai import OpenAI
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.providers.nvidia import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
 from policynim.settings import Settings
-from policynim.types import GeneratedPreflightDraft, PolicyMetadata, PreflightRequest, ScoredChunk
+from policynim.source_units import SourceCatalog, SourceContext, SourceSelection, SourceUnit
+from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
 
 NO_ENV: dict[str, Any] = {"_env_file": None}
 
@@ -77,7 +78,7 @@ def invoke(
                     client=client,
                 )
                 return generator.generate_preflight(
-                    PreflightRequest(task="add request identifiers to logs"), [candidate()]
+                    PreflightRequest(task="add request identifiers to logs"), source_context()
                 )
             embedder = NVIDIAEmbedder(
                 api_key="sentinel-key",
@@ -283,8 +284,8 @@ def test_chat_options_are_specific_to_replacement_model(model):
                             "role": "assistant",
                             "content": json.dumps(
                                 {
-                                    "summary": "Add request identifiers.",
-                                    "citation_ids": [candidate().chunk_id],
+                                    "source_ids": ["s1"],
+                                    "insufficient_context": False,
                                 }
                             ),
                         },
@@ -296,11 +297,9 @@ def test_chat_options_are_specific_to_replacement_model(model):
     assert invoke("generation", handler, model=model).citation_ids == [candidate().chunk_id]
     assert calls[0]["model"] == model
     system_prompt, user_prompt = [message["content"] for message in calls[0]["messages"]]
-    assert "A policy_id is not a citation" in system_prompt
-    allowed_ids = user_prompt.split("Allowed citation_ids (copy exactly):\n", 1)[1].split("\n", 1)[
-        0
-    ]
-    assert json.loads(allowed_ids) == [candidate().chunk_id]
+    assert "Select policy source IDs" in system_prompt
+    sources = json.loads(user_prompt)["sources"]
+    assert sources[0]["citation_ids"] == [candidate().chunk_id]
     if model == PREVIOUS_CHAT_MODEL:
         assert calls[0]["temperature"] == 1
         assert calls[0]["top_p"] == 0.95
@@ -316,14 +315,10 @@ def test_chat_options_are_specific_to_replacement_model(model):
         assert response_format["type"] == "json_schema"
         assert response_format["json_schema"]["strict"] is True
         schema = response_format["json_schema"]["schema"]
-        assert response_format["json_schema"]["name"] == GeneratedPreflightDraft.__name__
-        assert set(schema["properties"]) == set(GeneratedPreflightDraft.model_fields)
-        assert schema["properties"]["citation_ids"]["items"]["enum"] == [candidate().chunk_id]
-        variants = schema["properties"]["applicable_policies"]["items"]["anyOf"]
-        assert len(variants) == 1
-        assert variants[0]["properties"]["policy_id"]["enum"] == [candidate().policy.policy_id]
-        assert variants[0]["properties"]["title"]["enum"] == [candidate().policy.title]
-        assert variants[0]["properties"]["citation_ids"]["items"]["enum"] == [candidate().chunk_id]
+        assert response_format["json_schema"]["name"] == SourceSelection.__name__
+        assert set(schema["properties"]) == set(SourceSelection.model_fields)
+        assert schema["properties"]["source_ids"]["items"]["enum"] == ["s1"]
+
     else:
         assert "response_format" not in calls[0]
 
@@ -572,3 +567,21 @@ def test_valid_custom_endpoint_identity_matches_settings(endpoint, canonical):
 
     assert Settings(**NO_ENV, nvidia_base_url=endpoint).nvidia_base_url == canonical
     assert EmbeddingIdentity(model="custom/model", endpoint=endpoint).endpoint == canonical
+
+
+def source_context() -> SourceContext:
+    """Declare this wire fixture's full synthetic source at the composition boundary."""
+    return SourceContext(
+        (candidate(),),
+        SourceCatalog(
+            (
+                SourceUnit(
+                    "s1",
+                    "BE-LOG-001",
+                    "Logging",
+                    "Include request identifiers in logs.",
+                    ("BE-LOG-001:rules",),
+                ),
+            )
+        ),
+    )
