@@ -408,6 +408,7 @@ async def _rpc(
     index: int = 0,
     discovery: bool = False,
     expected_generation_id: str | None = None,
+    expected_hit_count: int | None = None,
 ) -> tuple[float, str, int]:
     """Send one actual JSON-RPC request and retain only timing/classification/hit count."""
     method = "tools/list" if discovery else "tools/call"
@@ -485,6 +486,13 @@ async def _rpc(
         search = SearchResult.model_validate(content)
         if expected_generation_id is not None and search.generation_id != expected_generation_id:
             return (time.perf_counter() - started) * 1000, "generation_identity_mismatch", 0
+        if expected_hit_count is not None and (
+            len(search.hits) != expected_hit_count
+            or search.domain != f"domain-{domain}"
+            or any(hit.policy.domain != f"domain-{domain}" for hit in search.hits)
+            or len({hit.chunk_id for hit in search.hits}) != len(search.hits)
+        ):
+            return (time.perf_counter() - started) * 1000, "retrieval_result_mismatch", 0
         return (time.perf_counter() - started) * 1000, "ok", len(search.hits)
     except ValueError:
         return (time.perf_counter() - started) * 1000, "invalid_rpc_response", 0
@@ -587,7 +595,14 @@ async def _measure(
             await asyncio.sleep(0.05)
         expected_generation_id = fixture["generation_id"] if fixture is not None else None
         warmup = await _rpc(
-            client, config["tokens"][0], expected_generation_id=expected_generation_id
+            client,
+            config["tokens"][0],
+            expected_generation_id=expected_generation_id,
+            expected_hit_count=(
+                min(5, fixture["expected_domain_chunk_counts"].get("domain-0", 0))
+                if fixture is not None
+                else None
+            ),
         )
         if warmup[1] != "ok":
             raise RuntimeError("Synthetic HTTP warmup failed.")
@@ -689,6 +704,16 @@ async def _measure(
                         config["tokens"][index % config["users"]],
                         index=index,
                         expected_generation_id=expected_generation_id,
+                        expected_hit_count=(
+                            min(
+                                5,
+                                fixture["expected_domain_chunk_counts"].get(
+                                    f"domain-{index % 4}", 0
+                                ),
+                            )
+                            if fixture is not None
+                            else None
+                        ),
                     )
                 )
 
@@ -801,6 +826,7 @@ async def _measure(
             and not outcomes["generation_identity_mismatch"]
             and not outcomes["invalid_rpc_response"]
             and not outcomes["jsonrpc_error"]
+            and not outcomes["retrieval_result_mismatch"]
             and not cheap_outcomes["invalid_rpc_response"]
             and not cheap_outcomes["jsonrpc_error"]
             and not cheap_outcomes["health_identity_mismatch"]

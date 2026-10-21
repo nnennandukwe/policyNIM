@@ -120,7 +120,8 @@ or call an external issuer.
 
 Each scenario records the expected published generation ID/count separately from
 observed health IDs/counts. Typed health responses must match that publication,
-and every successful search response must carry its generation ID. A mismatch
+and every successful search response must carry its generation ID, the expected
+number of unique hits and the requested domain on each hit. A mismatch
 can't count as a successful probe/search or a complete managed measurement. The
 report names this scope as `configuration.index_scope=managed_generation`.
 Compilation/preflight, concurrent publication/retention and durable job backlog

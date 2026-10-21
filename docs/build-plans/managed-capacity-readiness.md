@@ -26,3 +26,10 @@ assertion or measurement gate is relaxed. A public HTTP-response corruption
 regression also rejects malformed JSON-RPC/search envelopes and wrong generation
 IDs after valid warmup and active probing, preserving the server's actual completed
 operation outcomes.
+
+The final parent adopts the published release integration so these checks use its
+eight-tool application and ordinary hosted worker lifecycle. The small boundary
+controls verify tool discovery and creation of the owned job store without
+submitting evaluation work. Another actual HTTP-response corruption regression
+rejects schema-valid empty or wrong-domain hits against the fixture's expected
+count/domain, preserving accepted ledger outcomes while marking evidence incomplete.

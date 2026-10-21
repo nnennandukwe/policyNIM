@@ -149,6 +149,25 @@ def serve(application, **kwargs):
             "Mcp-Method": "tools/call",
             "Mcp-Name": "policy_search",
         }
+        discovery_headers = {**headers, "Mcp-Method": "tools/list"}
+        discovery_headers.pop("Mcp-Name")
+        discovered = client.post(
+            "/mcp",
+            headers=discovery_headers,
+            json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/list",
+                "params": {"_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                }},
+            },
+        ).json()["result"]
+        assert {tool["name"] for tool in discovered["tools"]} == {
+            "policy_preflight", "policy_search", "policy_compile",
+            "policy_preflight_evidence", "eval_submit", "eval_inspect",
+            "eval_cancel", "eval_result",
+        }
+        assert (root / "eval-workspace" / "jobs" / "jobs.sqlite3").is_file()
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -301,7 +320,14 @@ def test_health_binds_readiness_to_published_generation_and_count(
 
 
 @pytest.mark.parametrize(
-    "failure", ["invalid_rpc_response", "jsonrpc_error", "generation_identity_mismatch"]
+    "failure",
+    [
+        "invalid_rpc_response",
+        "jsonrpc_error",
+        "generation_identity_mismatch",
+        "empty_hits",
+        "wrong_domain",
+    ],
 )
 def test_malformed_workload_response_cant_complete_managed_measurement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
@@ -323,6 +349,14 @@ def test_malformed_workload_response_cant_complete_managed_measurement(
         if payload.get("method") == "tools/call":
             calls += 1
             if calls > 1:
+                if failure in {"empty_hits", "wrong_domain"}:
+                    envelope = response.json()
+                    content = envelope["result"]["structuredContent"]
+                    if failure == "empty_hits":
+                        content["hits"] = []
+                    else:
+                        content["hits"][0]["policy"]["domain"] = "domain-1"
+                    return httpx.Response(200, json=envelope)
                 if failure == "jsonrpc_error":
                     return httpx.Response(
                         200,
@@ -369,7 +403,8 @@ def test_malformed_workload_response_cant_complete_managed_measurement(
     status = runpy.run_path(str(script))["main"]()
     scenario = json.loads(output.read_text())["scenarios"][0]
     assert scenario["paired_active_work_probe_observed"] is True
-    assert scenario["outcomes"] == {failure: 1}
+    outcome = "retrieval_result_mismatch" if failure in {"empty_hits", "wrong_domain"} else failure
+    assert scenario["outcomes"] == {outcome: 1}
     assert scenario["operator_report"]["outcomes"]["completed"] == 2
     assert status == 1 and scenario["measurement_complete"] is False
     assert scenario["managed_identity_verified"] is False
