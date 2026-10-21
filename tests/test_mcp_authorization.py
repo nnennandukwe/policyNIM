@@ -50,6 +50,7 @@ def oauth_settings(tmp_path: Path, **overrides: object) -> Settings:
         "index_db_path": tmp_path / "index.sqlite3",
         "generations_dir": tmp_path / "generations",
         "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        "eval_workspace_dir": tmp_path / "evaluations",
         "runtime_rules_artifact_path": tmp_path / "rules.json",
     }
     values.update(overrides)
@@ -398,6 +399,7 @@ def test_service_permission_guards_precede_all_dependencies() -> None:
         MockGenerator,
         MockPolicyCompiler,
         MockReranker,
+        fixture_catalog,
     )
     from test_preflight_service import (
         MockIndexStore as PreflightIndexStore,
@@ -423,6 +425,7 @@ def test_service_permission_guards_precede_all_dependencies() -> None:
     compiler = MockPolicyCompiler(GeneratedCompiledPolicyDraft(insufficient_context=True))
     generator = MockGenerator(GeneratedPreflightDraft(summary="unused"))
     preflight = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         generator=generator,
         compiler=compiler,
         embedder=PreflightEmbedder(),
@@ -516,7 +519,7 @@ def test_real_http_client_authenticates_every_request(
             headers["Authorization"] = "Bearer external-fixture-token"
             accepted = client.post("/mcp", json=message, headers=headers)
             assert accepted.status_code == 200
-            assert len(accepted.json()["result"]["tools"]) == 4
+            assert len(accepted.json()["result"]["tools"]) == 8
             headers["Mcp-Method"] = "tools/call"
             headers["Mcp-Name"] = "policy_search"
             call = {
@@ -804,6 +807,7 @@ def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool
         from fixtures.mcp_fixture_server import OfflineSettings, offline_services
         from policynim.interfaces import mcp
         settings = OfflineSettings(
+            eval_workspace_dir={str(tmp_path / "stdio-evaluations")!r},
             default_top_k=3, mcp_require_auth=True, mcp_bearer_tokens=['local-fixture'],
             mcp_public_base_url='https://policy.example',
             mcp_oauth_issuer_url={repr(ISSUER) if oauth else "None"},
@@ -830,6 +834,7 @@ def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool
                 assert result.structured_content["query"] == "local"
 
     asyncio.run(exercise())
+    assert not (tmp_path / "stdio-evaluations").exists()
 
 
 def test_oauth_only_startup_doesnt_require_beta_storage(tmp_path: Path) -> None:

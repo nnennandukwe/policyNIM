@@ -9,13 +9,13 @@ from test_preflight_service import (
     MockIndexStore,
     MockPolicyCompiler,
     MockReranker,
+    fixture_catalog,
+    fixture_draft,
     make_chunk,
 )
 
 from policynim.services.preflight import PreflightService
 from policynim.types import (
-    GeneratedCompiledPolicyDraft,
-    GeneratedPolicyConstraint,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     PreflightRequest,
@@ -57,6 +57,7 @@ def test_preflight_refuses_guidance_with_forged_citation_owner_metadata(
         )
     )
     with PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=MockIndexStore(chunks),
         reranker=MockReranker(),
@@ -79,31 +80,10 @@ def test_compiled_packet_can_add_other_policy_citations_without_forging_guidance
             chunk_id="SECURITY-1", policy_id="SECURITY-TOKEN-001", domain="security", score=0.98
         ),
     ]
-    generator = MockGenerator(
-        GeneratedPreflightDraft(
-            summary="Apply logging with token redaction.",
-            applicable_policies=[
-                GeneratedPolicyGuidance(
-                    policy_id="BACKEND-LOG-001",
-                    title="Logging",
-                    rationale="Preserve request context.",
-                    citation_ids=["BACKEND-1"],
-                )
-            ],
-            citation_ids=["BACKEND-1"],
-        )
-    )
-    compiler = MockPolicyCompiler(
-        GeneratedCompiledPolicyDraft(
-            required_steps=[
-                GeneratedPolicyConstraint(
-                    statement="Log request identifiers without tokens.",
-                    citation_ids=["BACKEND-1", "SECURITY-1"],
-                )
-            ]
-        )
-    )
+    generator = MockGenerator(fixture_draft(chunks))
+    compiler = MockPolicyCompiler()
     with PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=MockIndexStore(chunks),
         reranker=MockReranker(),
@@ -125,21 +105,10 @@ def test_preflight_materializes_every_valid_guidance_reference() -> None:
         ),
     ]
     generator = MockGenerator(
-        GeneratedPreflightDraft(
-            summary="Apply logging and token handling.",
-            applicable_policies=[
-                GeneratedPolicyGuidance(
-                    policy_id=chunk.policy.policy_id,
-                    title=chunk.policy.title,
-                    rationale="Apply the cited requirement.",
-                    citation_ids=[chunk.chunk_id],
-                )
-                for chunk in chunks
-            ],
-            citation_ids=["BACKEND-1"],
-        )
+        fixture_draft(chunks).model_copy(update={"citation_ids": ["BACKEND-1"]})
     )
     with PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=MockIndexStore(chunks),
         reranker=MockReranker(),

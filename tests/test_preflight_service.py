@@ -13,12 +13,19 @@ from policynim.services.preflight import (
     GeneratedPreflightDraft,
     PreflightService,
 )
+from policynim.source_units import (
+    EXTRACTIVE_RATIONALE,
+    EXTRACTIVE_SUMMARY,
+    SourceCatalog,
+    SourceContext,
+    SourceSelection,
+    SourceUnit,
+)
 from policynim.types import (
     Citation,
     CompiledPolicyPacket,
     EmbeddedChunk,
     GeneratedCompiledPolicyDraft,
-    GeneratedPolicyConstraint,
     PolicyChunk,
     PolicyGuidance,
     PolicyMetadata,
@@ -169,26 +176,30 @@ class MockPolicyCompiler:
     """Returns a deterministic compiler draft for preflight tests."""
 
     def __init__(self, draft: GeneratedCompiledPolicyDraft | None = None) -> None:
-        self._draft = draft or GeneratedCompiledPolicyDraft(
-            required_steps=[
-                GeneratedPolicyConstraint(
-                    statement="Apply Logging to this task.",
-                    citation_ids=["BACKEND-1"],
-                )
-            ]
-        )
+        """Retain an explicit failure draft or use the owned complete-source fixture."""
+        self._draft = draft
         self.calls = 0
         self.closed = False
 
     def compile_policy_packet(self, request, selection_packet, context):
+        """Return the injected failure or materialize every declared fixture source."""
         self.calls += 1
-        return self._draft
+        if self._draft is not None:
+            return self._draft
+        assert isinstance(context, SourceContext)
+        return context.catalog.compiler_draft(
+            SourceSelection(
+                source_ids=[unit.source_id for unit in context.catalog.units],
+                insufficient_context=False,
+            )
+        )
 
     def close(self) -> None:
         self.closed = True
 
 
 def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
+    """Exact authored sources retain their canonical owner coordinates in the public response."""
     backend = make_chunk(
         chunk_id="BACKEND-1",
         policy_id="BACKEND-LOG-001",
@@ -207,29 +218,10 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
     )
     store = MockIndexStore([backend, security])
     reranker = MockReranker(order=["BACKEND-1", "SECURITY-1"])
-    draft = GeneratedPreflightDraft(
-        summary="Use request ids and avoid token leakage.",
-        applicable_policies=[
-            DraftPolicyGuidance(
-                policy_id="BACKEND-LOG-001",
-                title="Logging",
-                rationale="Logging should include stable request context.",
-                citation_ids=["BACKEND-1"],
-            ),
-            DraftPolicyGuidance(
-                policy_id="SECURITY-TOKEN-001",
-                title="Token handling",
-                rationale="Sensitive tokens must not reach logs.",
-                citation_ids=["SECURITY-1"],
-            ),
-        ],
-        implementation_guidance=["Log request ids.", "Redact secret material."],
-        review_flags=["Check for accidental token logging."],
-        tests_required=["Add unit tests for token redaction."],
-        citation_ids=["BACKEND-1", "SECURITY-1"],
-    )
+    draft = fixture_draft(store._chunks)
     generator = MockGenerator(draft)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=reranker,
@@ -244,18 +236,18 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
     assert generator.last_request is not None
     assert generator.last_request.top_k == 2
     assert generator.last_compiled_packet is not None
-    assert result.summary == "Use request ids and avoid token leakage."
+    assert result.summary == EXTRACTIVE_SUMMARY
     assert result.applicable_policies == [
         PolicyGuidance(
             policy_id="BACKEND-LOG-001",
             title="Logging",
-            rationale="Logging should include stable request context.",
+            rationale=EXTRACTIVE_RATIONALE,
             citation_ids=["BACKEND-1"],
         ),
         PolicyGuidance(
             policy_id="SECURITY-TOKEN-001",
             title="Token handling",
-            rationale="Sensitive tokens must not reach logs.",
+            rationale=EXTRACTIVE_RATIONALE,
             citation_ids=["SECURITY-1"],
         ),
     ]
@@ -280,7 +272,8 @@ def test_preflight_service_returns_grounded_result_and_maps_citations() -> None:
     assert not result.insufficient_context
 
 
-def test_preflight_service_merges_compiled_constraints_into_result() -> None:
+def test_preflight_service_rejects_generated_instructions_outside_full_sources() -> None:
+    """A valid compiler packet can't authorize additional generated instructions."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -308,6 +301,7 @@ def test_preflight_service_merges_compiled_constraints_into_result() -> None:
     )
     generator = MockGenerator(draft)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(order=["BACKEND-1"]),
@@ -319,13 +313,15 @@ def test_preflight_service_merges_compiled_constraints_into_result() -> None:
 
     assert generator.last_compiled_packet is not None
     assert generator.last_compiled_packet.required_steps
-    assert result.plan_steps == ["Apply Logging to this task."]
-    assert result.implementation_guidance == ["Keep existing logging behavior."]
-    assert result.review_flags == ["Review redaction behavior."]
-    assert result.tests_required == ["Keep existing tests green."]
+    assert result.insufficient_context
+    assert not result.plan_steps
+    assert not result.implementation_guidance
+    assert not result.review_flags
+    assert not result.tests_required
 
 
 def test_preflight_service_trace_exposes_internal_compiled_packet_without_changing_result() -> None:
+    """Opt-in tracing retains compilation evidence without altering the public result."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -336,20 +332,10 @@ def test_preflight_service_trace_exposes_internal_compiled_packet_without_changi
             )
         ]
     )
-    draft = GeneratedPreflightDraft(
-        summary="Use request ids in logs.",
-        applicable_policies=[
-            DraftPolicyGuidance(
-                policy_id="BACKEND-LOG-001",
-                title="Logging",
-                rationale="Use the retained backend logging policy.",
-                citation_ids=["BACKEND-1"],
-            )
-        ],
-        citation_ids=["BACKEND-1"],
-    )
+    draft = fixture_draft(store._chunks)
     generator = MockGenerator(draft)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(order=["BACKEND-1"]),
@@ -370,6 +356,8 @@ def test_preflight_service_trace_exposes_internal_compiled_packet_without_changi
 def test_preflight_service_preflight_keeps_trace_creation_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Ordinary preflight never constructs optional trace records."""
+
     def fail_trace_step(**_: object) -> object:
         raise AssertionError("preflight() should not build trace steps")
 
@@ -384,19 +372,9 @@ def test_preflight_service_preflight_keeps_trace_creation_opt_in(
             )
         ]
     )
-    draft = GeneratedPreflightDraft(
-        summary="Use request ids in logs.",
-        applicable_policies=[
-            DraftPolicyGuidance(
-                policy_id="BACKEND-LOG-001",
-                title="Logging",
-                rationale="Use the retained backend logging policy.",
-                citation_ids=["BACKEND-1"],
-            )
-        ],
-        citation_ids=["BACKEND-1"],
-    )
+    draft = fixture_draft(store._chunks)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(order=["BACKEND-1"]),
@@ -410,6 +388,7 @@ def test_preflight_service_preflight_keeps_trace_creation_opt_in(
 
 
 def test_preflight_service_fails_closed_when_compiler_has_insufficient_context() -> None:
+    """Compiler refusal prevents generator dispatch and authoritative output."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -423,6 +402,7 @@ def test_preflight_service_fails_closed_when_compiler_has_insufficient_context()
     compiler = MockPolicyCompiler(GeneratedCompiledPolicyDraft(insufficient_context=True))
     generator = MockGenerator(GeneratedPreflightDraft(summary="Should not be generated."))
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(order=["BACKEND-1"]),
@@ -469,26 +449,10 @@ def test_preflight_service_caps_discovery_and_completes_selected_policy_context(
         ]
     )
     reranker = MockReranker(order=["BACKEND-1", "BACKEND-2", "BACKEND-3", "SECURITY-1"])
-    draft = GeneratedPreflightDraft(
-        summary="Keep the top ranked policy evidence.",
-        applicable_policies=[
-            DraftPolicyGuidance(
-                policy_id="BACKEND-LOG-001",
-                title="Logging",
-                rationale="Use the strongest backend guidance.",
-                citation_ids=["BACKEND-1", "BACKEND-2"],
-            ),
-            DraftPolicyGuidance(
-                policy_id="SECURITY-TOKEN-001",
-                title="Token handling",
-                rationale="Retain one security policy.",
-                citation_ids=["SECURITY-1"],
-            ),
-        ],
-        citation_ids=["BACKEND-1", "BACKEND-2", "SECURITY-1"],
-    )
+    draft = fixture_draft(store._chunks)
     generator = MockGenerator(draft)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=reranker,
@@ -509,6 +473,7 @@ def test_preflight_service_caps_discovery_and_completes_selected_policy_context(
     assert [citation.chunk_id for citation in result.citations] == [
         "BACKEND-1",
         "BACKEND-2",
+        "BACKEND-3",
         "SECURITY-1",
     ]
 
@@ -533,6 +498,7 @@ def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids(cita
         )
     )
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(),
@@ -548,6 +514,7 @@ def test_preflight_service_marks_insufficient_context_for_unknown_chunk_ids(cita
 
 
 def test_preflight_service_marks_insufficient_context_when_generator_cites_nothing() -> None:
+    """A generator without source references can't produce authoritative guidance."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -574,6 +541,7 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
         )
     )
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(),
@@ -588,7 +556,8 @@ def test_preflight_service_marks_insufficient_context_when_generator_cites_nothi
     assert result.applicable_policies == []
 
 
-def test_preflight_service_deduplicates_citation_ids_and_preserves_first_seen_order() -> None:
+def test_preflight_service_refuses_duplicate_provider_metadata_instead_of_repairing_it() -> None:
+    """Noncanonical provider references are rejected without rewriting them into authority."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -626,6 +595,7 @@ def test_preflight_service_deduplicates_citation_ids_and_preserves_first_seen_or
         )
     )
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(order=["BACKEND-1", "SECURITY-1"]),
@@ -635,13 +605,15 @@ def test_preflight_service_deduplicates_citation_ids_and_preserves_first_seen_or
 
     result = service.preflight(PreflightRequest(task="refresh token cleanup", top_k=2))
 
-    assert [citation.chunk_id for citation in result.citations] == ["SECURITY-1", "BACKEND-1"]
-    assert result.applicable_policies[0].citation_ids == ["BACKEND-1"]
+    assert result.insufficient_context
+    assert not result.citations
+    assert not result.applicable_policies
 
 
 def test_preflight_service_invalidates_response_when_policy_citations_disagree_with_context() -> (
     None
 ):
+    """A citation-owner mismatch must leave the public result empty."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -667,6 +639,7 @@ def test_preflight_service_invalidates_response_when_policy_citations_disagree_w
         )
     )
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(),
@@ -682,6 +655,7 @@ def test_preflight_service_invalidates_response_when_policy_citations_disagree_w
 
 
 def test_preflight_service_uses_policy_citation_ids_when_draft_level_list_is_empty() -> None:
+    """Compiled source references keep every valid per-policy citation resolvable."""
     store = MockIndexStore(
         [
             make_chunk(
@@ -692,21 +666,9 @@ def test_preflight_service_uses_policy_citation_ids_when_draft_level_list_is_emp
             )
         ]
     )
-    generator = MockGenerator(
-        GeneratedPreflightDraft(
-            summary="Fallback to policy-level citation ids.",
-            applicable_policies=[
-                DraftPolicyGuidance(
-                    policy_id="BACKEND-LOG-001",
-                    title="Logging",
-                    rationale="Use the policy citation list when the draft-level list is empty.",
-                    citation_ids=["BACKEND-1"],
-                )
-            ],
-            citation_ids=[],
-        )
-    )
+    generator = MockGenerator(fixture_draft(store._chunks).model_copy(update={"citation_ids": []}))
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(),
@@ -721,8 +683,10 @@ def test_preflight_service_uses_policy_citation_ids_when_draft_level_list_is_emp
 
 
 def test_preflight_service_requires_existing_index() -> None:
+    """Missing index readiness is rejected before any downstream provider stage."""
     store = MockIndexStore([], exists=False)
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=store,
         reranker=MockReranker(),
@@ -735,10 +699,12 @@ def test_preflight_service_requires_existing_index() -> None:
 
 
 def test_preflight_service_close_closes_owned_components() -> None:
+    """Closing preflight releases each dependency it owns."""
     reranker = MockReranker()
     generator = MockGenerator(GeneratedPreflightDraft(summary="unused"))
     compiler = MockPolicyCompiler()
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=MockIndexStore(
             [make_chunk(chunk_id="BACKEND-1", policy_id="BACKEND-1", domain="backend", score=0.9)]
@@ -778,4 +744,40 @@ def make_chunk(
         text=text,
         policy=metadata,
         score=score,
+    )
+
+
+def fixture_catalog(context: Sequence[ScoredChunk]) -> SourceCatalog:
+    """Declare authored complete synthetic bodies separately from returned model wording."""
+    bodies = {
+        "BACKEND-LOG-001": "Logging policy full source.",
+        "SECURITY-TOKEN-001": "Token policy full source.",
+    }
+    policies = {chunk.policy.policy_id: chunk.policy for chunk in context}
+    return SourceCatalog(
+        tuple(
+            SourceUnit(
+                f"s{index + 1}",
+                policy.policy_id,
+                policy.title,
+                bodies[policy.policy_id],
+                tuple(
+                    chunk.chunk_id
+                    for chunk in context
+                    if chunk.policy.policy_id == policy.policy_id
+                ),
+            )
+            for index, policy in enumerate(policies.values())
+        )
+    )
+
+
+def fixture_draft(context: Sequence[ScoredChunk]) -> GeneratedPreflightDraft:
+    """Author the exact expected source-backed response before invoking the tested service."""
+    catalog = fixture_catalog(context)
+    return catalog.preflight_draft(
+        SourceSelection(
+            source_ids=[unit.source_id for unit in catalog.units],
+            insufficient_context=False,
+        )
     )

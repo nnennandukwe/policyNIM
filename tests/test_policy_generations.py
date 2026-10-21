@@ -1503,10 +1503,6 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
     from policynim.services.runtime_execution import create_runtime_execution_service
     from policynim.types import (
         FileWriteActionRequest,
-        GeneratedCompiledPolicyDraft,
-        GeneratedPolicyConstraint,
-        GeneratedPolicyGuidance,
-        GeneratedPreflightDraft,
         PreflightRequest,
         SearchRequest,
     )
@@ -1529,12 +1525,14 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
     class Compiler:
         def compile_policy_packet(self, request, selection_packet, context):
             """Compile a cited constraint from the actual retrieved generation context."""
-            return GeneratedCompiledPolicyDraft(
-                required_steps=[
-                    GeneratedPolicyConstraint(
-                        statement="Review deployment evidence.", citation_ids=[context[0].chunk_id]
-                    )
-                ]
+            from policynim.source_units import SourceContext, SourceSelection
+
+            assert isinstance(context, SourceContext)
+            return context.catalog.compiler_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
 
         def close(self):
@@ -1546,18 +1544,14 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
             self, request, context, *, compiled_packet=None, regeneration_context=None
         ):
             """Return a grounded draft using the actual retained chunk and policy IDs."""
-            return GeneratedPreflightDraft(
-                summary="Review deployment evidence.",
-                applicable_policies=[
-                    GeneratedPolicyGuidance(
-                        policy_id=context[0].policy.policy_id,
-                        title=context[0].policy.title,
-                        rationale="Selected policy evidence.",
-                        citation_ids=[context[0].chunk_id],
-                    )
-                ],
-                plan_steps=["Review deployment evidence."],
-                citation_ids=[context[0].chunk_id],
+            from policynim.source_units import SourceContext, SourceSelection
+
+            assert isinstance(context, SourceContext)
+            return context.catalog.preflight_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
 
         def close(self):

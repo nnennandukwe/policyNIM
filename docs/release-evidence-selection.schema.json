@@ -1,0 +1,326 @@
+{
+  "$defs": {
+    "Requirement": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "cases": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "cases"
+            ]
+          },
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "artifacts",
+                  "provenance"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "maxProperties": 0
+              },
+              "cases": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "client"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "properties": {
+                  "client": {
+                    "enum": [
+                      "codex",
+                      "claude-code"
+                    ]
+                  },
+                  "transport": {
+                    "enum": [
+                      "stdio",
+                      "http"
+                    ]
+                  },
+                  "auth_mode": {
+                    "enum": [
+                      "beta_key",
+                      "operator_key",
+                      "oauth",
+                      "local_stdio",
+                      "auth_disabled"
+                    ]
+                  }
+                },
+                "propertyNames": {
+                  "enum": [
+                    "auth_mode",
+                    "client",
+                    "client_version",
+                    "protocol",
+                    "server_sdk",
+                    "transport"
+                  ]
+                },
+                "required": [
+                  "auth_mode",
+                  "client",
+                  "client_version",
+                  "protocol",
+                  "server_sdk",
+                  "transport"
+                ]
+              }
+            },
+            "required": [
+              "context"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "deployment"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "propertyNames": {
+                  "enum": [
+                    "application_source_sha",
+                    "auth_mode",
+                    "deployment_id",
+                    "environment_id",
+                    "image_digest",
+                    "project_id",
+                    "provider",
+                    "service_id"
+                  ]
+                },
+                "required": [
+                  "application_source_sha",
+                  "deployment_id",
+                  "environment_id",
+                  "project_id",
+                  "provider",
+                  "service_id"
+                ]
+              }
+            },
+            "required": [
+              "context"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "published_install"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "required": [
+                  "channel",
+                  "distribution"
+                ]
+              }
+            },
+            "required": [
+              "context"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "rollback",
+                  "published_install",
+                  "ci",
+                  "optional_extras"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "propertyNames": {
+                  "enum": [
+                    "channel",
+                    "distribution",
+                    "platform",
+                    "producer",
+                    "python_version",
+                    "rollback_target_source_sha"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Select a scoped check and its explicit context and nonempty execution cases.",
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "artifacts",
+            "provenance",
+            "client",
+            "deployment",
+            "rollback",
+            "published_install",
+            "ci",
+            "optional_extras"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "context": {
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+=-]{0,199}$",
+              "type": "string"
+            }
+          },
+          "title": "Context",
+          "type": "object"
+        },
+        "cases": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Cases",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "Requirement",
+      "type": "object"
+    },
+    "Subject": {
+      "additionalProperties": false,
+      "description": "Name the operator's selected release, never an observation inferred from it.",
+      "properties": {
+        "repository": {
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "title": "Repository",
+          "type": "string"
+        },
+        "release_tag": {
+          "pattern": "^v[0-9][A-Za-z0-9.+-]{0,63}$",
+          "title": "Release Tag",
+          "type": "string"
+        },
+        "source_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Source Sha",
+          "type": "string"
+        },
+        "dependency_lock": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Dependency Lock",
+          "type": "string"
+        },
+        "generation_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "catalog_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Catalog Digest",
+          "type": "string"
+        },
+        "public_bundle_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Public Bundle Digest",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "release_tag",
+        "source_sha",
+        "dependency_lock",
+        "generation_id",
+        "catalog_digest",
+        "public_bundle_digest",
+        "manifest_sha256"
+      ],
+      "title": "Subject",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Bind all requested gates to one explicit expected release subject.",
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "expected": {
+      "$ref": "#/$defs/Subject"
+    },
+    "required_checks": {
+      "items": {
+        "$ref": "#/$defs/Requirement"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Required Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "expected",
+    "required_checks"
+  ],
+  "title": "Selection",
+  "type": "object"
+}

@@ -8,7 +8,7 @@ The goal is to show that PolicyNIM can:
 
 1. build a local policy index
 2. retrieve relevant policy evidence
-3. return grounded preflight guidance with citations
+3. return selected whole-policy quotations with citations
 4. expose the same workflow through MCP for agent clients
 
 ## Prerequisites
@@ -73,7 +73,7 @@ What this proves:
 
 - dense retrieval and reranking are working
 - the stored corpus is inspectable and citeable
-- the search surface is useful as a debug path before synthesis
+- the search surface exposes discovery evidence before whole-source compilation
 
 ## Step 3: Show Grounded Preflight
 
@@ -96,17 +96,21 @@ uv run policynim preflight \
 
 What to look for:
 
-- a concise summary tied to the task
+- a fixed service summary explaining that selected sources are quoted in full
 - applicable policies such as auth review, background jobs, token boundaries, and
   logging rules
-- implementation guidance, review flags, and required tests
+- whole policy bodies in `plan_steps`, including their conditions and exceptions
+- empty `implementation_guidance`, `review_flags` and `tests_required` lists
 - citations with chunk IDs and source line spans
 
 What this proves:
 
-- retrieval and grounded synthesis are integrated
-- the answer is not freeform; it is evidence-backed
-- PolicyNIM can return implementation guidance while preserving traceability
+- retrieval and source-extractive preflight share pinned policy evidence
+- whole-source quotations retain canonical citations and owner metadata
+
+Review applicability and source trust separately. The
+[source-extractive guide](source-extractive-guidance.md) explains field semantics,
+budgets and the limits of source fidelity.
 
 ## Step 4: Show Fail-Closed Behavior
 
@@ -122,7 +126,7 @@ What to look for:
 
 What this proves:
 
-- PolicyNIM does not always force an answer
+- PolicyNIM doesn't always force an answer
 - weak evidence can stop progression instead of generating plausible nonsense
 
 ## Step 5: Show Evaluation
@@ -245,21 +249,22 @@ short delay first. If the issue persists, inspect the hosted logs for
 
 ### Insufficient Context
 
-If the response sets `insufficient_context: true`, the failure is in grounded
-retrieval quality, not auth or service availability. Narrow the task, add a
-domain, or use `policy_search` first.
+A response with `insufficient_context: true` can reflect weak retrieval, missing
+complete-source ownership or rejected source selection/metadata. Inspect `--trace`,
+narrow the task or domain, or use `policy_search` to inspect discovery evidence.
+This result alone doesn't identify the failed boundary.
 
 ### Service Unavailable
 
-If the hosted service does not respond or `/healthz` returns `503`, the hosted
-service or baked index is not ready yet. Retry after the service becomes
+If the hosted service doesn't respond or `/healthz` returns `503`, the hosted
+service or baked index isn't ready yet. Retry after the service becomes
 healthy.
 
 ## Suggested Demo Narrative
 
 1. Build the index to show the corpus becomes a local, inspectable asset.
-2. Run `search` to show concrete evidence before any synthesis.
-3. Run `preflight` to show grounded implementation guidance with citations.
+2. Run `search` to inspect retrieved policy evidence.
+3. Run `preflight` to inspect whole policy quotations with canonical citations.
 4. Show one fail-closed case to make the safety behavior visible.
 5. End with either eval or MCP, depending on whether the audience cares more about
    local quality checks or agent integration.

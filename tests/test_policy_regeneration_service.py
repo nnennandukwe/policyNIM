@@ -13,6 +13,12 @@ from policynim.services.regeneration import (
     PolicyRegenerationService,
     regeneration_triggers_from_conformance,
 )
+from policynim.source_units import (
+    EXTRACTIVE_RATIONALE,
+    EXTRACTIVE_SUMMARY,
+    SourceCatalog,
+    SourceUnit,
+)
 from policynim.types import (
     Citation,
     CompiledPolicyConstraint,
@@ -33,12 +39,13 @@ from policynim.types import (
 
 
 def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
+    """Exact-source attempts preserve one compiler run and the typed retry evidence."""
     packet = make_compiled_packet()
     compiler = MockCompilerService(packet=packet, context=[make_chunk()])
     generator = MockGenerator(
         [
-            make_draft(summary="Initial preflight."),
-            make_draft(summary="Regenerated preflight."),
+            make_draft(),
+            make_draft(),
         ]
     )
     conformance = MockConformanceService(
@@ -76,7 +83,7 @@ def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
     assert result.passed is True
     assert result.stop_reason == "passed"
     assert result.compiled_packet_id == expected_packet_id
-    assert result.final_result.summary == "Regenerated preflight."
+    assert result.final_result.summary == EXTRACTIVE_SUMMARY
     assert compiler.calls == 1
     assert len(generator.calls) == 2
     assert generator.calls[0].regeneration_context is None
@@ -96,11 +103,12 @@ def test_regeneration_compiles_once_and_retries_from_typed_triggers() -> None:
 
 
 def test_regeneration_guardrails_wrapper_preserves_retry_context() -> None:
+    """The optional guardrail wrapper retains source ownership and regeneration context."""
     packet = make_compiled_packet()
     base_generator = MockGenerator(
         [
-            make_draft(summary="Initial preflight."),
-            make_draft(summary="Regenerated preflight."),
+            make_draft(),
+            make_draft(),
         ]
     )
     rails = PassingRails()
@@ -167,16 +175,17 @@ def test_regeneration_can_include_chunk_text_for_debug_traces() -> None:
 
 
 def test_regeneration_stops_at_max_regenerations() -> None:
+    """A persistent conformance failure can't exceed the configured retry count."""
     service = PolicyRegenerationService(
         compiler_service=MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()]),
-        generator=MockGenerator([make_draft(), make_draft(summary="Retry still failing.")]),
+        generator=MockGenerator([make_draft(), make_draft()]),
         conformance_service=MockConformanceService(
             [
                 make_conformance_result(
                     passed=False,
                     metrics=[
                         PolicyConformanceMetric(
-                            name="test_coverage",
+                            name="plan_completeness",
                             score=0.0,
                             passed=False,
                             failure_reasons=["test expectation was missing"],
@@ -187,7 +196,7 @@ def test_regeneration_stops_at_max_regenerations() -> None:
                     passed=False,
                     metrics=[
                         PolicyConformanceMetric(
-                            name="test_coverage",
+                            name="plan_completeness",
                             score=0.0,
                             passed=False,
                             failure_reasons=["test expectation was still missing"],
@@ -209,7 +218,7 @@ def test_regeneration_stops_at_max_regenerations() -> None:
     assert result.passed is False
     assert result.stop_reason == "max_regenerations"
     assert len(result.attempts) == 2
-    assert result.attempts[1].triggers[0].kind == "test_expectations"
+    assert result.attempts[1].triggers[0].kind == "required_steps"
 
 
 def test_regeneration_stops_when_failed_metrics_have_no_material_trigger() -> None:
@@ -263,8 +272,9 @@ def test_regeneration_treats_insufficient_compiled_context_as_terminal() -> None
 
 
 def test_regeneration_fails_closed_for_provider_errors_without_retry() -> None:
+    """Provider errors abort regeneration without starting another candidate."""
     compiler = MockCompilerService(packet=make_compiled_packet(), context=[make_chunk()])
-    generator = MockGenerator([make_draft(), make_draft(summary="Should not run.")])
+    generator = MockGenerator([make_draft(), make_draft()])
     conformance = MockConformanceService([ProviderError("judge failed", failure_class="timeout")])
     service = PolicyRegenerationService(
         compiler_service=compiler,
@@ -327,6 +337,20 @@ class MockCompilerService:
         self._context = context
         self.calls = 0
         self.closed = False
+
+    def source_catalog(self, context: Sequence[ScoredChunk]) -> SourceCatalog:
+        """Declare the complete synthetic policy independently from generated draft text."""
+        return SourceCatalog(
+            (
+                SourceUnit(
+                    "s1",
+                    "BACKEND-LOG-001",
+                    "Backend Logging",
+                    "Thread request ids through log context.",
+                    ("BACKEND-1",),
+                ),
+            )
+        )
 
     def compile(self, request: CompileRequest) -> CompileResult:
         self.calls += 1
@@ -448,6 +472,7 @@ def make_chunk(chunk_id: str = "BACKEND-1") -> ScoredChunk:
 
 
 def make_compiled_packet(*, insufficient_context: bool = False) -> CompiledPolicyPacket:
+    """Build one exact source constraint with stable IDs for regeneration lifecycle controls."""
     return CompiledPolicyPacket(
         task="fix backend logging",
         top_k=2,
@@ -463,43 +488,27 @@ def make_compiled_packet(*, insufficient_context: bool = False) -> CompiledPolic
                 )
             ]
         ),
-        test_expectations=(
-            []
-            if insufficient_context
-            else [
-                CompiledPolicyConstraint(
-                    statement="Add a regression test for request-id logging.",
-                    citation_ids=["BACKEND-1"],
-                    source_policy_ids=["BACKEND-LOG-001"],
-                )
-            ]
-        ),
+        test_expectations=[],
         citations=[] if insufficient_context else [make_citation()],
         insufficient_context=insufficient_context,
     )
 
 
-def make_draft(
-    *,
-    summary: str = "Use request ids in backend logs.",
-    citation_ids: list[str] | None = None,
-) -> GeneratedPreflightDraft:
-    resolved_citation_ids = citation_ids if citation_ids is not None else ["BACKEND-1"]
+def make_draft(*, citation_ids: list[str] | None = None) -> GeneratedPreflightDraft:
+    """Author one exact whole-source draft for controlled regeneration lifecycle tests."""
+    references = citation_ids if citation_ids is not None else ["BACKEND-1"]
     return GeneratedPreflightDraft(
-        summary=summary,
+        summary=EXTRACTIVE_SUMMARY,
         applicable_policies=[
             GeneratedPolicyGuidance(
                 policy_id="BACKEND-LOG-001",
                 title="Backend Logging",
-                rationale="Request ids keep backend logs traceable.",
-                citation_ids=resolved_citation_ids,
+                rationale=EXTRACTIVE_RATIONALE,
+                citation_ids=references,
             )
         ],
         plan_steps=["Thread request ids through log context."],
-        implementation_guidance=["Keep logging changes in the service layer."],
-        review_flags=[],
-        tests_required=["Add a regression test for request-id logging."],
-        citation_ids=resolved_citation_ids,
+        citation_ids=references,
     )
 
 
