@@ -100,6 +100,10 @@ are four-dimensional orthogonal vectors; reranking is disabled. The uniform corp
 spreads chunks over four domains. The skewed corpus places 90% in one domain and
 spreads the remainder across the other three. Requests use domain filters and
 record returned hit counts. Synthetic vectors don't test retrieval quality.
+The fixture uses a standalone synthetic SQLite index and replaces the search and
+health service factories. It doesn't exercise managed-generation readiness or
+reader admission, compilation/preflight, generation publication or durable job
+backlog. Those paths need separate final-source evidence.
 
 Reports include the source revision, dirty-state flag, harness digest, platform,
 CPU count, Python version, provider delay, configured/client concurrency, throughput,
@@ -113,6 +117,17 @@ before Uvicorn restores SIGTERM, and names that phase in `peak_server_rss_scope`
 A failed or missing shutdown measurement stays `null`. A
 warmup search contributes one explicitly identified ledger charge per scenario.
 Provider usage stays unavailable; `live_nvidia_calls` stays zero.
+
+`paired_active_work_probe_observed` records whether one successful discovery and
+health probe cycle had active ledger work both before and after its HTTP responses.
+Baseline, saturation and slow-provider scenarios require that paired observation
+for `measurement_complete=true`. Successful probes only before work starts, after
+it finishes, or without active work leave those measurements incomplete. The
+locked-database scenario intentionally admits no work and doesn't require this
+signal. Disconnect/shutdown also require the existing paired observation before
+the intervention; disconnect additionally requires an observed terminal drain.
+An incomplete scenario remains in the report and makes the harness exit nonzero.
+This overlap check doesn't define a latency SLO or prove continuous peak load.
 
 The six named scenarios cover bounded baseline load, saturation above ten active
 operations, a slow provider double, a write-locked quota database, client disconnect
@@ -168,6 +183,10 @@ p95 was 215.422 ms; the receipt records separate saturation, locking, slow-provi
 disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
+
+Those historical receipts predate the explicit paired-probe completeness gate.
+Their recorded timings and revision remain intact; they aren't final-source proof
+that cheap probes overlapped active work under the newer measurement contract.
 
 Fault receipts report one configured concurrent client when only one request is
 attempted. If a client task already completed before cancellation, the intervention
