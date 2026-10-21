@@ -64,6 +64,12 @@ def test_fenced_version_heading_cant_truncate_selected_notes(tmp_path: Path) -> 
         "<!-- pending\nsecond line",
         "TODO",
         "TODO: write release notes",
+        "TODO\u2014write release notes",
+        "- TBD\u2013release details",
+        "PLACEHOLDER; fill this section",
+        "Coming soon...release details",
+        "TODO/write release notes",
+        "TODO\u200dwrite release notes",
         "### Added\n\n- TBD: fill this section",
         "Placeholder content for the final release",
         "Coming soon: release details",
@@ -94,12 +100,17 @@ def test_empty_or_placeholder_notes_fail_before_render(tmp_path: Path, body: str
     assert output.read_text() == "prior reviewed notes"
 
 
-def test_actual_version_body_is_rendered_without_invented_artifact_claims(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "body",
+    ["Beta keys remain supported.", "Added TODO-list support.", "Placeholders render correctly."],
+)
+def test_actual_version_body_is_rendered_without_invented_artifact_claims(
+    tmp_path: Path, body: str
+) -> None:
     """Render the current version only and don't promote candidate notes to deployment facts."""
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
     (tmp_path / "CHANGELOG.md").write_text(
-        "## [Unreleased]\n\n## [0.2.0] - Candidate\nBeta keys remain supported.\n"
-        "\n## [0.1.0]\nEarlier notes.\n"
+        "## [Unreleased]\n\n## [0.2.0] - Candidate\n" + body + "\n\n## [0.1.0]\nEarlier notes.\n"
     )
     output = tmp_path / "notes.md"
     process = subprocess.run(
@@ -111,7 +122,7 @@ def test_actual_version_body_is_rendered_without_invented_artifact_claims(tmp_pa
     )
     assert process.returncode == 0
     assert json.loads(process.stdout)["version"] == "0.2.0"
-    assert output.read_text() == "# PolicyNIM 0.2.0\n\nBeta keys remain supported.\n"
+    assert output.read_text() == f"# PolicyNIM 0.2.0\n\n{body}\n"
 
 
 @pytest.mark.parametrize("literal", ["`<!--`", "`<!-- quoted -->`", "``<!-- `quoted` -->``"])
