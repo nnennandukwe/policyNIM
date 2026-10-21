@@ -2,45 +2,68 @@
 
 ## [Unreleased]
 
-## [0.2.0] - Candidate
+## [0.2.0] - 2026-10-20
 
-These are candidate release notes. Package publication and production rollout still
-need final release receipts. They don't establish coding-client acceptance, provider
-quality or production capacity.
+PolicyNIM 0.2 expands the policy library, adds source-bound MCP guidance and
+retained evaluation jobs, and strengthens package and hosted-runtime checks.
 
-### Implemented foundations
+### Policy sources and guidance
 
-- Immutable policy generations bind source, catalog, index and runtime-rule artifacts.
-  Publication, activation, reader leases, retention and rollback are covered by the
-  generation work in [#117](https://github.com/nnennandukwe/policyNIM/pull/117).
-- Principal-aware operation admission separates accepted work units, active slots and
-  caller outcomes. Weighted evaluation reservations retain their charge after accepted
-  cancellation or failure; they don't represent provider tokens or monetary cost.
-- Policy inventory and readiness diagnostics report source/catalog/index compatibility.
-  Content-free operational reports keep unavailable provider measurements explicit.
+- The public library contains 26 policies and 230 indexed chunks. Versioned
+  generations bind the policy bodies, catalog, index and runtime rules, with
+  explicit activation, reader leases, retention and rollback.
+- Local policy packs support reviewed additions, overrides and exclusions.
+  Catalog, generation and profile identities travel with evaluation evidence;
+  reports from earlier content remain historical evidence.
+- MCP exposes policy search, compilation, preflight, evidence and immutable source
+  resources. Default compiler constraints and preflight actions contain complete
+  quoted policy sources, including their conditions and examples. Callers must
+  assess applicability before treating a quotation as an implementation step.
 
-### Candidate release additions
+### Evaluations and operations
 
-- Grounded MCP compilation, evidence, resource and prompt interfaces are being integrated
-  through [#125](https://github.com/nnennandukwe/policyNIM/pull/125).
-- Durable evaluation submission, ownership, cancellation, case results and retained
-  reports are being integrated through [#130](https://github.com/nnennandukwe/policyNIM/pull/130).
-- Fresh wheel and standalone receipts bind source, dependency lock, policy generation
-  and artifact checksums through [#131](https://github.com/nnennandukwe/policyNIM/pull/131).
-  Signed provenance and optional installer verification are tracked in
-  [#145](https://github.com/nnennandukwe/policyNIM/pull/145).
-- The package metadata prepares version 0.2.0, Beta status and the Python typing marker.
-  Offline evidence collection keeps selected expectations, recomputed artifact facts,
-  supplied execution receipts and operator declarations separate.
+- Evaluation jobs retain their owner, accepted configuration, source generation,
+  case results and reports. Submission, status, cancellation and report access
+  use the existing authenticated MCP surface.
+- Admission uses principal-scoped work allowances and active-operation limits.
+  Accepted work stays charged after cancellation or failure. Work units aren't
+  provider tokens or monetary cost; unavailable usage remains unknown.
+- Interrupted jobs retain available results and don't automatically replay provider
+  calls. Quota finalization and job publication use separate databases: an
+  interruption between their commits can leave completed quota accounting with an
+  interrupted job. Reports preserve that outcome.
+- Operational reports and the synthetic HTTP capacity harness account for caller
+  outcomes, refusal and recovery. Synthetic load results don't establish live
+  NVIDIA throughput or production capacity.
 
-### Compatibility and limits
+### Installation and security
 
-- Beta and operator bearer keys remain supported. OAuth issuer/client acceptance is
-  pending; no external issuer has been selected or configured for production.
-- SDK protocol checks don't establish actual Codex or Claude Code acceptance. Final
-  client, deployment, rollback and optional-dependency receipts remain under
-  [#104](https://github.com/nnennandukwe/policyNIM/issues/104).
-- Measured token usage requires a provider response. Unknown usage isn't zero usage,
-  and neither token cost nor service capacity is inferred from offline tests.
-- Weighted-ledger data needs a compatible application version. Don't restore an older
-  quota writer against migrated state; retain compatible application and policy backups.
+- Version 0.2.0 uses Beta package metadata and ships the Python typing marker.
+  Release gates verify fresh wheels and native standalone archives against source,
+  dependency locks, packaged policies and archive checksums. Signed provenance,
+  installer verification and retained evidence have separate checks.
+- Runtime dependencies include the patched AnyIO, Starlette and HTTPX2 pins.
+  Auth SQLite storage uses private permissions and rejects unsafe aliases while
+  preserving live SQLite locks. Release verifiers isolate their settings home.
+- Phoenix runs in a separate tool environment. PolicyNIM retains its Phoenix
+  client/evaluators, NVIDIA model adapters and Guardrails. The unused bundled NeMo
+  launcher extra was removed; existing launcher installations need their own
+  compatible environment.
+- The optional FastEmbed dependency still selects Pillow 12.3.0, which has known
+  advisories. Its Pillow constraint prevents selecting the patched major version.
+  The standard hosted runtime doesn't install Pillow; the optional extras aren't
+  covered by a claim that every selected dependency is patched.
+
+### Compatibility and remaining limits
+
+- Beta and operator bearer keys remain supported. Production OAuth issuer and
+  registered-client acceptance are pending under #97; no issuer has been selected.
+- Durable evaluation tools don't claim MCP Tasks extension interoperability.
+  That optional integration remains blocked under #102.
+- SDK protocol checks, native coding-client checks, live provider behavior,
+  production persistence and artifact provenance establish different results.
+  Release evidence records each executed scope against its tested source and
+  generation; a skipped check isn't a pass.
+- Preserve compatible application, policy and quota-state backups. An older quota
+  writer mustn't run against migrated weighted-ledger state, and policy rollback
+  must preserve local overrides.
