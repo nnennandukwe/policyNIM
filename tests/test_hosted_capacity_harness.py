@@ -46,17 +46,45 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert report["live_nvidia_calls"] == 0
     assert report["production_capacity_verified"] is False
     scenarios = {item["scenario"]: item for item in report["scenarios"]}
+    failure_summary = json.dumps(
+        {
+            name: {
+                key: value.get(key)
+                for key in (
+                    "measurement_complete",
+                    "outcomes",
+                    "attempted_requests",
+                    "completed_client_responses",
+                    "response_latency_ms",
+                    "rejected_response_latency_ms",
+                    "observed_peak_active_operations",
+                    "provider_stage_counts",
+                    "state_read_failure_counts",
+                    "server_exit_code",
+                    "server_failure_diagnostics",
+                )
+            }
+            for name, value in scenarios.items()
+        },
+        sort_keys=True,
+    )
     assert scenarios["disconnect"]["drain_observation"] == "terminal_outcome_observed"
     assert scenarios["disconnect"]["intervention_started_with_active_work"] is True
     assert scenarios["shutdown"]["intervention_started_with_active_work"] is True
     assert scenarios["disconnect"]["client_concurrency"] == 1
     assert scenarios["shutdown"]["client_concurrency"] == 1
-    assert scenarios["baseline"]["outcomes"] == {"ok": 12}
-    assert scenarios["baseline"]["successful_search_hit_counts"] == {"5": 12}
+    assert scenarios["baseline"]["outcomes"] == {"ok": 12}, failure_summary
+    assert scenarios["baseline"]["successful_search_hit_counts"] == {"5": 12}, failure_summary
     assert scenarios["saturation"]["outcomes"].get("server_busy", 0) >= 1
-    assert scenarios["locked-database"]["outcomes"] == {"admission_busy": 12}
+    assert scenarios["locked-database"]["outcomes"] == {"admission_busy": 12}, failure_summary
     assert scenarios["locked-database"]["operator_report"]["retained_rows"] == 1  # warmup only
     assert scenarios["locked-database"]["provider_stage_counts"]["embed_query"] == 1
+    assert scenarios["locked-database"]["server_failure_diagnostics"]["tool_failure_counts"] == {
+        "admission_busy": 12
+    }, failure_summary
+    assert scenarios["locked-database"]["server_failure_diagnostics"]["storage_failures"], (
+        failure_summary
+    )
     for scenario in scenarios.values():
         assert scenario["observed_peak_active_operations"] <= 10
         assert scenario["cheap_probe_outcomes"].get("health_200", 0) > 0
@@ -655,3 +683,100 @@ def test_probe_transport_failure_isolated_while_work_remains_active(
     assert result["intervention_probe_observed"] is (not transport_failure)
     assert result["measurement_complete"] is (not transport_failure)
     assert "private-health-payload" not in json.dumps(result)
+
+
+def test_capacity_failure_diagnostics_keep_categories_without_private_payloads() -> None:
+    """Report available safe failure evidence without copying caller or exception payloads."""
+    import runpy
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py")
+    )
+    summarize = namespace["_server_failure_diagnostics"]
+    sentinel = "Bearer private-capacity-token /Users/private/input prompt"
+    events = [
+        {
+            "event": "operation.storage_failure",
+            "phase": "reservation",
+            "exception_class": "OperationalError",
+            "sqlite_code": 5,
+            "os_errno": None,
+            "message": sentinel,
+            "correlation_id": sentinel,
+        },
+        {"event": "mcp.tool", "upstream_failure_class": "admission_busy", "latency_ms": 402.5},
+        {"event": "mcp.tool", "upstream_failure_class": None, "latency_ms": 10.0},
+        {
+            "event": "operation.storage_failure",
+            "phase": sentinel,
+            "exception_class": sentinel,
+            "sqlite_code": sentinel,
+            "os_errno": sentinel,
+        },
+        {"event": "mcp.tool", "upstream_failure_class": sentinel, "latency_ms": float("nan")},
+    ]
+    result = summarize(events)
+    assert result["tool_failure_counts"] == {"admission_busy": 1, "other": 1}
+    assert result["tool_failure_latency_ms"] == {"p50": 402.5, "p95": 402.5, "p99": 402.5}
+    assert result["storage_failures"] == [
+        {
+            "phase": "reservation",
+            "exception_class": "OperationalError",
+            "sqlite_code": 5,
+            "os_errno": None,
+            "count": 1,
+        },
+        {
+            "phase": "other",
+            "exception_class": "OtherError",
+            "sqlite_code": None,
+            "os_errno": None,
+            "count": 1,
+        },
+    ]
+    assert result["database_lock_timing"] == "not_sampled"
+    assert sentinel not in json.dumps(result)
+
+    bounded = summarize(
+        [
+            {
+                "event": "operation.storage_failure",
+                "phase": "reservation",
+                "exception_class": "OperationalError",
+                "sqlite_code": code,
+            }
+            for code in range(50)
+        ]
+    )
+    assert len(bounded["storage_failures"]) == 16
+    assert bounded["additional_storage_failure_events"] == 34
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "retry_after_limit",
+        "budget_exhausted",
+        "invalid_response",
+        "auth",
+        "endpoint_not_found",
+        "endpoint_unavailable",
+        "shutdown",
+        "bad_request",
+        "http_status",
+        "unexpected",
+        "interrupted",
+    ],
+)
+def test_capacity_diagnostics_preserve_owned_provider_failure_reason(failure: str) -> None:
+    """Owned provider failures remain visible without accepting arbitrary log labels."""
+    import runpy
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py")
+    )
+    result = namespace["_server_failure_diagnostics"](
+        [{"event": "mcp.tool", "upstream_failure_class": failure, "latency_ms": 5.0}]
+    )
+    assert result["tool_failure_counts"] == {failure: 1}
+    assert result["tool_failure_latency_ms"] == {"p50": 5.0, "p95": 5.0, "p99": 5.0}

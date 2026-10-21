@@ -74,8 +74,8 @@ sha256_file() {
 
 verify_attestation() {
   case "${POLICYNIM_VERIFY_ATTESTATION:-}" in
-    "" | 0 | false | FALSE | no | off) return 0 ;;
-    1 | true | TRUE | yes | required) ;;
+    "" | 0 | [Ff][Aa][Ll][Ss][Ee] | [Nn][Oo] | [Oo][Ff][Ff]) return 0 ;;
+    1 | [Tt][Rr][Uu][Ee] | [Yy][Ee][Ss] | [Rr][Ee][Qq][Uu][Ii][Rr][Ee][Dd]) ;;
     *) fail "Invalid POLICYNIM_VERIFY_ATTESTATION value. Use required or 0." ;;
   esac
   need_command gh

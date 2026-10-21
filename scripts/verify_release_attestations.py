@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import selectors
+import signal
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
@@ -58,6 +60,42 @@ def _diagnostic_hint(stderr: bytes) -> tuple[str, str]:
         "Check GitHub CLI availability and service status, then retry with the same verification "
         "constraints. Use a private operator session for further diagnosis.",
     )
+
+
+def _run_verifier(command: list[str], *, timeout: float) -> tuple[int, bytes]:
+    """Drain the POSIX publishing runner's verifier without spooling untrusted output."""
+    deadline = time.monotonic() + timeout
+    prefix = bytearray()
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    ) as process:
+        assert process.stderr is not None
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stderr, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not selector.select(remaining):
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    block = os.read(process.stderr.fileno(), _DIAGNOSTIC_BYTES)
+                    if not block:
+                        break
+                    available = _DIAGNOSTIC_BYTES + 1 - len(prefix)
+                    if available > 0:
+                        prefix.extend(block[:available])
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+            return returncode, bytes(prefix)
+        finally:
+            if process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                finally:
+                    process.wait()
 
 
 def verify_subjects(
@@ -124,27 +162,21 @@ def verify_subjects(
             for attempt in range(1, 4):
                 result["attempts"] = attempt
                 try:
-                    with tempfile.TemporaryFile() as diagnostic_stream:
-                        process = subprocess.run(
-                            [
-                                "gh",
-                                "attestation",
-                                "verify",
-                                str(path),
-                                "--repo",
-                                repository,
-                                "--signer-workflow",
-                                report["signer_workflow"],
-                                "--source-digest",
-                                revision,
-                            ],
-                            stdout=subprocess.DEVNULL,
-                            stderr=diagnostic_stream,
-                            timeout=timeout,
-                            check=False,
-                        )
-                        diagnostic_stream.seek(0)
-                        diagnostic = diagnostic_stream.read(_DIAGNOSTIC_BYTES + 1)
+                    returncode, diagnostic = _run_verifier(
+                        [
+                            "gh",
+                            "attestation",
+                            "verify",
+                            str(path),
+                            "--repo",
+                            repository,
+                            "--signer-workflow",
+                            report["signer_workflow"],
+                            "--source-digest",
+                            revision,
+                        ],
+                        timeout=timeout,
+                    )
                 except subprocess.TimeoutExpired:
                     result.update(
                         returncode=None,
@@ -182,24 +214,24 @@ def verify_subjects(
                     return report
                 hint, recovery = (
                     ("verified", "")
-                    if process.returncode == 0
+                    if returncode == 0
                     else _diagnostic_hint(diagnostic[:_DIAGNOSTIC_BYTES])
                 )
                 result.update(
-                    returncode=process.returncode,
+                    returncode=returncode,
                     diagnostic_hint=hint,
                     recovery_instruction=recovery,
                 )
                 result["attempt_outcomes"].append(
                     {
                         "attempt": attempt,
-                        "outcome": "verified" if process.returncode == 0 else "rejected",
-                        "returncode": process.returncode,
+                        "outcome": "verified" if returncode == 0 else "rejected",
+                        "returncode": returncode,
                         "diagnostic_hint": hint,
                         "stderr_prefix_truncated": len(diagnostic) > _DIAGNOSTIC_BYTES,
                     }
                 )
-                if process.returncode == 0:
+                if returncode == 0:
                     break
                 if attempt == 3:
                     report["failure"] = "attestation_rejected"

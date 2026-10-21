@@ -228,7 +228,10 @@ verification as incomplete; only nonzero exits retry, up to three attempts with
 two-second waits. Failures retain partial receipts and stop publication. Receipts
 include each attempt's outcome and return code, plus static recovery hints derived
 from at most 8 KiB of stderr. Raw command output isn't printed or retained in the
-receipt. Hints don't establish the cause or relax any verification constraint.
+receipt. On the Ubuntu publishing runner, stderr is drained through a pipe with
+only a bounded prefix held in memory; it isn't spooled to disk. Timeout cleanup
+terminates the owned verifier process group, including children that
+retain the pipe, and reaps the direct verifier process. Hints don't establish the cause or relax any verification constraint.
 Signing permissions belong only to that job.
 The workflow retains the signing bundle and verification receipt as workflow
 artifacts, outside the release inputs they describe.
@@ -245,7 +248,8 @@ receipts; those checks don't replace signing evidence.
 
 Installers can require this check before extraction and replacement. Install
 GitHub CLI and authenticate it with `gh auth login`. Set
-`POLICYNIM_VERIFY_ATTESTATION=required` in the installer process.
+`POLICYNIM_VERIFY_ATTESTATION=required` in the installer process. Both installers
+accept the documented mode names regardless of letter case.
 The installer resolves the selected release tag's commit and verifies the archive
 against that source and release workflow. A missing verifier, unresolved tag or
 rejected attestation stops installation and preserves the previous install.
