@@ -10,6 +10,227 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize(
+    ("distribution", "chunks", "fault"),
+    [
+        ("uniform", 10000, "none"),
+        ("skewed", 10000, "none"),
+        ("uniform", 20, "pointer"),
+        ("uniform", 20, "manifest"),
+    ],
+)
+def test_fixture_uses_managed_health_and_search_with_recovery(
+    tmp_path: Path, distribution: str, chunks: int, fault: str
+) -> None:
+    """Exercise the actual application routes and managed reader failures in an owned child."""
+    root = Path(__file__).resolve().parents[1]
+    control = r'''
+import json, runpy, sys
+from collections import Counter
+from pathlib import Path
+from unittest.mock import patch
+from starlette.testclient import TestClient
+from policynim.services.generations import GenerationStore
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+from policynim.types import EmbeddingIdentity
+
+script, directory, distribution, count, fault = sys.argv[1:]
+root = Path(directory)
+config = {
+    "chunks": int(count),
+    "distribution": distribution,
+    "tokens": ["fixture"],
+    "port": 12345,
+    "delay": 0,
+}
+config_path = root / "fixture.json"
+config_path.write_text(json.dumps(config))
+
+
+def serve(application, **kwargs):
+    """Inspect normal HTTP routes before, during and after owned generation corruption."""
+    with TestClient(application, base_url="http://127.0.0.1:12345") as client:
+        health = client.get("/healthz")
+        assert health.status_code == 200
+        generation_id = health.json()["generation_id"]
+        assert generation_id is not None, "Harness bypasses managed-generation health."
+        assert health.json()["row_count"] == int(count)
+        identity = EmbeddingIdentity(
+            model="synthetic-orthogonal-4", endpoint="https://synthetic.invalid"
+        )
+        generations = GenerationStore(root=root / "generations", embedding=identity)
+        with generations.pin() as snapshot:
+            assert snapshot.generation_id == generation_id
+            index = SQLiteVecIndexStore(
+                path=snapshot.index_path, embedding_identity=identity
+            )
+            try:
+                observed = Counter(chunk.policy.domain for chunk in index.list_chunks())
+            finally:
+                index.close()
+        expected = Counter(
+            f"domain-{i % 4 if distribution == 'uniform' else (0 if i % 10 else 1 + (i // 10) % 3)}"
+            for i in range(int(count))
+        )
+        assert observed == expected
+        headers = {
+            "Authorization": "Bearer fixture",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/call",
+            "Mcp-Name": "policy_search",
+        }
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+                "name": "policy_search",
+                "arguments": {
+                    "query": "synthetic-domain-0",
+                    "domain": "domain-0",
+                    "top_k": 5,
+                },
+            },
+        }
+        response = client.post("/mcp", headers=headers, json=payload).json()["result"]
+        assert not response.get("isError", False), response
+        assert response["structuredContent"]["generation_id"] == generation_id
+        assert len(response["structuredContent"]["hits"]) == 5
+        if fault != "none":
+            target = (
+                root / "generations" / "active.json"
+                if fault == "pointer"
+                else root / "generations" / "objects" / generation_id / "manifest.json"
+            )
+            original = target.read_bytes()
+            if fault == "pointer":
+                target.unlink()
+            else:
+                target.write_bytes(b"invalid-generation-manifest")
+            try:
+                assert client.get("/healthz").status_code == 503
+                rejected = client.post("/mcp", headers=headers, json=payload).json()[
+                    "result"
+                ]
+                assert rejected["isError"] is True
+            finally:
+                target.write_bytes(original)
+            recovered = client.get("/healthz")
+            assert recovered.status_code == 200
+            assert recovered.json()["generation_id"] == generation_id
+            response = client.post("/mcp", headers=headers, json=payload).json()["result"]
+            assert not response.get("isError", False)
+            assert response["structuredContent"]["generation_id"] == generation_id
+        print(
+            json.dumps(
+                {"managed_fixture_verified": True, "chunks": int(count), "fault": fault}
+            )
+        )
+
+
+with patch("uvicorn.run", serve):
+    runpy.run_path(script)["_serve"](config_path)
+'''
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            control,
+            str(root / "scripts/measure_hosted_capacity.py"),
+            str(tmp_path),
+            distribution,
+            str(chunks),
+            fault,
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("generation_id", [None, "b" * 64, "a" * 64])
+def test_rpc_binds_success_to_the_published_generation(generation_id: str | None) -> None:
+    """A valid HTTP search envelope from a different or legacy index isn't successful evidence."""
+    import asyncio
+    import runpy
+
+    import httpx
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py")
+    )
+
+    async def inspect() -> tuple[float, str, int]:
+        """Exercise the existing HTTP response parser with a typed search payload."""
+        transport = httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "content": [],
+                        "structuredContent": {
+                            "query": "synthetic-domain-0",
+                            "top_k": 5,
+                            "hits": [],
+                            "generation_id": generation_id,
+                        },
+                    },
+                },
+            )
+        )
+        async with httpx.AsyncClient(base_url="http://fixture", transport=transport) as client:
+            return await namespace["_rpc"](client, "fixture", expected_generation_id="a" * 64)
+
+    _, outcome, count = asyncio.run(inspect())
+    assert outcome == ("ok" if generation_id == "a" * 64 else "generation_identity_mismatch")
+    assert count == 0
+
+
+@pytest.mark.parametrize(
+    ("generation_id", "row_count", "outcome"),
+    [
+        ("a" * 64, 20, "health_200"),
+        (None, 20, "health_identity_mismatch"),
+        ("b" * 64, 20, "health_identity_mismatch"),
+        ("a" * 64, 21, "health_identity_mismatch"),
+    ],
+)
+def test_health_binds_readiness_to_published_generation_and_count(
+    generation_id: str | None, row_count: int, outcome: str
+) -> None:
+    """Neither a legacy response nor a different managed fixture can establish readiness."""
+    import runpy
+
+    import httpx
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py")
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "ready": True,
+            "table_name": "policy_chunks",
+            "row_count": row_count,
+            "generation_id": generation_id,
+        },
+    )
+    result, _ = namespace["_inspect_health"](
+        response, {"generation_id": "a" * 64, "chunk_count": 20}
+    )
+    assert result == outcome
+
+
 def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path: Path) -> None:
     """Exercise real sockets/SQLite while keeping NVIDIA and production outside the test."""
     root = Path(__file__).resolve().parents[1]
@@ -31,6 +252,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
             "--scenarios",
             "baseline",
             "saturation",
+            "slow-provider",
             "locked-database",
             "disconnect",
             "shutdown",
@@ -45,6 +267,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert report["evidence_kind"] == "synthetic_provider_real_http_and_sqlite_vec"
     assert report["live_nvidia_calls"] == 0
     assert report["production_capacity_verified"] is False
+    assert report["configuration"]["index_scope"] == "managed_generation"
     scenarios = {item["scenario"]: item for item in report["scenarios"]}
     failure_summary = json.dumps(
         {
@@ -82,6 +305,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert scenarios["locked-database"]["paired_active_work_probe_observed"] is False
     assert scenarios["baseline"]["paired_active_work_probe_observed"] is True
     assert scenarios["saturation"]["paired_active_work_probe_observed"] is True
+    assert scenarios["slow-provider"]["paired_active_work_probe_observed"] is True
     assert scenarios["locked-database"]["server_failure_diagnostics"]["tool_failure_counts"] == {
         "admission_busy": 12
     }, failure_summary
@@ -89,6 +313,12 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
         failure_summary
     )
     for scenario in scenarios.values():
+        fixture = scenario["fixture_publication"]
+        assert fixture["chunk_count"] == 100
+        assert scenario["managed_identity_verified"] is True
+        assert scenario["observed_health_generation_ids"] == [fixture["generation_id"]]
+        assert set(scenario["observed_health_row_counts"]) == {"100"}
+        assert scenario["successful_search_identity_validation"] == "published_generation"
         assert scenario["observed_peak_active_operations"] <= 10
         assert scenario["cheap_probe_outcomes"].get("health_200", 0) > 0
         assert scenario["operator_report"]["active_operations"] == 0

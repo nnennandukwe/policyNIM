@@ -100,10 +100,23 @@ are four-dimensional orthogonal vectors; reranking is disabled. The uniform corp
 spreads chunks over four domains. The skewed corpus places 90% in one domain and
 spreads the remainder across the other three. Requests use domain filters and
 record returned hit counts. Synthetic vectors don't test retrieval quality.
-The fixture uses a standalone synthetic SQLite index and replaces the search and
-health service factories. It doesn't exercise managed-generation readiness or
-reader admission, compilation/preflight, generation publication or durable job
-backlog. Those paths need separate final-source evidence.
+Before measurement, the child writes up to four synthetic Markdown policies and
+publishes their requested sections through the normal managed-generation build.
+Health and search use their normal service factories, generation validation and
+reader admission; only provider-component construction is doubled. The child's
+normal environment-backed settings point at its owned fixture state, with private
+home/config/data paths and dotenv discovery disabled. Bearer tokens use the
+supported comma-separated environment contract. It doesn't read personal profiles
+or call an external issuer.
+
+Each scenario records the expected published generation ID/count separately from
+observed health IDs/counts. Typed health responses must match that publication,
+and every successful search response must carry its generation ID. A mismatch
+can't count as a successful probe/search or a complete managed measurement. The
+report names this scope as `configuration.index_scope=managed_generation`.
+Compilation/preflight, concurrent publication/retention and durable job backlog
+still need separate evidence. Fixture publication happens before load starts;
+it isn't a publication-throughput measurement.
 
 Reports include the source revision, dirty-state flag, harness digest, platform,
 CPU count, Python version, provider delay, configured/client concurrency, throughput,
@@ -184,9 +197,12 @@ disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
 
-Those historical receipts predate the explicit paired-probe completeness gate.
-Their recorded timings and revision remain intact; they aren't final-source proof
-that cheap probes overlapped active work under the newer measurement contract.
+Those historical receipts used the standalone SQLite fixture and replaced its
+health/search factories. They also predate the explicit paired-probe completeness
+gate. Their recorded timings and revision remain intact; they aren't final-source
+proof of managed-generation readiness or cheap probes overlapping active work.
+Run the current managed path against the final candidate before using new receipts
+for #103 acceptance.
 
 Fault receipts report one configured concurrent client when only one request is
 attempted. If a client task already completed before cancellation, the intervention
