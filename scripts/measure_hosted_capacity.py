@@ -627,6 +627,8 @@ async def _measure(
         report = await observe_state("final", attempts=3)
         workload_observations = state_observations["probe"] + state_observations["intervention"]
         measurement_complete = report is not None and workload_observations > 0
+        if scenario in {"baseline", "saturation", "slow-provider"}:
+            measurement_complete = measurement_complete and active_probe_observed.is_set()
         if scenario in {"disconnect", "shutdown"}:
             measurement_complete = (
                 measurement_complete
@@ -660,6 +662,7 @@ async def _measure(
             "discovery_latency_ms": _percentiles(cheap_latencies),
             "health_latency_ms": _percentiles(health_latencies),
             "cheap_probe_outcomes": dict(cheap_outcomes),
+            "paired_active_work_probe_observed": active_probe_observed.is_set(),
             "observed_peak_active_operations": active_peak if workload_observations else None,
             "sampled_peak_server_rss_bytes": sampled_peak_rss,
             "memory_sampling": "POSIX ps RSS during readiness/discovery probes",

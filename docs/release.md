@@ -116,6 +116,11 @@ SQLite vector extension; generation import must succeed before the archive ships
 
 ## GitHub Release
 
+Before signing and publishing, the workflow checks the remote release tag against
+the artifact source commit. An existing lightweight or annotated tag must resolve
+to that commit. A missing tag can be created at the verified source; an unavailable
+remote or mismatched existing tag blocks publication. The gate never moves tags.
+
 Create and push a version tag from the commit you want to release:
 
 ```bash
@@ -192,3 +197,43 @@ uses canonical requirement/specifier objects and retains dependency markers for
 all target environments; it doesn't check only dependencies active on the current
 host. A mismatch blocks manifest creation. Rebuild the distribution from the
 selected checkout before retrying.
+
+## Signed release provenance
+
+After manifest checks, the release job signs every subject in `SHA256SUMS` using
+GitHub's pinned `actions/attest` action. Before draft creation, each subject must
+pass `gh attestation verify` against this repository,
+`nnennandukwe/policyNIM/.github/workflows/release.yml` and the exact release source
+commit. Each verifier call has a 45-second timeout. A timeout immediately stops
+verification as incomplete; only nonzero exits retry, up to three attempts with
+two-second waits. Failures retain partial receipts and stop publication. Receipts
+include each attempt's outcome and return code, plus static recovery hints derived
+from at most 8 KiB of stderr. Raw command output isn't printed or retained in the
+receipt. On the Ubuntu publishing runner, stderr is drained through a pipe with
+only a bounded prefix held in memory; it isn't spooled to disk. Timeout cleanup
+terminates the owned verifier process group, including children that
+retain the pipe, and reaps the direct verifier process. Hints don't establish the cause or relax any verification constraint.
+Signing permissions belong only to that job.
+The workflow retains the signing bundle and verification receipt as workflow
+artifacts, outside the release inputs they describe.
+
+This verifies the workflow identity and artifact bytes. It doesn't establish
+independent review, a hermetic build, a security certification or a SLSA level.
+[GitHub's action documentation](https://github.com/actions/attest/tree/59d89421af93a897026c735860bf21b6eb4f7b26)
+explains its provenance and signing permissions. Actual signing and verification
+are observed during the release workflow; local subprocess tests don't create
+cryptographic evidence. Synthetic archive tests prove installer gate ordering
+and preservation of an existing install. Fresh-artifact packaging, runtime and
+client acceptance belong to the separate release evidence and runtime verifier
+receipts; those checks don't replace signing evidence.
+
+Installers can require this check before extraction and replacement. Install
+GitHub CLI and authenticate it with `gh auth login`. Set
+`POLICYNIM_VERIFY_ATTESTATION=required` in the installer process. Both installers
+accept the documented mode names regardless of letter case.
+The installer resolves the selected release tag's commit and verifies the archive
+against that source and release workflow. A missing verifier, unresolved tag or
+rejected attestation stops installation and preserves the previous install.
+Unset the option or set it to `0` for checksum-only installation; invalid values
+fail rather than silently skipping a requested check. Older releases without
+attestations can't pass the required mode.
