@@ -10,11 +10,26 @@ from test_evaluation_jobs import evaluator_factory, job_setup, principal
 from test_grounded_mcp import generation as generation_fixture
 
 from policynim.job_types import EvaluationJobError
+from policynim.services import generations as generation_service
 from policynim.services.evaluation_jobs import EvaluationJobWorker
 from policynim.services.generations import GenerationStore
 from policynim.storage import evaluation_jobs as storage
 
 generation = generation_fixture
+
+
+@pytest.mark.parametrize("limit", ["_MAX_EXPORT_ARCHIVE_BYTES", "_MAX_EXPORT_EXPANDED_BYTES"])
+def test_real_export_size_rejection_has_actionable_job_guidance(
+    generation, tmp_path, monkeypatch, limit
+):
+    """Actual generation compression and artifact traversal reject before job acceptance."""
+    service, suite, _ = job_setup(generation, tmp_path)
+    monkeypatch.setattr(generation_service, limit, 1, raising=False)
+    with pytest.raises(EvaluationJobError, match="archive_too_large.*smaller policy generation"):
+        service.submit(suite, idempotency_key="real-export-bound", principal=principal())
+    assert service.store.aggregate_counts() == {}
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("failure_target", ["quota", "acknowledgement"])

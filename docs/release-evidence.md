@@ -25,6 +25,8 @@ manifest. The provenance check consumes the existing attestation verifier's rece
 and requires its repository, workflow, source and complete verified subject set to
 match those bytes. Output paths must stay outside the release asset directory and
 can't replace selection or receipt inputs. The tools reject these aliases before writing.
+Execution-only selections don't read or hash artifacts, even if an asset directory
+was supplied. A selected provenance check still requires recomputed artifact bytes.
 
 ## Collect existing receipts
 
@@ -102,8 +104,10 @@ uv run --no-sync python scripts/check_release_notes.py \
 
 The checker reads the actual project version and requires one matching nonempty
 CHANGELOG section plus one Unreleased section. Empty/comment-only/placeholder bodies
-fail before rendering or replacing earlier notes. Candidate feature status remains
+fail before rendering or replacing earlier notes. Subheading lines such as
+`### Added` don't count as release-note content. Candidate feature status remains
 in the authored body; the checker doesn't turn pending integration into a shipped claim.
+HTML comments are omitted; comment syntax quoted in backtick code spans is retained.
 
 The release workflow runs the notes checker after resolving the release version and
 before signing or draft creation. After manifest and attestation verification, it

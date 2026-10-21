@@ -6,7 +6,7 @@ A live evaluation can outlast a client connection. PolicyNIM's application jobs 
 
 The suite must pin its catalog digest or policy revisions. Submission captures its JSON, provider/model configuration, limits and complete generation archive in one SQLite transaction. Provider credentials and bearer tokens aren't stored. Changing source files, activating another generation or pruning the original generation can't change an accepted job's inputs.
 
-Captured generation archives can't exceed 256 MiB. Submission checks the exported file before buffering it or accepting quota, and restoration checks retained BLOB size before loading it. `archive_too_large` requires a smaller selected policy generation. Export still performs compression and disk work under the bounded capture slot; this limit isn't a production capacity measurement. Progress inspection reads summary columns without loading retained input or report bodies.
+Captured generation archives can't exceed 256 MiB. The generation exporter already enforces 256 MiB compressed and 512 MiB expanded limits; job submission translates those size failures into `archive_too_large` with smaller-generation guidance. Submission also checks an exported file before loading it for job storage or accepting quota, and restoration checks retained BLOB size before loading it. Export still performs in-memory compression and disk work under the bounded capture slot; these limits aren't production capacity measurements. Progress inspection reads summary columns without loading retained input or report bodies.
 
 ```console
 policynim eval-jobs submit suite.json --idempotency-key demo-2026 \
