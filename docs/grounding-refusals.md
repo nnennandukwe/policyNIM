@@ -11,7 +11,7 @@ Preflight returns empty insufficient context when a generated draft fails source
 | `policy_id_mismatch` | A guidance item's policy ID doesn't own every cited chunk. |
 | `policy_title_mismatch` | A guidance item's title doesn't exactly match its cited source owner. |
 | `missing_policy_guidance` | No guidance item has a supported source reference. |
-| `unsupported_source_text` | A draft changes the complete selected source text, adds unsupported prose or breaks the source-extractive output contract. |
+| `unsupported_source_text` | Retained source ownership can't be reproduced or doesn't match, or the draft changes selected source text, adds unsupported prose or breaks the source-extractive output contract. |
 
 These codes identify structural refusal, not semantic correctness. They don't contain model-supplied values. Existing generation trace summaries remain advisory model output. Inspecting a code doesn't authorize weakening source checks or changing evaluation expectations. A later passing replay doesn't rewrite an earlier failed receipt.
 
