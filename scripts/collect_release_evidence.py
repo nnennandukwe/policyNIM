@@ -405,6 +405,10 @@ def provenance_result(
         return result
     try:
         raw = read_bytes(path)
+    except (OSError, ValueError) as exc:
+        result.update(reason="provenance_input_unavailable", error_class=type(exc).__name__)
+        return result
+    try:
         receipt = decode_json(raw)
         if not isinstance(receipt, dict):
             raise ValueError("Provenance receipt must be an object.")

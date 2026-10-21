@@ -67,6 +67,8 @@ isn't independent execution evidence.
 The report retains the expected selection, observed identities, scoped check results,
 receipt checksums, declarations and sanitized input failures. Required missing,
 failed, skipped, timed-out, nonzero, mismatched or incomplete results hold the gate.
+An unavailable provenance input reports `provenance_input_unavailable` with a safe
+error class; readable but invalid or mismatched receipts report `provenance_mismatch`.
 An all-skipped or empty execution set can't pass. Separate artifact consistency,
 published-channel installation, actual client acceptance, deployment match and rollback.
 This report alone doesn't complete #104 or authorize a production claim.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -281,6 +282,49 @@ def test_invalid_supplied_evidence_is_sanitized_and_holds(
     process, report = run_collector(path, assets, *arguments)
     assert process.returncode == 1 and report["input_errors"]
     assert marker not in process.stdout and marker not in process.stderr
+
+
+@pytest.mark.parametrize(
+    ("fault", "error_class"),
+    [
+        ("missing", "FileNotFoundError"),
+        ("symlink", "ValueError"),
+        pytest.param(
+            "unreadable",
+            "PermissionError",
+            marks=pytest.mark.skipif(
+                os.name == "nt" or getattr(os, "geteuid", lambda: 0)() == 0,
+                reason="POSIX read-mode denial needs an unprivileged Unix process.",
+            ),
+        ),
+    ],
+)
+def test_unavailable_provenance_input_isnt_a_receipt_mismatch(
+    candidate, tmp_path: Path, fault: str, error_class: str
+) -> None:
+    """Keep the real CLI on hold with a safe input diagnosis before receipt validation."""
+    path, selection, assets = candidate
+    selection["required_checks"].append({"id": "provenance", "kind": "provenance"})
+    path.write_text(json.dumps(selection))
+    receipt_path = tmp_path / "private-provenance.json"
+    if fault == "symlink":
+        receipt_path.symlink_to(path)
+    elif fault == "unreadable":
+        receipt_path.write_text("private-verifier-detail")
+        receipt_path.chmod(0)
+    try:
+        process, report = run_collector(path, assets, "--provenance-receipt", str(receipt_path))
+    finally:
+        if fault == "unreadable":
+            receipt_path.chmod(0o600)
+    assert process.returncode == 1 and report["decision"] == "hold"
+    check = report["checks"][1]
+    assert check["status"] == "failed" and check["observed"] == {}
+    assert check["reason"] == "provenance_input_unavailable"
+    assert check["error_class"] == error_class
+    assert "receipt_sha256" not in check
+    assert "private-verifier-detail" not in process.stdout
+    assert str(receipt_path) not in process.stdout
 
 
 def provenance_receipt(selection: dict, assets: Path) -> dict:
