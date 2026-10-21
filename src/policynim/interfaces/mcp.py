@@ -777,10 +777,11 @@ def _register_tools(
         *,
         ctx: Context,
     ) -> PreflightResult:
-        """Get citation-backed policy guidance, review flags and tests for a coding task.
+        """Return complete selected policy sources with canonical citations for a coding task.
 
-        Recommendations are generated advice. Review their cited source before applying
-        implementation details; they aren't independently verified policy facts.
+        Default responses quote whole policy bodies, including conditions and examples.
+        Review applicability before treating quoted text as an implementation requirement.
+        Source fidelity doesn't establish source trust or runtime policy compliance.
         """
         principal = get_principal("policy_preflight")
         try:

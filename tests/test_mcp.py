@@ -776,6 +776,13 @@ def test_mcp_describes_typed_results_and_bounded_inputs() -> None:
         async with Client(server) as client:
             discovered = await client.list_tools()
             by_name = {tool.name: tool for tool in discovered.tools}
+            for name in ("policy_compile", "policy_preflight", "policy_preflight_evidence"):
+                description = by_name[name].description
+                assert description is not None
+                assert "whole policy bodies" in description
+                assert "conditions and examples" in description
+                assert "Review applicability" in description
+                assert "doesn't establish source trust or runtime policy compliance" in description
             for name, result_field in (
                 ("policy_search", "hits"),
                 ("policy_preflight", "citations"),
