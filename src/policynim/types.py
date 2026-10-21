@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -13,6 +14,7 @@ MIN_TOP_K = 1
 MAX_TOP_K = 20
 DEFAULT_TOP_K = 5
 TopK = Annotated[int, Field(ge=MIN_TOP_K, le=MAX_TOP_K)]
+GenerationID = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 TaskType = Literal[
     "bug_fix",
     "refactor",
@@ -290,7 +292,7 @@ class ShellCommandActionRequest(RuntimeActionRequestBase):
     @classmethod
     def validate_command(cls, value: list[str]) -> list[str]:
         """Validate executable and argument boundaries without changing their contents."""
-        if not value[0]:
+        if not value[0].strip():
             raise ValueError("command executable must not be empty.")
         for index, item in enumerate(value):
             if "\x00" in item:
@@ -335,6 +337,8 @@ RuntimeActionRequest = Annotated[
 
 class RuntimeDecisionResult(StrictModel):
     """Read-only runtime decision output with matched rule evidence."""
+
+    generation_id: GenerationID | None = None
 
     request: RuntimeActionRequest
     decision: RuntimeDecision
@@ -418,6 +422,7 @@ RuntimeExecutionMetadata = (
 class RuntimeExecutionResult(StrictModel):
     """Top-level result for one runtime execution attempt."""
 
+    generation_id: GenerationID | None = None
     execution_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     request: RuntimeExecutionRequest
@@ -435,6 +440,7 @@ class RuntimeExecutionResult(StrictModel):
 class RuntimeExecutionEvidenceRecord(StrictModel):
     """One immutable persisted runtime execution evidence event."""
 
+    generation_id: GenerationID | None = None
     event_id: str = Field(min_length=1)
     execution_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
@@ -455,6 +461,7 @@ class RuntimeExecutionEvidenceRecord(StrictModel):
 class RuntimeEvidenceExecutionSummary(StrictModel):
     """Compact summary for one execution inside a reported evidence session."""
 
+    generation_id: GenerationID | None = None
     execution_id: str = Field(min_length=1)
     action_kind: RuntimeActionKind
     task: str = Field(min_length=1)
@@ -544,6 +551,7 @@ class Citation(StrictModel):
     section: str
     lines: str
     chunk_id: str
+    resource_uri: str | None = None
 
 
 class SearchRequest(StrictModel):
@@ -576,6 +584,7 @@ class SearchResult(StrictModel):
     top_k: int
     hits: list[ScoredChunk] = Field(default_factory=list)
     insufficient_context: bool = False
+    generation_id: GenerationID | None = None
 
 
 class RouteRequest(StrictModel):
@@ -634,6 +643,7 @@ class SelectedPolicy(StrictModel):
 class PolicySelectionPacket(StrictModel):
     """Inspection-friendly packet emitted by task-aware policy routing."""
 
+    generation_id: GenerationID | None = None
     task: str
     domain: str | None = None
     top_k: int
@@ -646,6 +656,8 @@ class PolicySelectionPacket(StrictModel):
 
 class RouteResult(StrictModel):
     """Internal route result with packet JSON and generator-ready context."""
+
+    generation_id: GenerationID | None = None
 
     packet: PolicySelectionPacket
     retained_context: list[ScoredChunk] = Field(default_factory=list)
@@ -703,6 +715,8 @@ class CompiledPolicyConstraint(StrictModel):
 class CompiledPolicyPacket(StrictModel):
     """Citation-backed policy constraints for planning and generation."""
 
+    generation_id: GenerationID | None = None
+
     task: str
     domain: str | None = None
     top_k: int
@@ -722,12 +736,18 @@ class CompiledPolicyPacket(StrictModel):
 class CompileResult(StrictModel):
     """Internal compile result with packet JSON and generator-ready context."""
 
+    generation_id: GenerationID | None = None
+
     packet: CompiledPolicyPacket
     retained_context: list[ScoredChunk] = Field(default_factory=list)
 
 
 class IngestResult(StrictModel):
     """Summary of one completed ingest run."""
+
+    generation_id: GenerationID | None = None
+    previous_generation_id: GenerationID | None = None
+    warnings: list[str] = Field(default_factory=list)
 
     corpus_path: str
     profile_path: str | None = None
@@ -743,6 +763,8 @@ class IngestResult(StrictModel):
 
 class HealthCheckResult(StrictModel):
     """Hosted runtime health payload for HTTP readiness checks."""
+
+    generation_id: GenerationID | None = None
 
     status: Literal["ok", "error"]
     ready: bool
@@ -886,6 +908,9 @@ class GeneratedPreflightDraft(StrictModel):
 
 class PreflightResult(StrictModel):
     """Preflight response shared by CLI and MCP."""
+
+    run_id: str | None = None
+    generation_id: GenerationID | None = None
 
     task: str
     domain: str | None = None
@@ -1080,6 +1105,9 @@ class PolicyEvidenceTraceConformanceCheck(StrictModel):
 class PolicyEvidenceTrace(StrictModel):
     """Replay-free evidence trace for one policy-conditioned preflight run."""
 
+    run_id: str | None = None
+    generation_id: GenerationID | None = None
+
     task: str
     domain: str | None = None
     top_k: int
@@ -1129,6 +1157,8 @@ class PreflightRegenerationRequest(StrictModel):
 class PreflightRegenerationResult(StrictModel):
     """Typed result for a bounded policy-backed regeneration loop."""
 
+    generation_id: GenerationID | None = None
+
     request: PreflightRegenerationRequest
     passed: bool
     stop_reason: RegenerationStopReason
@@ -1150,13 +1180,38 @@ class EvalCase(StrictModel):
     expected_insufficient_context: bool = False
     expected_chunk_ids: list[str] = Field(default_factory=list)
     expected_policy_ids: list[str] = Field(default_factory=list)
+    forbidden_policy_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_expectations(self) -> EvalCase:
+        """Reject contradictory fixtures before evaluation can start provider work."""
+        if set(self.expected_policy_ids) & set(self.forbidden_policy_ids):
+            raise ValueError("A policy cannot be both expected and forbidden.")
+        if self.expected_insufficient_context and (
+            self.expected_policy_ids or self.expected_chunk_ids
+        ):
+            raise ValueError("Insufficient-context cases cannot require grounded output evidence.")
+        return self
 
 
 class EvalSuite(StrictModel):
     """Named bundle of eval cases."""
 
     name: str
-    cases: list[EvalCase] = Field(default_factory=list)
+    cases: list[EvalCase] = Field(min_length=1)
+    expected_catalog_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    expected_policy_revisions: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_cases(self) -> EvalSuite:
+        """Keep case identity unambiguous and revision pins explicit."""
+        ids = [case.case_id for case in self.cases]
+        if any(not value.strip() for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("Evaluation case IDs must be nonempty and unique.")
+        for digest in self.expected_policy_revisions.values():
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise ValueError("Expected policy revisions must be SHA256 digests.")
+        return self
 
 
 class EvalCaseMetrics(StrictModel):
@@ -1171,6 +1226,8 @@ class EvalCaseMetrics(StrictModel):
 
 class EvalCaseResult(StrictModel):
     """Scored result for one eval case under a specific rerank mode."""
+
+    generation_id: GenerationID | None = None
 
     case_id: str
     kind: EvalKind
@@ -1188,6 +1245,10 @@ class EvalCaseResult(StrictModel):
     expected_policy_ids: list[str] = Field(default_factory=list)
     actual_policy_ids: list[str] = Field(default_factory=list)
     matched_policy_ids: list[str] = Field(default_factory=list)
+    forbidden_policy_ids: list[str] = Field(default_factory=list)
+    actual_citations: list[Citation] = Field(default_factory=list)
+    search_result: SearchResult | None = None
+    preflight_result: PreflightResult | None = None
     actual_summary: str | None = None
     conformance_result: PolicyConformanceResult | None = None
     evidence_trace: PolicyEvidenceTrace | None = None
@@ -1199,6 +1260,8 @@ class EvalAggregateMetrics(StrictModel):
     """Aggregate metrics for one rerank mode run."""
 
     case_count: int = Field(ge=0)
+    expected_chunk_case_count: int = Field(default=0, ge=0)
+    expected_policy_case_count: int = Field(default=0, ge=0)
     passed_count: int = Field(ge=0)
     search_case_count: int = Field(ge=0)
     search_passed_count: int = Field(ge=0)
@@ -1216,8 +1279,75 @@ class EvalAggregateMetrics(StrictModel):
     conformance_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class ChatRequestConfiguration(StrictModel):
+    """Resolved sampling and output settings shared by dispatch and reporting."""
+
+    model: str
+    temperature: float
+    top_p: float
+    enable_thinking: bool | None = None
+    output_mode: Literal["default", "json_schema"] = "default"
+
+
+class ConformanceThresholds(StrictModel):
+    """Score boundaries used by the optional conformance judge."""
+
+    final_adherence: float = Field(ge=0.0, le=1.0)
+    trajectory_adherence: float = Field(ge=0.0, le=1.0)
+
+
+class EvalEffectiveConfiguration(StrictModel):
+    """Resolved run settings, without credentials or claims about provider invocation."""
+
+    provider: Literal["nvidia", "synthetic"] = "nvidia"
+    embedding_model: str | None = None
+    reranking_model: str | None = None
+    chat: ChatRequestConfiguration | None = None
+    top_k_by_case: dict[str, int]
+    rerank_enabled: bool
+    request_timeout_seconds: float | None = None
+    operation_timeout_seconds: float
+    max_retries: int | None = None
+    conformance_thresholds: ConformanceThresholds | None = None
+
+
+EvalFamilySource = Literal["pack", "domain", "unassigned"]
+
+
+class EvalFamilyCoverage(StrictModel):
+    """Executed gold cases assigned to a sealed source family."""
+
+    family: str
+    source: EvalFamilySource
+    case_ids: list[str]
+    passed_case_ids: list[str]
+    case_count: int = Field(ge=0)
+    passed_case_count: int = Field(ge=0)
+    conformance_case_count: int = Field(default=0, ge=0)
+    judged_case_count: int | None = Field(default=None, ge=0)
+    operation_counts: dict[EvalKind, int]
+
+
+class EvalSourceCoverage(StrictModel):
+    """Pinned profile and overlapping family coverage from executed expectations only."""
+
+    profile_id: str | None = None
+    profile_digest: str | None = None
+    executed_case_count: int = Field(ge=0)
+    families: list[EvalFamilyCoverage] = Field(default_factory=list)
+
+
 class EvalModeRunResult(StrictModel):
     """All eval results for one rerank mode."""
+
+    generation_id: GenerationID | None = None
+    suite_digest: str | None = None
+    suite_definition: EvalSuite | None = None
+    catalog_digest: str | None = None
+    provider_models: dict[str, str] = Field(default_factory=dict)
+    provider_usage: Literal["not_performed", "unavailable"] = "not_performed"
+    effective_configuration: EvalEffectiveConfiguration | None = None
+    source_coverage: EvalSourceCoverage | None = None
 
     backend: EvalBackend = "default"
     rerank_enabled: bool
@@ -1241,6 +1371,9 @@ class EvalComparisonDelta(StrictModel):
 
 class EvalRunResult(StrictModel):
     """Top-level eval command result."""
+
+    generation_id: GenerationID | None = None
+    suite_digest: str | None = None
 
     mode: EvalExecutionMode
     backend: EvalBackend = "default"

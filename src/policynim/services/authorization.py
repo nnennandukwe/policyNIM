@@ -44,6 +44,15 @@ EVALUATE_SCOPE = "policies:evaluate"
 OPERATION_SCOPES = {
     "policy_search": frozenset({READ_SCOPE}),
     "policy_preflight": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "policy_compile": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "policy_preflight_evidence": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "policy_resource": frozenset({READ_SCOPE}),
+    "policy_review_prompt": frozenset({READ_SCOPE}),
+    "eval_submit": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "eval_inspect": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "eval_result": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "eval_cancel": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
+    "eval_report_resource": frozenset({READ_SCOPE, EVALUATE_SCOPE}),
 }
 SUPPORTED_SCOPES = [READ_SCOPE, EVALUATE_SCOPE]
 LOGGER = logging.getLogger(__name__)

@@ -15,11 +15,12 @@ from policynim.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
-def clean_catalog_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def clean_catalog_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Prevent cached settings and personal credentials from entering source-only tests."""
     for key in list(os.environ):
         if key.startswith("POLICYNIM_") or key == "NVIDIA_API_KEY":
             monkeypatch.delenv(key)
+    monkeypatch.setenv("POLICYNIM_GENERATIONS_DIR", str(tmp_path / "isolated-generations"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -35,9 +36,9 @@ def test_catalog_commands_work_without_provider_credentials(monkeypatch, tmp_pat
     assert result.exit_code == 0, result.output
     catalog = json.loads(result.stdout)
     assert catalog["scope"] == "source"
-    assert catalog["authored_count"] == catalog["effective_count"] == 15
+    assert catalog["authored_count"] == catalog["effective_count"] == 26
     assert catalog["indexed_count"] is None
-    assert len(catalog["policies"]) == 15
+    assert len(catalog["policies"]) == 26
     shown = runner.invoke(app, ["policies", "show", "SEC-AUTH-001", "--format", "json"])
     assert shown.exit_code == 0, shown.output
     policy = json.loads(shown.stdout)
@@ -104,15 +105,15 @@ def test_provenance_round_trips_through_real_sqlite(tmp_path: Path) -> None:
     """Both dump and retrieval preserve declared source details and actual content revision."""
     from policynim.ingest.chunking import chunk_policy_documents
     from policynim.ingest.loader import load_policy_documents
+    from policynim.services.index_store import create_index_store
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
     from policynim.types import EmbeddedChunk
 
     root = tmp_path / "pack"
     write_pack(root)
     chunks = chunk_policy_documents(load_policy_documents(root))
     settings = Settings(index_db_path=tmp_path / "index.sqlite3")
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     store.replace([EmbeddedChunk(**chunk.model_dump(), vector=[1.0, 0.0]) for chunk in chunks])
     dumped = store.list_chunks()
     found = store.search([1.0, 0.0], top_k=1)
@@ -141,9 +142,9 @@ def test_invalid_manifest_fails_before_real_ingest_provider_work(tmp_path: Path)
     from test_index_identity import SpyEmbedder
 
     from policynim.errors import InvalidPolicyDocumentError
+    from policynim.services.index_store import create_index_store
     from policynim.services.ingest import IngestService
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
 
     root = tmp_path / "pack"
     manifest = write_pack(root)
@@ -155,7 +156,7 @@ def test_invalid_manifest_fails_before_real_ingest_provider_work(tmp_path: Path)
     rules = tmp_path / "rules.json"
     service = IngestService(
         embedder=embedder,
-        index_store=create_index_store(Settings(index_db_path=output)),
+        index_store=create_index_store(Settings(index_db_path=output), legacy=True),
         corpus_root=root,
         embedding_model="fixture/model",
         runtime_rules_artifact_path=rules,
@@ -254,7 +255,7 @@ def test_json_catalog_and_show_match_declared_models(monkeypatch, tmp_path: Path
     """Machine consumers can validate both command responses using their public schemas."""
     from jsonschema import validate
 
-    from policynim.services.catalog import CatalogPolicy, PolicyCatalog
+    from policynim.services.catalog import CatalogPolicyView, PolicyCatalog
 
     root = tmp_path / "pack"
     write_pack(root)
@@ -263,7 +264,7 @@ def test_json_catalog_and_show_match_declared_models(monkeypatch, tmp_path: Path
     shown = CliRunner().invoke(app, ["policies", "show", "LOG-001", "--format", "json"])
     assert listed.exit_code == shown.exit_code == 0
     validate(json.loads(listed.stdout), PolicyCatalog.model_json_schema())
-    validate(json.loads(shown.stdout), CatalogPolicy.model_json_schema())
+    validate(json.loads(shown.stdout), CatalogPolicyView.model_json_schema())
     missing = CliRunner().invoke(app, ["policies", "show", "ABSENT", "--format", "json"])
     assert missing.exit_code == 1
     assert "policies list" in json.loads(missing.stdout)["message"]
@@ -279,16 +280,16 @@ def test_index_provenance_compatibility_and_failure_gate(tmp_path: Path, mutatio
     from policynim.errors import IndexCompatibilityError
     from policynim.ingest.chunking import chunk_policy_documents
     from policynim.ingest.loader import load_policy_documents
+    from policynim.services.index_store import create_index_store
     from policynim.services.search import SearchService
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
     from policynim.types import EmbeddedChunk, SearchRequest
 
     root = tmp_path / "pack"
     write_pack(root)
     chunks = chunk_policy_documents(load_policy_documents(root))
     path = tmp_path / "index.sqlite3"
-    store = create_index_store(Settings(index_db_path=path))
+    store = create_index_store(Settings(index_db_path=path), legacy=True)
     store.replace([EmbeddedChunk(**chunk.model_dump(), vector=[1.0, 0.0]) for chunk in chunks])
     assert store.inspect_readiness().state == "ready"
     with sqlite3.connect(path) as conn:
@@ -319,15 +320,17 @@ def test_ingestion_returns_the_catalog_compiled_before_embedding(tmp_path: Path)
     from test_index_identity import SpyEmbedder
 
     from policynim.services.catalog import build_policy_catalog
+    from policynim.services.index_store import create_index_store
     from policynim.services.ingest import IngestService
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
 
     root = tmp_path / "pack"
     write_pack(root)
     service = IngestService(
         embedder=SpyEmbedder(),
-        index_store=create_index_store(Settings(index_db_path=tmp_path / "index.sqlite3")),
+        index_store=create_index_store(
+            Settings(index_db_path=tmp_path / "index.sqlite3"), legacy=True
+        ),
         corpus_root=root,
         embedding_model="fixture/model",
         runtime_rules_artifact_path=tmp_path / "rules.json",
@@ -342,8 +345,8 @@ def test_catalog_rejection_blocks_embedding_and_publication(monkeypatch, tmp_pat
 
     from policynim.errors import InvalidPolicyDocumentError
     from policynim.services import ingest as ingest_module
+    from policynim.services.index_store import create_index_store
     from policynim.settings import Settings
-    from policynim.storage import create_index_store
 
     root = tmp_path / "pack"
     write_pack(root)
@@ -357,7 +360,7 @@ def test_catalog_rejection_blocks_embedding_and_publication(monkeypatch, tmp_pat
     monkeypatch.setattr(ingest_module, "compile_policy_catalog", reject_catalog)
     service = ingest_module.IngestService(
         embedder=embedder,
-        index_store=create_index_store(Settings(index_db_path=output)),
+        index_store=create_index_store(Settings(index_db_path=output), legacy=True),
         corpus_root=root,
         embedding_model="fixture/model",
         runtime_rules_artifact_path=rules,

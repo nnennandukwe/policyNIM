@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.interfaces.cli import app
 from policynim.services.catalog import build_policy_catalog
+from policynim.services.index_store import create_index_store
 from policynim.services.ingest import IngestService
 from policynim.services.inventory import inspect_source_inventory
 from policynim.services.profiles import (
@@ -31,18 +32,18 @@ from policynim.services.profiles import (
     update_profile,
 )
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
 from policynim.types import RuntimeRulesArtifact
 
 NO_ENV: dict[str, Any] = {"_env_file": None}
 
 
 @pytest.fixture(autouse=True)
-def clean_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Prevent credentials, personal profiles, and cached settings from entering tests."""
     for key in list(os.environ):
         if key.startswith("POLICYNIM_") or key == "NVIDIA_API_KEY":
             monkeypatch.delenv(key)
+    monkeypatch.setenv("POLICYNIM_GENERATIONS_DIR", str(tmp_path / "isolated-generations"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -152,7 +153,7 @@ def test_composition_flows_through_real_index_retrieval_and_runtime_rules(
     settings = Settings(
         **NO_ENV, profile=profile_path, index_db_path=profile_path.parent / "index.sqlite3"
     )
-    store = create_index_store(settings)
+    store = create_index_store(settings, legacy=True)
     rules = profile_path.parent / "rules.json"
     result = IngestService(
         embedder=SpyEmbedder(),
@@ -304,7 +305,7 @@ def test_invalid_decisions_fail_before_embeddings_and_writes(
     with pytest.raises(InvalidPolicyDocumentError, match=diagnostic):
         IngestService(
             embedder=embedder,
-            index_store=create_index_store(settings),
+            index_store=create_index_store(settings, legacy=True),
             corpus_root=profile_path.parent / "unused",
             embedding_model="test",
             runtime_rules_artifact_path=rules,
@@ -637,7 +638,7 @@ def test_ingest_rejects_looped_profile_pack_before_embedding(profile_path: Path)
     settings = Settings(**NO_ENV, index_db_path=profile_path.parent / "index.sqlite3")
     with IngestService(
         embedder=embedder,
-        index_store=create_index_store(settings),
+        index_store=create_index_store(settings, legacy=True),
         corpus_root=profile_path.parent / "unused",
         embedding_model=settings.nvidia_embed_model,
         runtime_rules_artifact_path=profile_path.parent / "rules.json",
@@ -839,7 +840,7 @@ def test_ingest_cant_write_into_any_selected_pack(profile_path: Path) -> None:
     with pytest.raises(IndexCompatibilityError, match="outside policy sources"):
         IngestService(
             embedder=embedder,
-            index_store=create_index_store(settings),
+            index_store=create_index_store(settings, legacy=True),
             corpus_root=profile_path.parent / "unused",
             embedding_model="test",
             runtime_rules_artifact_path=profile_path.parent / "rules.json",
@@ -1163,11 +1164,12 @@ def test_profile_factory_doesnt_require_bundled_sources(
         """Inject the deterministic embedding boundary without credentials or network access."""
         return embedder
 
-    monkeypatch.setattr(ingest, "resolve_corpus_root", missing_bundle)
+    monkeypatch.setattr("policynim.services.generation_sources.resolve_corpus_root", missing_bundle)
     monkeypatch.setattr(ingest, "_create_default_embedder", fixture_embedder)
     settings = Settings(
         **NO_ENV,
         profile=profile_path,
+        generations_dir=profile_path.parent / "generations",
         index_db_path=profile_path.parent / "profile.sqlite3",
         runtime_rules_artifact_path=profile_path.parent / "profile-rules.json",
     )

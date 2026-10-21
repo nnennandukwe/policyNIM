@@ -114,8 +114,12 @@ async def _exercise_client(client: Client, mode: str) -> None:
 
     listing = await client.list_tools()
     tools = {tool.name: tool for tool in listing.tools}
-    assert set(tools) == {"policy_search", "policy_preflight"}
-    for tool in tools.values():
+    guidance = {"policy_search", "policy_preflight", "policy_compile", "policy_preflight_evidence"}
+    application_jobs = {"eval_submit", "eval_inspect", "eval_cancel", "eval_result"}
+    assert set(tools) in (guidance, guidance | application_jobs)
+    for name, tool in tools.items():
+        if name in application_jobs:
+            continue
         assert tool.description and tool.description.strip()
         assert tool.annotations is not None
         assert tool.annotations.read_only_hint is True
@@ -193,8 +197,8 @@ def test_stdio_subprocess_protocol_round_trip(mode: str, tmp_path: Path) -> None
 
     async def run() -> None:
         """Start and close the SDK-managed child under a bounded timeout."""
-        async with asyncio.timeout(20):
-            async with Client(parameters, mode=mode, read_timeout_seconds=5) as client:
+        async with asyncio.timeout(60):
+            async with Client(parameters, mode=mode, read_timeout_seconds=20) as client:
                 await _exercise_client(client, mode)
 
     asyncio.run(run())

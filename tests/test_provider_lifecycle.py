@@ -401,7 +401,7 @@ def test_live_eval_factories_close_partial_provider_graphs(monkeypatch, kind: st
     with pytest.raises(RuntimeError, match="construction failed"):
         factory(settings(), rerank_enabled=True, **kwargs)
     expected = {
-        "search": {"embedder", "reranker"},
+        "search": set(),
         "preflight": {"embedder", "reranker", "generator"},
         "regeneration": {"embedder", "reranker", "generator", "compiler"},
     }[kind]

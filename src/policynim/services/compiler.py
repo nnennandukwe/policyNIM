@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, PolicyCompiler, Reranker
+from policynim.errors import PolicyContextError
+from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.settings import Settings, get_settings
+from policynim.source_units import MAX_OUTPUT_BYTES, SourceCatalog, SourceContext
 from policynim.types import (
     Citation,
     CompiledPolicyConstraint,
@@ -35,9 +38,11 @@ class PolicyCompilerService:
         index_store: IndexStore | None = None,
         reranker: Reranker | None = None,
         operation_timeout_seconds: float = 120.0,
+        source_catalog_resolver: Callable[[Sequence[ScoredChunk]], SourceCatalog] | None = None,
     ) -> None:
         """Assign operation-local dependencies and the outer deadline default."""
         self._operation_timeout_seconds = operation_timeout_seconds
+        self._source_catalog_resolver = source_catalog_resolver
         if router is None:
             if embedder is None or index_store is None or reranker is None:
                 raise ValueError(
@@ -51,6 +56,12 @@ class PolicyCompilerService:
             )
         self._router = router
         self._compiler = compiler
+
+    def source_catalog(self, context: Sequence[ScoredChunk]) -> SourceCatalog:
+        """Expose only source bodies owned by the same router and held reader lease."""
+        if self._source_catalog_resolver is not None:
+            return self._source_catalog_resolver(context)
+        return source_catalog_for(self._router, context)
 
     def __enter__(self) -> PolicyCompilerService:
         return self
@@ -81,30 +92,56 @@ class PolicyCompilerService:
         selection_packet = route_result.packet
         if selection_packet.insufficient_context or not route_result.retained_context:
             return CompileResult(
-                packet=_insufficient_packet_from_selection(selection_packet),
+                packet=_insufficient_packet_from_selection(selection_packet).model_copy(
+                    update={"generation_id": route_result.generation_id}
+                ),
                 retained_context=route_result.retained_context,
+                generation_id=route_result.generation_id,
             )
 
+        catalog = self.source_catalog(route_result.retained_context)
+        if not catalog.units:
+            return CompileResult(
+                packet=_insufficient_packet_from_selection(selection_packet).model_copy(
+                    update={"generation_id": route_result.generation_id}
+                ),
+                retained_context=route_result.retained_context,
+                generation_id=route_result.generation_id,
+            )
         check_budget()
         generated_draft = self._compiler.compile_policy_packet(
             request,
             selection_packet,
-            route_result.retained_context,
+            SourceContext(tuple(route_result.retained_context), catalog),
         )
+        if self.source_catalog(
+            route_result.retained_context
+        ) != catalog or not catalog.accepts_compiler(generated_draft):
+            generated_draft = GeneratedCompiledPolicyDraft(insufficient_context=True)
         compiled_packet = _materialize_compiled_packet(
             selection_packet,
             route_result.retained_context,
             generated_draft,
-        )
+        ).model_copy(update={"generation_id": route_result.generation_id})
+        if len(compiled_packet.model_dump_json().encode("utf-8")) > MAX_OUTPUT_BYTES:
+            raise PolicyContextError(output_budget=True)
         return CompileResult(
             packet=compiled_packet,
             retained_context=route_result.retained_context,
+            generation_id=route_result.generation_id,
         )
+
+
+def source_catalog_for(owner: object, context: Sequence[ScoredChunk]) -> SourceCatalog:
+    """Fail closed when an injected service doesn't own complete pinned source documents."""
+    resolver = getattr(owner, "source_catalog", None)
+    catalog = resolver(context) if callable(resolver) else None
+    return catalog if isinstance(catalog, SourceCatalog) else SourceCatalog()
 
 
 def create_policy_compiler_service(settings: Settings | None = None) -> PolicyCompilerService:
     """Build the default policy compiler service from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     router = create_policy_router_service(active_settings)
     try:
         compiler = _create_default_policy_compiler(active_settings)
@@ -166,7 +203,7 @@ def _materialize_compiled_packet(
     if not all_constraints:
         return _insufficient_packet_from_selection(selection_packet)
 
-    citation_ids = _ordered_unique(
+    citation_ids = ordered_unique(
         [citation_id for constraint in all_constraints for citation_id in constraint.citation_ids]
     )
     citations = [_citation_from_chunk(context_by_id[citation_id]) for citation_id in citation_ids]
@@ -195,10 +232,11 @@ def _compile_constraint_list(
     generated_constraints: Sequence[GeneratedPolicyConstraint],
     context_by_id: dict[str, ScoredChunk],
 ) -> list[CompiledPolicyConstraint] | None:
+    """Map exact whole-source statements to citation owners without trimming their text."""
     compiled_constraints: list[CompiledPolicyConstraint] = []
     for generated_constraint in generated_constraints:
-        statement = generated_constraint.statement.strip()
-        citation_ids = _ordered_unique(
+        statement = generated_constraint.statement
+        citation_ids = ordered_unique(
             [citation_id.strip() for citation_id in generated_constraint.citation_ids]
         )
         if not statement or not citation_ids:
@@ -206,7 +244,7 @@ def _compile_constraint_list(
         if any(citation_id not in context_by_id for citation_id in citation_ids):
             return None
 
-        source_policy_ids = _ordered_unique(
+        source_policy_ids = ordered_unique(
             [context_by_id[citation_id].policy.policy_id for citation_id in citation_ids]
         )
         compiled_constraints.append(
@@ -249,17 +287,6 @@ def _citation_from_chunk(chunk: ScoredChunk) -> Citation:
         lines=chunk.lines,
         chunk_id=chunk.chunk_id,
     )
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 __all__ = [

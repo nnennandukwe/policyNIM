@@ -1,0 +1,47 @@
+schema_version = 1
+pack_id = "policynim.testing"
+version = "0.3.0"
+
+[[policies]]
+policy_id = "TEST-FAIL-001"
+path = "failure-and-recovery.md"
+requirement_level = "required"
+applicability = ["application-developer", "service-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.8.1", "PW.8.2"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "TEST-CONTRACT-001"
+path = "public-boundary-contracts.md"
+requirement_level = "required"
+applicability = ["application-developer", "library-maintainer"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "NIST SSDF 1.1 final"
+url = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218.pdf"
+revision = "SP 800-218, February 2022"
+sections = ["PW.8.2"]
+retrieved_on = 2026-10-20
+license = "Not subject to copyright in the United States; see publication authority notice"
+attribution = "Murugiah Souppaya, Karen Scarfone, Donna Dodson; NIST"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies.sources]]
+title = "Google SRE: Testing for Reliability"
+url = "https://sre.google/sre-book/testing-reliability/"
+revision = "Site Reliability Engineering, 2016, chapter 17"
+sections = ["Traditional Tests"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Alex Perry and Max Luebbe; edited by Diane Bates; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, Reranker
+from policynim.errors import IndexReadLimitError, PolicyContextError
 from policynim.operations import bounded_stage, check_budget, close_components
+from policynim.services.index_store import (
+    create_index_store,
+    pinned_generation,
+    require_index_ready,
+)
 from policynim.settings import Settings, get_settings
-from policynim.storage import create_index_store
-from policynim.storage.index_readiness import require_index_ready
+from policynim.source_units import SourceCatalog
 from policynim.types import (
     PolicyMetadata,
     PolicySelectionPacket,
@@ -26,6 +32,8 @@ from policynim.types import (
 
 _DEFAULT_ROUTING_CANDIDATE_POOL = 15
 _MAX_CHUNKS_PER_POLICY = 2
+_MAX_POLICY_CONTEXT_CHUNKS = 80
+_MAX_POLICY_CONTEXT_BYTES = 256 * 1024
 _TaskPattern = tuple[str, str]
 _ROUTABLE_TASK_TYPES: tuple[TaskType, ...] = (
     "bug_fix",
@@ -106,7 +114,16 @@ class PolicyRouterService:
         self._operation_timeout_seconds = operation_timeout_seconds
         self._embedder = embedder
         self._index_store = index_store
+        snapshot = pinned_generation(index_store)
+        self._snapshot = snapshot
+        self._generation_id = snapshot.generation_id if snapshot else None
         self._reranker = reranker
+
+    def source_catalog(self, context: Sequence[ScoredChunk]) -> SourceCatalog:
+        """Bind complete selected bodies to this router's held generation only."""
+        return SourceCatalog.from_documents(
+            self._snapshot.documents if self._snapshot is not None else (), context
+        )
 
     def __enter__(self) -> PolicyRouterService:
         return self
@@ -121,7 +138,7 @@ class PolicyRouterService:
 
     def close(self) -> None:
         """Release owned provider resources held by this service."""
-        close_components(self._embedder, self._reranker)
+        close_components(self._embedder, self._reranker, self._index_store)
 
     @bounded_stage("retrieval")
     def route(self, request: RouteRequest) -> RouteResult:
@@ -138,7 +155,7 @@ class PolicyRouterService:
             domain=request.domain,
         )
         if not dense_candidates:
-            return _empty_route_result(request, profile)
+            return _empty_route_result(request, profile, generation_id=self._generation_id)
 
         route_query = _build_route_query(profile, domain=request.domain)
         check_budget()
@@ -147,27 +164,92 @@ class PolicyRouterService:
             dense_candidates,
             top_k=max(request.top_k, _DEFAULT_ROUTING_CANDIDATE_POOL),
         )
+        dense_by_id = {chunk.chunk_id: chunk for chunk in dense_candidates}
+        for candidate in reranked_candidates:
+            original = dense_by_id.get(candidate.chunk_id)
+            if original is None or candidate.model_dump(exclude={"score"}) != original.model_dump(
+                exclude={"score"}
+            ):
+                raise PolicyContextError(identity_mismatch=True)
         retained_context = _retain_policy_evidence(reranked_candidates, top_k=request.top_k)
         if not retained_context:
-            return _empty_route_result(request, profile)
+            return _empty_route_result(request, profile, generation_id=self._generation_id)
 
+        packet = _build_selection_packet(request, profile, retained_context)
+        complete_context = _complete_selected_context(self._index_store, retained_context)
+        for selected in packet.selected_policies:
+            additional = sum(
+                chunk.policy.policy_id == selected.policy_id for chunk in complete_context
+            ) - len(selected.evidence)
+            selected.reason += (
+                f" Context includes {len(selected.evidence)} discovery chunk(s) and "
+                f"{additional} additional source chunk(s) from the same pinned policy."
+            )
         return RouteResult(
-            packet=_build_selection_packet(request, profile, retained_context),
-            retained_context=retained_context,
+            packet=packet.model_copy(update={"generation_id": self._generation_id}),
+            retained_context=complete_context,
+            generation_id=self._generation_id,
         )
+
+
+def _complete_selected_context(
+    index_store: IndexStore, discovery: Sequence[ScoredChunk]
+) -> list[ScoredChunk]:
+    """Append whole selected policies from one pinned index without inventing relevance."""
+    check_budget()
+    selected = {chunk.policy.policy_id: chunk.policy for chunk in discovery}
+    try:
+        indexed = index_store.read_policy_chunks(
+            list(selected),
+            max_chunks=_MAX_POLICY_CONTEXT_CHUNKS,
+            max_source_bytes=_MAX_POLICY_CONTEXT_BYTES,
+        )
+    except IndexReadLimitError as exc:
+        raise PolicyContextError() from exc
+    canonical = {}
+    for chunk in indexed:
+        if chunk.policy.policy_id not in selected:
+            continue
+        if chunk.policy != selected[chunk.policy.policy_id] or chunk.chunk_id in canonical:
+            raise PolicyContextError(identity_mismatch=True)
+        canonical[chunk.chunk_id] = chunk
+    for hit in discovery:
+        expected = canonical.get(hit.chunk_id)
+        if expected is None or hit.model_dump(exclude={"score"}) != expected.model_dump():
+            raise PolicyContextError(identity_mismatch=True)
+    seen = {hit.chunk_id for hit in discovery}
+    complete = list(discovery)
+    for chunk in canonical.values():
+        if chunk.chunk_id not in seen:
+            complete.append(ScoredChunk(**chunk.model_dump(), score=None))
+    serialized = json.dumps(
+        [chunk.model_dump(mode="json") for chunk in complete],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(complete) > _MAX_POLICY_CONTEXT_CHUNKS or len(serialized) > _MAX_POLICY_CONTEXT_BYTES:
+        raise PolicyContextError()
+    check_budget()
+    return complete
 
 
 def create_policy_router_service(settings: Settings | None = None) -> PolicyRouterService:
     """Build the default policy router from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     index_store = create_index_store(active_settings)
-    embedder, reranker = _create_default_router_components(active_settings)
-    return PolicyRouterService(
-        embedder=embedder,
-        index_store=index_store,
-        reranker=reranker,
-        operation_timeout_seconds=active_settings.operation_timeout_seconds,
-    )
+    embedder: Embedder | None = None
+    reranker: Reranker | None = None
+    try:
+        embedder, reranker = _create_default_router_components(active_settings)
+        return PolicyRouterService(
+            embedder=embedder,
+            index_store=index_store,
+            reranker=reranker,
+            operation_timeout_seconds=active_settings.operation_timeout_seconds,
+        )
+    except BaseException as error:
+        close_components(embedder, reranker, index_store, primary_error=error)
+        raise
 
 
 def profile_task(task: str, *, explicit_task_type: TaskType | None = None) -> TaskProfile:
@@ -347,9 +429,14 @@ def _evidence_from_chunk(chunk: ScoredChunk) -> SelectedPolicyEvidence:
     )
 
 
-def _empty_route_result(request: RouteRequest, profile: TaskProfile) -> RouteResult:
+def _empty_route_result(
+    request: RouteRequest, profile: TaskProfile, *, generation_id: str | None = None
+) -> RouteResult:
+    """Preserve selected generation evidence when routing finds no usable context."""
     return RouteResult(
+        generation_id=generation_id,
         packet=PolicySelectionPacket(
+            generation_id=generation_id,
             task=profile.task,
             domain=request.domain,
             top_k=request.top_k,

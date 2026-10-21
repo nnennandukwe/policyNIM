@@ -46,6 +46,29 @@ function Download-Asset([string]$SourceUrl, [string]$Destination, [string]$Label
     }
 }
 
+function Verify-Attestation([string]$AssetPath, [string]$AssetName) {
+    $mode = if ($env:POLICYNIM_VERIFY_ATTESTATION) { $env:POLICYNIM_VERIFY_ATTESTATION.ToLowerInvariant() } else { "" }
+    if ($mode -in @("", "0", "false", "no", "off")) { return }
+    if ($mode -notin @("1", "true", "yes", "required")) {
+        Stop-Install "Invalid POLICYNIM_VERIFY_ATTESTATION value. Use required or 0."
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Stop-Install "Missing required command: gh. Install GitHub CLI and retry."
+    }
+    if ($RepositoryUrl -notmatch "^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/?$") {
+        Stop-Install "Attestation verification requires an https://github.com repository URL."
+    }
+    $slug = $Matches[1] -replace "\.git$", ""
+    $sourceRevision = & gh api "repos/$slug/commits/$tag" --jq .sha
+    if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch "^[0-9a-f]{40}$") {
+        Stop-Install "Couldn't resolve the release source revision. Check $releasePageUrl and retry."
+    }
+    & gh attestation verify $AssetPath --repo $slug --signer-workflow "$slug/.github/workflows/release.yml" --source-digest $sourceRevision
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Install "Artifact attestation verification failed for $AssetName. Check $releasePageUrl and retry the install."
+    }
+}
+
 function Replace-InstallDirectory([string]$StagingDir, [string]$InstallDir, [string]$Version) {
     $installParent = Split-Path -Parent $InstallDir
     $backupDir = Join-Path $installParent ".$Version.backup.$PID"
@@ -119,6 +142,8 @@ try {
     if ($actualChecksum -ne $expectedChecksum) {
         Stop-Install "Checksum mismatch for $assetName. Check $releasePageUrl and retry the install."
     }
+
+    Verify-Attestation $assetPath $assetName
 
     try {
         Expand-Archive -Path $assetPath -DestinationPath $extractDir -Force

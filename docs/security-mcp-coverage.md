@@ -1,9 +1,12 @@
 # Application Security and MCP Source Coverage
 
-The maintained `policynim.baseline@0.2.0` source pack selects 15 policies. Nine
-security policies were added or materially revised for #94; the six other
-members retain their existing bytes. The package/software version remains
-`0.1.0`. A source-pack version doesn't publish a package or activate an index.
+The security revisions introduced in `policynim.baseline@0.2.0` remain in the
+expanded `0.3.0` aggregate and the selectable `policynim.security-mcp@0.3.0` pack.
+Nine security policies were added or materially revised for #94. The engineering
+expansion also revises API, job, logging, tracing, and configuration guidance while
+preserving their established safety requirements. Source-pack versions track
+policy content independently of the application version. A source-pack update
+doesn't publish a package or activate an index.
 
 This guidance helps reviewers identify applicable requirements and expected
 failure evidence. It doesn't implement OAuth, grant execution authority, create
@@ -84,7 +87,7 @@ Run the deterministic content checks without model credentials:
 
 ```bash
 uv sync --locked --group test --group dev
-uv run --no-sync policynim policies validate --format json
+uv run --no-sync policynim policies validate --source --format json
 uv run --no-sync pytest -q tests/test_security_content.py
 ```
 

@@ -75,4 +75,119 @@ jobs:
         run: uv sync --locked --group test --group dev
 
       - name: Verify Windows profile readers and writers offline
-        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_policy_profiles.py tests/test_policy_catalog.py tests/test_policy_generations.py tests/test_generation_bootstrap.py tests/test_generation_cli.py tests/test_generation_recovery_boundaries.py tests/test_generation_recovery_followups.py tests/test_operation_owner_cleanup.py
+
+      - name: Verify PowerShell installer signature recovery
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_installer_attestation_powershell.py
+
+      - name: Verify grounded evaluation and Windows diagnostics
+        run: uv run --no-sync pytest -q -m "not live and not docker_live" tests/test_grounded_evaluations.py tests/test_windows_diagnostics.py
+
+  package-offline:
+    name: Installed package (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build wheel from this revision
+        run: uv build --wheel --python ${{ matrix.python-version }}
+
+      - name: Verify fresh install and real MCP transports without provider calls
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          root = Path.cwd()
+          wheel, = (root / "dist").glob("*.whl")
+          bundle = root / "artifacts/public-generation"
+          with tempfile.TemporaryDirectory(prefix="policynim-package-") as temporary:
+              runtime = Path(temporary)
+              subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
+              python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+              requirements = runtime / "locked-requirements.txt"
+              subprocess.run(["uv", "export", "--locked", "--no-dev", "--group", "verification", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--require-hashes", "--no-deps", "-r", str(requirements)], check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
+              subprocess.run(["uv", "pip", "check", "--python", str(python)], check=True)
+              subprocess.run([
+                  str(python), str(root / "scripts/verify_installed_package.py"),
+                  "--wheel", str(wheel), "--bundle", str(bundle / "generation.zip"),
+                  "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+                  "--revision", os.environ["GITHUB_SHA"],
+                  "--lockfile", str(root / "uv.lock"),
+                  "--requirements", str(requirements),
+                  "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
+                  "--output", str(root / "package-evidence.json"),
+              ], cwd=runtime, check=True)
+          PY
+
+      - name: Retain installed-package verification evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: package-evidence-${{ matrix.os }}-${{ matrix.python-version }}
+          path: package-evidence.json
+          if-no-files-found: error
+
+  docker-offline:
+    name: Offline Docker images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NVIDIA_API_KEY: ""
+      POLICYNIM_RUN_DOCKER_TESTS: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Set up Python 3.11.15
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11.15"
+
+      - name: Sync locked dependencies
+        run: uv sync --locked --group test --group dev
+
+      - name: Require the Docker daemon
+        run: docker info > /dev/null
+
+      - name: Build both images and probe their offline runtimes
+        run: uv run --no-sync pytest -q -m docker_live tests/test_docker_build_live.py --junitxml=docker-offline-results.xml
+
+      - name: Require both image checks to run
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse("docker-offline-results.xml").getroot().findall(".//testcase")
+          assert len(cases) == 2, "Both Dockerfiles must have test results."
+          assert all(
+              not any(case.find(tag) is not None for tag in ("skipped", "failure", "error"))
+              for case in cases
+          ), "Container checks can't be skipped or fail."
+          print("Verified both Dockerfiles and their offline runtime probes.")
+          PY

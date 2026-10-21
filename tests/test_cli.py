@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -91,9 +92,9 @@ def write_env_file(path: Path, **values: str) -> None:
 
 def write_ready_sqlite_index(path: Path) -> None:
     """Write a minimal populated PolicyNIM sqlite-vec index for doctor tests."""
-    from policynim.storage import create_index_store
+    from policynim.services.index_store import create_index_store
 
-    create_index_store(Settings(index_db_path=path)).replace(
+    create_index_store(Settings(index_db_path=path), legacy=True).replace(
         [
             EmbeddedChunk(
                 chunk_id="DOCTOR-READY-1",
@@ -122,6 +123,8 @@ def clear_installer_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "POLICYNIM_CONFIG_FILE",
         "POLICYNIM_CORPUS_DIR",
         "POLICYNIM_INDEX_DB_PATH",
+        "POLICYNIM_GENERATIONS_DIR",
+        "POLICYNIM_GENERATION_ID",
         "POLICYNIM_LANCEDB_URI",
         "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH",
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH",
@@ -486,6 +489,21 @@ class MockIndexDumpService:
     def __init__(self) -> None:
         """Track whether the CLI closed the dump service."""
         self.closed = False
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
 
     def list_chunks(self) -> list[PolicyChunk]:
         return [
@@ -1168,6 +1186,7 @@ def test_compile_command_closes_service_when_it_errors(monkeypatch) -> None:
 
 
 def test_eval_command_prints_json(monkeypatch) -> None:
+    """Check the typed offline summary and help keep case payloads out of default JSON."""
     service = MockEvalService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_eval_service",
@@ -1180,6 +1199,8 @@ def test_eval_command_prints_json(monkeypatch) -> None:
     payload = EvalRunResult.model_validate(json.loads(result.stdout))
     assert payload.mode == "offline"
     assert payload.runs[0].metrics.case_count == 2
+    assert "case_results" not in json.loads(result.stdout)["runs"][0]
+    assert "suite_definition" not in json.loads(result.stdout)["runs"][0]
     assert "--cases" not in runner.invoke(app, ["eval", "--help"]).stdout
     assert "Phoenix" in runner.invoke(app, ["eval", "--help"]).stdout
     assert "Evidently" not in runner.invoke(app, ["eval", "--help"]).stdout
@@ -1612,11 +1633,11 @@ def test_doctor_reports_missing_standalone_setup_without_provider_calls(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert payload["runtime_mode"] == "standalone"
-    assert payload["config"]["expected_init_config_file"] == str(config_root / "config.env")
+    assert payload["config"]["expected_init_config_file"] == (config_root / "config.env").as_posix()
     assert payload["next_steps"][0] == (
         f"Run `policynim init` to create {config_root / 'config.env'}."
     )
-    assert payload["inventory"]["source"]["document_count"] == 15
+    assert payload["inventory"]["source"]["document_count"] == 26
     assert payload["index"]["state"] == "missing"
     assert "nvapi" not in result.stdout.lower()
 
@@ -1643,18 +1664,19 @@ def test_doctor_reports_ready_checkout_and_mcp_hints(
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["status"] == "ok"
+    assert payload["status"] == "action_required"
+    assert payload["inventory"]["generation_state"] == "migration_required"
     assert payload["runtime_mode"] == "source_checkout"
-    assert payload["config"]["active_config_file"] == str(checkout_root / ".env")
-    assert payload["paths"]["index_db_path"] == str(index_path)
+    assert payload["config"]["active_config_file"] == (checkout_root / ".env").as_posix()
+    assert payload["paths"]["index_db_path"] == index_path.as_posix()
     assert payload["mcp"]["stdio_command"] == "uv run policynim mcp --transport stdio"
     assert payload["mcp"]["smoke_command"] == "uv run policynim mcp-smoke --format json"
     assert payload["mcp"]["local_stdio_config_commands"] == {
         "codex": "uv run policynim mcp-config --target local-stdio --client codex "
-        f"--repo-root {checkout_root} --format json",
+        f"--repo-root {shlex.quote(str(checkout_root))} --format json",
         "claude-code": (
             "uv run policynim mcp-config --target local-stdio --client claude-code "
-            f"--repo-root {checkout_root} --format json"
+            f"--repo-root {shlex.quote(str(checkout_root))} --format json"
         ),
     }
     assert payload["mcp"]["streamable_http_url"] == "http://127.0.0.1:8000/mcp"
@@ -1797,9 +1819,8 @@ def test_doctor_source_checkout_recovery_uses_uv_run_commands(
     payload = json.loads(result.stdout)
     assert payload["status"] == "action_required"
     assert (
-        "Run `uv run policynim ingest` to build the local policy index and runtime rules artifact. "
-        "If either output exists, choose separate POLICYNIM_INDEX_DB_PATH and "
-        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
+        "Run `uv run policynim ingest` to build and activate a complete generation "
+        "under POLICYNIM_GENERATIONS_DIR. Existing standalone index and rules stay preserved."
     ) in payload["next_steps"]
     assert (
         "Run `policynim ingest` to build the local policy index and runtime rules artifact."
@@ -1972,11 +1993,11 @@ def test_doctor_text_output_prints_mcp_config_commands(
     assert "policynim mcp-smoke --format json" in result.stdout
     assert (
         "uv run policynim mcp-config --target local-stdio --client codex "
-        f"--repo-root {checkout_root} --format json"
+        f"--repo-root {shlex.quote(str(checkout_root))} --format json"
     ) in result.stdout
     assert (
         "uv run policynim mcp-config --target local-stdio --client claude-code "
-        f"--repo-root {checkout_root} --format json"
+        f"--repo-root {shlex.quote(str(checkout_root))} --format json"
     ) in result.stdout
 
 
@@ -2074,12 +2095,12 @@ def test_support_bundle_reports_redacted_first_run_state(
     assert payload["python"]["executable"] == "<python-executable>"
     assert payload["doctor"]["config"]["expected_init_config_file"] == ("<config-dir>/config.env")
     assert payload["redaction"]["local_paths"] == "redacted"
-    assert payload["redaction"]["path_markers"] == [
+    assert set(payload["redaction"]["path_markers"]) - {"<local-path>"} == {
         "<config-dir>",
         "<data-dir>",
         "<home>",
         "<python-executable>",
-    ]
+    }
     assert payload["mcp_smoke"] == {
         "status": "skipped",
         "reason": "Pass --include-mcp-smoke to verify stdio tool registration.",
@@ -2146,11 +2167,12 @@ def test_support_bundle_can_include_local_paths_for_private_triage(
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["python"]["executable"] == sys.executable
-    assert payload["doctor"]["config"]["expected_init_config_file"] == str(
-        config_root / "config.env"
+    assert (
+        payload["doctor"]["config"]["expected_init_config_file"]
+        == (config_root / "config.env").as_posix()
     )
     assert payload["redaction"]["local_paths"] == "included"
-    assert str(config_root) in result.stdout
+    assert config_root.as_posix() in result.stdout
     assert "nvapi" not in result.stdout.lower()
 
 
@@ -2221,6 +2243,7 @@ def test_init_command_writes_config_and_prints_next_step(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Verify init command writes config and prints next step."""
     _, config_root, data_root = configure_standalone_cli_environment(monkeypatch, tmp_path)
     custom_corpus = tmp_path / "custom-corpus"
     custom_corpus.mkdir()
@@ -2238,12 +2261,14 @@ def test_init_command_writes_config_and_prints_next_step(
     assert "policynim ingest" in result.stdout
     assert config_path.read_text(encoding="utf-8") == (
         "NVIDIA_API_KEY='nvapi-test-key'\n"
-        f"POLICYNIM_CORPUS_DIR='{custom_corpus}'\n"
-        f"POLICYNIM_INDEX_DB_PATH='{data_root / 'index.sqlite3'}'\n"
-        f"POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH='{data_root / 'runtime' / 'runtime_rules.json'}'\n"
+        f"POLICYNIM_CORPUS_DIR='{custom_corpus.as_posix()}'\n"
+        f"POLICYNIM_GENERATIONS_DIR='{(data_root / 'generations').as_posix()}'\n"
+        f"POLICYNIM_INDEX_DB_PATH='{(data_root / 'index.sqlite3').as_posix()}'\n"
+        "POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH="
+        f"'{(data_root / 'runtime' / 'runtime_rules.json').as_posix()}'\n"
         "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH="
-        f"'{data_root / 'runtime' / 'runtime_evidence.sqlite3'}'\n"
-        f"POLICYNIM_EVAL_WORKSPACE_DIR='{data_root / 'evals' / 'workspace'}'\n"
+        f"'{(data_root / 'runtime' / 'runtime_evidence.sqlite3').as_posix()}'\n"
+        f"POLICYNIM_EVAL_WORKSPACE_DIR='{(data_root / 'evals' / 'workspace').as_posix()}'\n"
     )
 
 
@@ -2348,7 +2373,13 @@ def test_quickstart_defaults_to_hosted_mcp_without_requiring_setup(
         in (agent_workflows[1]["prompt"])
     )
     assert "cited policy lines" in agent_workflows[1]["prompt"]
-    assert "policy_preflight and policy_search" in agent_workflows[2]["prompt"]
+    for name in (
+        "policy_search",
+        "policy_compile",
+        "policy_preflight",
+        "policy_preflight_evidence",
+    ):
+        assert name in agent_workflows[2]["prompt"]
     assert "before starting implementation" in agent_workflows[2]["prompt"]
 
 
@@ -2626,7 +2657,7 @@ def test_quickstart_prints_local_mcp_path_with_source_checkout_hint(
         payload["commands"]
     )
     assert "policynim mcp-smoke" not in payload["commands"]
-    assert f"--repo-root {checkout_root}" in " ".join(payload["commands"])
+    assert f"--repo-root {shlex.quote(str(checkout_root))}" in " ".join(payload["commands"])
     assert "NVIDIA_API_KEY" in " ".join(payload["prerequisites"])
     assert "exact local filesystem paths" in " ".join(payload["safety"])
     assert "policynim support-bundle" in " ".join(payload["safety"])
@@ -2680,21 +2711,25 @@ def test_quickstart_help_mentions_targets_clients_and_json_output() -> None:
 
 
 def test_route_help_mentions_task_type_override() -> None:
+    """Route help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["route", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace(chr(0x2502), " ").split())
 
 
 def test_compile_help_mentions_task_type_override() -> None:
+    """Compile help explains discovery depth and complete policy context."""
     result = runner.invoke(app, ["compile", "--help"])
     help_output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "--task-type" in help_output
-    assert "Selected evidence depth." in help_output
+    assert "Discovery hits," in help_output
+    assert "selected-policy context" in " ".join(help_output.replace(chr(0x2502), " ").split())
 
 
 def test_runtime_help_mentions_decide_and_execute_commands() -> None:
@@ -2721,12 +2756,13 @@ def test_dump_index_help_mentions_less_for_paging() -> None:
 
 
 def test_preflight_help_mentions_current_top_k_behavior() -> None:
+    """Preflight help identifies the discovery limit and trace option."""
     result = runner.invoke(app, ["preflight", "--help"])
     help_text = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "Retrieval depth." in help_text
-    assert "1-20." in help_text
+    assert "Discovery hits," in help_text
+    assert "1-20;" in help_text
     assert "--trace" in help_text
     assert "Reserved retrieval depth" not in help_text
 
@@ -2790,7 +2826,6 @@ def test_search_command_points_to_ingest_when_config_exists_but_index_is_missing
         (["preflight", "--task", "refresh token cleanup"], None),
         (["compile", "--task", "refresh token cleanup"], None),
         (["dump-index"], None),
-        (["eval", "--headless"], None),
         (
             ["runtime", "decide", "--input", "-"],
             json.dumps(
@@ -3119,7 +3154,9 @@ def test_mcp_config_prints_codex_cli_and_app_guidance(
     assert "PolicyNIM MCP config for Codex" in result.stdout
     assert "codex mcp add policynim" in result.stdout
     assert "--env NVIDIA_API_KEY=$NVIDIA_API_KEY --" in result.stdout
-    assert f"uv run --directory {checkout_root} policynim mcp --transport stdio" in result.stdout
+    assert (
+        f"uv run --directory {shlex.quote(str(checkout_root))} policynim mcp --transport stdio"
+    ) in result.stdout
     assert "Command to launch: uv" in result.stdout
     assert f"Working directory: {checkout_root}" in result.stdout
     assert "Environment variable passthrough: NVIDIA_API_KEY" in result.stdout
@@ -3577,8 +3614,16 @@ def test_mcp_smoke_failure_text_prints_recovery_steps(
 @pytest.mark.parametrize(
     ("tool_names", "expected_status", "missing_tools"),
     [
-        (["policy_search", "policy_preflight"], "ok", []),
-        (["policy_search"], "error", ["policy_preflight"]),
+        (
+            ["policy_search", "policy_preflight", "policy_compile", "policy_preflight_evidence"],
+            "ok",
+            [],
+        ),
+        (
+            ["policy_search"],
+            "error",
+            ["policy_preflight", "policy_compile", "policy_preflight_evidence"],
+        ),
     ],
 )
 def test_mcp_stdio_smoke_discovers_sdk_tools_with_float_timeout(
@@ -3653,7 +3698,12 @@ def test_mcp_stdio_smoke_reports_sdk_failures_and_closes_session(
 
     assert report["status"] == "error"
     assert report["tools"] == []
-    assert report["missing_tools"] == ["policy_preflight", "policy_search"]
+    assert report["missing_tools"] == [
+        "policy_preflight",
+        "policy_search",
+        "policy_compile",
+        "policy_preflight_evidence",
+    ]
     assert type(failure).__name__ in str(report["message"])
     assert "policynim doctor" in " ".join(cast(list[str], report["next_steps"]))
     session.__aexit__.assert_awaited_once()
@@ -4374,7 +4424,7 @@ def test_evidence_report_command_prints_markdown(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "# Runtime Evidence Report" in result.stdout
     assert "session-1" in result.stdout
-    assert "| exec-1 | shell_command | allow | allowed |" in result.stdout
+    assert "| exec-1 | unknown | shell_command | allow | allowed |" in result.stdout
     assert service.closed is True
 
 
@@ -4502,8 +4552,8 @@ def test_doctor_reports_index_identity_without_provider_calls(monkeypatch, tmp_p
     assert path.read_bytes() == before
 
 
-def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tmp_path):
-    """Use the real ingest command to reject corrupt data with operator guidance."""
+def test_ingest_preserves_unrelated_corrupt_standalone_index(monkeypatch, tmp_path):
+    """Default ingestion creates a generation without touching standalone migration inputs."""
     from test_index_identity import SpyEmbedder
 
     checkout, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
@@ -4516,11 +4566,10 @@ def test_ingest_corrupt_index_reports_recovery_without_embedding(monkeypatch, tm
 
     result = runner.invoke(app, ["ingest"])
 
-    assert result.exit_code == 1
-    assert "separate" in result.stderr
+    assert result.exit_code == 0, result.output
+    assert "Activated generation:" in result.stdout
     assert "sentinel" not in result.output
-    assert isinstance(result.exception, SystemExit)
-    assert embedder.calls == 0 and embedder.closed
+    assert embedder.calls == 1 and embedder.closed
     assert path.read_bytes() == b"private-corrupt-index-sentinel"
 
 
@@ -4556,3 +4605,99 @@ def test_invalid_provider_endpoint_does_not_echo_credentials(
     assert "input_value" not in result.stderr
     assert "Provider client must not be created" not in result.stderr
     assert "endpoint" in result.stderr.lower() or "credentials" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+def test_support_bundle_redacts_windows_config_paths_with_spaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str
+) -> None:
+    """Public missing-setup diagnostics mustn't expose an unquoted Windows directory."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    private_directory = separator.join(["D:", "Work Projects", "acme"])
+    monkeypatch.setenv("POLICYNIM_CONFIG_FILE", private_directory + separator + "policynim.env")
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Work Projects" not in result.stdout
+    assert "acme" not in result.stdout
+    assert "<local-path>" in result.stdout
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+def test_support_bundle_redacts_embedded_windows_diagnostic_with_spaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str
+) -> None:
+    """Redaction can't depend on another report field repeating the same private path."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    private_directory = separator.join(["D:", "Work Projects", "acme"])
+    message = "Could not read configured index " + private_directory + separator + "index.sqlite3."
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {"status": "action_required", "message": message},
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Work Projects" not in result.stdout
+    assert "acme" not in result.stdout
+    assert "<local-path>" in result.stdout
+
+
+@pytest.mark.parametrize("separator", ["\\", "/"])
+@pytest.mark.parametrize("prefix", ["Index ", ""])
+def test_support_bundle_preserves_diagnostics_between_two_windows_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separator: str, prefix: str
+) -> None:
+    """Separate drive roots can't absorb the failure reason between private paths."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    first = separator.join(["C:", "PrivateData", "x.db"])
+    second = separator.join(["C:", "PrivateConfig", "y"])
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {
+            "status": "action_required",
+            "message": prefix + first + " missing; config at " + second,
+        },
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    message = json.loads(result.stdout)["doctor"]["message"]
+    assert "missing; config at" in message
+    assert "PrivateData" not in message and "PrivateConfig" not in message
+
+
+def test_support_bundle_keeps_ambiguous_windows_directory_names_private(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """File-like words and apparent prose can still belong to a real directory name."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    path = r"C:\Client.env see docs\setup\index.sqlite3"
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {
+            "status": "action_required",
+            "message": "Failed " + path,
+        },
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    assert "Client.env see docs" not in json.loads(result.stdout)["doctor"]["message"]
+
+
+@pytest.mark.parametrize("tag", ["file:", "SOURCE:"])
+def test_support_bundle_redacts_tagged_posix_paths_with_colon_directories(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tag: str
+) -> None:
+    """A diagnostic prefix can't make a POSIX directory look like a Windows drive."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_doctor_report",
+        lambda: {"status": "action_required", "message": f"Missing {tag}/opt/private/a:b/x"},
+    )
+    result = runner.invoke(app, ["support-bundle"])
+    assert result.exit_code == 0
+    message = json.loads(result.stdout)["doctor"]["message"]
+    assert "private" not in message and "a:b" not in message
+    assert f"Missing {tag}" in message and "<local-path>" in message

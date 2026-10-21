@@ -14,6 +14,8 @@ from pydantic import ValidationError
 
 from policynim.contracts import Generator
 from policynim.errors import ConfigurationError, ProviderError
+from policynim.iterables import ordered_unique
+from policynim.nvidia_models import DEFAULT_NVIDIA_CHAT_MODEL
 from policynim.operations import bounded_stage
 from policynim.providers.nvidia import NVIDIAGenerator
 from policynim.settings import Settings
@@ -29,7 +31,6 @@ from policynim.types import (
 _NEMO_GUARDRAILS_DISTRIBUTION = "nemoguardrails"
 _NVIDIA_GUARDRAILS_EXTRA = "nvidia-guardrails"
 _NVIDIA_GUARDRAILS_INSTALL_HINT = "uv sync --extra nvidia-guardrails"
-_DEFAULT_GUARDRAILS_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 _MODEL_PLACEHOLDER = "__POLICYNIM_NVIDIA_CHAT_MODEL__"
 _ASSET_ROOT = ("templates", "nvidia_guardrails", "preflight_output")
 _CONFIG_ASSET = "config.yml"
@@ -64,7 +65,7 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         if rails is None:
             try:
                 rails, rail_type_output = _create_default_output_rails(
-                    model=model or _DEFAULT_GUARDRAILS_MODEL
+                    model=model or DEFAULT_NVIDIA_CHAT_MODEL
                 )
             except ConfigurationError:
                 _close_component(base_generator)
@@ -75,6 +76,11 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         self._rails = rails
         self._rail_type_output = rail_type_output
         self._owns_rails = owns_rails
+
+    @property
+    def source_extractive(self) -> bool:
+        """Preserve the wrapped generator's explicit no-revision capability."""
+        return getattr(self._base_generator, "source_extractive", False) is True
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NeMoGuardrailsPreflightGenerator:
@@ -320,7 +326,7 @@ def _validate_guardrailed_draft(
     if unsupported_citation_ids:
         raise ProviderError(
             "NeMo Guardrails output rails returned unsupported citation ids: "
-            f"{', '.join(_ordered_unique(unsupported_citation_ids))}.",
+            f"{', '.join(ordered_unique(unsupported_citation_ids))}.",
             failure_class="invalid_response",
         )
 
@@ -336,13 +342,13 @@ def _validate_guardrailed_draft(
     if unsupported_trigger_chunk_ids:
         raise ProviderError(
             "Regeneration context referenced chunk ids outside the retained context: "
-            f"{', '.join(_ordered_unique(unsupported_trigger_chunk_ids))}.",
+            f"{', '.join(ordered_unique(unsupported_trigger_chunk_ids))}.",
             failure_class="invalid_response",
         )
 
 
 def _draft_citation_ids(draft: GeneratedPreflightDraft) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [
             *draft.citation_ids,
             *[
@@ -369,17 +375,6 @@ def _rail_result_content(result: Any) -> Any:
     if isinstance(result, Mapping):
         return result.get("content")
     return getattr(result, "content", None)
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def _close_component(component: object | None) -> None:

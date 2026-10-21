@@ -7,8 +7,10 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Generator
+from policynim.errors import PolicyContextError
+from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
-from policynim.services.compiler import create_policy_compiler_service
+from policynim.services.compiler import create_policy_compiler_service, source_catalog_for
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import (
     PolicyEvidenceTraceService,
@@ -23,6 +25,7 @@ from policynim.services.preflight import (
     _validate_and_materialize_result,
 )
 from policynim.settings import Settings, get_settings
+from policynim.source_units import MAX_OUTPUT_BYTES, SourceContext
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -128,7 +131,9 @@ class PolicyRegenerationService:
         packet_id = compiled_policy_packet_id(compiled_packet)
 
         if compiled_packet.insufficient_context or not retained_context:
-            result = _insufficient_context_result(preflight_request)
+            result = _insufficient_context_result(preflight_request).model_copy(
+                update={"generation_id": compiled_packet.generation_id}
+            )
             trace_steps = _initial_trace_steps(compiled_packet)
             trace_result = _trace_result(
                 result=result,
@@ -181,6 +186,9 @@ class PolicyRegenerationService:
                 regeneration_context=regeneration_context,
                 trace_steps=trace_steps,
             )
+            result = result.model_copy(update={"generation_id": compiled_packet.generation_id})
+            if len(result.model_dump_json().encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyContextError(output_budget=True)
             trace_result = _trace_result(
                 result=result,
                 compiled_packet=compiled_packet,
@@ -256,7 +264,7 @@ class PolicyRegenerationService:
                 conformance_result,
                 compiled_packet,
             )
-            if not next_triggers:
+            if not next_triggers or getattr(self._generator, "source_extractive", False) is True:
                 return _result(
                     request=request,
                     passed=False,
@@ -284,15 +292,21 @@ class PolicyRegenerationService:
         trace_steps: list[PolicyConformanceTraceStep],
     ) -> PreflightResult:
         """Generate one candidate only if the shared budget still permits work."""
+        retained_catalog = source_catalog_for(self._compiler_service, retained_context)
+        catalog = retained_catalog.compiled_sources(compiled_packet)
+        if not catalog.units:
+            return _insufficient_context_result(request)
         check_budget()
         generated = self._generator.generate_preflight(
             request,
-            retained_context,
+            SourceContext(tuple(retained_context), retained_catalog),
             compiled_packet=compiled_packet,
             regeneration_context=regeneration_context,
         )
         draft = _coerce_generated_draft(generated)
-        draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
+        raw_valid = catalog.accepts_preflight(draft, allow_missing_references=True)
+        if raw_valid:
+            draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
         step_kind = (
             "policy_regeneration" if regeneration_context is not None else "grounded_generation"
         )
@@ -300,11 +314,16 @@ class PolicyRegenerationService:
             _trace_step(
                 step_id=("regenerate" if regeneration_context is not None else "generate"),
                 kind=step_kind,
-                summary=draft.summary or "Generated preflight draft.",
-                citation_ids=draft.citation_ids,
+                summary="Provider source selection completed; local validation follows.",
+                citation_ids=draft.citation_ids if raw_valid else [],
             )
         )
-        validated = _validate_and_materialize_result(request, retained_context, draft)
+        validated = (
+            _validate_and_materialize_result(request, retained_context, draft, catalog=catalog)
+            if raw_valid
+            and source_catalog_for(self._compiler_service, retained_context) == retained_catalog
+            else None
+        )
         if validated is None:
             return _insufficient_context_result(request)
         return validated
@@ -316,7 +335,7 @@ def create_policy_regeneration_service(
     backend: RegenerationBackend = "nemo",
 ) -> PolicyRegenerationService:
     """Build the default policy regeneration service from application settings."""
-    active_settings = settings or get_settings()
+    active_settings = (settings or get_settings()).model_copy(deep=True)
     compiler_service: _PolicyCompilerService | None = None
     generator: Generator | None = None
     conformance_service: _PolicyConformanceService | None = None
@@ -462,10 +481,12 @@ def _result(
     compiled_packet_id: str,
     attempts: Sequence[RegenerationAttempt],
 ) -> PreflightRegenerationResult:
+    """Assemble the final regeneration result from its last attempt."""
     if not attempts:
         raise ValueError("regeneration result requires at least one attempt.")
     final_attempt = attempts[-1]
     return PreflightRegenerationResult(
+        generation_id=final_attempt.result.generation_id,
         request=request,
         passed=passed,
         stop_reason=stop_reason,
@@ -586,7 +607,7 @@ def _all_constraint_ids(compiled_packet: CompiledPolicyPacket) -> list[str]:
 
 
 def _all_constraint_chunk_ids(compiled_packet: CompiledPolicyPacket) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [
             citation_id
             for _category_name, constraints in _constraint_categories(compiled_packet)
@@ -611,7 +632,7 @@ def _constraint_categories(
 def _constraint_chunk_ids(
     constraints: Sequence[CompiledPolicyConstraint],
 ) -> list[str]:
-    return _ordered_unique(
+    return ordered_unique(
         [citation_id for constraint in constraints for citation_id in constraint.citation_ids]
     )
 
@@ -633,17 +654,6 @@ def _dedupe_triggers(triggers: Sequence[RegenerationTrigger]) -> list[Regenerati
         seen.add(key)
         deduped.append(trigger)
     return deduped
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 __all__ = [

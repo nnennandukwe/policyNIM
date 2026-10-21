@@ -10,20 +10,21 @@ reference that used to live in the root README.
 - `policynim quickstart [--target hosted-mcp|local-cli|local-mcp] [--client codex|claude-code] [--format text|json]`
 - `policynim doctor [--format text|json]`
 - `policynim inventory [--format text|json]`
-- `policynim policies list|validate [--format text|json]`
+- `policynim policies list|validate [--source] [--format text|json]`
 - `policynim profile init <path> [--pack <directory>] [--id <name>]`
 - `policynim profile validate|preview|diff <path> [--format text|json]`
 - `policynim profile update <path> --expect-digest <review-digest>`
-- `policynim policies show <policy-id> [--format text|json]`
+- `policynim policies show <policy-id> [--source] [--format text|json]`
 - `policynim init`
 - `policynim ingest`
+- `policynim generation inspect|migrate|import|export|activate|rollback|prune --help`
 - `policynim dump-index [--count-only]`
 - `policynim search --query "..."`
 - `policynim route --task "..."`
 - `policynim compile --task "..."`
 - `policynim preflight --task "..."`
 - `policynim preflight --task "..." [--trace] [--regenerate] [--max-regenerations 1] [--backend nemo|nemo_evaluator|nat]`
-- `policynim eval --mode offline|live [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
+- `policynim eval --mode offline|live [--suite reviewed.json] [--backend default|nemo|nemo_evaluator|nat] [--regenerate] [--max-regenerations 1] [--headless] [--no-compare-rerank]`
 - `policynim mcp --transport stdio|streamable-http`
 - `policynim runtime decide --input <path|->`
 - `policynim runtime execute --input <path|->`
@@ -53,8 +54,7 @@ reference that used to live in the root README.
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
 - `/beta` stays as the self-serve signup and key-management surface
 - hosted `streamable-http` startup fails fast when
-  `POLICYNIM_MCP_PUBLIC_BASE_URL` is set but the configured local index is
-  missing or empty
+  the complete configured generation is missing or invalid; startup never ingests
 
 `policynim init` writes the local config file interactively when you want the
 CLI to prompt for `NVIDIA_API_KEY` and an optional custom corpus directory.
@@ -71,8 +71,10 @@ or prior initialization. It reports unavailable counts as unknown and keeps loca
 inspection separate from remote deployment evidence. See
 [policy inventory and recovery](policy-inventory.md) for states and recovery.
 
-Use `policynim policies list`, `show <policy-id>`, and `validate` for a source-only
-catalog with pack identity, content revisions, and declared provenance. A
+Use `policynim policies list`, `show <policy-id>`, and `validate` for the active
+generation catalog, or add `--source` to inspect editable sources. Results expose
+scope and generation identity. See [generation operations](policy-generations.md)
+for migration, rollback, reader retention, and offline image bundles. A
 `pack.toml` manifest makes membership explicit; plain directories remain supported.
 See [policy packs](policy-packs.md) before authoring a manifest, and
 [local profiles](policy-profiles.md) to compose explicit packs with reviewed decisions.
@@ -109,8 +111,8 @@ What this does:
 - chunks the documents into stable, citeable sections
 - compiles any `runtime_rules` frontmatter into the persisted runtime rules artifact
 - embeds those chunks with NVIDIA-hosted embeddings
-- builds a new local SQLite index; refreshes require separate, absent index and
-  runtime-rules paths as described in [provider recovery](hosted-provider-recovery.md)
+- seals and validates a complete generation, then atomically activates it under
+  `POLICYNIM_GENERATIONS_DIR`; existing generations remain available for rollback
 
 Typical output includes the chunk count, document count, embedding model, and
 index location.
@@ -269,16 +271,9 @@ The optional `nvidia-eval` extra installs the pinned NeMo Evaluator SDK,
 paths. If the packages are not installed, the command fails with a
 `ConfigurationError` that names the missing extra.
 
-Install the in-project launcher stack only when you need launcher-managed
-evaluator runs:
-
-```bash
-uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev
-```
-
-The launcher extra pins `nemo-evaluator-launcher==0.2.4` and
-`nvidia-nat[eval]==1.6.0`. PolicyNIM keeps `httpx==0.27.2` to match that stack,
-and default CI does not sync the launcher extra.
+The optional NeMo launcher runs outside the PolicyNIM environment; see
+[installation profiles](runtime-install-profiles.md). It isn't a PolicyNIM backend
+or a bundled runtime dependency.
 
 Internal Guardrails-backed preflight generation is package-gated separately:
 
@@ -294,6 +289,17 @@ runs output rails over the generated draft JSON, and fails closed on blocked,
 malformed, or unsupported-citation output.
 
 ### 7. Run Evaluations
+
+Install the optional Phoenix UI command in a separate environment before using
+the default UI flow:
+
+```bash
+uv tool install --python 3.11 arize-phoenix==20.23.0
+```
+
+Make the tool bin directory available on PATH. See
+[installation profiles](runtime-install-profiles.md) for setup and migration.
+Use `policynim eval --headless` when a UI isn't needed.
 
 ```bash
 uv run policynim eval
@@ -326,8 +332,48 @@ uv run policynim eval --mode live
 uv run policynim eval --mode live --backend nemo --headless
 ```
 
-`--mode live` requires `NVIDIA_API_KEY` and uses an isolated temporary index so
-it does not overwrite the normal runtime index.
+`--mode live` requires `NVIDIA_API_KEY` and a verified generation. One job lease
+retains the same generation across modes, cases, and regeneration attempts.
+Live evaluation never ingests; offline fixtures report `generation_id: null`.
+
+Live mode uses `evals/grounded_cases.json`, whose expectations refer to the
+maintained policy IDs and pinned source catalog. Offline mode retains the original
+synthetic `default_cases.json`; it verifies orchestration rather than real-corpus
+retrieval quality and runs without standalone credential setup.
+
+Use `--suite reviewed.json --mode live` for an explicitly reviewed profile suite.
+The JSON has `name`, nonempty `cases`, and `expected_catalog_digest` and/or
+`expected_policy_revisions` (policy ID to `sha256:` content revision). Obtain these
+values from `generation inspect` and `policies show` for the selected generation.
+Changed catalog/revision pins, absent expected evidence, duplicate case IDs and
+contradictory expectations fail before provider services are allocated. Custom
+suites cannot run against synthetic offline fixtures.
+
+Each case supports `expected_policy_ids`, `expected_chunk_ids`, and
+`forbidden_policy_ids`, as well as `expected_insufficient_context`. Missing required
+chunks fail preflight scoring even when a policy name matches. Forbidden policies
+fail retrieval/output scoring and are also checked in preflight's retained context,
+selected policies and compiled constraints. Returned citation coordinates and trace
+generation identity are checked independently against the held generation. These
+checks establish structural grounding; optional conformance judgments and live
+retrieval evidence remain separate measures. Generation and compilation encode
+source chunks as JSON data in a user message and explicitly reject embedded requests
+to change instruction authority or execute tools. Offline adversarial checks verify
+that message boundary and fabricated-reference rejection; they don't establish
+universal prompt-injection resistance or live model adherence.
+
+JSON reports retain the parsed suite definition, its canonical SHA256 digest,
+generation/catalog identity, configured provider models, and actual search/preflight
+outputs. Provider usage is marked unavailable for live runs because this adapter
+doesn't aggregate it, and not performed for synthetic offline runs; no cost is inferred.
+Recall applicability counts identify cases with declared expected policy/chunk IDs;
+HTML shows not applicable when a suite has no such expectations. Local reports can therefore contain task text and policy excerpts; keep
+private-profile reports in the intended local workspace. The CLI prints metrics,
+identities and report paths without case bodies or suite inputs. New JSON and HTML
+files use exclusive creation and owner-only permissions on POSIX; Windows operators
+must restrict the workspace's inherited ACLs. Existing report files aren't replaced.
+Every run uses unique artifact paths so repeated invocations preserve earlier evidence. Reports from an
+older generation don't verify a changed generation.
 
 `--backend nemo` adds policy-conformance scoring for preflight eval cases. In
 offline mode it uses deterministic local fixtures; in live mode it reuses the
@@ -446,12 +492,9 @@ Hosted HTTP notes:
   still validated at startup
 - when `POLICYNIM_ENV=production` and Railway injects `PORT`, hosted MCP
   defaults to `0.0.0.0` unless `POLICYNIM_MCP_HOST` is explicitly set
-- the baked-image workflow uses `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
-  as the fast path. Hosted startup only falls back to `policynim ingest` when
-  that local index is missing or empty
-- if that automatic rebuild path runs without a runtime `NVIDIA_API_KEY`, hosted
-  startup fails fast with an explicit recovery message instead of serving
-  traffic
+- the image imports its verified bundle into `POLICYNIM_GENERATIONS_DIR=/app/data/generations`
+- hosted startup requires a complete generation and never ingests or calls NVIDIA;
+  a missing or invalid object produces import/migration recovery guidance
 
 Example readiness check:
 
@@ -477,6 +520,11 @@ uv run policynim support-bundle --include-mcp-smoke
 Use these commands when you want the no-network first-run plan, a local setup
 health check, copyable MCP client config, a stdio tool-registration smoke test,
 or a redacted support bundle for an issue report.
+
+Unquoted Windows directory names can resemble surrounding prose. Public bundle
+redaction favors hiding the full parent path and can mask neighboring words in
+ambiguous messages. For private diagnostics, `support-bundle --include-local-paths`
+retains the original path text; keep that output out of public issue reports.
 
 ## Runtime Decisions And Evidence
 
@@ -510,10 +558,15 @@ retains direct-child termination; process-tree cleanup isn't guaranteed there.
 Shell `command` values are argument arrays passed directly to the process.
 PolicyNIM preserves each string, including surrounding whitespace and empty
 arguments after the executable. The array must contain a nonempty executable
-name, and no element may contain a NUL byte. Invalid commands are rejected
-before runtime decisions, process creation, or evidence writes. Command regex
-rules match the `shlex.join` rendering of the unchanged array; results and
-stored evidence retain that array. Existing evidence isn't rewritten; evidence
+name that isn't whitespace-only, and no element may contain a NUL byte. Invalid
+commands are rejected before runtime decisions, process creation, or evidence
+writes. Command regex
+rules screen both the `shlex.join` rendering of the unchanged array and a
+rendering with empty or whitespace-only operands omitted. A match in either form
+applies the rule. This conservative check can deny a benign command whose blank
+operands matter;
+regex screening isn't semantic shell isolation. Execution, results, and stored
+evidence retain the original array. Existing evidence isn't rewritten; evidence
 reports can still read legacy NUL-containing decisions as incomplete executions.
 
 The runtime CLI flow is JSON-first and file- or stdin-driven:

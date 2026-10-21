@@ -31,10 +31,10 @@ Current automated coverage includes:
   Phoenix startup, deterministic span publishing, and synchronous code
   annotations
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with
-  mock-backed import-injected package modules; default CI does not import live optional
+  mock-backed import-injected package modules; default CI doesn't import live optional
   NVIDIA eval packages
-- Optional NVIDIA Eval Launcher dependency resolution through
-  `uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`
+- Optional NVIDIA evaluation adapter dependency resolution through
+  `uv sync --extra nvidia-eval --group test --group dev`
 - Internal NeMo Guardrails output-rail wrapper coverage for lazy package
   gating, packaged assets, malformed rail output, blocked output, citation drift,
   regeneration context pass-through, and default factory isolation
@@ -50,14 +50,24 @@ Current automated coverage includes:
 - CLI output for `runtime decide`, `runtime execute`, and `evidence report`,
   including Markdown/file artifact exports
 - CLI output for `beta-admin` hosted operator commands, including audit-log filtering
-- MCP tool parity for `policy_preflight` and `policy_search`
+- MCP search, compilation, preflight and same-run evidence schemas, plus immutable
+  catalog/policy/chunk resources and the review prompt
+- Durable evaluation jobs through real SQLite, generation archives, process-kill
+  recovery, interruption evidence, queue bounds, cancellation drain and usage budgets
+- Job CLI commands and authenticated MCP disconnect/reconnect, owner isolation and
+  bounded report fragments; native MCP Tasks capability isn't advertised
+- Aggregate operator reporting for validated generation identity, durable job
+  state counts, correlation and owned reader cleanup
 - MCP startup wiring for `stdio` and `streamable-http`
 - Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper
 - Hosted beta portal routes, signed-session flow, SQLite auth storage, and
   quota-blocking behavior
 - Hosted MCP structured logs for auth rejects, tool name, latency, and upstream failure class
 - Hosted docs parity for the canonical Codex and Claude hosted MCP commands plus recovery guidance
-- Opt-in Docker hosted-image contract coverage for missing `NVIDIA_API_KEY` and a non-empty baked index
+- A separate offline Docker CI job builds both images from the verified generation
+  bundle and probes health/MCP discovery with container networking disabled.
+  Local Docker checks require `POLICYNIM_RUN_DOCKER_TESTS=1`; neither path ingests
+  policies or invokes model tools.
 - Opt-in live NVIDIA embedding smoke coverage behind `NVIDIA_API_KEY`
 - Opt-in live Railway hosted MCP smoke coverage behind:
   - `POLICYNIM_BETA_MCP_URL`
@@ -77,7 +87,7 @@ Hosted onboarding versus Docker build-test env vars:
 - Set `NVIDIA_API_KEY` as well if you want the positive baked-index image validation
   to run instead of skip; the Docker harness passes it as a BuildKit secret, not
   as a build arg.
-- Do not rely on `-m live` to pick up Docker build checks; they use the dedicated
+- Don't rely on `-m live` to pick up Docker build checks; they use the dedicated
   `docker_live` marker.
 
 Run the hosted build and deployed-service suites manually with:

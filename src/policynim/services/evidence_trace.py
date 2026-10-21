@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 
+from policynim.iterables import ordered_unique
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -38,6 +39,7 @@ class PolicyEvidenceTraceService:
         compiled_packet = trace_result.compiled_packet
         constraints = _trace_constraints(compiled_packet)
         return PolicyEvidenceTrace(
+            generation_id=trace_result.result.generation_id,
             task=trace_result.result.task,
             domain=trace_result.result.domain,
             top_k=compiled_packet.top_k,
@@ -66,8 +68,13 @@ def create_policy_evidence_trace_service() -> PolicyEvidenceTraceService:
 
 def compiled_policy_packet_id(compiled_packet: CompiledPolicyPacket) -> str:
     """Return a deterministic identity for a compiled policy packet."""
+    packet_payload = compiled_packet.model_dump(
+        mode="json", exclude={"citations": {"__all__": {"resource_uri"}}}
+    )
+    if compiled_packet.generation_id is None:
+        packet_payload.pop("generation_id", None)
     payload = json.dumps(
-        compiled_packet.model_dump(mode="json"),
+        packet_payload,
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -107,7 +114,7 @@ def _trace_policies(compiled_packet: CompiledPolicyPacket) -> list[PolicyEvidenc
             policy_id=policy.policy_id,
             title=policy.title,
             reason=policy.reason,
-            supporting_chunk_ids=_ordered_unique(
+            supporting_chunk_ids=ordered_unique(
                 [evidence.chunk_id for evidence in policy.evidence]
             ),
         )
@@ -188,7 +195,7 @@ def _trace_text_outputs(
                 index=index,
                 text=text,
                 constraint_ids=[constraint.constraint_id for constraint in linked_constraints],
-                chunk_ids=_ordered_unique(
+                chunk_ids=ordered_unique(
                     [
                         chunk_id
                         for constraint in linked_constraints
@@ -209,7 +216,7 @@ def _trace_conformance_checks(
 
     constraints_by_category = _constraints_by_category(constraints)
     all_constraint_ids = [constraint.constraint_id for constraint in constraints]
-    all_chunk_ids = _ordered_unique(
+    all_chunk_ids = ordered_unique(
         [chunk_id for constraint in constraints for chunk_id in constraint.citation_ids]
     )
     checks: list[PolicyEvidenceTraceConformanceCheck] = []
@@ -330,20 +337,9 @@ def _metric_chunk_ids(
         constraints = constraints_by_category["forbidden_patterns"]
     else:
         constraints = []
-    return _ordered_unique(
+    return ordered_unique(
         [chunk_id for constraint in constraints for chunk_id in constraint.citation_ids]
     )
-
-
-def _ordered_unique(values: Sequence[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 __all__ = [

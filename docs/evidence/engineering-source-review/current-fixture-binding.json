@@ -1,0 +1,15 @@
+{
+  "kind": "derived_current_fixture_binding",
+  "reviewed_fixture_revision": "61708adbe25f565127695dddd35593bebc8b19e5",
+  "scenario_sha256": "sha256:b1dd4dd1497ad98a9a08ce6b69183f2df3121f866c26fe82a1da9e5d50979c26",
+  "reviewed_semantic_payload_sha256": "sha256:1ae67a52dab92752aaabb6d7d6e1d7ea246d2e4b72865516a2f4f1a142dfb364",
+  "full_review_receipt": "refreshed.json",
+  "full_review_receipt_sha256": "sha256:231d4a0fd1330b761ac225c1b67a6820a36f907e78c0ec67473fcfa3b1a8a804",
+  "delta_review_receipt": "rationale-delta.json",
+  "delta_review_receipt_sha256": "sha256:3e9aadc80fff49d533819fd99f14fe79760c65affcdef911e81b9efb5ac7e906",
+  "model_evaluated": false,
+  "source_catalog_digest": "sha256:04a26d71f3b54eb63e41e779585177ce397767cdf89da9368de3e92d61667a26",
+  "generation_id": "3c4e948289c6cd843b8002c83e094f1fb3eb9ce9f44d7bc88d26a07862cacb63",
+  "bundle_digest": "sha256:376ba2727eb73e56696bce91eaf68ac2b6eae20b315a99b87e405cc56a380dce",
+  "metadata_changes_after_review": "Only review status and generated bundle/catalog identities changed; the reviewed semantic payload remains identical. Historical full/final receipts remain unchanged."
+}

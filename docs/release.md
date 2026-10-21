@@ -22,6 +22,9 @@ policynim init
 policynim ingest
 ```
 
+See the [compatibility and evidence matrix](release-compatibility.md) for exact
+SDK, protocol, Python, client, authorization and optional-extra coverage.
+
 ## Before Tagging
 
 Run the deterministic gates locally:
@@ -44,13 +47,88 @@ python -m venv /tmp/policynim-wheel-smoke
 /tmp/policynim-wheel-smoke/bin/policynim --version
 ```
 
+The `package-offline` CI job verifies fresh wheel installations on Linux and
+Windows with Python 3.11 and 3.12. It creates each environment outside the source
+checkout, compares installed package bytes to the wheel, validates packaged policy
+sources, imports the checksum-pinned public generation with source matching, and
+checks the served catalog identity. It also runs the original synthetic offline
+evaluation and actual stdio/HTTP discovery for MCP protocols `2026-07-28` and
+`2025-11-25`, including rejection of unauthenticated HTTP requests.
+
+To repeat these checks, use the fresh environment's Python from a directory
+outside this repository to run the absolute path to `scripts/verify_installed_package.py`. Supply the
+absolute wheel and public bundle paths with `--wheel` and `--bundle`, the trusted
+contents of `artifacts/public-generation/generation.sha256` with `--bundle-digest`,
+the source commit with `--revision`, and an output JSON path with `--output`.
+Also supply `--lockfile /absolute/path/to/checkout/uv.lock`,
+`--lock-digest sha256:<digest>`, and `--requirements` with the absolute path to the
+exported runtime requirements used for installation. Relative paths resolve from
+the working directory where you launch the verifier, not from its script directory.
+CI exports with
+`uv export --locked --no-dev --group verification --no-emit-project`, installs those
+artifacts with required hashes, and installs the wheel without dependency resolution.
+The `verification` group supplies the verifier's locked `packaging` parser; include
+it in the export for manual fresh-environment checks too. The report records the
+lock digest, requirements digest and actual installed versions.
+Bootstrap installer packages are recorded separately when they weren't selected
+for the runtime installation.
+The verification group isn't part of the application runtime. Before running the
+manifest command manually, use
+`uv sync --locked --no-dev --no-default-groups --group verification`.
+The verifier refuses an installation resolved back to a source checkout. It never
+calls model providers; protocol discovery doesn't establish live retrieval quality
+or Codex/Claude UI interoperability. Retain those acceptance results separately.
+
+Standalone builds must also import the public generation and negotiate both MCP
+protocols over stdio and authenticated HTTP. Run `scripts/verify_standalone.py`
+with `--command` pointing to a local build or `--archive` selecting a compressed
+release artifact, `--bundle` and `--bundle-digest`
+identifying the reviewed public archive, `--lockfile` and `--lock-digest`
+identifying the selected build lock, `--expected-version X.Y.Z` matching the
+release package version, and `--revision` and `--output` identifying the source
+commit and receipt. Both verifiers give child processes an owned temporary home directory, keeping
+user profiles outside the packaged-source check while preserving the parent environment.
+This check runs without provider credentials and records a
+digest of the complete standalone directory, including native-library bytes and
+file/directory permissions. Special entries such as FIFOs are rejected before
+execution; supported entries are regular files, directories and contained symlinks.
+Credential redaction covers the bounded log-tail
+boundary; diagnostics are omitted if a known credential exceeds its capture bound.
+
+Final publication requires `--archive /absolute/path/to/the/platform.tar.gz` (or the
+Windows `.zip`). The verifier copies those compressed bytes into an owned temporary
+directory, safely extracts them, and runs the extracted command instead of the
+original build directory. Only a completed six-case offline fixture and both MCP
+protocol/transport checks can produce `archive_verified: true` and the archive
+checksum. Changed, unsafe or incomplete archives fail before publication; failed
+receipts retain the requested source, platform, version and digest context as
+incomplete execution.
+
+The lock digest identifies the selected build checkout. The workflow performs a
+locked dependency sync before building from that checkout; the standalone receipt
+alone doesn't independently inspect every dependency version inside the frozen
+executable.
+Authenticated HTTP checks cover beta/operator keys and missing-token rejection.
+Receipts record `authentication_scope: beta_operator_key` and
+`external_oauth_e2e: not_run`. External issuer/client acceptance remains open in
+#97; this gate doesn't establish OAuth E2E, live retrieval quality or coding-client acceptance.
+
+The release workflow retains a separate `standalone-evidence-<platform>.json`
+receipt for each platform. A successful help command alone can't detect a missing
+SQLite vector extension; generation import must succeed before the archive ships.
+
 ## GitHub Release
+
+Before signing and publishing, the workflow checks the remote release tag against
+the artifact source commit. An existing lightweight or annotated tag must resolve
+to that commit. A missing tag can be created at the verified source; an unavailable
+remote or mismatched existing tag blocks publication. The gate never moves tags.
 
 Create and push a version tag from the commit you want to release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The `Release` workflow builds the wheel, source distribution, and standalone
@@ -64,6 +142,8 @@ release with:
 - `policynim-vX.Y.Z-darwin-amd64.tar.gz`
 - `policynim-vX.Y.Z-windows-amd64.zip`
 - `SHA256SUMS`
+- `policynim-public-generation.zip` and its `policynim-public-generation.sha256`
+- Platform-specific `standalone-evidence-<platform>.json` receipts
 
 PolicyNIM publishes separate macOS bundles for Apple Silicon and Intel hosts.
 
@@ -89,3 +169,95 @@ After the draft release artifacts pass local smoke tests, run the manual
 `Hosted Beta Smoke` workflow only when the deployed Railway beta and hosted MCP
 secrets are available. This is a deployment promotion check, not part of the
 offline release artifact build.
+
+## Artifact evidence manifest
+
+Before creating the draft, publication runs
+`uv run --no-sync python scripts/release_manifest.py release-assets --tag vX.Y.Z --source-sha <40-character-commit>`.
+The publishing job independently rebuilds the wheel from its reviewed checkout
+with the pinned build backend. The downloaded wheel must have the same filename
+and byte-for-byte checksum as that rebuild before manifest creation or signing.
+Matching receipts supplied by the build job can't authorize a changed wheel.
+This comparison trusts the publisher's checkout and build environment; it doesn't
+establish a hermetic build or protect a compromised publishing job.
+The source revision must match the checked-out commit and the tag must match
+`pyproject.toml`. The gate requires fresh wheel receipts for Python 3.11 and 3.12 plus four standalone platform
+receipts with the same dependency lock, generation and catalog. Every wheel and
+standalone receipt must include exactly six offline cases with a pass rate of one;
+missing or reduced fixture evidence blocks publication. Each standalone
+receipt binds its archive checksum after compression; the wheel receipt binds the
+actual installed wheel. Full offline, lint and type checks run on both Python versions. Missing platforms, failed probes, changed downloads,
+unexpected assets and stale receipts stop publication.
+
+`RELEASE_MANIFEST.json` records these identities and each download's checksum.
+`SHA256SUMS` also covers the manifest. This gate covers artifact verification;
+real coding-client, live-provider, production and rollback acceptance stay separate
+under #104. Keep those receipts tied to the final release revision before promotion.
+
+The source distribution includes tracked package source, public policies, evaluation
+fixtures, README, license, build metadata, lockfile and ignore rules. Checkout pointers
+and agent state aren't package inputs. The gate compares every source-archive file
+with these tracked inputs and checks package metadata before adding the source
+download to the manifest; missing, altered and unexpected source files block publication.
+
+Wheel `METADATA` and source `PKG-INFO` must match the selected `pyproject.toml`
+package identity, Python requirement, dependencies and advertised extras. The gate
+uses canonical requirement/specifier objects and retains dependency markers for
+all target environments; it doesn't check only dependencies active on the current
+host. A mismatch blocks manifest creation. Rebuild the distribution from the
+selected checkout before retrying.
+
+Before signing or draft creation, the workflow also renders the selected version's
+reviewed CHANGELOG section with `check_release_notes.py`. After actual attestation
+verification, it runs the existing evidence collector with artifact/provenance checks.
+Expected identities come from CI and the checked-out lock/public bundle; downloaded
+receipts can't choose them. Selection and report are retained in `release-evidence/`
+outside the signed assets. Once asset preparation succeeds, selection and collection
+also run after a failed signing/tag/provenance step unless the run was cancelled.
+That preserves a held report for missing or failed attestation evidence; the original
+failed step still blocks draft creation. Retention runs after failed collection,
+but skips when asset preparation never completed. A missing, failed or mismatched
+receipt stops draft creation.
+See [the scoped evidence guide](release-evidence.md) for its trust boundary. This gate
+doesn't establish actual coding-client, published installation, deployment or rollback
+acceptance. Those phases still need their own executed receipts.
+
+## Signed release provenance
+
+After manifest checks, the release job signs every subject in `SHA256SUMS` using
+GitHub's pinned `actions/attest` action. Before draft creation, each subject must
+pass `gh attestation verify` against this repository,
+`nnennandukwe/policyNIM/.github/workflows/release.yml` and the exact release source
+commit. Each verifier call has a 45-second timeout. A timeout immediately stops
+verification as incomplete; only nonzero exits retry, up to three attempts with
+two-second waits. Failures retain partial receipts and stop publication. Receipts
+include each attempt's outcome and return code, plus static recovery hints derived
+from at most 8 KiB of stderr. Raw command output isn't printed or retained in the
+receipt. On the Ubuntu publishing runner, stderr is drained through a pipe with
+only a bounded prefix held in memory; it isn't spooled to disk. Timeout cleanup
+terminates the owned verifier process group, including children that
+retain the pipe, and reaps the direct verifier process. Hints don't establish the cause or relax any verification constraint.
+Signing permissions belong only to that job.
+The workflow retains the signing bundle and verification receipt as workflow
+artifacts, outside the release inputs they describe.
+
+This verifies the workflow identity and artifact bytes. It doesn't establish
+independent review, a hermetic build, a security certification or a SLSA level.
+[GitHub's action documentation](https://github.com/actions/attest/tree/59d89421af93a897026c735860bf21b6eb4f7b26)
+explains its provenance and signing permissions. Actual signing and verification
+are observed during the release workflow; local subprocess tests don't create
+cryptographic evidence. Synthetic archive tests prove installer gate ordering
+and preservation of an existing install. Fresh-artifact packaging, runtime and
+client acceptance belong to the separate release evidence and runtime verifier
+receipts; those checks don't replace signing evidence.
+
+Installers can require this check before extraction and replacement. Install
+GitHub CLI and authenticate it with `gh auth login`. Set
+`POLICYNIM_VERIFY_ATTESTATION=required` in the installer process. Both installers
+accept the documented mode names regardless of letter case.
+The installer resolves the selected release tag's commit and verifies the archive
+against that source and release workflow. A missing verifier, unresolved tag or
+rejected attestation stops installation and preserves the previous install.
+Unset the option or set it to `0` for checksum-only installation; invalid values
+fail rather than silently skipping a requested check. Older releases without
+attestations can't pass the required mode.

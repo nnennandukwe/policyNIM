@@ -18,9 +18,9 @@
 
 PolicyNIM is a policy-aware engineering preflight layer for AI coding agents.
 
-It helps an agent retrieve grounded policy evidence, generate implementation
-guidance with citations attached, and fail closed when the available grounding
-is too weak to trust.
+It helps an agent retrieve policy evidence and review complete selected policy
+bodies with citations. It fails closed when complete source ownership or exact
+source references are unavailable.
 
 PolicyNIM currently ships with two main user-facing surfaces:
 
@@ -34,14 +34,16 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - NVIDIA-hosted embeddings and reranking for retrieval.
 - Local sqlite-vec storage for the retrievable policy index.
 - Task-aware policy routing with citation-preserving selected-policy packets.
-- Policy compilation into citation-backed planning and generation constraints.
-- Grounded preflight synthesis with compiled plan steps, citation validation, and
-  fail-closed fallback.
+- Source-extractive policy compilation and preflight: models select compact IDs,
+  then services quote whole pinned policy bodies with canonical citations.
+  [Output semantics and limits](docs/source-extractive-guidance.md) describe the
+  empty advisory fields, source budgets and required applicability review.
 - Opt-in preflight evidence traces that link chunks, selected policies, compiled
-  constraints, generated guidance, and conformance checks.
+  source quotations, and conformance checks.
 - Opt-in policy-backed regeneration for preflight and eval preflight cases,
   reusing the same compiled packet and typed conformance failures as retry
-  triggers.
+  triggers. Repeated attempts retain the same quoted source set; they can't
+  rewrite policy text or establish a policy repair.
 - Eval backend selection with optional policy-conformance scoring for compiled
   plans and preflight outputs, with compact traces embedded in eval result
   artifacts and local Phoenix reporting for non-headless runs.
@@ -51,7 +53,8 @@ PolicyNIM currently ships with two main user-facing surfaces:
   commands for `ingest`, `dump-index`, `search`, `route`, `compile`,
   `preflight`, `eval`, `mcp`, `mcp-config`, `mcp-smoke`, `support-bundle`,
   `beta-admin`, `runtime`, and `evidence`.
-- MCP tools for `policy_preflight` and `policy_search`.
+- MCP tools for `policy_search`, `policy_compile`, `policy_preflight` and
+  `policy_preflight_evidence`, with versioned policy resources and a review prompt.
 - Hosted HTTP `streamable-http` with `/healthz`, a self-serve `/beta` portal,
   and bearer auth on `/mcp`.
 
@@ -60,6 +63,10 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` to bound expensive tool calls per server
 (default `10`). Excess calls receive a retry-later error. See the
 [MCP workflow](docs/workflows.md) for transport and public-origin configuration.
+For evaluations that need to survive client disconnects, see [durable evaluation jobs](docs/evaluation-jobs.md).
+
+See [grounded MCP guidance](docs/grounded-mcp.md) for tool schemas, evidence and
+immutable resource links.
 
 The maintained source baseline includes application-security and MCP trust guidance
 with pinned references, role boundaries, and authored scenarios. See the
@@ -73,11 +80,14 @@ These new commands are available from this source checkout or a wheel built from
 it. The existing `v0.1.0` release predates them.
 
 ```bash
-uv run policynim policies list
-uv run policynim policies show SEC-AUTH-001
-uv run policynim policies validate --format json
+uv run policynim policies list --source
+uv run policynim policies show SEC-AUTH-001 --source
+uv run policynim policies validate --source --format json
 uv run policynim inventory --format json
 ```
+
+These examples inspect mutable sources with `--source`. Without that flag, catalog
+commands inspect the active generation when one exists.
 
 The catalog commands list policy IDs, source text, pack versions, and content
 revisions. Inventory inspects the selected Markdown sources and local SQLite index
@@ -174,8 +184,10 @@ Use [docs/hosted-beta-operations.md](docs/hosted-beta-operations.md) for:
 
 Existing installations changing embedding models must follow the
 [source-preserving provider recovery runbook](docs/hosted-provider-recovery.md).
-Every ingestion build, including a same-model refresh, requires separate, absent
-index and runtime-rules output paths; existing installations are preserved.
+`policynim ingest` builds a complete immutable generation and atomically activates
+it. Existing standalone installations require explicit migration. See
+[policy generations](docs/policy-generations.md) for inspection, rollback,
+retention, and offline deployment bundles.
 
 ## Local Contributor Setup
 
@@ -225,9 +237,11 @@ uv run policynim preflight --task "Implement a refresh-token cleanup background 
 
 Use [docs/contributor-guide.md](docs/contributor-guide.md) for environment
 templates, runtime settings, optional NVIDIA eval and Guardrails extras, and
-contributor quality gates. The launcher path is installable in-project with
-`uv sync --extra nvidia-eval --extra nvidia-eval-launcher --group test --group dev`;
-the internal Guardrails output-rail wrapper uses `uv sync --extra nvidia-guardrails`.
+contributor quality gates. Optional evaluation adapters use
+`uv sync --locked --extra nvidia-eval --group test --group dev`;
+the internal Guardrails output-rail wrapper uses
+`uv sync --locked --extra nvidia-guardrails`. The separate upstream launcher
+setup is described in [installation profiles](docs/runtime-install-profiles.md).
 
 If you are using an installed copy instead of a source checkout, run
 `policynim init` once first so PolicyNIM can write the standalone config file
@@ -282,3 +296,7 @@ Current limitations are intentional:
 
 See [docs/limitations.md](docs/limitations.md) for the full list and future
 expansion areas.
+
+Install the optional Phoenix UI command in a separate tool environment; see
+[installation profiles](docs/runtime-install-profiles.md).
+`policynim eval --headless` needs no Phoenix server.

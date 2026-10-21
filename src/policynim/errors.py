@@ -11,6 +11,67 @@ class PolicyNIMError(Exception):
         self.failure_class = failure_class
 
 
+class IndexReadLimitError(PolicyNIMError):
+    """Refuse a bounded row read before materializing an oversized payload."""
+
+    def __init__(self) -> None:
+        """Keep the storage failure independent of caller-specific recovery policy."""
+        super().__init__(
+            "Selected index rows exceed the read budget.", failure_class="index_read_limit"
+        )
+
+
+class PolicyContextError(PolicyNIMError):
+    """Refuse incomplete or unbound selected-policy context before generation."""
+
+    def __init__(self, *, identity_mismatch: bool = False, output_budget: bool = False) -> None:
+        """Expose fixed recovery guidance without including source content or paths."""
+        if output_budget:
+            message = (
+                "Full-source output exceeds the 1-MiB serialized result budget. "
+                "No partial output was returned. Narrow the task, top_k or domain "
+                "before retrying."
+            )
+            failure_class = "policy_output_budget_exceeded"
+        elif identity_mismatch:
+            message = (
+                "Selected policy evidence doesn't match the pinned index. "
+                "Preserve the generation and ask the operator to inspect its integrity."
+            )
+            failure_class = "policy_context_identity_mismatch"
+        else:
+            message = (
+                "Complete selected-policy context exceeds the 80-chunk or 256-KiB budget. "
+                "No partial policy context was used. Narrow top_k or domain, or ask the "
+                "operator to split reviewed policy documents before retrying."
+            )
+            failure_class = "policy_context_budget_exceeded"
+        super().__init__(message, failure_class=failure_class)
+
+
+class GenerationError(PolicyNIMError):
+    """A bounded generation failure with a phase and source-preserving recovery action."""
+
+    def __init__(self, phase: str, detail: str, *, recovery: str | None = None) -> None:
+        """Preserve a safe phase and recovery action without echoing artifact contents."""
+        self.phase = phase
+        action = recovery or (
+            "Preserve existing data and run `policynim generation inspect` before retrying."
+        )
+        super().__init__(
+            f"Generation {phase} failed: {detail} {action}",
+            failure_class=f"generation_{phase}",
+        )
+
+
+class MissingGenerationError(GenerationError):
+    """The selected generation object is absent; existing object corruption stays separate."""
+
+
+class GenerationBundleSizeError(GenerationError):
+    """A generation export exceeds its existing compressed or expanded bundle limit."""
+
+
 class ConfigurationError(PolicyNIMError):
     """Raised when required configuration is missing or invalid."""
 

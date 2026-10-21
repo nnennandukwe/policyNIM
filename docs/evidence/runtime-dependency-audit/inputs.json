@@ -1,0 +1,51 @@
+{
+  "observed_at": "2026-10-20T23:14:29.392989+00:00",
+  "auditor": "pip-audit 2.10.1",
+  "service": "pypi",
+  "python": "3.11 (selected with uvx --python 3.11)",
+  "platform": "Darwin",
+  "scope": "Selected standard and supported-extra requirements evaluated on Python 3.11 macOS; no exploit or all-platform claim.",
+  "lock_sha256": "sha256:7e89ff0c8e6059bdc8917b3d2071df4227a8dae45c0663f4e5f32495f1ca3e66",
+  "pyproject_sha256": "sha256:2b50e916e1337cd13aa478ebbbea5cebe1bd7b84834b272ce353b76631525405",
+  "profiles": {
+    "standard": {
+      "requirements_sha256": "sha256:b6e8eb0013f68301006c83569580ec64e4a8245633621ffb27c6a09fd919ad49",
+      "receipt_sha256": "sha256:b5d84a4c245f6f6bcae85bc5e1189f6c73712cb9bbcc805b25eda609299b16b7",
+      "package_count": 79,
+      "affected_packages": []
+    },
+    "all-extras": {
+      "requirements_sha256": "sha256:706026e13f2d5d92a144b228962c57b268f9af6d86968394cfcfcb59c4aeafc4",
+      "receipt_sha256": "sha256:1760fbee1d26476f03bd05a67f5dbb4757a6bdaa3131b679f624556ed616ccaa",
+      "package_count": 162,
+      "affected_packages": [
+        {
+          "name": "pillow",
+          "version": "12.3.0",
+          "advisory_ids": [
+            "CVE-2026-112895",
+            "CVE-2026-112400",
+            "CVE-2026-112397",
+            "CVE-2026-112896",
+            "CVE-2026-112897",
+            "CVE-2026-112395",
+            "CVE-2026-112404",
+            "CVE-2026-112899"
+          ]
+        }
+      ]
+    }
+  },
+  "separate_tool_profiles": {
+    "phoenix-ui": {
+      "package": "arize-phoenix==20.23.0",
+      "python": "3.11.13",
+      "platform": "Darwin",
+      "requirements_sha256": "sha256:7e9dff0f8200ebaecaa6766169476320fcee40e9e7cf2dff1f23c25335617226",
+      "receipt_sha256": "sha256:0939f55cd7986652c1ab2bf2a20aa5ea299c3c0b3b25264653b81c953b3ff7ac",
+      "package_count": 151,
+      "affected_packages": [],
+      "scope": "Installed separate tool environment, outside the application universal lock."
+    }
+  }
+}

@@ -14,9 +14,9 @@ from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from ipaddress import ip_address
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import NamedTemporaryFile, TemporaryFile
-from typing import Annotated, Literal, NoReturn, cast
+from typing import Annotated, Literal, NoReturn, TextIO, cast
 from urllib.parse import urlparse
 
 import typer
@@ -28,10 +28,13 @@ import policynim.config_discovery as config_discovery
 from policynim.agent_workflows import agent_workflows
 from policynim.errors import (
     ConfigurationError,
+    GenerationError,
     IndexCompatibilityError,
     MissingIndexError,
     PolicyNIMError,
 )
+from policynim.interfaces.evaluation_jobs_cli import job_app
+from policynim.interfaces.generation_cli import app as generation_app
 from policynim.interfaces.mcp import run_server
 from policynim.interfaces.profile_cli import app as profile_app
 from policynim.runtime_paths import resolve_runtime_path
@@ -50,7 +53,7 @@ from policynim.services import (
     create_runtime_execution_service,
     create_search_service,
 )
-from policynim.services.catalog import build_policy_catalog
+from policynim.services.catalog import CatalogPolicyView, build_policy_catalog
 from policynim.services.inventory import inspect_policy_inventory
 from policynim.settings import Settings, get_settings
 from policynim.types import (
@@ -75,8 +78,16 @@ _RUNTIME_REQUEST_ADAPTER = TypeAdapter(RuntimeActionRequest)
 _STANDALONE_MISSING_INDEX_MESSAGE = (
     "Local PolicyNIM data is not built yet. Run `policynim ingest` to build the local policy index."
 )
-_EXPECTED_MCP_TOOLS = ("policy_preflight", "policy_search")
+_EXPECTED_MCP_TOOLS = (
+    "policy_preflight",
+    "policy_search",
+    "policy_compile",
+    "policy_preflight_evidence",
+)
 _POSIX_PATH_TOKEN_RE = re.compile(r"(^|[\s\"'`=(:])(/(?!/)[^\s\"'`<>),;]+)")
+_WINDOWS_PATH_TOKEN_RE = re.compile(
+    r"[A-Za-z]:[\\/](?:[^\\/:\r\n\"<>|?*]+[\\/])*[^\s\\/:\r\n\"<>|?*]+"
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -104,12 +115,16 @@ app.add_typer(evidence_app, name="evidence")
 policies_app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Inspect and validate policy sources without model credentials or network calls.",
+    help="Inspect policy generations or configured sources without model credentials.",
 )
 app.add_typer(policies_app, name="policies")
 
 
 app.add_typer(profile_app, name="profile")
+app.add_typer(generation_app, name="generation")
+
+
+app.add_typer(job_app, name="eval-jobs")
 
 
 @policies_app.command("list")
@@ -117,17 +132,22 @@ def policies_list(
     output_format: Annotated[
         Literal["text", "json"], typer.Option("--format", help="Catalog output: text or json.")
     ] = "text",
+    source: Annotated[
+        bool, typer.Option("--source", help="Inspect configured mutable sources.")
+    ] = False,
 ) -> None:
     """List source policy IDs and pack versions; use show for individual content revisions."""
     try:
-        catalog = build_policy_catalog()
+        catalog = build_policy_catalog(source_only=source)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
     if output_format == "json":
         typer.echo(catalog.model_dump_json(indent=2))
         return
-    typer.echo(f"Source catalog: {catalog.effective_count} policies; {catalog.digest}")
-    typer.echo("Indexed generation: unknown (source inspection only)")
+    typer.echo(
+        f"{catalog.scope.title()} catalog: {catalog.effective_count} policies; {catalog.digest}"
+    )
+    typer.echo(f"Generation: {catalog.generation_id or 'unknown (source inspection only)'}")
     for entry in catalog.policies:
         provenance = entry.policy.provenance
         pack = (
@@ -142,7 +162,7 @@ def policies_list(
     if catalog.unlisted_markdown:
         typer.echo(
             f"Unlisted Markdown: {len(catalog.unlisted_markdown)} file(s) aren't selected. "
-            "Run `policynim policies validate --format json` for their paths."
+            "Run `policynim policies validate --source --format json` for their paths."
         )
 
 
@@ -152,16 +172,28 @@ def policies_show(
     output_format: Annotated[
         Literal["text", "json"], typer.Option("--format", help="Policy output: text or json.")
     ] = "text",
+    source: Annotated[
+        bool, typer.Option("--source", help="Inspect configured mutable sources.")
+    ] = False,
 ) -> None:
     """Show one policy's source text, content digest, and declared provenance."""
     try:
-        entry = build_policy_catalog().show(policy_id)
+        catalog = build_policy_catalog(source_only=source)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
+    try:
+        entry = catalog.show(policy_id)
+    except PolicyNIMError as exc:
+        _catalog_error(exc, output_format, scope=catalog.scope, generation_id=catalog.generation_id)
     if output_format == "json":
-        typer.echo(entry.model_dump_json(indent=2))
+        typer.echo(
+            CatalogPolicyView(
+                **entry.model_dump(), scope=catalog.scope, generation_id=catalog.generation_id
+            ).model_dump_json(indent=2)
+        )
         return
     typer.echo(f"{entry.policy.policy_id}: {entry.policy.title}")
+    typer.echo(f"Scope: {catalog.scope}; generation: {catalog.generation_id or 'unknown'}")
     typer.echo(f"Source: {entry.path}; state: {entry.state}")
     if entry.reason is not None:
         typer.echo(f"Decision: {entry.reason}")
@@ -176,25 +208,32 @@ def policies_validate(
     output_format: Annotated[
         Literal["text", "json"], typer.Option("--format", help="Validation output: text or json.")
     ] = "text",
+    source: Annotated[
+        bool, typer.Option("--source", help="Inspect configured mutable sources.")
+    ] = False,
 ) -> None:
     """Validate manifest, membership, source metadata, and policy IDs without embedding."""
     try:
-        catalog = build_policy_catalog()
+        catalog = build_policy_catalog(source_only=source)
     except PolicyNIMError as exc:
         _catalog_error(exc, output_format)
     result = {
         "status": "ok",
-        "scope": "source",
+        "scope": catalog.scope,
+        "generation_id": catalog.generation_id,
         "catalog_digest": catalog.digest,
         "authored_count": catalog.authored_count,
         "effective_count": catalog.effective_count,
-        "indexed_count": None,
+        "indexed_count": catalog.indexed_count,
         "unlisted_markdown": catalog.unlisted_markdown,
     }
     if output_format == "json":
         typer.echo(json.dumps(result, indent=2))
     else:
-        typer.echo(f"Valid source catalog: {catalog.effective_count} policies; {catalog.digest}")
+        typer.echo(
+            f"Valid {catalog.scope} catalog: {catalog.effective_count} policies; {catalog.digest}"
+        )
+        typer.echo(f"Generation: {catalog.generation_id or 'unknown (source inspection only)'}")
         typer.echo(
             "Validation checks structure and declared metadata; it doesn't certify compliance."
         )
@@ -202,10 +241,26 @@ def policies_validate(
             typer.echo("Unlisted Markdown (not selected): " + ", ".join(catalog.unlisted_markdown))
 
 
-def _catalog_error(error: PolicyNIMError, output_format: str) -> NoReturn:
+def _catalog_error(
+    error: PolicyNIMError,
+    output_format: str,
+    *,
+    scope: Literal["source", "generation"] | None = None,
+    generation_id: str | None = None,
+) -> NoReturn:
     """Keep validation failures machine-readable with a nonzero command exit."""
     if output_format == "json":
-        typer.echo(json.dumps({"status": "error", "scope": "source", "message": str(error)}))
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "scope": scope
+                    or ("generation" if isinstance(error, GenerationError) else "source"),
+                    "generation_id": generation_id,
+                    "message": str(error),
+                }
+            )
+        )
         raise typer.Exit(code=1)
     _exit_with_error(str(error))
 
@@ -384,6 +439,10 @@ def inventory(
         typer.echo(report.model_dump_json(indent=2))
         return
     typer.echo("PolicyNIM inventory (local process; remote deployment isn't inspected)")
+    typer.echo(
+        f"Generation state: {report.generation_state}; ID: {report.generation_id or 'unknown'}"
+    )
+    typer.echo(f"Index scope: {report.index_scope}")
     source = report.source
     if source.profile_path is not None:
         typer.echo(f"Source profile: {source.profile_path}")
@@ -412,7 +471,7 @@ def _inventory_count(count: int | None) -> str:
 
 @app.command()
 def ingest() -> None:
-    """Build a policy index and runtime rules at unused output paths."""
+    """Build and activate a complete policy generation with explicit embedding requests."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
@@ -430,6 +489,10 @@ def ingest() -> None:
     typer.echo(f"Index: {result.index_uri} (table: {result.table_name})")
     if result.catalog_digest is not None:
         typer.echo(f"Source catalog: {result.catalog_digest}")
+    if result.generation_id is not None:
+        typer.echo(f"Activated generation: {result.generation_id}")
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}")
 
 
 @app.command(
@@ -486,7 +549,7 @@ def preflight(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Retrieval depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     trace: Annotated[
@@ -615,7 +678,7 @@ def route(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -670,7 +733,7 @@ def compile(
             "--top-k",
             min=1,
             max=MAX_TOP_K,
-            help="Selected evidence depth. Allowed range: 1-20.",
+            help="Discovery hits, 1-20; complete selected-policy context can exceed this count.",
         ),
     ] = None,
     task_type: Annotated[
@@ -810,6 +873,12 @@ def evidence_report(
 
 @app.command()
 def eval(
+    suite: Annotated[
+        Path | None,
+        typer.Option(
+            "--suite", exists=True, dir_okay=False, help="Reviewed live evaluation suite JSON."
+        ),
+    ] = None,
     mode: Annotated[
         EvalExecutionMode,
         typer.Option("--mode", help="Eval execution mode. Supported values: offline, live."),
@@ -855,19 +924,25 @@ def eval(
     """Run the PolicyNIM eval suite and persist local reports."""
     service = None
     try:
-        settings = _load_setup_dependent_settings()
+        settings = get_settings() if mode == "offline" else _load_setup_dependent_settings()
         service = create_eval_service(settings)
+        suite_options = {"suite_path": suite} if suite is not None else {}
         result = service.run(
             mode=mode,
             backend=backend,
             compare_rerank=not no_compare_rerank,
             regenerate=regenerate,
             max_regenerations=max_regenerations,
+            **suite_options,
         )
         if not headless:
             service.start_ui()
             service.publish_to_ui(result)
-        typer.echo(result.model_dump_json(indent=2))
+        typer.echo(
+            result.model_dump_json(
+                indent=2, exclude={"runs": {"__all__": {"case_results", "suite_definition"}}}
+            )
+        )
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))
     except ValueError as exc:
@@ -1287,10 +1362,10 @@ def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) ->
     lines.extend(
         [
             (
-                "| Execution | Action | Decision | Outcome | Confirmation | "
+                "| Execution | Generation | Action | Decision | Outcome | Confirmation | "
                 "Started | Completed | Failure |"
             ),
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for execution in summary.executions:
@@ -1298,6 +1373,7 @@ def _runtime_evidence_report_markdown(summary: RuntimeEvidenceSessionSummary) ->
             " | ".join(
                 [
                     f"| {_markdown_cell(execution.execution_id)}",
+                    _markdown_cell(execution.generation_id or "unknown"),
                     _markdown_cell(execution.action_kind),
                     _markdown_cell(execution.decision),
                     _markdown_cell(execution.execution_outcome or "incomplete"),
@@ -1677,7 +1753,8 @@ def _build_quickstart_payload(
         "agent_workflows": _quickstart_agent_workflows(),
         "next_steps": [
             "Load the generated config in your MCP client.",
-            "Ask the client to list `policy_preflight` and `policy_search`.",
+            "Ask the client to list `policy_search`, `policy_compile`, "
+            "`policy_preflight` and `policy_preflight_evidence`.",
         ],
         "safety": [
             "This command does not launch the MCP server.",
@@ -2536,6 +2613,8 @@ def _support_bundle_path_replacements(
         replacements[sys.executable] = "<python-executable>"
     for path, marker in candidates:
         for candidate in (
+            str(path.expanduser()),
+            str(path.expanduser().resolve(strict=False)),
             path.expanduser().as_posix(),
             path.expanduser().resolve(strict=False).as_posix(),
         ):
@@ -2586,6 +2665,7 @@ def _support_bundle_absolute_path_tokens(value: str) -> list[str]:
     except ValueError:
         tokens.extend(value.split())
     tokens.extend(match.group(2) for match in _POSIX_PATH_TOKEN_RE.finditer(value))
+    tokens.extend(match.group(0) for match in _WINDOWS_PATH_TOKEN_RE.finditer(value))
 
     paths: set[str] = set()
     for token in tokens:
@@ -2601,11 +2681,23 @@ def _support_bundle_token_is_absolute_path(value: str) -> bool:
         return False
     if value.startswith("/") and not value.startswith("//"):
         return len(Path(value).parts) >= 3
-    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in {"\\", "/"}
+    return (
+        len(value) >= 3
+        and value[0].isalpha()
+        and value[1] == ":"
+        and value[2] in {"\\", "/"}
+        and ":" not in value[3:]
+    )
 
 
 def _support_bundle_redaction_prefix(path_text: str) -> str | None:
     """Return the parent prefix to redact for an absolute path string."""
+    windows_path = PureWindowsPath(path_text)
+    if windows_path.is_absolute():
+        parent = windows_path.parent
+        if parent == windows_path or parent == PureWindowsPath(windows_path.anchor):
+            return None
+        return str(parent) if "\\" in path_text else parent.as_posix()
     if path_text.startswith("/"):
         path = Path(path_text).expanduser()
         parent = path.parent
@@ -2620,9 +2712,12 @@ def _support_bundle_path_is_known(
     replacements: dict[str, str],
 ) -> bool:
     """Return whether a path already falls under an existing redaction prefix."""
-    normalized = path_text.rstrip("/")
-    for existing in replacements:
-        prefix = existing.rstrip("/")
+    normalized = path_text.replace("\\", "/").rstrip("/")
+    for existing, marker in replacements.items():
+        prefix = existing.replace("\\", "/").rstrip("/")
+        if marker == "<home>" and normalized != prefix:
+            # Unknown directories beneath a home path still need their own redaction.
+            continue
         if normalized == prefix or normalized.startswith(f"{prefix}/"):
             return True
     return False
@@ -2633,7 +2728,11 @@ def _replace_local_path_prefixes(value: object, replacements: Sequence[tuple[str
     if isinstance(value, str):
         redacted = value
         for path_prefix, marker in replacements:
-            redacted = redacted.replace(path_prefix, marker)
+            if PureWindowsPath(path_prefix).is_absolute():
+                pattern = r"[\\/]".join(re.escape(part) for part in re.split(r"[\\/]", path_prefix))
+                redacted = re.sub(pattern, lambda match: marker, redacted, flags=re.IGNORECASE)
+            else:
+                redacted = redacted.replace(path_prefix, marker)
         return redacted
     if isinstance(value, list):
         return [_replace_local_path_prefixes(item, replacements) for item in value]
@@ -2688,7 +2787,10 @@ async def _run_mcp_stdio_smoke(
                 env=_mcp_stdio_smoke_env(),
                 cwd=cwd or Path.cwd(),
             )
-            async with stdio_client(parameters, errlog=errlog) as (read_stream, write_stream):
+            async with stdio_client(parameters, errlog=cast(TextIO, errlog)) as (
+                read_stream,
+                write_stream,
+            ):
                 async with ClientSession(
                     read_stream,
                     write_stream,
@@ -2936,6 +3038,7 @@ def _build_doctor_report() -> dict[str, object]:
     index_path = resolve_runtime_path(settings.index_db_path)
     runtime_rules_path = resolve_runtime_path(settings.runtime_rules_artifact_path)
     report["paths"] = {
+        "generations_dir": resolve_runtime_path(settings.generations_dir).as_posix(),
         "index_db_path": index_path.as_posix(),
         "runtime_rules_artifact_path": runtime_rules_path.as_posix(),
         "runtime_evidence_db_path": resolve_runtime_path(
@@ -2948,6 +3051,24 @@ def _build_doctor_report() -> dict[str, object]:
     report["inventory"] = inventory.model_dump(mode="json")
     report["index"] = inventory.index.model_dump(mode="json")
     readiness = inventory.index
+    checks.append(
+        {
+            "name": "policy_generation",
+            "status": "ok" if inventory.generation_state == "ready" else "action_required",
+            "message": inventory.generation_id
+            or inventory.generation_reason
+            or "No active generation.",
+        }
+    )
+    if inventory.generation_state != "ready":
+        next_steps.append(
+            "Import a trusted bundle with `policynim generation import BUNDLE "
+            "--expect-digest DIGEST`, "
+            "or validate a standalone pair with `policynim generation migrate`. "
+            "For changed sources, `policynim ingest` builds a new generation "
+            "with explicit embedding usage. "
+            "Preserve existing SQLite and LanceDB data."
+        )
     legacy_lancedb_alias_configured = _doctor_legacy_lancedb_alias_configured(discovery)
     index_recovery_step_added = readiness.state not in {"ready", "missing"}
     if readiness.state == "directory":
@@ -2993,11 +3114,11 @@ def _build_doctor_report() -> dict[str, object]:
             }
         )
         next_steps.append(
-            "Run `policynim policies validate --format json` for the exact source error. "
+            "Run `policynim policies validate --source --format json` for the exact source error. "
             "Recover authoritative Markdown sources and set POLICYNIM_CORPUS_DIR before rebuilding."
         )
 
-    if runtime_rules_path.exists():
+    if inventory.generation_state == "ready" or runtime_rules_path.exists():
         checks.append(
             {
                 "name": "runtime_rules_artifact",
@@ -3072,9 +3193,8 @@ def _doctor_cli_command(command: str) -> str:
 def _doctor_ingest_next_step() -> str:
     """Return the standard ingest recovery step for doctor output."""
     return (
-        f"Run `{_doctor_cli_command('ingest')}` to build the local policy index "
-        "and runtime rules artifact. If either output exists, choose separate "
-        "POLICYNIM_INDEX_DB_PATH and POLICYNIM_RUNTIME_RULES_ARTIFACT_PATH destinations."
+        f"Run `{_doctor_cli_command('ingest')}` to build and activate a complete generation "
+        "under POLICYNIM_GENERATIONS_DIR. Existing standalone index and rules stay preserved."
     )
 
 

@@ -96,12 +96,32 @@ def load_pack_manifest(root: Path) -> PolicyPackManifest | None:
         raise InvalidPolicyDocumentError("Couldn't read pack.toml as UTF-8 TOML.") from exc
 
 
+def normalize_pack_member_path(value: str) -> PurePosixPath:
+    """Validate the shared lexical manifest contract and normalize harmless path spelling."""
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or "\\" in value
+        or ":" in value
+        or relative.suffix != ".md"
+        or relative.name == "TEMPLATE.md"
+    ):
+        raise InvalidPolicyDocumentError("Pack members must name relative Markdown files.")
+    return relative
+
+
 def resolve_pack_members(root: Path, manifest: PolicyPackManifest) -> list[Path]:
     """Resolve explicit Markdown files without traversal, symlink escape, or aliases."""
     paths: list[Path] = []
     resolved_paths: set[Path] = set()
     for index, member in enumerate(manifest.policies):
-        relative = PurePosixPath(member.path)
+        try:
+            normalize_pack_member_path(member.path)
+        except InvalidPolicyDocumentError as exc:
+            raise InvalidPolicyDocumentError(
+                f"pack.toml policies.{index}.path must name a Markdown member within the pack."
+            ) from exc
         path = root / member.path
         try:
             resolved = path.resolve()
@@ -112,15 +132,7 @@ def resolve_pack_members(root: Path, manifest: PolicyPackManifest) -> list[Path]
                 f"pack.toml policies.{index}.path couldn't be inspected. "
                 "Check paths and permissions."
             ) from exc
-        if (
-            relative.is_absolute()
-            or ".." in relative.parts
-            or "\\" in member.path
-            or ":" in member.path
-            or relative.suffix != ".md"
-            or relative.name == "TEMPLATE.md"
-            or not resolved.is_relative_to(root_resolved)
-        ):
+        if not resolved.is_relative_to(root_resolved):
             raise InvalidPolicyDocumentError(
                 f"pack.toml policies.{index}.path must name a Markdown member within the pack."
             )

@@ -1,7 +1,10 @@
 # Hosted NVIDIA provider recovery (#107)
 
-This repair targets ingestion and the two existing guidance tools. It does not
-implement the policy-generation publication protocol tracked in #93.
+This page preserves the #107 repair evidence and its earlier standalone workflow.
+For current deployment and migration, use [complete policy generations](policy-generations.md).
+For the later chat-model HTTP 404 repair, use [chat availability recovery](chat-availability-recovery.md).
+Image builds now import a verified bundle, and startup never ingests. The historical
+commands below describe the earlier implementation; they aren't current deployment instructions.
 
 ## Diagnosis and supported configuration
 
@@ -19,7 +22,7 @@ ingestion subsequently succeeded with the existing staging credential. See
 [PR #108](https://github.com/nnennandukwe/policyNIM/pull/108) for revision-bound
 build, inventory, health, and tool acceptance evidence.
 
-| Operation | Default model | Official request contract |
+| Operation | Default model at the #107 repair | Official request contract |
 | --- | --- | --- |
 | Embedding | `nvidia/nemotron-3-embed-1b` | [Reference](https://docs.api.nvidia.com/nim/re/reference/nvidia-nemotron-3-embed-1b-infer): `/v1/embeddings`, `input_type=passage` or `query`, `encoding_format=float`, `truncate=NONE`. |
 | Reranking | `nvidia/llama-nemotron-rerank-vl-1b-v2` | [Reference](https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-rerank-vl-1b-v2-infer): `/v1/retrieval/{model}/reranking`, text query and passages, `truncate=END`. |
@@ -44,9 +47,9 @@ insufficient-context and citation checks. A model-specific relevance cutoff need
 separate labeled evaluation; do not assume that a successful cited example
 establishes retrieval quality for every task.
 
-## Build and runtime configuration
+## Historical build and runtime configuration
 
-Both Dockerfiles declare these nonsecret arguments globally and in the builder
+At the #107 repair, both Dockerfiles declared these nonsecret arguments globally and in the builder
 and runtime stages, and carry them into the runtime image's defaults:
 
 | Variable / build argument | Default |
@@ -57,8 +60,8 @@ and runtime stages, and carry them into the runtime image's defaults:
 | `POLICYNIM_NVIDIA_TIMEOUT_SECONDS` | `30.0` |
 | `POLICYNIM_NVIDIA_MAX_RETRIES` | `2` |
 
-The standard Dockerfile continues to use a BuildKit secret. Railway's Dockerfile
-continues to use its existing key build argument because the platform rejects
+The #107 standard Dockerfile used a BuildKit secret. Railway's Dockerfile
+used its existing key build argument because the platform rejects
 secret mounts. Never print key values or pass keys in command-line arguments.
 [Railway requires explicit ARG declarations](https://docs.railway.com/builds/dockerfiles)
 for service variables used by a Docker build. Existing Railway model variables
@@ -74,7 +77,7 @@ The image includes both the database and `/app/data/runtime/runtime_rules.json`.
 Build failures remain fatal; missing, empty, unknown, or incompatible indexes
 cannot satisfy startup readiness.
 
-## Rebuild into a separate candidate
+## Historical standalone candidate workflow
 
 Preserve the original corpus, index, runtime rules, and configuration. Do not edit
 identity metadata or reuse either old output path. This requirement also applies
@@ -254,7 +257,7 @@ Citation validation remains strict: a policy ID is never silently expanded or
 accepted as a chunk citation. Live acceptance must verify this contract separately
 from endpoint access.
 
-Railway still supplies the ingestion key through its supported build ARG. The
+At the #107 revision, Railway supplied the ingestion key through its supported build ARG. The
 ingestion command reads that inherited environment value without inline expansion,
 so the key is not embedded in the displayed RUN command. This does not turn build
 ARGs into BuildKit secrets: restrict access to Railway build metadata and rotate

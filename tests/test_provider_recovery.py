@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,13 +14,15 @@ from openai import OpenAI
 from policynim.errors import ConfigurationError, ProviderError
 from policynim.providers.nvidia import NVIDIAEmbedder, NVIDIAGenerator, NVIDIAReranker
 from policynim.settings import Settings
+from policynim.source_units import SourceCatalog, SourceContext, SourceSelection, SourceUnit
 from policynim.types import PolicyMetadata, PreflightRequest, ScoredChunk
 
 NO_ENV: dict[str, Any] = {"_env_file": None}
 
 EMBED_MODEL = "nvidia/nemotron-3-embed-1b"
 RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2"
-CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+CHAT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+PREVIOUS_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 
 def candidate() -> ScoredChunk:
@@ -75,7 +78,7 @@ def invoke(
                     client=client,
                 )
                 return generator.generate_preflight(
-                    PreflightRequest(task="add request identifiers to logs"), [candidate()]
+                    PreflightRequest(task="add request identifiers to logs"), source_context()
                 )
             embedder = NVIDIAEmbedder(
                 api_key="sentinel-key",
@@ -96,6 +99,7 @@ def invoke(
     ("status", "failure_class", "attempts"),
     [
         (410, "endpoint_unavailable", 1),
+        (404, "endpoint_not_found", 1),
         (400, "bad_request", 1),
         (401, "auth", 1),
         (403, "auth", 1),
@@ -119,11 +123,14 @@ def test_provider_failure_contract(operation: str, status: int, failure_class: s
     expected_class = "http_status" if operation == "reranking" and status == 400 else failure_class
     assert caught.value.failure_class == expected_class
     assert "sentinel" not in str(caught.value)
-    if status == 410:
+    if status in {404, 410}:
         assert operation in str(caught.value)
         setting = {"embeddings": "EMBED", "reranking": "RERANK", "generation": "CHAT"}[operation]
         assert f"POLICYNIM_NVIDIA_{setting}_MODEL" in str(caught.value)
         assert "retry" in str(caught.value).lower()
+    if status == 404:
+        assert "account" in str(caught.value)
+        assert "HTTP 404" in str(caught.value)
 
 
 @pytest.mark.parametrize("operation", ["embeddings", "query"])
@@ -254,7 +261,7 @@ def test_sdk_response_validation_failure_is_sanitized_and_not_retried():
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("model", [CHAT_MODEL, "custom/chat-model"])
+@pytest.mark.parametrize("model", [CHAT_MODEL, PREVIOUS_CHAT_MODEL, "custom/chat-model"])
 def test_chat_options_are_specific_to_replacement_model(model):
     """Verify chat options are specific to replacement model."""
     calls = []
@@ -277,8 +284,8 @@ def test_chat_options_are_specific_to_replacement_model(model):
                             "role": "assistant",
                             "content": json.dumps(
                                 {
-                                    "summary": "Add request identifiers.",
-                                    "citation_ids": [candidate().chunk_id],
+                                    "source_ids": ["s1"],
+                                    "insufficient_context": False,
                                 }
                             ),
                         },
@@ -290,19 +297,30 @@ def test_chat_options_are_specific_to_replacement_model(model):
     assert invoke("generation", handler, model=model).citation_ids == [candidate().chunk_id]
     assert calls[0]["model"] == model
     system_prompt, user_prompt = [message["content"] for message in calls[0]["messages"]]
-    assert "A policy_id is not a citation" in system_prompt
-    allowed_ids = user_prompt.split("Allowed citation_ids (copy exactly):\n", 1)[1].split("\n", 1)[
-        0
-    ]
-    assert json.loads(allowed_ids) == [candidate().chunk_id]
-    if model == CHAT_MODEL:
+    assert "Select policy source IDs" in system_prompt
+    sources = json.loads(user_prompt)["sources"]
+    assert sources[0]["citation_ids"] == [candidate().chunk_id]
+    if model == PREVIOUS_CHAT_MODEL:
         assert calls[0]["temperature"] == 1
         assert calls[0]["top_p"] == 0.95
-        assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
     else:
         assert calls[0]["temperature"] == 0
         assert calls[0]["top_p"] == 1
+    if model in {CHAT_MODEL, PREVIOUS_CHAT_MODEL}:
+        assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    else:
         assert "chat_template_kwargs" not in calls[0]
+    if model == CHAT_MODEL:
+        response_format = calls[0]["response_format"]
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["strict"] is True
+        schema = response_format["json_schema"]["schema"]
+        assert response_format["json_schema"]["name"] == SourceSelection.__name__
+        assert set(schema["properties"]) == set(SourceSelection.model_fields)
+        assert schema["properties"]["source_ids"]["items"]["enum"] == ["s1"]
+
+    else:
+        assert "response_format" not in calls[0]
 
 
 def test_default_models_and_environment_overrides(monkeypatch):
@@ -325,6 +343,26 @@ def test_default_models_and_environment_overrides(monkeypatch):
         Settings(**NO_ENV, nvidia_embed_model="explicit/model").nvidia_embed_model
         == "explicit/model"
     )
+    monkeypatch.setenv("POLICYNIM_NVIDIA_CHAT_MODEL", PREVIOUS_CHAT_MODEL)
+    assert Settings(**NO_ENV).nvidia_chat_model == PREVIOUS_CHAT_MODEL
+    assert Settings(**NO_ENV, nvidia_chat_model=CHAT_MODEL).nvidia_chat_model == CHAT_MODEL
+
+
+@pytest.mark.parametrize(
+    "example", [".env.example", ".env.development.example", ".env.production.example"]
+)
+def test_chat_model_environment_examples_match_runtime_default(monkeypatch, example):
+    """Load the shipped chat assignment through settings without unrelated example secrets."""
+    monkeypatch.delenv("POLICYNIM_NVIDIA_CHAT_MODEL", raising=False)
+    source = Path(__file__).parents[1] / example
+    assignment = next(
+        line
+        for line in source.read_text().splitlines()
+        if line.startswith("POLICYNIM_NVIDIA_CHAT_MODEL=")
+    )
+    assert assignment.split("=", 1)[1] == Settings(**NO_ENV).nvidia_chat_model
+    monkeypatch.setenv(*assignment.split("=", 1))
+    assert Settings(**NO_ENV).nvidia_chat_model == CHAT_MODEL
 
 
 @pytest.mark.parametrize(
@@ -417,8 +455,8 @@ def test_reranker_rejects_nonfinite_scores_without_retry(score):
 
 def test_negative_nvidia_logits_reach_policy_compilation_routing(tmp_path):
     """Exercise the observed hosted failure through real SQLite and mocked NVIDIA HTTP."""
+    from policynim.services.index_store import create_index_store
     from policynim.services.router import PolicyRouterService
-    from policynim.storage import create_index_store
     from policynim.types import EmbeddedChunk, RouteRequest
 
     class QueryEmbedder:
@@ -435,7 +473,9 @@ def test_negative_nvidia_logits_reach_policy_compilation_routing(tmp_path):
         def close(self):
             """Release the resource-free test embedder."""
 
-    store = create_index_store(Settings(**NO_ENV, index_db_path=tmp_path / "index.sqlite3"))
+    store = create_index_store(
+        Settings(**NO_ENV, index_db_path=tmp_path / "index.sqlite3"), legacy=True
+    )
     store.replace([EmbeddedChunk(**candidate().model_dump(exclude={"score"}), vector=[1.0, 0.0])])
 
     def handler(request):
@@ -527,3 +567,21 @@ def test_valid_custom_endpoint_identity_matches_settings(endpoint, canonical):
 
     assert Settings(**NO_ENV, nvidia_base_url=endpoint).nvidia_base_url == canonical
     assert EmbeddingIdentity(model="custom/model", endpoint=endpoint).endpoint == canonical
+
+
+def source_context() -> SourceContext:
+    """Declare this wire fixture's full synthetic source at the composition boundary."""
+    return SourceContext(
+        (candidate(),),
+        SourceCatalog(
+            (
+                SourceUnit(
+                    "s1",
+                    "BE-LOG-001",
+                    "Logging",
+                    "Include request identifiers in logs.",
+                    ("BE-LOG-001:rules",),
+                ),
+            )
+        ),
+    )

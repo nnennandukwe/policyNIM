@@ -270,3 +270,27 @@ def test_runtime_evidence_store_handles_concurrent_appends(tmp_path: Path) -> No
 
     assert len(events) == 20
     assert {event.event_id for event in events} == {f"event-{index}" for index in range(20)}
+
+
+def test_generation_column_migrates_once_under_concurrent_open_and_preserves_events(
+    tmp_path: Path,
+) -> None:
+    """Old event bytes retain unknown IDs while new generation evidence survives reopening."""
+    import sqlite3
+    from contextlib import closing
+
+    path = tmp_path / "legacy-evidence.sqlite3"
+    original = make_record(event_id="old-event", execution_id="old-execution")
+    RuntimeEvidenceStore(path=path).append_event(original)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("ALTER TABLE runtime_execution_events DROP COLUMN generation_id")
+        connection.commit()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        opened = list(executor.map(lambda _: RuntimeEvidenceStore(path=path), range(4)))
+    for store in opened:
+        assert store.list_session_events("session-1") == [original]
+    current = make_record(event_id="new-event", execution_id="new-execution").model_copy(
+        update={"generation_id": "b" * 64}
+    )
+    opened[0].append_event(current)
+    assert RuntimeEvidenceStore(path=path).list_session_events("session-1") == [original, current]

@@ -91,6 +91,23 @@ class PolicyConformanceEvaluator(Protocol):
         ...
 
 
+class GenerationLease(Protocol):
+    """The reader identity and lifetime owned by an immutable index adapter."""
+
+    @property
+    def generation_id(self) -> str:
+        """Identify the retained generation without storage knowing its source/service models."""
+        ...
+
+    def close(self) -> None:
+        """Release the retained generation once its index reader closes."""
+        ...
+
+    def validate_read(self) -> None:
+        """Reject observed artifact changes before an owned index operation proceeds."""
+        ...
+
+
 class IndexStore(Protocol):
     """Stores and searches policy chunks."""
 
@@ -108,6 +125,12 @@ class IndexStore(Protocol):
 
     def count(self) -> int:
         """Return the number of rows in the local index."""
+        ...
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Read whole selected policies or refuse their row/UTF-8 payload budget."""
         ...
 
     def list_chunks(self) -> list[PolicyChunk]:

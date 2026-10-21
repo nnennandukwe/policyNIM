@@ -13,13 +13,14 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from threading import RLock
 from uuid import uuid4
 
 import sqlite_vec
 from pydantic import ValidationError
 
-from policynim.contracts import IndexStore
-from policynim.errors import IndexCompatibilityError, MissingIndexError
+from policynim.contracts import GenerationLease, IndexStore
+from policynim.errors import IndexCompatibilityError, IndexReadLimitError, MissingIndexError
 from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
 from policynim.types import (
     EmbeddedChunk,
@@ -35,6 +36,7 @@ _SCHEMA_VERSION = "2"
 LOGGER = logging.getLogger(__name__)
 _METADATA_TABLE = "index_metadata"
 _CHUNKS_TABLE = "policy_chunks"
+POLICY_CHUNKS_TABLE = _CHUNKS_TABLE
 _VECTORS_TABLE = "policy_vectors"
 _DOMAIN_CANDIDATE_MULTIPLIER = 5
 _MIN_DOMAIN_CANDIDATES = 20
@@ -43,10 +45,19 @@ _MIN_DOMAIN_CANDIDATES = 20
 class SQLiteVecIndexStore(IndexStore):
     """Stores embedded policy chunks in a local sqlite-vec database."""
 
-    def __init__(self, *, path: Path, embedding_identity: EmbeddingIdentity | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        embedding_identity: EmbeddingIdentity | None = None,
+        generation_snapshot: GenerationLease | None = None,
+    ) -> None:
         """Configure the SQLite index database path."""
         self._path = path
         self._embedding_identity = embedding_identity
+        self._generation_snapshot = generation_snapshot
+        self._closed = False
+        self._reader_lock = RLock()
         self._pending_ingest: tuple[str, tuple[int, int, int, int]] | None = None
 
     @property
@@ -64,8 +75,47 @@ class SQLiteVecIndexStore(IndexStore):
         """Return the fixed logical table name for ingest result compatibility."""
         return _CHUNKS_TABLE
 
+    @property
+    def generation_snapshot(self) -> GenerationLease | None:
+        """Return the retained complete object backing this managed reader, when present."""
+        return self._generation_snapshot
+
+    @property
+    def generation_id(self) -> str | None:
+        """Identify the exact retained generation without inferring identity for legacy stores."""
+        return self._generation_snapshot.generation_id if self._generation_snapshot else None
+
+    def _require_open(self) -> None:
+        """Prevent reuse after a managed reader released its generation lease."""
+        if self._closed:
+            raise MissingIndexError("The pinned generation reader is closed; create a new service.")
+        if self._generation_snapshot is not None:
+            self._generation_snapshot.validate_read()
+
+    def _require_mutable(self) -> None:
+        """Reject managed generation writes even through a raw SQLite adapter."""
+        managed = self._generation_snapshot is not None
+        try:
+            canonical = self._path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise IndexCompatibilityError("Index destination couldn't be resolved safely.") from exc
+        if (
+            canonical.name == "index.sqlite3"
+            and canonical.parent.parent.name == "objects"
+            and re.fullmatch(r"[0-9a-f]{64}", canonical.parent.name)
+        ):
+            owner = canonical.parent.parent.parent / "owner.json"
+            manifest = canonical.parent / "manifest.json"
+            managed = managed or owner.exists() or owner.is_symlink() or manifest.exists()
+        if managed:
+            raise IndexCompatibilityError(
+                "Managed generation artifacts are immutable. "
+                "Publish or migrate a new complete generation."
+            )
+
     def validate_replacement(self) -> None:
         """Reject unknown or incompatible existing data before incurring embedding usage."""
+        self._require_mutable()
         if self._embedding_identity is None or self._path.is_symlink():
             raise IndexCompatibilityError()
         _require_no_destination_sidecars(self._path)
@@ -79,66 +129,97 @@ class SQLiteVecIndexStore(IndexStore):
 
     def inspect_identity(self) -> IndexIdentity:
         """Inspect persisted identity without altering the database or calling a provider."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             return _read_identity(conn)
 
     def validate_identity(self) -> None:
         """Require a complete index in the embedding space configured for this store."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             self._validate_identity(conn)
+
+    def probe_readability(self) -> None:
+        """Probe one row after caller-verified identity; retain full integrity checks."""
+        with self._reader_lock:
+            self._require_open()
+            try:
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    self._require_open()
+                    if (
+                        conn.execute(f"SELECT rowid FROM {_CHUNKS_TABLE} LIMIT 1").fetchone()
+                        is None
+                    ):
+                        raise IndexCompatibilityError(
+                            "The validated index contains no readable rows."
+                        )
+            except (sqlite3.DatabaseError, OSError) as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(code, int) and code & 0xFF in {
+                    sqlite3.SQLITE_CORRUPT,
+                    sqlite3.SQLITE_NOTADB,
+                }:
+                    raise IndexCompatibilityError(
+                        "The validated index is invalid or corrupt."
+                    ) from exc
+                raise MissingIndexError(
+                    "The validated index couldn't be read. "
+                    "Check runtime resources and access; inspect it before retrying."
+                ) from exc
 
     def inspect_readiness(self) -> IndexReadinessReport:
         """Read counts and identity from one snapshot without changing existing data."""
-        try:
-            mode = self._path.stat().st_mode
-            if stat.S_ISDIR(mode):
-                return IndexReadinessReport(state="directory")
-            if not stat.S_ISREG(mode):
-                return IndexReadinessReport(state="invalid")
-            with closing(_connect(self._path, read_only=True)) as conn:
-                conn.execute("BEGIN")
-                if not _has_required_schema(conn):
+        with self._reader_lock:
+            self._require_open()
+            try:
+                mode = self._path.stat().st_mode
+                if stat.S_ISDIR(mode):
+                    return IndexReadinessReport(state="directory")
+                if not stat.S_ISREG(mode):
                     return IndexReadinessReport(state="invalid")
-                count = _count_chunks(conn)
-                policy_count = int(
-                    conn.execute(
-                        f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
-                    ).fetchone()[0]
-                )
-                try:
-                    identity = _read_identity(conn, allow_empty=True)
-                except IndexCompatibilityError as exc:
-                    if isinstance(exc.__cause__, sqlite3.Error) and is_sqlite_access_error(
-                        exc.__cause__
-                    ):
-                        return IndexReadinessReport(state="unreadable")
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    self._require_open()
+                    conn.execute("BEGIN")
+                    if not _has_required_schema(conn):
+                        return IndexReadinessReport(state="invalid")
+                    count = _count_chunks(conn)
+                    policy_count = int(
+                        conn.execute(
+                            f"SELECT COUNT(DISTINCT policy_id) FROM {_CHUNKS_TABLE}"
+                        ).fetchone()[0]
+                    )
+                    try:
+                        identity = _read_identity(conn, allow_empty=True)
+                    except IndexCompatibilityError as exc:
+                        if isinstance(exc.__cause__, sqlite3.Error) and is_sqlite_access_error(
+                            exc.__cause__
+                        ):
+                            return IndexReadinessReport(state="unreadable")
+                        return IndexReadinessReport(
+                            state="invalid" if count == 0 else "incompatible",
+                            chunk_count=count,
+                            policy_count=policy_count,
+                        )
+                    if not identity.complete:
+                        state = "incomplete"
+                    elif identity.embedding != self._embedding_identity:
+                        state = "incompatible"
+                    elif count == 0:
+                        state = "empty"
+                    else:
+                        state = "ready"
                     return IndexReadinessReport(
-                        state="invalid" if count == 0 else "incompatible",
+                        state=state,
                         chunk_count=count,
                         policy_count=policy_count,
+                        identity=identity,
+                        compatible=state == "ready",
                     )
-                if not identity.complete:
-                    state = "incomplete"
-                elif identity.embedding != self._embedding_identity:
-                    state = "incompatible"
-                elif count == 0:
-                    state = "empty"
-                else:
-                    state = "ready"
-                return IndexReadinessReport(
-                    state=state,
-                    chunk_count=count,
-                    policy_count=policy_count,
-                    identity=identity,
-                    compatible=state == "ready",
-                )
-        except FileNotFoundError:
-            return IndexReadinessReport(state="missing")
-        except OSError:
-            return IndexReadinessReport(state="unreadable")
-        except sqlite3.DatabaseError as exc:
-            state = "unreadable" if is_sqlite_access_error(exc) else "invalid"
-            return IndexReadinessReport(state=state)
+            except FileNotFoundError:
+                return IndexReadinessReport(state="missing")
+            except OSError:
+                return IndexReadinessReport(state="unreadable")
+            except sqlite3.DatabaseError as exc:
+                state = "unreadable" if is_sqlite_access_error(exc) else "invalid"
+                return IndexReadinessReport(state=state)
 
     def _validate_identity(
         self, conn: sqlite3.Connection, *, require_complete: bool = True
@@ -219,6 +300,7 @@ class SQLiteVecIndexStore(IndexStore):
 
     def complete_ingest(self, build_id: str) -> None:
         """Mark only this ingestion's database complete after runtime rules are finalized."""
+        self._require_mutable()
         self._validate_pending_ingest(build_id)
         with closing(_connect(self._path, must_exist=True, configure_wal=False)) as conn:
             self._validate_pending_ingest(build_id)
@@ -250,29 +332,84 @@ class SQLiteVecIndexStore(IndexStore):
 
     def exists(self) -> bool:
         """Return whether the local index exists."""
-        if not self._path.exists() or self._path.is_dir():
-            return False
-        try:
-            with closing(_connect(self._path, read_only=True)) as conn:
-                return _has_required_schema(conn) and _count_chunks(conn) > 0
-        except (OSError, sqlite3.DatabaseError):
-            return False
+        with self._reader_lock:
+            self._require_open()
+            if not self._path.exists() or self._path.is_dir():
+                return False
+            try:
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    return _has_required_schema(conn) and _count_chunks(conn) > 0
+            except (OSError, sqlite3.DatabaseError):
+                return False
 
     def count(self) -> int:
         """Return the number of rows in the local index."""
-        if not self._path.exists() or self._path.is_dir():
-            return 0
-        try:
-            with closing(_connect(self._path, read_only=True)) as conn:
-                if not _has_required_schema(conn):
-                    return 0
-                return _count_chunks(conn)
-        except (OSError, sqlite3.DatabaseError):
-            return 0
+        with self._reader_lock:
+            self._require_open()
+            if not self._path.exists() or self._path.is_dir():
+                return 0
+            try:
+                with closing(_connect(self._path, read_only=True)) as conn:
+                    if not _has_required_schema(conn):
+                        return 0
+                    return _count_chunks(conn)
+            except (OSError, sqlite3.DatabaseError):
+                return 0
+
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Preflight selected UTF-8 row payloads in one snapshot before decoding text."""
+        if max_chunks < 1 or max_source_bytes < 1:
+            raise ValueError("Row and byte budgets must be positive.")
+        selected_ids = tuple(dict.fromkeys(policy_ids))
+        if not selected_ids:
+            return []
+        placeholders = ",".join("?" for _ in selected_ids)
+        selection = f"""
+            SELECT c.*,
+                (SELECT value FROM {_METADATA_TABLE}
+                 WHERE key = 'provenance:' || c.policy_id) AS policy_provenance_json
+            FROM {_CHUNKS_TABLE} AS c
+            WHERE c.policy_id IN ({placeholders})
+        """
+        columns = (
+            "chunk_id",
+            "path",
+            "section",
+            "lines",
+            "text",
+            "policy_id",
+            "title",
+            "doc_type",
+            "domain",
+            "tags_json",
+            "grounded_in_json",
+            "policy_provenance_json",
+        )
+        byte_sum = " + ".join(f"length(CAST(COALESCE({column}, '') AS BLOB))" for column in columns)
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            count = conn.execute(
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {_CHUNKS_TABLE} "
+                f"WHERE policy_id IN ({placeholders}) LIMIT ?)",
+                (*selected_ids, max_chunks + 1),
+            ).fetchone()[0]
+            if count > max_chunks:
+                raise IndexReadLimitError()
+            source_bytes = conn.execute(
+                f"SELECT COALESCE(SUM({byte_sum}), 0) FROM ({selection})", selected_ids
+            ).fetchone()[0]
+            if source_bytes > max_source_bytes:
+                raise IndexReadLimitError()
+            rows = conn.execute(
+                selection + " ORDER BY c.rowid ASC LIMIT ?", (*selected_ids, max_chunks)
+            ).fetchall()
+            return [_policy_chunk_from_row(row) for row in rows]
 
     def list_chunks(self) -> list[PolicyChunk]:
         """Return all indexed chunks without embeddings."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             conn.execute("BEGIN")
             rows = conn.execute(
                 f"""
@@ -297,6 +434,28 @@ class SQLiteVecIndexStore(IndexStore):
             ).fetchall()
         return [_policy_chunk_from_row(row) for row in rows]
 
+    def list_chunk_ids(self) -> list[str]:
+        """Read only logical identifiers when building a bounded resource-key lookup cache."""
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            return [row[0] for row in conn.execute(f"SELECT chunk_id FROM {_CHUNKS_TABLE}")]
+
+    def get_chunk(self, chunk_id: str) -> PolicyChunk | None:
+        """Use the unique chunk-ID index and materialize only the requested evidence row."""
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                f"""
+                SELECT chunk_id, path, section, lines, text, policy_id, title, doc_type,
+                       domain, tags_json, grounded_in_json,
+                       (SELECT value FROM {_METADATA_TABLE}
+                        WHERE key = 'provenance:' || {_CHUNKS_TABLE}.policy_id)
+                           AS policy_provenance_json
+                FROM {_CHUNKS_TABLE} WHERE chunk_id = ?
+                """,
+                (chunk_id,),
+            ).fetchone()
+        return _policy_chunk_from_row(row) if row is not None else None
+
     def search(
         self,
         query_embedding: Sequence[float],
@@ -305,7 +464,7 @@ class SQLiteVecIndexStore(IndexStore):
         domain: str | None = None,
     ) -> list[ScoredChunk]:
         """Search the local index and return scored chunks."""
-        with closing(self._require_connection()) as conn:
+        with self._reader_lock, closing(self._require_connection()) as conn:
             conn.execute("BEGIN")
             self._validate_identity(conn)
             if top_k <= 0:
@@ -353,19 +512,20 @@ class SQLiteVecIndexStore(IndexStore):
                 candidate_limit = min(row_count, max(candidate_limit * 2, candidate_limit + top_k))
 
     def close(self) -> None:
-        """Release owned resources.
-
-        The store opens one SQLite connection per operation, so there is no
-        shared handle to close. The hook keeps service lifecycle behavior
-        symmetrical with other stores.
-        """
+        """Finish admitted SQLite reads before releasing a managed lease."""
+        with self._reader_lock:
+            if self._generation_snapshot is not None and not self._closed:
+                self._closed = True
+                self._generation_snapshot.close()
 
     def reset_for_tests(self) -> None:
         """Reset the backing SQLite file and WAL sidecars for deterministic tests."""
+        self._require_mutable()
         _cleanup_database_files(self._path)
 
     def _require_connection(self) -> sqlite3.Connection:
         """Open a validated SQLite connection or fail with missing-index guidance."""
+        self._require_open()
         if not self._path.exists():
             raise MissingIndexError(f"Local SQLite index does not exist at {self._path}.")
         if self._path.is_dir():
@@ -375,6 +535,7 @@ class SQLiteVecIndexStore(IndexStore):
 
         conn = _connect(self._path, read_only=True)
         try:
+            self._require_open()
             if not _has_required_schema(conn):
                 raise MissingIndexError(f"Local SQLite index at {self._path} is not initialized.")
             if _count_chunks(conn) == 0:
@@ -495,6 +656,7 @@ def _initialize_schema(conn: sqlite3.Connection, *, dimension: int) -> None:
         ON {_CHUNKS_TABLE}(domain)
         """
     )
+    conn.execute(f"CREATE INDEX idx_policy_chunks_policy_id ON {_CHUNKS_TABLE}(policy_id)")
     conn.execute(
         f"""
         CREATE VIRTUAL TABLE {_VECTORS_TABLE}
@@ -624,6 +786,12 @@ def _read_identity(conn: sqlite3.Connection, *, allow_empty: bool = False) -> In
         count = conn.execute(f"SELECT COUNT(*) FROM {_VECTORS_TABLE}").fetchone()[0]
         if count != _count_chunks(conn) or (count == 0 and not allow_empty):
             raise ValueError("Vector and policy inventory disagree")
+        paired = conn.execute(
+            f"SELECT COUNT(*) FROM {_CHUNKS_TABLE} AS c "
+            f"JOIN {_VECTORS_TABLE} AS v ON v.rowid = c.rowid"
+        ).fetchone()[0]
+        if paired != count:
+            raise ValueError("Vector rows don't match policy chunk row IDs")
         for row in conn.execute(
             f"SELECT value FROM {_METADATA_TABLE} WHERE key LIKE 'provenance:%'"
         ):

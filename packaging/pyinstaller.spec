@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_dynamic_libs, copy_metadata
 
 project_root = Path(SPECPATH).parent
 entrypoint = project_root / "src/policynim/interfaces/cli.py"
@@ -21,7 +21,9 @@ datas += copy_metadata("policynim")
 analysis = Analysis(
     [str(entrypoint)],
     pathex=[str(project_root / "src")],
-    binaries=[],
+    binaries=collect_dynamic_libs(
+        "sqlite_vec", search_patterns=["vec0.so", "vec0.dylib", "vec0.dll"]
+    ),
     datas=datas,
     hiddenimports=[],
     hookspath=[],

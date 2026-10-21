@@ -1,0 +1,37 @@
+schema_version = 1
+pack_id = "policynim.data"
+version = "0.3.0"
+
+[[policies]]
+policy_id = "DATA-MIGRATE-001"
+path = "migration-recovery.md"
+requirement_level = "required"
+applicability = ["application-developer", "database-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "Google SRE: Data Integrity"
+url = "https://sre.google/sre-book/data-integrity/"
+revision = "Site Reliability Engineering, 2016, chapter 26"
+sections = ["Delivering a Recovery System, Rather Than a Backup System"]
+retrieved_on = 2026-10-20
+license = "Online reading edition; no redistribution permission asserted"
+attribution = "Raymond Blum and Rhandeev Singh; edited by Betsy Beyer; Google"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."
+
+[[policies]]
+policy_id = "DATA-TRANSACTION-001"
+path = "transaction-boundaries.md"
+requirement_level = "required"
+applicability = ["application-developer", "database-operator"]
+grounding_kind = "project_recommendation"
+
+[[policies.sources]]
+title = "PostgreSQL 18: Transactions"
+url = "https://www.postgresql.org/docs/18/tutorial-transactions.html"
+revision = "PostgreSQL 18"
+sections = ["3.4"]
+retrieved_on = 2026-10-20
+license = "PostgreSQL License; source legal notice linked"
+attribution = "PostgreSQL Global Development Group and The Regents of the University of California"
+change_notice = "Original PolicyNIM review guidance informed by the cited material. Source requirements and project decisions are labeled; no certification or source endorsement is claimed."

@@ -132,43 +132,66 @@ GitHub Actions smoke:
 - if `/healthz` includes `Local index readiness could not be inspected`, use the
   sanitized exception class in the payload, then check the Railway deploy logs
   for detailed index path, volume, or file-permission failures
-- if `/healthz` says the local index is missing or empty, confirm the latest
-  build received `NVIDIA_API_KEY`, rerun the deploy so `policynim ingest` bakes
-  the index, and confirm `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
+- if `/healthz` reports a missing or invalid generation, check
+  `POLICYNIM_GENERATIONS_DIR` and run `policynim generation inspect`. Import a
+  verified bundle or explicitly migrate a matching standalone pair before startup.
+  Startup never ingests or calls NVIDIA.
 - if the live smoke passes `/healthz` but fails `policy_search` or
   `policy_preflight`, inspect hosted MCP logs for `upstream_failure_class`
   before rotating auth tokens or rebuilding the image
 
 ## Container Build For Hosted HTTP
 
-Build the production image with a BuildKit secret for the bake-time NVIDIA key
-so the index is baked into the image:
+Build the production image from the checked-in verified public generation:
 
 ```bash
-DOCKER_BUILDKIT=1 docker build \
-  --secret id=nvidia_api_key,env=NVIDIA_API_KEY \
-  -t policynim-hosted .
+docker build -t policynim-hosted .
 ```
 
-Important container defaults:
+Both `Dockerfile` and `Dockerfile.railway` run `generation import` with the trusted
+bundle checksum and `--require-source-match`. Builds install locked dependencies,
+then validate and activate source text, catalog, SQLite vectors, runtime rules,
+model identity, and notices without model credentials. Changed policy sources
+require an explicitly refreshed bundle; a stale artifact fails the build.
 
-- the image bakes the SQLite index at `/app/data/index.sqlite3`
-- the image sets `POLICYNIM_INDEX_DB_PATH=/app/data/index.sqlite3`
-- the image sets `POLICYNIM_MCP_HOST=0.0.0.0` so hosted HTTP can bind inside the
-  container
-- the builder stage reads the bake-time key from the temporary BuildKit secret
-  mounted at `/run/secrets/nvidia_api_key`
-- if that secret is missing or empty, `docker build` fails while
-  `policynim ingest` tries to bake the index
-- the final image doesn't store the build-time `NVIDIA_API_KEY`
-- runtime `NVIDIA_API_KEY` is still required because live `search` and
-  `preflight` call NVIDIA-hosted APIs
-- this standard Docker path uses the repo root `Dockerfile`
+The image defaults to `/app/data/generations`. Hosted deployments must mount
+`/app/state` and set `POLICYNIM_GENERATIONS_DIR=/app/state/generations` so retained
+objects and their active pointer survive redeploys. The container startup validates
+the existing selected generation, or imports the trusted image seed once when the
+target root is absent. It never activates a new image seed over existing state.
+Persistent deployments also set `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`.
+The hosted entrypoint refuses an unmounted path or generation, authentication,
+evaluation, or runtime-evidence paths outside that volume before creating state.
+This startup check doesn't establish cross-redeploy durability; verify that
+separately. Leaving the setting absent permits an ephemeral image test.
+An unowned, incomplete, incompatible, or damaged root blocks startup and remains
+available for operator recovery. Restart doesn't rebuild or call providers.
+
+Policy updates need an explicit, reviewed `generation import` or `generation
+activate` operation against the mounted root. Inspect the active ID first, retain
+its objects, and follow [generation rollback](policy-generations.md). Changing an
+application image alone keeps the previous policy selection. A newer application
+can therefore serve an intentionally retained older policy generation.
+
+An interrupted first import can leave an owned root without an active pointer.
+Preserve that root, inspect it, and explicitly import the verified seed before
+restarting. Startup won't infer that an existing directory is disposable.
+
+The runtime selects storage through `POLICYNIM_GENERATIONS_DIR`.
+Health and MCP discovery work without an NVIDIA key. Live search and preflight
+still require runtime `NVIDIA_API_KEY`. Each request retains its selected generation
+until cleanup; a new activation affects subsequent requests.
 
 Example hosted run:
 
 ```bash
 docker run --rm -p 8000:8000 \
+  --mount type=volume,source=policynim-state,target=/app/state \
+  -e POLICYNIM_GENERATIONS_DIR=/app/state/generations \
+  -e POLICYNIM_HOSTED_STATE_MOUNT=/app/state \
+  -e POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3 \
+  -e POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace \
+  -e POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3 \
   -e NVIDIA_API_KEY=$NVIDIA_API_KEY \
   -e POLICYNIM_MCP_REQUIRE_AUTH=true \
   -e POLICYNIM_MCP_BEARER_TOKENS=token-a \
@@ -196,7 +219,7 @@ curl -i -X POST http://localhost:8000/mcp
 What to expect:
 
 - `GET /healthz` returns `200` with a JSON payload that includes `ready: true`
-  when the baked index is present and non-empty
+  when the complete active generation validates
 - a plain `GET /mcp` returns `406 Not Acceptable` because the client must accept
   `text/event-stream`
 - a plain `POST /mcp` returns `400 Invalid Content-Type header` because the
@@ -210,22 +233,13 @@ What to expect:
 The repo ships a root [`railway.toml`](../railway.toml) so Railway uses
 [`Dockerfile.railway`](../Dockerfile.railway) and probes `GET /healthz`.
 
-Railway-specific build note:
-
-- Railway only supports `--mount=type=cache`, so it rejects the secret-mount
-  form used in the standard [`Dockerfile`](../Dockerfile)
-- `Dockerfile.railway` is the platform-compatible exception and still declares
-  `ARG NVIDIA_API_KEY` for the bake-time ingest step
-- set `NVIDIA_API_KEY` as a Railway service variable before deploy so it is
-  available during the image build as well as at runtime for live retrieval
-- the ingestion model, base URL, batch size, timeout, and retry variables are
-  explicitly declared as build arguments in both Docker stages; changing a
-  runtime variable alone doesn't change an already baked index
-- update existing model overrides for all three operations using the
-  [provider recovery runbook](hosted-provider-recovery.md). An embedding identity
-  mismatch keeps startup unready; rebuild the complete preserved corpus
-- both the SQLite index and compiled runtime-rules artifact are copied into the
-  runtime image. The database is marked complete only after rules finalization
+Railway uses the same offline artifact-import contract as the standard
+[`Dockerfile`](../Dockerfile). Neither image path accepts an embedding key during
+build. Set `NVIDIA_API_KEY` as a runtime service variable for live retrieval.
+Embedding model and endpoint settings must match the imported generation, even
+when another model has the same vector dimension. See
+[policy generations](policy-generations.md) for migration, rollback, retention,
+and bundle refresh instructions.
 
 Recommended beta setup:
 
@@ -239,12 +253,16 @@ Recommended beta setup:
    - `POLICYNIM_MCP_HOST=0.0.0.0`
 4. Deploy once so the service becomes healthy on `/healthz`.
 5. Generate a Railway public domain for that service.
-6. Mount one Railway volume at `/app/state` for the hosted auth SQLite database.
+6. Mount one Railway volume at `/app/state` for auth, generations, and job state.
 7. Set these runtime variables and redeploy:
    - `POLICYNIM_MCP_REQUIRE_AUTH=true`
    - `POLICYNIM_MCP_PUBLIC_BASE_URL=https://<generated-domain>`
    - `POLICYNIM_BETA_SIGNUP_ENABLED=true`
    - `POLICYNIM_BETA_AUTH_DB_PATH=/app/state/auth.sqlite3`
+   - `POLICYNIM_GENERATIONS_DIR=/app/state/generations`
+   - `POLICYNIM_HOSTED_STATE_MOUNT=/app/state`
+   - `POLICYNIM_EVAL_WORKSPACE_DIR=/app/state/evals/workspace`
+   - `POLICYNIM_RUNTIME_EVIDENCE_DB_PATH=/app/state/runtime_evidence.sqlite3`
    - `POLICYNIM_BETA_SESSION_SECRET=<random-secret>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_ID=<github-oauth-client-id>`
    - `POLICYNIM_BETA_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>`
@@ -283,7 +301,7 @@ Important hosted behavior:
 - `/mcp` returns:
   - `401 {"error":"Unauthorized."}` for missing, invalid, or revoked bearer tokens
   - `403 {"error":"Account suspended."}` for suspended self-serve accounts
-  - MCP tool error `quota_exceeded` when accepted-operation allowance is exhausted;
+  - MCP tool error `quota_exceeded` when reserved-work-unit allowance is exhausted;
     discovery remains usable, and the tool message gives the UTC reset time
 - hosted MCP logs emit one JSON object per line for auth rejects and tool calls,
   including `auth_result`, `tool_name`, `latency_ms`, and
@@ -398,23 +416,28 @@ measurements and shouldn't be added together as total latency.
 
 ## Principal operation limits
 
-Hosted authentication doesn't consume operation allowance. Accepted expensive work
-(search and preflight) charges once when its admission transaction
-commits, before providers start. Later provider failure, cancellation or process loss
-keeps that charge: upstream usage may already exist. Invalid credentials, missing
-scopes, saturation and exhausted allowance start no provider and add no charge.
-A cancelled/expired worker is rejected before reservation, and cancellation is
-checked again with the write-locked snapshot; neither check charges usage.
+Hosted authentication doesn't consume work-unit allowance. Interactive expensive
+work (search, preflight, compile and preflight evidence) reserves one unit when its
+admission transaction commits, before providers start. Durable evaluation work
+reserves its validated case/configuration weight before the job is queued; worker
+activation doesn't reserve another unit. Later provider failure, cancellation or
+process loss keeps the accepted charge. A rejected new acceptance adds no charge.
+Cancellation/deadline checks run again with the write-locked acceptance snapshot.
+Queued activation also rechecks authority, cancellation, deadline and active caps:
+rejection starts no provider and adds no units, while the prior reservation stays
+charged. Cancelling or expiring an already accepted queued job doesn't refund it.
 Initialization, discovery, public health, resources and job polling aren't expensive
-operations. Durable evaluation submission deduplication and worker integration belong
-to #101; polling or returning an existing submission must never create another charge.
+operations. Resources, review prompts, job inspection, results and cancellation
+reserve no units. Returning an existing durable submission reserves no additional
+units. Their local worker concurrency remains bounded. Durable evaluation integration
+is tracked in [#101](https://github.com/nnennandukwe/policyNIM/issues/101).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` | `10` | Global active work, held until worker cleanup finishes |
 | `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS_PER_PRINCIPAL` | `2` | Active work per authenticated issuer/subject |
-| `POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA` | `500` | Accepted operations per OAuth/operator principal per UTC day |
-| `POLICYNIM_BETA_DAILY_REQUEST_QUOTA` | `500` | Accepted operations per beta account per UTC day; historical name retained |
+| `POLICYNIM_MCP_PRINCIPAL_DAILY_OPERATION_QUOTA` | `500` | Reserved work units per OAuth/operator principal per UTC day |
+| `POLICYNIM_BETA_DAILY_REQUEST_QUOTA` | `500` | Reserved work units per beta account per UTC day; historical name retained |
 | `POLICYNIM_BETA_AUTH_DB_PATH` | `data/runtime/auth.sqlite3` | Durable hosted account and operation state, including OAuth-only usage |
 
 All numeric limits must be positive. Settings retain constructor, environment and
@@ -422,8 +445,12 @@ configured dotenv/default precedence. OAuth principal identity uses issuer plus
 subject, so switching clients doesn't reset usage. Beta identity uses the account,
 so key rotation doesn't reset it. Operator key replacement creates a new principal;
 operators must rotate keys deliberately and keep their aggregate provider budget.
-The portal's `accepted operations` count and remaining allowance use the new
-operation rows. Historical HTTP authentication counters remain preserved separately
+The portal's `reserved work units` count and remaining allowance sum the weights
+in operation rows. Interactive expensive operations reserve one unit each. A durable
+evaluation submission reserves one unit per validated case execution and selected
+configuration before it's queued. One job still counts as one accepted operation
+and uses one active slot while executing; provider attempts and token usage are
+separate measurements. Historical operation rows migrate to one unit each. Historical HTTP authentication counters remain preserved separately
 and aren't represented as provider work. This migration starts accepted-work usage
 from zero; it doesn't rewrite audit history.
 
@@ -433,7 +460,8 @@ admission: key rotation, revocation and suspension are checked again at admissio
 No token or raw task/policy content is stored in operation rows. Rows contain a
 hashed principal identifier, random operation ID, operation name, timestamps, local
 process ID and outcome. Outcomes are completed, failed, cancelled or interrupted;
-accepted rows remain active until cleanup. Provider token usage remains `unknown`
+accepted interactive rows remain active until cleanup. Queued evaluation reservations
+aren't active; their slot is acquired separately when the worker starts. Provider token usage remains `unknown`
 in this ledger; existing stage events report measured provider usage when supplied.
 Neither accepted-operation counts nor estimated usage imply financial billing.
 
@@ -506,3 +534,102 @@ only matching aliases older than one hour. This prevents pruning from racing wor
 startup. Quiesce admissions and drain or stop workers before taking a matching database
 and owner-directory backup. A database-only emergency restore can leave unknown owners;
 keep those reservations until an operator reconciles them.
+
+### Durable weighted evaluation acceptance
+
+`OperationAdmissionService.accept_work` commits the validated weight against the
+principal's UTC-day allowance. The job store invokes it after its duplicate,
+capacity and archive checks, before inserting the job row. These databases commit
+separately: if quota acceptance commits and job insertion fails, the acceptance
+remains charged and inactive. Retrying the same opaque key and request digest
+reuses its operation ID without charging again. Changed input under that key is
+rejected. An over-budget acceptance creates no queued job. The jobs store's stable
+identity namespaces keys across workspaces that share a quota database.
+
+`run_accepted` rechecks current authority, credentials, deadline and active limits,
+then acquires one execution slot without another daily charge. Cancellation,
+provider failure and process loss don't refund accepted units. A terminal acceptance
+can't execute again. Job recovery preserves completed case checkpoints and marks
+interrupted work for inspection; it doesn't blindly repeat provider requests.
+Internal terminal reconciliation uses the job's bound owner and operation identity,
+so expired or revoked credentials don't prevent accounting cleanup. Live execution
+can't be finalized by queued-job cleanup.
+
+The operation report keeps logical row counts, `reserved_work_units`,
+`inactive_accepted_operations` and observed active slots separate. Inactive acceptance
+isn't proof of a queued job: an interrupted submission can leave a reservation
+before job insertion. Actual queue depth comes from the jobs database.
+Reserved units include all
+retained accepted work, including terminal outcomes; they aren't provider-call or
+billing totals. The daily usage view sums only the current UTC day's units. The
+persisted latency sample measures acceptance through terminal accounting, including
+queue time for evaluation jobs.
+
+Keyed evaluation acceptance rows are permanent idempotency tombstones, matching
+the jobs store's permanent submission keys. The configured operation retention
+window still prunes unkeyed terminal interactive rows; it doesn't prune these
+keyed records or reset their historical charges. Operators must provision and
+monitor the persistent volume accordingly. Never delete quota tombstones while
+retaining jobs that can replay their keys. A failed terminal write pauses new work
+on that service until the operator inspects state and restarts it. Keep the quota
+database, jobs database and owner leases on the same persistent deployment volume;
+back up both databases with SQLite's online-backup API before operator recovery.
+
+## Persistent-state upgrades
+
+### Weighted-ledger upgrade and rollback boundary
+
+Before upgrading, drain hosted work and stop every writer, then take SQLite online
+backups of the quota/auth database and jobs database. Keep both databases and their
+owner-lease directories on the persistent state volume.
+
+After the service accepts weighted evaluation work, only deploy versions that
+understand `work_units`, `active_slot` and keyed acceptance records. Older quota
+writers count logical operations as units and treat inactive acceptance as active
+work. Running them against this ledger can undercount reserved units or mark
+queued reservations interrupted. Don't mix those versions or roll back to them.
+This change migrates forward; it doesn't provide a downgrade migration.
+
+Preserve keyed quota and job idempotency tombstones together. A submission can
+commit its quota reservation before its job row; retry the original key and request
+digest to reconcile that gap without another charge. Accepted cancellation,
+failure and interruption don't refund reserved units. If terminal accounting fails,
+inspect retained state before restarting paused workers; don't delete reservations
+to make a retry succeed.
+
+### Private auth SQLite files
+
+Account and operation writers create the configured auth database at POSIX mode
+0600 before SQLite opens it. SQLite inherits that mode when it creates WAL, SHM
+and rollback-journal sidecars. Existing service-owned regular database and sidecar
+files are tightened in place; their inode and stored records aren't replaced.
+Runtime code doesn't change the process-wide umask. Existing SQLite inodes aren't
+opened through extra file descriptors during permission repair: closing those
+descriptors could release locks owned by other SQLite connections in the same
+process. New-file creation is serialized before local SQLite opens.
+
+Use an operator-controlled parent directory on the persistent volume. A database
+or sidecar that's a symlink, has multiple hard links, isn't a regular file, or
+belongs to another POSIX user is rejected before permission changes or SQL work.
+Configured relative paths still use the command's working directory; the parent
+is resolved while the final filename stays available for alias validation.
+
+Read-only operation reports don't create or chmod the auth database. Legacy broad modes
+or unsafe aliases return `auth_storage_unsafe` until a writer or an operator
+repairs ownership, permissions or aliases. A missing configured database returns
+`auth_storage_missing`: check `POLICYNIM_BETA_AUTH_DB_PATH` and the mounted volume,
+then initialize state through its owning service. Other preparation/access failures
+use `auth_storage_unavailable`; check directory access, permissions and available
+space. A successful SQLite read can create private WAL/SHM coordination files;
+account and operation records and the main database's bytes stay unchanged.
+These messages don't include private paths or raw filesystem errors.
+Preserve existing state. Don't copy a linked target, delete an existing database
+or change ownership blindly.
+
+This boundary assumes one service instance and trusted deployment-managed parent
+directories. It doesn't defend against a hostile process with the same operating
+system identity or replacement of operator-controlled ancestors. POSIX modes
+don't establish Windows ACL privacy; Windows deployments still need an appropriate
+private directory ACL. This is filesystem access control, not database encryption.
+
+The read-only report preserves `auth_storage_unsafe` when an existing database needs permission or alias repair. It leaves those files untouched. Strict MCP startup and degraded authentication logs retain the same safe category; paths, credentials and raw filesystem messages stay out of those diagnostics.

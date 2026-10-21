@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import types
 from pathlib import Path
 
@@ -23,36 +22,17 @@ from policynim.types import (
 )
 
 
-class MockIngestService:
-    """Capture the isolated live eval index path."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        seen_paths: list[Path],
-        *,
-        closed: list[bool] | None = None,
-    ) -> None:
-        """Store live-eval ingest settings and close tracking hooks."""
-        self._settings = settings
-        self._seen_paths = seen_paths
-        self._closed = closed
-
-    def run(self):
-        self._seen_paths.append(self._settings.index_db_path)
-        return None
-
-    def close(self) -> None:
-        """Record that live-eval cleanup closed the ingest service."""
-        if self._closed is not None:
-            self._closed.append(True)
-
-
 class MockSearchService:
     """Static search service used for live-eval isolation tests."""
 
+    def __init__(self, generation_id: str | None = None) -> None:
+        """Retain the generation ID for deterministic result evidence."""
+        self.generation_id = generation_id
+
     def search(self, request) -> SearchResult:
+        """Return offline search evidence bound to the selected generation."""
         return SearchResult(
+            generation_id=self.generation_id,
             query=request.query,
             domain=request.domain,
             top_k=request.top_k,
@@ -82,8 +62,14 @@ class MockSearchService:
 class MockPreflightService:
     """Static preflight service used for live-eval isolation tests."""
 
+    def __init__(self, generation_id: str | None = None) -> None:
+        """Retain the generation ID for deterministic result evidence."""
+        self.generation_id = generation_id
+
     def preflight(self, request) -> PreflightResult:
+        """Return an offline preflight result for the selected generation."""
         return PreflightResult(
+            generation_id=self.generation_id,
             task=request.task,
             domain=request.domain,
             summary="Use explicit request ids in backend logs.",
@@ -96,10 +82,12 @@ class MockPreflightService:
         )
 
     def preflight_with_trace(self, request) -> PreflightTraceResult:
+        """Retain matching compiled-packet and result evidence for offline tests."""
         result = self.preflight(request)
         return PreflightTraceResult(
             result=result,
             compiled_packet=CompiledPolicyPacket(
+                generation_id=self.generation_id,
                 task=request.task,
                 domain=request.domain,
                 top_k=request.top_k,
@@ -293,131 +281,122 @@ def test_eval_service_regeneration_runs_for_preflight_cases_only(tmp_path: Path)
     )
 
 
-def test_eval_service_live_mode_uses_isolated_temp_index(monkeypatch, tmp_path: Path) -> None:
-    """Close live ingest while keeping caller index settings unchanged."""
-    settings = Settings(
-        index_db_path=tmp_path / "caller-index.sqlite3",
-        eval_workspace_dir=tmp_path / "workspace",
-    )
-    seen_paths: list[Path] = []
-    closed: list[bool] = []
+def test_live_eval_pins_one_generation_across_modes_and_publication(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Use the real lease/retention boundary with offline query/generation doubles."""
+    from test_ingest_service import MockEmbedder
+    from test_policy_generations import seed_legacy
 
-    monkeypatch.setattr(
-        "policynim.services.eval.create_ingest_service",
-        lambda active_settings: MockIngestService(active_settings, seen_paths, closed=closed),
+    import policynim.services.ingest as ingest_module
+    from policynim.services.generations import GenerationStore
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "generations",
+            "eval_workspace_dir": tmp_path / "workspace",
+        }
     )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: MockSearchService(),
-    )
+    store = GenerationStore(root=settings.generations_dir, embedding=identity)
+    original = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    with store.pin() as snapshot:
+        suite_path = tmp_path / "reviewed-suite.json"
+        suite_path.write_text(
+            json.dumps(
+                {
+                    "name": "reader-pinning",
+                    "expected_catalog_digest": snapshot.catalog.digest,
+                    "cases": [{"case_id": "read", "kind": "search", "input": "backend logs"}],
+                }
+            )
+        )
+    before = index.read_bytes(), rules.read_bytes()
+    seen: list[str | None] = []
+
+    def forbid_embedder(settings):
+        """Evaluation must never construct an ingestion provider."""
+        raise AssertionError("Implicit embedding ingestion")
+
+    monkeypatch.setattr(ingest_module, "_create_default_embedder", forbid_embedder)
+
+    def search_factory(active_settings, *, rerank_enabled):
+        """Publish enough new states to put the original beyond normal retention."""
+        seen.append(active_settings.generation_id)
+        if len(seen) == 1:
+            source = settings.corpus_dir
+            assert source is not None
+            member = next(source.rglob("*.md"))
+            for number in range(4):
+                member.write_text(member.read_text() + f"\nPublished revision {number}.\n")
+                store.build(settings, embedder=MockEmbedder())
+            store.prune(keep_recent=0)
+            assert (store.root / "objects" / original).is_dir()
+        return MockSearchService(active_settings.generation_id)
+
+    monkeypatch.setattr("policynim.services.eval._create_live_search_service", search_factory)
     monkeypatch.setattr(
         "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: MockPreflightService(),
+        lambda active_settings, rerank_enabled: MockPreflightService(active_settings.generation_id),
     )
-
     result = EvalService(settings=settings).run(
-        mode="live",
-        compare_rerank=False,
+        mode="live", compare_rerank=True, suite_path=suite_path
     )
-
-    assert result.mode == "live"
-    assert seen_paths
-    assert seen_paths[0] != settings.index_db_path
-    assert settings.index_db_path == tmp_path / "caller-index.sqlite3"
-    assert closed == [True]
+    assert seen == [original, original]
+    assert settings.generation_id is None
+    assert result.generation_id == original
+    assert all(run.generation_id == original for run in result.runs)
+    assert all(case.generation_id == original for run in result.runs for case in run.case_results)
+    for run in result.runs:
+        assert json.loads(Path(run.result_json_path).read_text())["generation_id"] == original
+        assert original in Path(run.report_html_path).read_text()
+    assert (index.read_bytes(), rules.read_bytes()) == before
+    store.prune(keep_recent=0)
+    assert not (store.root / "objects" / original).exists()
 
 
 @pytest.mark.parametrize("existing_rules", [False, True])
-def test_live_eval_real_ingestion_keeps_both_outputs_isolated(
+def test_live_eval_requires_generation_before_provider_construction(
     monkeypatch, tmp_path: Path, existing_rules: bool
 ) -> None:
-    """Exercise live-mode orchestration offline without touching installation artifacts."""
-    from test_index_identity import SpyEmbedder, settings_for
+    """Standalone artifacts aren't silently rebuilt or accepted as a live job snapshot."""
+    from policynim.services.generations import GenerationError
 
-    from policynim.services.ingest import create_ingest_service
-
-    index = tmp_path / "installed.sqlite3"
-    rules = tmp_path / "installed-rules.json"
-    index.write_bytes(b"preserved installation index")
+    index, rules = tmp_path / "legacy.sqlite3", tmp_path / "rules.json"
+    index.write_bytes(b"preserved index")
     if existing_rules:
-        rules.write_bytes(b"preserved installation rules")
-    settings = settings_for(
-        index, runtime_rules_artifact_path=rules, eval_workspace_dir=tmp_path / "workspace"
-    )
-    captured: list[Settings] = []
-    embedder = SpyEmbedder()
-
-    def capture_ingest(active_settings: Settings):
-        """Capture the actual temporary settings while retaining real SQLite ingestion."""
-        captured.append(active_settings)
-        return create_ingest_service(active_settings)
-
-    monkeypatch.setattr("policynim.services.eval.create_ingest_service", capture_ingest)
-    monkeypatch.setattr("policynim.services.ingest._create_default_embedder", lambda _: embedder)
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: MockSearchService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: MockPreflightService(),
-    )
-
-    result = EvalService(settings=settings).run(mode="live", compare_rerank=False)
-
-    assert result.runs and captured and embedder.calls == 1 and embedder.closed
-    candidate = captured[0]
-    assert candidate.runtime_rules_artifact_path.parent == candidate.index_db_path.parent
-    assert candidate.runtime_rules_artifact_path != rules
-    assert not candidate.index_db_path.parent.exists()
-    assert index.read_bytes() == b"preserved installation index"
-    if existing_rules:
-        assert rules.read_bytes() == b"preserved installation rules"
-    else:
-        assert not rules.exists()
-
-
-def test_eval_service_live_nemo_backend_uses_isolated_conformance_service(
-    monkeypatch, tmp_path: Path
-) -> None:
+        rules.write_bytes(b"preserved rules")
     settings = Settings(
-        index_db_path=tmp_path / "caller-index.sqlite3",
+        index_db_path=index,
+        runtime_rules_artifact_path=rules,
+        generations_dir=tmp_path / "generations",
         eval_workspace_dir=tmp_path / "workspace",
     )
-    seen_paths: list[Path] = []
-    closed: list[bool] = []
 
-    class MockConformanceService:
-        def close(self) -> None:
-            closed.append(True)
+    def forbid_provider(*args, **kwargs):
+        """Missing generation rejection must happen before graph construction."""
+        raise AssertionError("Provider constructed before generation validation")
 
-    monkeypatch.setattr(
-        "policynim.services.eval.create_ingest_service",
-        lambda active_settings: MockIngestService(active_settings, seen_paths),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_search_service",
-        lambda active_settings, rerank_enabled: MockSearchService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_preflight_service",
-        lambda active_settings, rerank_enabled: MockPreflightService(),
-    )
-    monkeypatch.setattr(
-        "policynim.services.eval._create_live_conformance_service",
-        lambda active_settings, *, backend: MockConformanceService(),
-    )
+    monkeypatch.setattr("policynim.services.eval._create_live_search_service", forbid_provider)
+    with pytest.raises(GenerationError):
+        EvalService(settings=settings).run(mode="live")
+    assert index.read_bytes() == b"preserved index"
+    assert rules.read_bytes() == b"preserved rules" if existing_rules else not rules.exists()
+    assert not settings.eval_workspace_dir.exists()
 
-    result = EvalService(settings=settings).run(
-        mode="live",
-        backend="nemo",
-        compare_rerank=False,
-    )
 
-    assert result.backend == "nemo"
-    assert seen_paths
-    assert seen_paths[0] != settings.index_db_path
-    assert closed == [True]
+def test_offline_eval_doesnt_claim_configured_live_generation(tmp_path: Path) -> None:
+    """Synthetic fixtures stay unassociated with an explicit live ID."""
+    result = EvalService(
+        settings=Settings(
+            generation_id="a" * 64,
+            generations_dir=tmp_path / "missing",
+            eval_workspace_dir=tmp_path / "workspace",
+        )
+    ).run()
+    assert result.generation_id is None
+    assert all(run.generation_id is None for run in result.runs)
+    assert all(case.generation_id is None for run in result.runs for case in run.case_results)
 
 
 def test_eval_service_start_ui_fails_when_process_exits_early(monkeypatch, tmp_path: Path) -> None:
@@ -454,6 +433,9 @@ def test_eval_service_start_ui_succeeds_when_port_becomes_reachable(
     )
     monkeypatch.setattr("policynim.services.eval.time.sleep", lambda seconds: None)
 
+    clock = iter([0.0, 1.0, 21.0])
+    monkeypatch.setattr("policynim.services.eval.time.monotonic", lambda: next(clock))
+
     service.start_ui(port=8016)
 
     assert process.terminate_called is False
@@ -471,7 +453,7 @@ def test_eval_service_start_ui_terminates_when_port_never_becomes_reachable(
 ) -> None:
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
     process = MockProcess(returncodes=[None, None, None])
-    monotonic_values = iter([0.0, 1.0, 2.0, 6.0])
+    monotonic_values = iter([0.0, 1.0, 2.0, 31.0])
     monkeypatch.setattr(
         "policynim.services.eval.subprocess.Popen",
         lambda *args, **kwargs: process,
@@ -490,6 +472,7 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Check deterministic Phoenix publication creates a project only after confirmed absence."""
     service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "workspace"))
     result = service.run(mode="offline", compare_rerank=False)
 
@@ -502,7 +485,11 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
 
     class MockPhoenixProjects:
         def get(self, *, project_name: str) -> None:
-            raise RuntimeError(f"missing project {project_name}")
+            import httpx
+
+            request = httpx.Request("GET", "http://127.0.0.1/projects/PolicyNIM%20Eval")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Project not found", request=request, response=response)
 
         def create(self, *, name: str) -> dict[str, str]:
             return {"name": name}
@@ -522,9 +509,7 @@ def test_eval_service_publish_to_ui_logs_deterministic_spans_and_annotations(
             self.logged_annotations.extend(span_annotations)
 
     clients: list[MockPhoenixClient] = []
-    mock_client_module = types.ModuleType("phoenix.client")
-    setattr(mock_client_module, "Client", MockPhoenixClient)
-    monkeypatch.setitem(sys.modules, "phoenix.client", mock_client_module)
+    monkeypatch.setattr("phoenix.client.Client", MockPhoenixClient)
 
     service.publish_to_ui(result, port=8123)
 
@@ -563,3 +548,184 @@ def test_eval_service_publish_to_ui_surfaces_phoenix_endpoint_and_log_path(
         service.publish_to_ui(result, port=8124)
 
     assert "phoenix.log" in str(exc_info.value)
+
+
+def test_missing_phoenix_command_explains_isolated_install_or_headless(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A real missing executable gives setup and headless recovery instructions."""
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+    service = EvalService(settings=Settings(eval_workspace_dir=tmp_path / "reports"))
+    with pytest.raises(PolicyNIMError, match="uv tool install") as caught:
+        service.start_ui()
+    assert "arize-phoenix==20.23.0" in str(caught.value)
+    assert "--headless" in str(caught.value)
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
+
+
+def test_phoenix_annotation_publish_waits_for_queued_spans(monkeypatch) -> None:
+    """A queued span can become visible after the first synchronous annotation request."""
+    import httpx
+
+    from policynim.services.eval import _publish_phoenix_annotations
+
+    attempts = []
+    request = httpx.Request("POST", "http://127.0.0.1/v1/span_annotations")
+
+    class PendingSpans:
+        """Model the real endpoint's missing-span response until ingestion finishes."""
+
+        def log_span_annotations(self, **kwargs):
+            """Reject the first write and accept the unchanged annotations next."""
+            attempts.append(kwargs)
+            if len(attempts) == 1:
+                response = httpx.Response(404, request=request)
+                raise httpx.HTTPStatusError("queued", request=request, response=response)
+
+    client = types.SimpleNamespace(spans=PendingSpans())
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda _: None)
+    annotations = [{"span_id": "123"}]
+    _publish_phoenix_annotations(client, annotations)
+    assert attempts == [dict(span_annotations=annotations, sync=True)] * 2
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 404])
+def test_phoenix_annotation_publish_preserves_failure_after_budget(monkeypatch, status) -> None:
+    """Permanent errors propagate immediately and missing spans have a bounded retry window."""
+    import httpx
+
+    from policynim.services.eval import _publish_phoenix_annotations
+
+    calls = []
+    request = httpx.Request("POST", "http://127.0.0.1/v1/span_annotations")
+    failure = httpx.HTTPStatusError(
+        "not ready", request=request, response=httpx.Response(status, request=request)
+    )
+
+    class FailedSpans:
+        """Retain the exact endpoint exception for caller diagnostics."""
+
+        def log_span_annotations(self, **kwargs):
+            """Fail each attempted annotation write."""
+            calls.append(kwargs)
+            raise failure
+
+    clock = iter([0.0, 1.0, 6.0])
+    monkeypatch.setattr("policynim.services.eval.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("policynim.services.eval.time.sleep", lambda _: None)
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        _publish_phoenix_annotations(types.SimpleNamespace(spans=FailedSpans()), [])
+    assert caught.value is failure
+    assert len(calls) == (2 if status == 404 else 1)
+
+
+def _publication_spans() -> list[dict[str, object]]:
+    """Provide two independently identified report spans for publication recovery."""
+    return [
+        {
+            "name": f"report case {number}",
+            "context": {"span_id": f"{number:016x}", "trace_id": f"{number:032x}"},
+            "span_kind": "CHAIN",
+            "start_time": "2026-10-20T00:00:00Z",
+            "end_time": "2026-10-20T00:00:00Z",
+            "status_code": "OK",
+            "status_message": "",
+            "attributes": {"case": str(number), "result": "passed"},
+        }
+        for number in (1, 2)
+    ]
+
+
+def test_phoenix_publication_resumes_after_verified_existing_spans() -> None:
+    """A partial earlier publish doesn't prevent the remaining spans from being queued."""
+    from phoenix.client.exceptions import SpanCreationError
+
+    from policynim.services.eval import _publish_phoenix_spans
+
+    planned = _publication_spans()
+    writes = []
+    reads = []
+
+    class PartialPublication:
+        """Model an endpoint rejecting a batch containing one persisted span."""
+
+        def log_spans(self, *, project_identifier, spans):
+            """Reject duplicates before accepting the smaller remaining batch."""
+            assert project_identifier == "PolicyNIM Eval"
+            writes.append(spans)
+            if len(writes) == 1:
+                raise SpanCreationError(
+                    "duplicate",
+                    duplicate_spans=[{"span_id": "0000000000000001", "trace_id": "0" * 31 + "1"}],
+                    total_received=2,
+                    total_duplicates=1,
+                )
+
+        def get_spans(self, **kwargs):
+            """Return the prior span from the explicitly selected project and trace."""
+            reads.append(kwargs)
+            return [planned[0] | {"start_time": "2026-10-19T00:00:00+00:00"}]
+
+    _publish_phoenix_spans(types.SimpleNamespace(spans=PartialPublication()), planned)
+    assert writes == [planned, [planned[1]]]
+    assert reads == [
+        {
+            "project_identifier": "PolicyNIM Eval",
+            "trace_ids": ["0" * 31 + "1"],
+            "limit": 1,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "fault", ["changed_content", "missing", "wrong_trace", "invalid", "queued", "parent", "events"]
+)
+def test_phoenix_publication_never_accepts_conflicting_or_uncertain_duplicates(fault) -> None:
+    """Duplicate handling can't turn mismatched evidence or accepted uncertainty into success."""
+    from copy import deepcopy
+
+    from phoenix.client.exceptions import SpanCreationError
+
+    from policynim.services.eval import _publish_phoenix_spans
+
+    planned = _publication_spans()
+    stored = deepcopy(planned[0])
+    if fault == "changed_content":
+        stored["attributes"] = {"case": "1", "result": "failed"}
+    if fault == "parent":
+        stored["parent_id"] = "f" * 16
+    if fault == "events":
+        stored["events"] = [{"name": "other result"}]
+    failure = SpanCreationError(
+        "duplicate",
+        duplicate_spans=[
+            {
+                "span_id": "0000000000000001",
+                "trace_id": "f" * 32 if fault == "wrong_trace" else "0" * 31 + "1",
+            }
+        ],
+        total_received=2,
+        total_duplicates=1,
+        total_invalid=int(fault == "invalid"),
+        total_queued=int(fault == "queued"),
+    )
+    writes = []
+
+    class ConflictingPublication:
+        """Retain the exact failed batch rather than silently relabel evidence."""
+
+        def log_spans(self, **kwargs):
+            """Expose the original conflict without enqueueing a replacement."""
+            writes.append(kwargs)
+            raise failure
+
+        def get_spans(self, **kwargs):
+            """Return the conflicting or absent project-scoped span."""
+            return [] if fault == "missing" else [stored]
+
+    with pytest.raises(SpanCreationError) as caught:
+        _publish_phoenix_spans(types.SimpleNamespace(spans=ConflictingPublication()), planned)
+    assert caught.value is failure
+    assert len(writes) == 1

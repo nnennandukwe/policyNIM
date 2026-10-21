@@ -52,6 +52,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
                 conn.execute(
                     """
                     INSERT INTO runtime_execution_events (
+                        generation_id,
                         event_id,
                         execution_id,
                         session_id,
@@ -68,9 +69,10 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
                         failure_class,
                         residual_uncertainty
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
+                        record.generation_id,
                         record.event_id,
                         record.execution_id,
                         record.session_id,
@@ -112,6 +114,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
             rows = conn.execute(
                 """
                 SELECT
+                    generation_id,
                     event_id,
                     execution_id,
                     session_id,
@@ -136,6 +139,7 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
         return [_evidence_record_from_row(row) for row in rows]
 
     def _initialize_schema(self) -> None:
+        """Serialize additive generation-column migration without rewriting prior events."""
         with closing(self._connect()) as conn:
             conn.executescript(
                 """
@@ -164,6 +168,20 @@ class RuntimeEvidenceStore(RuntimeEvidenceStoreProtocol):
                 ON runtime_execution_events(execution_id, created_at);
                 """
             )
+            _begin_immediate(conn)
+            try:
+                columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(runtime_execution_events)")
+                }
+                if "generation_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE runtime_execution_events ADD COLUMN generation_id TEXT"
+                    )
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._path, timeout=30.0, isolation_level=None)
@@ -185,7 +203,9 @@ def _iso_utc(value: datetime) -> str:
 
 
 def _evidence_record_from_row(row: sqlite3.Row) -> RuntimeExecutionEvidenceRecord:
+    """Parse additive generation evidence; older events retain an unknown ID."""
     payload = {
+        "generation_id": row["generation_id"],
         "event_id": str(row["event_id"]),
         "execution_id": str(row["execution_id"]),
         "session_id": str(row["session_id"]),

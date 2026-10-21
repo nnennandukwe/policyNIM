@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version or tag, for example 0.1.0 or v0.1.0."
+        description: "Release version or tag, for example 0.2.0 or v0.2.0."
         required: false
         type: string
       publish_pypi:
@@ -25,6 +25,10 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -35,27 +39,29 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        run: uv sync --locked --group test --group dev
+        run: uv sync --locked --python ${{ matrix.python-version }} --group test --group dev
 
       - name: Check lockfile
         run: uv lock --check
 
       - name: Run Ruff
-        run: uv run --no-sync ruff check .
+        run: uv run --no-sync --python ${{ matrix.python-version }} ruff check .
 
       - name: Run Pyright
-        run: uv run --no-sync pyright
+        run: uv run --no-sync --python ${{ matrix.python-version }} pyright
 
       - name: Run offline pytest
-        run: uv run --no-sync pytest -q -m "not live and not docker_live"
+        run: uv run --no-sync --python ${{ matrix.python-version }} pytest -q -m "not live and not docker_live"
 
       - name: Build Python distribution
+        if: matrix.python-version == '3.11'
         run: uv build --out-dir dist
 
       - name: Upload Python distribution
+        if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: python-dist
@@ -64,8 +70,18 @@ jobs:
 
   wheel-smoke:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     needs: verify
     steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
       - name: Download Python distribution
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -75,14 +91,49 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
-      - name: Smoke install built wheel
+      - name: Verify fresh wheel from locked dependencies
         run: |
-          python -m venv /tmp/policynim-wheel-smoke
-          /tmp/policynim-wheel-smoke/bin/python -m pip install dist/*.whl
-          /tmp/policynim-wheel-smoke/bin/policynim --help
-          /tmp/policynim-wheel-smoke/bin/policynim --version
+          python - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+          
+          root = Path.cwd()
+          wheel, = (root / "dist").glob("*.whl")
+          bundle = root / "artifacts/public-generation"
+          with tempfile.TemporaryDirectory(prefix="policynim-package-") as temporary:
+              runtime = Path(temporary)
+              subprocess.run([sys.executable, "-m", "venv", str(runtime / "venv")], check=True)
+              python = runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+              requirements = runtime / "locked-requirements.txt"
+              subprocess.run(["uv", "export", "--locked", "--python", sys.executable, "--no-dev", "--group", "verification", "--no-emit-project", "--output-file", str(requirements)], cwd=root, check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--require-hashes", "--no-deps", "-r", str(requirements)], check=True)
+              subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
+              subprocess.run(["uv", "pip", "check", "--python", str(python)], check=True)
+              subprocess.run([
+                  str(python), str(root / "scripts/verify_installed_package.py"),
+                  "--wheel", str(wheel), "--bundle", str(bundle / "generation.zip"),
+                  "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+                  "--revision", os.environ["GITHUB_SHA"],
+                  "--lockfile", str(root / "uv.lock"),
+                  "--requirements", str(requirements),
+                  "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
+                  "--output", str(root / "wheel-evidence-${{ matrix.python-version }}.json"),
+              ], cwd=runtime, check=True)
+          PY
+
+      - name: Retain wheel verification evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: wheel-evidence-${{ matrix.python-version }}
+          path: wheel-evidence-${{ matrix.python-version }}.json
+          if-no-files-found: error
 
   standalone-build:
     needs: verify
@@ -152,44 +203,66 @@ jobs:
       - name: Build standalone bundle
         run: uv run --no-sync pyinstaller --clean --noconfirm packaging/pyinstaller.spec
 
-      - name: Smoke standalone bundle
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "windows-amd64" ]; then
-            dist/policynim/policynim.exe --help
-            dist/policynim/policynim.exe --version
-          else
-            dist/policynim/policynim --help
-            dist/policynim/policynim --version
-          fi
-
       - name: Archive Unix standalone bundle
         if: matrix.archive == 'tar'
         shell: bash
         run: |
-          mkdir -p artifacts
+          mkdir -p standalone-archives
           case "${{ matrix.platform }}" in
             linux-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-linux-amd64.tar.gz" ;;
             darwin-arm64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-arm64.tar.gz" ;;
             darwin-amd64) ASSET_NAME="policynim-${RELEASE_TAG}-darwin-amd64.tar.gz" ;;
             *) echo "Unsupported release platform: ${{ matrix.platform }}" >&2; exit 1 ;;
           esac
-          tar -C dist -czf "artifacts/${ASSET_NAME}" policynim
+          COPYFILE_DISABLE=1 tar -C dist -czf "standalone-archives/${ASSET_NAME}" policynim
 
       - name: Archive Windows standalone bundle
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          New-Item -ItemType Directory -Force -Path standalone-archives | Out-Null
           $RELEASE_TAG = $env:RELEASE_TAG
           $AssetName = "policynim-${RELEASE_TAG}-windows-amd64.zip"
-          Compress-Archive -Path "dist/policynim/*" -DestinationPath "artifacts/$AssetName" -Force
+          Compress-Archive -Path "dist/policynim/*" -DestinationPath "standalone-archives/$AssetName" -Force
+
+      - name: Verify standalone generation and transports
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import subprocess
+
+          root = Path.cwd()
+          bundle = root / "artifacts/public-generation"
+          archive, = (root / "standalone-archives").iterdir()
+          subprocess.run([
+              "uv", "run", "--no-sync", "python", "scripts/verify_standalone.py",
+              "--archive", str(archive),
+              "--bundle", str(bundle / "generation.zip"),
+              "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
+              "--lockfile", str(root / "uv.lock"),
+              "--lock-digest", "sha256:" + hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
+              "--revision", os.environ["GITHUB_SHA"],
+              "--expected-version", os.environ["RELEASE_TAG"].removeprefix("v"),
+              "--output", "standalone-evidence-${{ matrix.platform }}.json",
+          ], check=True)
+          PY
+
+      - name: Retain standalone verification evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: standalone-evidence-${{ matrix.platform }}
+          path: standalone-evidence-${{ matrix.platform }}.json
+          if-no-files-found: error
 
       - name: Upload standalone bundle
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: standalone-${{ matrix.platform }}
-          path: artifacts/*
+          path: standalone-archives/*
           if-no-files-found: error
 
   publish-github-release:
@@ -200,9 +273,23 @@ jobs:
       - standalone-build
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install uv for release evidence
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Set up Python for manifest verification
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Sync locked evidence dependencies
+        run: uv sync --locked --no-dev --no-default-groups --group verification --python ${{ env.PYTHON_VERSION }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -239,29 +326,137 @@ jobs:
           print(f"RELEASE_TAG={tag}")
           PY
 
+      - name: Rebuild wheel from reviewed source
+        run: uv build --wheel --out-dir release-source-wheel
+
       - name: Prepare release assets
+        id: prepare_release_assets
         run: |
           mkdir -p release-assets
           find release-downloads -type f -exec cp {} release-assets/ \;
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install.ps1 release-assets/install.ps1
-          (
-            cd release-assets
-            sha256sum * > SHA256SUMS
-          )
-          cat > release-notes.md <<'EOF'
-          PolicyNIM release artifacts:
+          cp artifacts/public-generation/generation.zip release-assets/policynim-public-generation.zip
+          cp artifacts/public-generation/generation.sha256 release-assets/policynim-public-generation.sha256
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
 
-          - Python wheel and source distribution for `pipx install policynim`
-          - Standalone CLI bundles for Linux, Apple Silicon macOS, Intel macOS, and Windows
-          - Unix and PowerShell installer scripts
-          - SHA256SUMS for release asset verification
-          EOF
+          candidate, = Path("release-assets").glob("*.whl")
+          reference, = Path("release-source-wheel").glob("*.whl")
+          with candidate.open("rb") as downloaded, reference.open("rb") as rebuilt:
+              matches = (
+                  candidate.name == reference.name
+                  and hashlib.file_digest(downloaded, "sha256").digest()
+                  == hashlib.file_digest(rebuilt, "sha256").digest()
+              )
+          if not matches:
+              raise SystemExit("Downloaded wheel differs from the reviewed-source rebuild.")
+          PY
+          uv run --no-sync --python ${{ env.PYTHON_VERSION }} python scripts/release_manifest.py release-assets --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
+          uv run --no-sync python scripts/check_release_notes.py --repo-root . --output release-notes.md
+
+      - name: Check release tag source
+        run: python scripts/verify_release_tag.py --tag "$RELEASE_TAG" --revision "$GITHUB_SHA"
+
+      - name: Generate release asset attestations
+        id: provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-checksums: release-assets/SHA256SUMS
+          show-summary: true
+
+      - name: Verify release asset attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p attestation-evidence
+          python scripts/verify_release_attestations.py release-assets --repository "$GITHUB_REPOSITORY" --revision "$GITHUB_SHA" --output attestation-evidence/verification.json
+
+      - name: Retain release provenance evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-provenance-evidence
+          path: |
+            attestation-evidence/verification.json
+            ${{ steps.provenance.outputs.bundle-path }}
+          if-no-files-found: error
+
+      - name: Select artifact promotion evidence
+        if: ${{ !cancelled() && steps.prepare_release_assets.outcome == 'success' }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          from collect_release_evidence import Requirement, Selection, Subject
+          from release_evidence_io import read_bytes, write_document
+          from release_manifest import require, sha256
+
+          source = Path("artifacts/public-generation")
+          bundle = source / "generation.zip"
+          bundle_digest = "sha256:" + sha256(bundle)
+          require(
+              read_bytes(source / "generation.sha256").decode("ascii").strip() == bundle_digest,
+              "Checkout public bundle checksum differs.",
+          )
+          with zipfile.ZipFile(bundle) as archive:
+              require(archive.namelist().count("manifest.json") == 1, "Ambiguous checkout manifest.")
+              with archive.open("manifest.json") as stream:
+                  manifest = stream.read(1024 * 1024 + 1)
+          require(len(manifest) <= 1024 * 1024, "Checkout generation manifest is too large.")
+          selection = Selection(
+              schema_version="1",
+              expected=Subject(
+                  repository=os.environ["GITHUB_REPOSITORY"],
+                  release_tag=os.environ["RELEASE_TAG"],
+                  source_sha=os.environ["GITHUB_SHA"],
+                  dependency_lock="sha256:" + sha256(Path("uv.lock")),
+                  generation_id=hashlib.sha256(manifest).hexdigest(),
+                  catalog_digest=json.loads(manifest)["catalog_digest"],
+                  public_bundle_digest=bundle_digest,
+                  manifest_sha256=sha256(Path("release-assets/RELEASE_MANIFEST.json")),
+              ),
+              required_checks=[
+                  Requirement(id="artifacts", kind="artifacts"),
+                  Requirement(id="provenance", kind="provenance"),
+              ],
+          )
+          Path("release-evidence").mkdir(exist_ok=True)
+          write_document(
+              Path("release-evidence/selection.json"),
+              (selection.model_dump_json(indent=2) + "\n").encode("utf-8"),
+          )
+          PY
+
+      - name: Gate artifact and provenance consistency
+        if: ${{ !cancelled() && steps.prepare_release_assets.outcome == 'success' }}
+        run: >-
+          uv run --no-sync python scripts/collect_release_evidence.py
+          --selection release-evidence/selection.json
+          --artifact-dir release-assets
+          --provenance-receipt attestation-evidence/verification.json
+          --output release-evidence/report.json
+
+      - name: Retain artifact promotion evidence
+        if: ${{ always() && steps.prepare_release_assets.outcome == 'success' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: artifact-promotion-evidence
+          path: release-evidence/
+          if-no-files-found: error
 
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python scripts/verify_release_tag.py --tag "$RELEASE_TAG" --revision "$GITHUB_SHA"
           gh release create "$RELEASE_TAG" \
             --draft \
             --target "$GITHUB_SHA" \
@@ -286,5 +481,5 @@ jobs:
           path: dist
 
       - name: Publish to PyPI
-        # This Docker-based action publishes GHCR images under release tags, not commit SHA tags.
-        uses: pypa/gh-action-pypi-publish@v1.14.0 # 6733eb7d741f0b11ec6a39b58540dab7590f9b7d
+        # Dereferenced v1.14.0 commit; its matching GHCR commit image is published.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0

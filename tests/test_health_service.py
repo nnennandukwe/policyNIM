@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from collections.abc import Sequence
 
 import pytest
 
@@ -10,17 +10,7 @@ from policynim.errors import ConfigurationError
 from policynim.services import health as health_module
 from policynim.services.health import RuntimeHealthService
 from policynim.settings import Settings
-from policynim.types import HealthCheckResult
-
-
-class IngestStub(SimpleNamespace):
-    def __enter__(self):
-        """Return the owned test resource for context-managed execution."""
-        return self
-
-    def __exit__(self, *args):
-        """Release the test resource when context-managed execution ends."""
-        self.closed = True
+from policynim.types import HealthCheckResult, PolicyChunk
 
 
 class StubIndexStore:
@@ -58,6 +48,21 @@ class StubIndexStore:
             raise self._count_error
         return self._row_count
 
+    def read_policy_chunks(
+        self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+    ) -> list[PolicyChunk]:
+        """Bound the selected in-memory fixture while preserving its canonical source values."""
+        from policynim.errors import IndexReadLimitError
+
+        selected = [chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids]
+        if (
+            len(selected) > max_chunks
+            or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+            > max_source_bytes
+        ):
+            raise IndexReadLimitError()
+        return selected
+
     def list_chunks(self):  # pragma: no cover - protocol filler for tests
         raise NotImplementedError
 
@@ -92,6 +97,7 @@ def test_runtime_health_service_reports_ready_index() -> None:
 
 
 def test_runtime_health_service_reports_missing_index() -> None:
+    """Verify runtime health service reports missing index."""
     service = RuntimeHealthService(
         index_store=StubIndexStore(exists=False),
         table_name="policy_chunks",
@@ -104,7 +110,7 @@ def test_runtime_health_service_reports_missing_index() -> None:
     assert result.ready is False
     assert result.row_count == 0
     assert result.reason is not None
-    assert "does not exist" in result.reason
+    assert "doesn't exist" in result.reason
 
 
 def test_runtime_health_service_reports_empty_index() -> None:
@@ -166,6 +172,7 @@ def test_ensure_hosted_runtime_ready_accepts_ready_index(monkeypatch: pytest.Mon
 def test_ensure_hosted_runtime_ready_raises_for_missing_index(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify ensure hosted runtime ready raises for missing index."""
     monkeypatch.setattr(
         health_module,
         "create_runtime_health_service",
@@ -181,7 +188,7 @@ def test_ensure_hosted_runtime_ready_raises_for_missing_index(
         ),
     )
 
-    with pytest.raises(ConfigurationError, match="policynim ingest"):
+    with pytest.raises(ConfigurationError, match="generation migrate"):
         health_module.ensure_hosted_runtime_ready(Settings())
 
 
@@ -207,155 +214,24 @@ def test_ensure_hosted_runtime_ready_raises_for_empty_index(
         health_module.ensure_hosted_runtime_ready(Settings())
 
 
-def test_ensure_hosted_runtime_ready_rebuilds_missing_index(
+@pytest.mark.parametrize("row_count", [None, 0])
+@pytest.mark.parametrize("rebuild_requested", [False, True])
+def test_startup_never_rebuilds_missing_or_empty_generation(
     monkeypatch: pytest.MonkeyPatch,
+    row_count: int | None,
+    rebuild_requested: bool,
 ) -> None:
-    """Verify ensure hosted runtime ready rebuilds missing index."""
-    results = iter(
-        [
-            HealthCheckResult(
-                status="error",
-                ready=False,
-                table_name="policy_chunks",
-                row_count=0,
-                mcp_url="https://beta.example.com/mcp",
-                reason="Local index table 'policy_chunks' does not exist.",
-            ),
-            HealthCheckResult(
-                status="ok",
-                ready=True,
-                table_name="policy_chunks",
-                row_count=4,
-                mcp_url="https://beta.example.com/mcp",
-                reason=None,
-            ),
-        ]
-    )
-    rebuilds: list[str] = []
+    """Legacy rebuild arguments can't trigger provider construction or index mutation."""
+    import policynim.services.ingest as ingest_module
 
-    monkeypatch.setattr(
-        health_module,
-        "create_runtime_health_service",
-        lambda settings: StaticHealthService(next(results)),
-    )
-    monkeypatch.setattr(
-        health_module,
-        "create_ingest_service",
-        lambda settings: IngestStub(
-            run=lambda: (
-                rebuilds.append("run")
-                or SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
-            )
-        ),
-    )
+    calls: list[str] = []
 
-    health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
+    def forbid_ingest(settings):
+        """Fail at construction before any provider work can begin."""
+        calls.append("ingest")
+        raise AssertionError("Startup attempted ingestion")
 
-    assert rebuilds == ["run"]
-
-
-def test_ensure_hosted_runtime_ready_rebuilds_empty_index(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Verify ensure hosted runtime ready rebuilds empty index."""
-    results = iter(
-        [
-            HealthCheckResult(
-                status="error",
-                ready=False,
-                table_name="policy_chunks",
-                row_count=0,
-                mcp_url="https://beta.example.com/mcp",
-                reason="Local index table 'policy_chunks' exists but contains no rows.",
-            ),
-            HealthCheckResult(
-                status="ok",
-                ready=True,
-                table_name="policy_chunks",
-                row_count=4,
-                mcp_url="https://beta.example.com/mcp",
-                reason=None,
-            ),
-        ]
-    )
-    rebuilds: list[str] = []
-
-    monkeypatch.setattr(
-        health_module,
-        "create_runtime_health_service",
-        lambda settings: StaticHealthService(next(results)),
-    )
-    monkeypatch.setattr(
-        health_module,
-        "create_ingest_service",
-        lambda settings: IngestStub(
-            run=lambda: (
-                rebuilds.append("run")
-                or SimpleNamespace(index_uri="/tmp/index", chunk_count=4, document_count=2)
-            )
-        ),
-    )
-
-    health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
-
-    assert rebuilds == ["run"]
-
-
-def test_ensure_hosted_runtime_ready_raises_when_empty_index_stays_empty_after_rebuild(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Verify ensure hosted runtime ready raises when empty index stays empty after rebuild."""
-    results = iter(
-        [
-            HealthCheckResult(
-                status="error",
-                ready=False,
-                table_name="policy_chunks",
-                row_count=0,
-                mcp_url="https://beta.example.com/mcp",
-                reason="Local index table 'policy_chunks' exists but contains no rows.",
-            ),
-            HealthCheckResult(
-                status="error",
-                ready=False,
-                table_name="policy_chunks",
-                row_count=0,
-                mcp_url="https://beta.example.com/mcp",
-                reason="Local index table 'policy_chunks' exists but contains no rows.",
-            ),
-        ]
-    )
-    rebuilds: list[str] = []
-
-    monkeypatch.setattr(
-        health_module,
-        "create_runtime_health_service",
-        lambda settings: StaticHealthService(next(results)),
-    )
-    monkeypatch.setattr(
-        health_module,
-        "create_ingest_service",
-        lambda settings: IngestStub(
-            run=lambda: (
-                rebuilds.append("run")
-                or SimpleNamespace(index_uri="/tmp/index", chunk_count=0, document_count=0)
-            )
-        ),
-    )
-
-    with pytest.raises(ConfigurationError, match="contains no rows") as exc_info:
-        health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
-
-    assert rebuilds == ["run"]
-    assert "Configure the path with `POLICYNIM_INDEX_DB_PATH`" in str(exc_info.value)
-
-
-def test_ensure_hosted_runtime_ready_raises_when_automatic_rebuild_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Verify ensure hosted runtime ready raises when automatic rebuild fails."""
-    failure = ConfigurationError("NVIDIA_API_KEY is required for embeddings.")
-
+    monkeypatch.setattr(ingest_module, "create_ingest_service", forbid_ingest)
     monkeypatch.setattr(
         health_module,
         "create_runtime_health_service",
@@ -365,26 +241,14 @@ def test_ensure_hosted_runtime_ready_raises_when_automatic_rebuild_fails(
                 ready=False,
                 table_name="policy_chunks",
                 row_count=0,
-                mcp_url="https://beta.example.com/mcp",
-                reason="Local index table 'policy_chunks' does not exist.",
+                mcp_url=None,
+                reason="No complete generation exists.",
             )
         ),
     )
-    monkeypatch.setattr(
-        health_module,
-        "create_ingest_service",
-        lambda settings: IngestStub(run=lambda: (_ for _ in ()).throw(failure)),
-    )
-
-    with pytest.raises(
-        ConfigurationError,
-        match="Automatic hosted-index rebuild failed",
-    ) as exc_info:
-        health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=True)
-
-    assert exc_info.value.__cause__ is failure
-    assert "NVIDIA_API_KEY is required for embeddings." in str(exc_info.value)
-    assert "Configure the path with `POLICYNIM_INDEX_DB_PATH`" in str(exc_info.value)
+    with pytest.raises(ConfigurationError, match="generation migrate"):
+        health_module.ensure_hosted_runtime_ready(Settings(), rebuild_if_missing=rebuild_requested)
+    assert calls == []
 
 
 def test_ensure_hosted_runtime_ready_wraps_constructor_errors(

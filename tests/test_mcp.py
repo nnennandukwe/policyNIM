@@ -435,6 +435,7 @@ def test_run_server_uses_stdio_transport_and_runtime_host_port(monkeypatch) -> N
 
 
 def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
+    """Verify run server uses streamable http transport."""
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -466,11 +467,12 @@ def test_run_server_uses_streamable_http_transport(monkeypatch) -> None:
     mcp_module.run_server("streamable-http")
 
     assert captured["probe"] == ("127.0.0.1", 8010)
-    assert captured["ready"] is True
+    assert captured["ready"] is False
     assert captured["run"] == {"host": "127.0.0.1", "port": 8010, "log_level": "info"}
 
 
 def test_run_server_requires_ready_index_for_hosted_http(monkeypatch) -> None:
+    """Verify run server requires ready index for hosted http."""
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -508,7 +510,7 @@ def test_run_server_requires_ready_index_for_hosted_http(monkeypatch) -> None:
     mcp_module.run_server("streamable-http")
 
     assert captured["probe"] == ("127.0.0.1", 8010)
-    assert captured["ready"] is True
+    assert captured["ready"] is False
     assert captured["run"] == {"host": "127.0.0.1", "port": 8010, "log_level": "info"}
 
 
@@ -757,7 +759,12 @@ def test_run_server_surfaces_streamable_http_port_conflicts(monkeypatch) -> None
 
 def test_mcp_registers_both_public_tools() -> None:
     tools = asyncio.run(mcp_module.mcp.list_tools())
-    assert {tool.name for tool in tools} == {"policy_preflight", "policy_search"}
+    assert {tool.name for tool in tools} == {
+        "policy_preflight",
+        "policy_search",
+        "policy_compile",
+        "policy_preflight_evidence",
+    }
 
 
 def test_mcp_describes_typed_results_and_bounded_inputs() -> None:
@@ -769,6 +776,13 @@ def test_mcp_describes_typed_results_and_bounded_inputs() -> None:
         async with Client(server) as client:
             discovered = await client.list_tools()
             by_name = {tool.name: tool for tool in discovered.tools}
+            for name in ("policy_compile", "policy_preflight", "policy_preflight_evidence"):
+                description = by_name[name].description
+                assert description is not None
+                assert "whole policy bodies" in description
+                assert "conditions and examples" in description
+                assert "Review applicability" in description
+                assert "doesn't establish source trust or runtime policy compliance" in description
             for name, result_field in (
                 ("policy_search", "hits"),
                 ("policy_preflight", "citations"),
@@ -854,7 +868,7 @@ def test_mcp_rejects_eleventh_operation_before_provider_construction(monkeypatch
         try:
             await _wait_until_set(all_started)
             assert all(thread != get_ident() for thread in factory_threads)
-            assert len(await asyncio.wait_for(server.list_tools(), timeout=0.5)) == 2
+            assert len(await asyncio.wait_for(server.list_tools(), timeout=0.5)) == 4
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://localhost"
             ) as client:
@@ -1061,7 +1075,7 @@ def test_mcp_cancellation_retains_slot_until_cleanup_finishes(
 
 
 def test_mcp_sanitizes_unexpected_failure_and_releases_capacity(monkeypatch) -> None:
-    """A crash cannot leak its message or keep subsequent operations blocked."""
+    """A crash can't leak its message or keep subsequent operations blocked."""
 
     class CrashingSearchService(MockSearchService):
         def search(self, request: SearchRequest) -> SearchResult:
@@ -1228,6 +1242,19 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
     monkeypatch,
 ) -> None:
     """Verify call tool logs failure class when policy preflight generator times out."""
+    from policynim.source_units import SourceCatalog, SourceUnit
+
+    authority = SourceCatalog(
+        (
+            SourceUnit(
+                "s1",
+                "AUTH-001",
+                "Auth Reviews",
+                "Cleanup must preserve revocation semantics.",
+                ("AUTH-1",),
+            ),
+        )
+    )
     events: list[dict[str, object]] = []
 
     class StaticEmbedder:
@@ -1280,8 +1307,29 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
             """Implement the test store's replacement protocol with a synthetic build receipt."""
             raise NotImplementedError
 
-        def list_chunks(self) -> list[PolicyChunk]:  # pragma: no cover - protocol filler
-            return []
+        def read_policy_chunks(
+            self, policy_ids: Sequence[str], *, max_chunks: int, max_source_bytes: int
+        ) -> list[PolicyChunk]:
+            """Bound the selected in-memory fixture while preserving its canonical source values."""
+            from policynim.errors import IndexReadLimitError
+
+            selected = [
+                chunk for chunk in self.list_chunks() if chunk.policy.policy_id in policy_ids
+            ]
+            if (
+                len(selected) > max_chunks
+                or sum(len(chunk.model_dump_json().encode("utf-8")) for chunk in selected)
+                > max_source_bytes
+            ):
+                raise IndexReadLimitError()
+            return selected
+
+        def list_chunks(self) -> list[PolicyChunk]:
+            """Return the same canonical source used by search and generation."""
+            return [
+                PolicyChunk(**chunk.model_dump(exclude={"score"}))
+                for chunk in self.search([1.0, 0.0], top_k=1)
+            ]
 
     class StaticReranker:
         def rerank(
@@ -1308,10 +1356,11 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
 
     class StaticCompiler:
         def compile_policy_packet(self, request, selection_packet, context):
+            """Return the exact authored authentication source before the generator timeout."""
             return GeneratedCompiledPolicyDraft(
                 required_steps=[
                     GeneratedPolicyConstraint(
-                        statement="Use the retained auth policy.",
+                        statement="Cleanup must preserve revocation semantics.",
                         citation_ids=["AUTH-1"],
                     )
                 ]
@@ -1324,6 +1373,7 @@ def test_call_tool_logs_failure_class_when_policy_preflight_generator_times_out(
         mcp_module,
         "create_preflight_service",
         lambda settings: PreflightService(
+            source_catalog_resolver=lambda context: authority,
             embedder=StaticEmbedder(),
             index_store=StaticIndexStore(),
             reranker=StaticReranker(),
@@ -1856,7 +1906,7 @@ def test_key_regeneration_rejects_account_overlap_and_keeps_other_accounts_indep
 
 @pytest.mark.parametrize("failure_stage", ["account", "issue", "render"])
 def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, failure_stage) -> None:
-    """Account reads, issuance failures, and rendering failures cannot strand the guard."""
+    """Account reads, issuance failures, and rendering failures can't strand the guard."""
     service = ControlledKeyRotationService(block_first=False, failure_stage=failure_stage)
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
     if failure_stage == "render":
@@ -1891,7 +1941,7 @@ def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, fail
 def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
     monkeypatch, cancellation_kind
 ) -> None:
-    """Disconnect cancellation cannot permit another rotation while issuance still runs."""
+    """Disconnect cancellation can't permit another rotation while issuance still runs."""
     service = ControlledKeyRotationService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: service)
     app = mcp_module._build_streamable_http_app(_self_serve_hosted_settings())
@@ -2040,14 +2090,16 @@ def test_slow_github_callback_does_not_block_portal_requests(monkeypatch) -> Non
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("failure", ["endpoint_unavailable", "index_incompatible"])
+@pytest.mark.parametrize(
+    "failure", ["endpoint_unavailable", "endpoint_not_found", "index_incompatible"]
+)
 def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, failure):
     """Verify mcp recovery guidance does not retry permanent failures."""
     from policynim.errors import IndexCompatibilityError
 
     error = (
         ProviderError("private-response-sentinel", failure_class=failure)
-        if failure == "endpoint_unavailable"
+        if failure in {"endpoint_unavailable", "endpoint_not_found"}
         else IndexCompatibilityError("private-index-path-sentinel")
     )
     closed = []
@@ -2068,7 +2120,15 @@ def test_mcp_recovery_guidance_does_not_retry_permanent_failures(monkeypatch, fa
         _call_tool("policy_search", {"query": "request logging", "top_k": 1})
     text = str(caught.value)
     assert "sentinel" not in text
-    assert ("Do not retry" if failure == "endpoint_unavailable" else "separate") in text
+    if failure == "endpoint_not_found":
+        assert "HTTP 404" in text
+        assert "HTTP 410" not in text
+        assert "account" in text
+        assert "POLICYNIM_NVIDIA_CHAT_MODEL" in text
+        assert "POLICYNIM_NVIDIA_BASE_URL" in text
+        assert "don't retry" in text
+    else:
+        assert ("Do not retry" if failure == "endpoint_unavailable" else "separate") in text
     assert "Retry or" not in text
     assert closed == [True]
     assert events[0]["upstream_failure_class"] == failure
@@ -2107,3 +2167,29 @@ def test_healthz_os_errors_never_echo_untrusted_exception_text(monkeypatch, fail
     assert "test_mcp.py" in caplog.text
     assert "health-secret-sentinel" not in caplog.text
     assert "/private/policy" not in caplog.text
+
+
+@pytest.mark.parametrize("identity_mismatch", [False, True])
+def test_preflight_context_refusal_preserves_actionable_safe_tool_error(
+    monkeypatch: pytest.MonkeyPatch, identity_mismatch: bool
+) -> None:
+    """Expose whole-context refusal through actual MCP dispatch and close its service."""
+    from policynim.errors import PolicyContextError
+
+    class RefusingService(MockPreflightService):
+        """Return a fixed source-context boundary error before generation."""
+
+        def preflight(self, request: PreflightRequest) -> PreflightResult:
+            """Refuse the operation with the same error class used by the public router."""
+            raise PolicyContextError(identity_mismatch=identity_mismatch)
+
+    service = RefusingService()
+    monkeypatch.setattr(mcp_module, "create_preflight_service", lambda settings: service)
+    expected = (
+        "Preserve the generation" if identity_mismatch else "No partial policy context was used"
+    )
+    with pytest.raises(ToolError, match=expected) as refused:
+        _call_tool("policy_preflight", {"task": "Review cleanup job", "top_k": 1})
+    assert service.closed
+    if not identity_mismatch:
+        assert "top_k" in str(refused.value)
