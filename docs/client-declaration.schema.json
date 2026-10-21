@@ -1,0 +1,94 @@
+{
+  "additionalProperties": false,
+  "description": "Keep entered client information outside execution acceptance.",
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "evidence_type": {
+      "const": "operator_declaration",
+      "title": "Evidence Type",
+      "type": "string"
+    },
+    "context": {
+      "maxProperties": 6,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+=-]{0,199}$",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "client": {
+          "enum": [
+            "codex",
+            "claude-code"
+          ]
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "http"
+          ]
+        },
+        "auth_mode": {
+          "enum": [
+            "beta_key",
+            "operator_key",
+            "oauth",
+            "local_stdio",
+            "auth_disabled"
+          ]
+        }
+      },
+      "propertyNames": {
+        "enum": [
+          "auth_mode",
+          "client",
+          "client_version",
+          "protocol",
+          "server_sdk",
+          "transport"
+        ]
+      },
+      "required": [
+        "auth_mode",
+        "client",
+        "client_version",
+        "protocol",
+        "server_sdk",
+        "transport"
+      ],
+      "title": "Context",
+      "type": "object"
+    },
+    "sanitized": {
+      "const": true,
+      "title": "Sanitized",
+      "type": "boolean"
+    },
+    "reference": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evidence_type",
+    "context",
+    "sanitized"
+  ],
+  "title": "ClientDeclaration",
+  "type": "object"
+}
