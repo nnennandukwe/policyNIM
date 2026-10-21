@@ -620,6 +620,7 @@ async def _measure(
         cheap_latencies: list[float] = []
         health_latencies: list[float] = []
         cheap_outcomes: Counter[str] = Counter()
+        managed_health_failures = 0
         active_peak = 0
         sampled_peak_rss = _sample_rss(process.pid)
         stop = asyncio.Event()
@@ -652,7 +653,7 @@ async def _measure(
 
         async def probes() -> None:
             """Measure discovery/readiness while expensive operations are active."""
-            nonlocal active_peak, sampled_peak_rss
+            nonlocal active_peak, managed_health_failures, sampled_peak_rss
             while not stop.is_set():
                 sampled = await asyncio.to_thread(_sample_rss, process.pid)
                 if sampled is not None:
@@ -683,6 +684,8 @@ async def _measure(
                             observed_health_ids.add(observed_health.generation_id)
                         observed_health_counts[observed_health.row_count] += 1
                 health_latencies.append((time.perf_counter() - start) * 1000)
+                if not health_ok:
+                    managed_health_failures += 1
                 observed = await observe_state("probe")
                 if observed is not None:
                     active_peak = max(active_peak, observed.active_operations)
@@ -848,6 +851,7 @@ async def _measure(
             and not cheap_outcomes["discovery_tool_mismatch"]
             and not cheap_outcomes["health_identity_mismatch"]
             and not cheap_outcomes["health_invalid_response"]
+            and managed_health_failures == 0
         )
         if fixture is not None:
             measurement_complete = measurement_complete and managed_identity_verified
