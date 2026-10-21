@@ -1,4 +1,5 @@
 /.gitattributes text eol=lf
+/uv.lock text eol=lf
 /policies/**/*.md text eol=lf
 /policies/**/*.toml text eol=lf
 /policies/**/*.txt text eol=lf

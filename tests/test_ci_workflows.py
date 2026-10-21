@@ -100,6 +100,7 @@ def test_workflows_pin_node24_compatible_actions() -> None:
 def test_setup_python_accepts_reviewed_node24_majors(
     tmp_path: Path, reference: str, version: str
 ) -> None:
+    """Accept the setup-python majors reviewed for the current runner runtime."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
     _assert_workflow_pins(path)
@@ -107,6 +108,7 @@ def test_setup_python_accepts_reviewed_node24_majors(
 
 @pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v8"])
 def test_setup_python_rejects_unreviewed_majors(tmp_path: Path, version: str) -> None:
+    """Reject setup-python majors that haven't passed the workflow contract review."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{'a' * 40} # {version}.0.0\n")
     with pytest.raises(AssertionError):
@@ -118,6 +120,7 @@ def test_setup_python_rejects_unreviewed_majors(tmp_path: Path, version: str) ->
 def test_setup_python_still_requires_full_commit_pins(
     tmp_path: Path, reference: str, version: str
 ) -> None:
+    """Require immutable setup-python references even for an accepted major."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
     with pytest.raises(AssertionError):
@@ -164,6 +167,7 @@ def test_ci_checks_supported_python_versions_from_locked_dependencies() -> None:
 
 
 def test_ci_checks_real_optional_nemo_packages_on_supported_platforms() -> None:
+    """Cover the installed optional SDK on each supported platform and Python version."""
     job = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]["nvidia-eval"]
     assert job["strategy"]["matrix"] == {
         "os": ["ubuntu-24.04", "windows-2022"],
@@ -762,3 +766,106 @@ def test_standalone_archive_payload_runs_before_receipt_binding() -> None:
     )
     assert '"--archive"' in steps[verification]["run"]
     assert not any(step["name"] == "Bind standalone receipt to archive" for step in steps)
+
+
+def test_native_build_uses_managed_runtime_and_capability_guard() -> None:
+    """Every native invocation must use the pinned managed build interpreter."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    job = workflow["jobs"]["standalone-build"]
+    assert job["env"]["NATIVE_PYTHON_VERSION"] == "3.11.13"
+    commands = [step.get("run", "") for step in job["steps"]]
+    install = next(command for command in commands if "uv python install" in command)
+    assert "--managed-python" in install
+    assert "${{ env.NATIVE_PYTHON_VERSION }}" in install
+    sync = next(command for command in commands if command.startswith("uv sync"))
+    assert "--locked" in sync and "--managed-python" in sync
+    assert "--python ${{ env.NATIVE_PYTHON_VERSION }}" in sync
+    guard = next(
+        index for index, command in enumerate(commands) if "check_standalone_runtime.py" in command
+    )
+    build = next(
+        index for index, command in enumerate(commands) if "pyinstaller --clean" in command
+    )
+    assert guard < build
+    for index in (guard, build):
+        assert "--no-sync" in commands[index] and "--managed-python" in commands[index]
+        assert "--python ${{ env.NATIVE_PYTHON_VERSION }}" in commands[index]
+    assert "--expected-python ${{ env.NATIVE_PYTHON_VERSION }}" in commands[guard]
+
+
+def test_failed_native_verification_retains_existing_archive_only() -> None:
+    """A failed verification must retain its archive without changing publisher inputs."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["standalone-build"]
+    upload = next(step for step in job["steps"] if step["name"] == "Upload standalone bundle")
+    assert "always()" in upload["if"]
+    assert "hashFiles('standalone-archives/*')" in upload["if"]
+    assert upload["with"]["name"] == "standalone-${{ matrix.platform }}"
+    assert upload["with"]["path"] == "standalone-archives/*"
+    assert not job.get("continue-on-error", False)
+    assert not any(step.get("continue-on-error", False) for step in job["steps"])
+
+
+def _publication_allowed(
+    condition: str, *, build_only: bool, publish_pypi: bool, tagged: bool
+) -> bool:
+    """Evaluate only the boolean operators used by the selected publisher job gates."""
+    expression = (
+        condition.removeprefix("${{")
+        .removesuffix("}}")
+        .replace("inputs.build_only", str(build_only))
+        .replace("inputs.publish_pypi", str(publish_pypi))
+    )
+    expression = expression.replace("startsWith(github.ref, 'refs/tags/v')", str(tagged)).replace(
+        "github.event_name == 'workflow_dispatch'", str(not tagged)
+    )
+    expression = expression.replace("!", " not ").replace("&&", " and ").replace("||", " or ")
+
+    def value(node: ast.AST) -> bool:
+        """Reject unexpected expression forms instead of executing workflow text."""
+        if isinstance(node, ast.Constant) and type(node.value) is bool:
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not value(node.operand)
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+            operands = [value(operand) for operand in node.values]
+            return all(operands) if isinstance(node.op, ast.And) else any(operands)
+        raise AssertionError("Unsupported publisher condition.")
+
+    return value(ast.parse(expression.strip(), mode="eval").body)
+
+
+def test_build_only_is_an_explicit_boolean_opt_in() -> None:
+    """Manual validation must default to the existing release behavior."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    inputs = workflow[True]["workflow_dispatch"]["inputs"]
+    assert inputs["build_only"]["type"] == "boolean"
+    assert inputs["build_only"]["default"] is False
+
+
+@pytest.mark.parametrize("publish_pypi", [False, True])
+@pytest.mark.parametrize("tagged", [False, True])
+def test_build_only_cant_reach_either_publisher(publish_pypi: bool, tagged: bool) -> None:
+    """Even contradictory publish flags mustn't sign, draft, tag or upload distributions."""
+    jobs = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]
+    for name in ("publish-github-release", "publish-pypi"):
+        assert not _publication_allowed(
+            jobs[name]["if"], build_only=True, publish_pypi=publish_pypi, tagged=tagged
+        )
+    for name in ("verify", "wheel-smoke", "standalone-build"):
+        assert "build_only" not in jobs[name].get("if", "")
+
+
+@pytest.mark.parametrize("publish_pypi", [False, True])
+@pytest.mark.parametrize("tagged", [False, True])
+def test_normal_release_publisher_behavior_is_preserved(publish_pypi: bool, tagged: bool) -> None:
+    """Tag releases and ordinary manual drafts retain their previous publication rules."""
+    jobs = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]
+    assert _publication_allowed(
+        jobs["publish-github-release"]["if"],
+        build_only=False,
+        publish_pypi=publish_pypi,
+        tagged=tagged,
+    )
+    assert _publication_allowed(
+        jobs["publish-pypi"]["if"], build_only=False, publish_pypi=publish_pypi, tagged=tagged
+    ) == (tagged or publish_pypi)
