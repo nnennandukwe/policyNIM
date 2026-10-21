@@ -124,8 +124,16 @@ the checker doesn't silently remove it. Literal syntax inside inline code, fence
 examples or indented code remains unchanged. Comments elsewhere can't supply a
 version heading. Rejection leaves any previous rendered output untouched.
 
-For later integration, the release workflow can call the notes checker after resolving the
-release version and before draft creation. Call the collector after existing manifest
-and attestation verification, storing its output outside `release-assets`. Hosted and
-actual-client jobs should retain their own normalized receipts, then use an explicitly
-selected promotion gate. No existing workflow is changed by these tools.
+The release workflow runs the notes checker after resolving the release version and
+before signing or draft creation. After manifest and attestation verification, it
+selects artifact/provenance checks and runs the collector in a locked environment.
+The expected source/tag/repository come from CI; lock and public generation identities
+come from the checked-out sources. The selected manifest checksum binds the existing
+source-verified manifest. Downloaded receipts don't choose those expected identities.
+Selection and report stay in `release-evidence/`, outside the signed asset inventory,
+and are retained even when the gate fails. A missing or mismatched receipt stops draft
+creation. These notes and helpers stay checkout-scoped; installed packages don't need them.
+
+This gate covers artifact and provenance consistency. Hosted and actual-client phases
+still need their own executed, authenticated receipts and explicitly selected gates.
+It doesn't establish publication, client, deployment or rollback acceptance.
