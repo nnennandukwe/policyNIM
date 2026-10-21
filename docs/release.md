@@ -78,7 +78,8 @@ or Codex/Claude UI interoperability. Retain those acceptance results separately.
 
 Standalone builds must also import the public generation and negotiate both MCP
 protocols over stdio and authenticated HTTP. Run `scripts/verify_standalone.py`
-with `--command` pointing to the built executable, `--bundle` and `--bundle-digest`
+with `--command` pointing to a local build or `--archive` selecting a compressed
+release artifact, `--bundle` and `--bundle-digest`
 identifying the reviewed public archive, `--lockfile` and `--lock-digest`
 identifying the selected build lock, `--expected-version X.Y.Z` matching the
 release package version, and `--revision` and `--output` identifying the source
@@ -90,8 +91,14 @@ file/directory permissions. Special entries such as FIFOs are rejected before
 execution; supported entries are regular files, directories and contained symlinks.
 Credential redaction covers the bounded log-tail
 boundary; diagnostics are omitted if a known credential exceeds its capture bound.
-The offline fixture must contain exactly six cases. Failed receipts retain the
-requested source, platform, version and digest context, clearly marked as an
+
+Final publication requires `--archive /absolute/path/to/the/platform.tar.gz` (or the
+Windows `.zip`). The verifier copies those compressed bytes into an owned temporary
+directory, safely extracts them, and runs the extracted command instead of the
+original build directory. Only a completed six-case offline fixture and both MCP
+protocol/transport checks can produce `archive_verified: true` and the archive
+checksum. Changed, unsafe or incomplete archives fail before publication; failed
+receipts retain the requested source, platform, version and digest context as
 incomplete execution.
 
 The lock digest identifies the selected build checkout. The workflow performs a
@@ -154,3 +161,34 @@ After the draft release artifacts pass local smoke tests, run the manual
 `Hosted Beta Smoke` workflow only when the deployed Railway beta and hosted MCP
 secrets are available. This is a deployment promotion check, not part of the
 offline release artifact build.
+
+## Artifact evidence manifest
+
+Before creating the draft, publication runs
+`uv run --no-sync python scripts/release_manifest.py release-assets --tag vX.Y.Z --source-sha <40-character-commit>`.
+The source revision must match the checked-out commit and the tag must match
+`pyproject.toml`. The gate requires fresh wheel receipts for Python 3.11 and 3.12 plus four standalone platform
+receipts with the same dependency lock, generation and catalog. Every wheel and
+standalone receipt must include exactly six offline cases with a pass rate of one;
+missing or reduced fixture evidence blocks publication. Each standalone
+receipt binds its archive checksum after compression; the wheel receipt binds the
+actual installed wheel. Full offline, lint and type checks run on both Python versions. Missing platforms, failed probes, changed downloads,
+unexpected assets and stale receipts stop publication.
+
+`RELEASE_MANIFEST.json` records these identities and each download's checksum.
+`SHA256SUMS` also covers the manifest. This gate covers artifact verification;
+real coding-client, live-provider, production and rollback acceptance stay separate
+under #104. Keep those receipts tied to the final release revision before promotion.
+
+The source distribution includes tracked package source, public policies, evaluation
+fixtures, README, license, build metadata, lockfile and ignore rules. Checkout pointers
+and agent state aren't package inputs. The gate compares every source-archive file
+with these tracked inputs and checks package metadata before adding the source
+download to the manifest; missing, altered and unexpected source files block publication.
+
+Wheel `METADATA` and source `PKG-INFO` must match the selected `pyproject.toml`
+package identity, Python requirement, dependencies and advertised extras. The gate
+uses canonical requirement/specifier objects and retains dependency markers for
+all target environments; it doesn't check only dependencies active on the current
+host. A mismatch blocks manifest creation. Rebuild the distribution from the
+selected checkout before retrying.

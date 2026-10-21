@@ -6,10 +6,13 @@ import argparse
 import asyncio
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -136,6 +139,130 @@ def test_wrong_release_version_fails_before_generation_work(
     with pytest.raises(RuntimeError, match="Standalone version differs"):
         verifier.verify(args)
     assert calls == [["--help"], ["--version"]]
+
+
+@pytest.mark.parametrize("fault", ["traversal", "link", "duplicate", "oversized", "case"])
+def test_standalone_archive_rejects_unsafe_payload_before_execution(
+    tmp_path: Path, fault: str, monkeypatch
+):
+    """Archive paths and expansion limits can't write outside the owned extraction root."""
+    archive_path = tmp_path / "payload.tar.gz"
+    if fault == "case":
+        monkeypatch.setattr(verifier.platform, "system", lambda: "Darwin")
+    with tarfile.open(archive_path, "w:gz") as archive:
+        info = tarfile.TarInfo("policynim/policynim")
+        info.mode = 0o755
+        payload = b"launcher"
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+        bad = tarfile.TarInfo(
+            {
+                "traversal": "../outside",
+                "link": "policynim/link",
+                "duplicate": "policynim/./policynim",
+                "oversized": "policynim/large",
+                "case": "policynim/POLICYNIM",
+            }[fault]
+        )
+        if fault == "link":
+            bad.type = tarfile.SYMTYPE
+            bad.linkname = "../../outside"
+        elif fault == "oversized":
+            bad.size = 8 * 1024**3 + 1
+        archive.addfile(bad)
+    destination = tmp_path / "extracted"
+    destination.mkdir()
+    with pytest.raises((RuntimeError, tarfile.TarError)):
+        verifier.unpack_standalone(archive_path, destination)
+    assert not (tmp_path / "outside").exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["../outside", "C:/outside", "policynim.exe", "POLICYNIM.EXE", "CON", "policynim.exe."]
+)
+def test_standalone_zip_rejects_paths_and_case_collisions(tmp_path: Path, name: str):
+    """The Windows archive layout has no traversal or ambiguous case-folded members."""
+    archive_path = tmp_path / "payload.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("policynim.exe", b"launcher")
+        if name == "policynim.exe":
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                archive.writestr(name, b"different")
+        else:
+            archive.writestr(name, b"different")
+    destination = tmp_path / "extracted"
+    destination.mkdir()
+    with pytest.raises(RuntimeError):
+        verifier.unpack_standalone(archive_path, destination)
+    assert not (tmp_path / "outside").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires an executable POSIX launcher.")
+def test_archive_cli_executes_archived_entrypoint(tmp_path: Path):
+    """The archive-only CLI must execute and reject its actual stale-version payload."""
+    archive_path = tmp_path / "payload.tar.gz"
+    payload = (
+        b'#!/bin/sh\nif [ "$1" = "--help" ]; then echo "Usage: policynim"; else echo 0.0.1; fi\n'
+    )
+    with tarfile.open(archive_path, "w:gz") as archive:
+        info = tarfile.TarInfo("policynim/policynim")
+        info.size, info.mode = len(payload), 0o755
+        archive.addfile(info, io.BytesIO(payload))
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_bytes(b"locked")
+    output = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "verify_standalone.py"),
+            "--archive",
+            str(archive_path),
+            "--bundle",
+            str(tmp_path / "unused.zip"),
+            "--bundle-digest",
+            "sha256:" + "b" * 64,
+            "--lockfile",
+            str(lockfile),
+            "--lock-digest",
+            "sha256:" + hashlib.sha256(b"locked").hexdigest(),
+            "--revision",
+            "a" * 40,
+            "--expected-version",
+            "0.1.0",
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    receipt = json.loads(output.read_text())
+    assert receipt["status"] == "failed"
+    assert receipt["source_revision"] == "a" * 40
+    assert receipt["expected_version"] == "0.1.0"
+    assert receipt["public_bundle_digest"] == "sha256:" + "b" * 64
+    assert receipt["expected_dependency_lock"] == "sha256:" + hashlib.sha256(b"locked").hexdigest()
+    assert receipt["platform"] == verifier.platform.system()
+    assert "execution didn't complete" in receipt["context_scope"]
+    assert "Standalone version differs" in receipt["message"]
+    assert receipt.get("archive_verified") is not True
+
+
+def test_archive_changed_after_payload_execution_cant_receive_binding(tmp_path: Path, monkeypatch):
+    """A private snapshot binds executed bytes; concurrent source replacement is rejected."""
+    archive_path = tmp_path / "payload.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("policynim.exe", b"launcher")
+
+    def change_after_execution(args):
+        """Change the public archive only after the private extracted payload is selected."""
+        assert args.command.read_bytes() == b"launcher"
+        archive_path.write_bytes(b"replaced")
+        return {"status": "passed"}
+
+    monkeypatch.setattr(verifier, "_verify_command", change_after_execution)
+    with pytest.raises(RuntimeError, match="archive changed"):
+        verifier.verify(argparse.Namespace(archive=archive_path))
 
 
 @pytest.mark.parametrize("case_count", [0, 5, 7])

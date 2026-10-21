@@ -375,7 +375,12 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
         report["policy_count"] = source["effective_count"]
         report["chunk_count"] = inspected["manifest"]["chunk_count"]
         evaluated = run_cli(["eval", "--headless", "--no-compare-rerank"], env=env, cwd=cwd)
-        report["synthetic_offline_cases"] = evaluated["runs"][0]["metrics"]
+        metrics = evaluated["runs"][0]["metrics"]
+        require(
+            metrics["case_count"] == 6 and metrics["overall_pass_rate"] == 1.0,
+            "Installed offline fixture requires exactly 6 passing cases.",
+        )
+        report["synthetic_offline_cases"] = metrics
         report["stdio"] = asyncio.run(check_stdio(env, cwd))
 
         with socket.socket() as probe:
