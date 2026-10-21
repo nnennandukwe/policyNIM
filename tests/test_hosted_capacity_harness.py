@@ -752,15 +752,31 @@ def test_capacity_failure_diagnostics_keep_categories_without_private_payloads()
     assert bounded["additional_storage_failure_events"] == 34
 
 
-def test_capacity_diagnostics_preserve_public_retry_limit_reason() -> None:
-    """A bounded provider retry refusal stays actionable in the safe diagnostic summary."""
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "retry_after_limit",
+        "budget_exhausted",
+        "invalid_response",
+        "auth",
+        "endpoint_not_found",
+        "endpoint_unavailable",
+        "shutdown",
+        "bad_request",
+        "http_status",
+        "unexpected",
+        "interrupted",
+    ],
+)
+def test_capacity_diagnostics_preserve_owned_provider_failure_reason(failure: str) -> None:
+    """Owned provider failures remain visible without accepting arbitrary log labels."""
     import runpy
 
     namespace = runpy.run_path(
         str(Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py")
     )
     result = namespace["_server_failure_diagnostics"](
-        [{"event": "mcp.tool", "upstream_failure_class": "retry_after_limit", "latency_ms": 5.0}]
+        [{"event": "mcp.tool", "upstream_failure_class": failure, "latency_ms": 5.0}]
     )
-    assert result["tool_failure_counts"] == {"retry_after_limit": 1}
+    assert result["tool_failure_counts"] == {failure: 1}
     assert result["tool_failure_latency_ms"] == {"p50": 5.0, "p95": 5.0, "p99": 5.0}

@@ -590,3 +590,58 @@ def test_operation_admission_preserves_unsafe_file_recovery(tmp_path: Path, suff
     assert "database locks" not in message
     assert "private-admission-sentinel" not in message and str(tmp_path) not in message
     assert target.read_bytes() == b"retained-private-records"
+
+
+def test_admin_cli_sqlite_open_race_has_safe_recovery(tmp_path, monkeypatch) -> None:
+    """A real failed SQLite open after preparation can't escape the public admin command."""
+    from typer.testing import CliRunner
+
+    from policynim.interfaces import cli
+    from policynim.settings import Settings
+    from policynim.storage import auth_database
+
+    path, retained = tmp_path / "auth.sqlite3", tmp_path / "retained-auth.sqlite3"
+    AuthStore(path=path).close()
+    before = path.read_bytes()
+    original = sqlite3.connect
+    moved: list[bool] = []
+
+    def move_before_actual_open(*args, **kwargs):
+        """Move the owned database after validation and let the real rw open fail."""
+        if not moved:
+            path.rename(retained)
+            moved.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(auth_database.sqlite3, "connect", move_before_actual_open)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(beta_auth_db_path=path))
+    result = CliRunner().invoke(cli.app, ["beta-admin", "list-accounts"])
+    assert moved and result.exit_code == 1
+    assert "auth_storage_unavailable:" in result.output
+    assert "Preserve the database" in result.output
+    assert not isinstance(result.exception, sqlite3.Error)
+    assert "Traceback" not in result.output and str(tmp_path) not in result.output
+    assert retained.read_bytes() == before and not path.exists()
+
+
+@pytest.mark.parametrize("code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED])
+def test_admission_preserves_sqlite_open_contention(tmp_path, monkeypatch, code) -> None:
+    """Busy DB-API open failures must keep their existing bounded retry classification."""
+    from policynim.services.operation_admission import (
+        OperationAdmissionError,
+        OperationAdmissionService,
+    )
+    from policynim.settings import Settings
+    from policynim.storage import auth_database
+
+    error = sqlite3.OperationalError("private-open-contention-sentinel")
+    error.sqlite_errorcode = code
+
+    def busy_open(*args, **kwargs):
+        """Preserve the DB-API failure and code while rejecting before SQL work."""
+        raise error
+
+    monkeypatch.setattr(auth_database.sqlite3, "connect", busy_open)
+    with pytest.raises(OperationAdmissionError, match="admission_busy:") as raised:
+        OperationAdmissionService(Settings(beta_auth_db_path=tmp_path / "auth.sqlite3"))
+    assert "private-open-contention-sentinel" not in str(raised.value)

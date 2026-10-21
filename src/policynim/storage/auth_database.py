@@ -35,6 +35,7 @@ class AuthDatabaseError(OSError):
     ) -> None:
         """Keep missing state, unsafe aliases and filesystem availability separate."""
         self.code = code
+        self.sqlite_errorcode: int | None = None
         super().__init__(
             _UNSAFE
             if code == "auth_storage_unsafe"
@@ -142,12 +143,24 @@ def connect_auth_database(
             raise
         except OSError:
             raise AuthDatabaseError("auth_storage_unavailable") from None
-        connection = sqlite3.connect(
-            path.absolute().as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
-            uri=True,
-            timeout=timeout,
-            isolation_level=None,
-        )
+        try:
+            connection = sqlite3.connect(
+                path.absolute().as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
+                uri=True,
+                timeout=timeout,
+                isolation_level=None,
+            )
+        except sqlite3.Error as exc:
+            code = getattr(exc, "sqlite_errorcode", None)
+            if isinstance(code, int) and code & 0xFF in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }:
+                raise
+            failure = AuthDatabaseError("auth_storage_unavailable")
+            if isinstance(code, int):
+                failure.sqlite_errorcode = code
+            raise failure from None
         try:
             current = path.lstat()
             _validate_file(current)
