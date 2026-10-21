@@ -61,6 +61,8 @@ official Python SDK `2.2.0`, with typed tool outputs and stateless HTTP. Set
 `POLICYNIM_MCP_MAX_CONCURRENT_OPERATIONS` to bound expensive tool calls per server
 (default `10`). Excess calls receive a retry-later error. See the
 [MCP workflow](docs/workflows.md) for transport and public-origin configuration.
+For evaluations that need to survive client disconnects, see [durable evaluation jobs](docs/evaluation-jobs.md).
+
 See [grounded MCP guidance](docs/grounded-mcp.md) for tool schemas, evidence and
 immutable resource links.
 

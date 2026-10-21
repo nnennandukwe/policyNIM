@@ -57,6 +57,14 @@ class GenerationError(PolicyNIMError):
         )
 
 
+class MissingGenerationError(GenerationError):
+    """The selected generation object is absent; existing object corruption stays separate."""
+
+
+class GenerationBundleSizeError(GenerationError):
+    """A generation export exceeds its existing compressed or expanded bundle limit."""
+
+
 class ConfigurationError(PolicyNIMError):
     """Raised when required configuration is missing or invalid."""
 

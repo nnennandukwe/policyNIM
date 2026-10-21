@@ -17,6 +17,8 @@ from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
 
+import httpx
+
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.ingest import chunk_policy_documents
@@ -140,7 +142,7 @@ class EvalService:
                 snapshot = pinned_generation(store)
                 if snapshot is None:
                     raise PolicyNIMError("Live evaluation requires a verified policy generation.")
-                _validate_suite_generation(suite, snapshot)
+                validate_suite_generation(suite, snapshot)
                 worker = EvalService(
                     settings=self._settings.model_copy(
                         update={"generation_id": snapshot.generation_id}, deep=True
@@ -191,7 +193,7 @@ class EvalService:
             snapshot = pinned_generation(store)
             if snapshot is None or snapshot.generation_id != self._settings.generation_id:
                 raise PolicyNIMError("Case evaluation couldn't pin its requested generation.")
-            _validate_suite_generation(captured, snapshot)
+            validate_suite_generation(captured, snapshot)
             results = self._run_suite_cases(
                 captured.model_copy(update={"cases": [case]}),
                 mode="live",
@@ -1006,6 +1008,7 @@ def _build_failure_reasons(
 
 
 def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateMetrics:
+    """Aggregate executed case outcomes while keeping missing expectations separately counted."""
     search_results = [result for result in case_results if result.kind == "search"]
     preflight_results = [result for result in case_results if result.kind == "preflight"]
     conformance_results = [
@@ -1167,7 +1170,7 @@ def _forbidden_policy_failures(case: EvalCase, observed: Sequence[str] | set[str
     return ["forbidden policy_id values: " + ", ".join(unexpected)] if unexpected else []
 
 
-def _validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
+def validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
     """Reject stale or impossible custom fixtures before constructing provider services."""
     if suite.expected_catalog_digest is None and not suite.expected_policy_revisions:
         raise PolicyNIMError(
@@ -1615,9 +1618,12 @@ def _publish_phoenix_annotations(client: Any, annotations: Any) -> None:
 
 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
+    """Create a missing project only after the pinned client confirms HTTP 404."""
     try:
         client.projects.get(project_name=project_name)
-    except Exception:
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
         client.projects.create(name=project_name)
 
 

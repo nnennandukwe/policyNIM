@@ -29,8 +29,10 @@ from pydantic import Field, model_validator
 from policynim.contracts import Embedder
 from policynim.errors import (
     ConfigurationError,
+    GenerationBundleSizeError,
     GenerationError,
     IndexCompatibilityError,
+    MissingGenerationError,
     MissingIndexError,
     PolicyNIMError,
     ProviderError,
@@ -62,6 +64,8 @@ _FILES = _ARTIFACTS | {"manifest.json"}
 _OWNER = b'{"owner":"policynim-generations","schema_version":1}\n'
 _STAGE_OWNER = b"policynim-generation-stage-v1\n"
 LOGGER = logging.getLogger(__name__)
+_MAX_EXPORT_ARCHIVE_BYTES = 256 * 1024 * 1024
+_MAX_EXPORT_EXPANDED_BYTES = 512 * 1024 * 1024
 
 
 class GenerationManifest(StrictModel):
@@ -451,7 +455,7 @@ class GenerationStore:
                 self._step("root_parent_fsync")
                 _sync_directory(directory.parent)
         if not self.root.exists():
-            raise GenerationError(
+            raise MissingGenerationError(
                 "open",
                 "No managed generation exists.",
                 recovery=(
@@ -903,7 +907,7 @@ class GenerationStore:
                     try:
                         object_mode = (self.root / "objects" / selected).lstat().st_mode
                     except FileNotFoundError as exc:
-                        raise GenerationError(
+                        raise MissingGenerationError(
                             "pin", "The selected generation doesn't exist."
                         ) from exc
                     if not stat.S_ISDIR(object_mode):
@@ -1615,14 +1619,20 @@ class GenerationStore:
                             "An artifact changed after validation; preserve and inspect it.",
                         )
                     expanded_size += len(artifact)
-                    if expanded_size > 512 * 1024 * 1024:
-                        raise GenerationError(
-                            "export", "Expanded bundle exceeds the 512 MiB limit."
+                    if expanded_size > _MAX_EXPORT_EXPANDED_BYTES:
+                        raise GenerationBundleSizeError(
+                            "export",
+                            "Expanded bundle exceeds the 512 MiB limit.",
+                            recovery="Use a smaller policy generation before retrying.",
                         )
                     archive.writestr(info, artifact)
             data = buffer.getvalue()
-            if len(data) > 256 * 1024 * 1024:
-                raise GenerationError("export", "Compressed bundle exceeds the 256 MiB limit.")
+            if len(data) > _MAX_EXPORT_ARCHIVE_BYTES:
+                raise GenerationBundleSizeError(
+                    "export",
+                    "Compressed bundle exceeds the 256 MiB limit.",
+                    recovery="Use a smaller policy generation before retrying.",
+                )
             expected_digest = digest_bytes(data)
             destination.parent.mkdir(parents=True, exist_ok=True)
             descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

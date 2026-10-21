@@ -145,6 +145,16 @@ def admit_operation(
     )
 
 
+def _validate_work_identity(work_units: int, reservation_key: str, request_digest: str) -> None:
+    """Use identical validated weights and opaque identities for preflight and acceptance."""
+    if type(work_units) is not int or work_units < 1:
+        raise ValueError("Work units must be a positive integer.")
+    if any(
+        re.fullmatch(r"[0-9a-f]{64}", value) is None for value in (reservation_key, request_digest)
+    ):
+        raise ValueError("Acceptance key and request digest must be SHA256 hex values.")
+
+
 class OperationAdmissionError(PolicyNIMError):
     """Reject work before provider execution with a stable recovery message."""
 
@@ -216,7 +226,9 @@ class OperationAdmissionService:
             check_ready()
 
     @staticmethod
-    def _check_decision(decision: OperationAdmission) -> OperationAdmission:
+    def _check_decision(
+        decision: OperationAdmission, *, work_units: int = 1, daily_limit: int | None = None
+    ) -> OperationAdmission:
         """Translate storage facts into stable caller recovery errors."""
         if decision.rejection == "invalid_token":
             raise AuthorizationError(
@@ -228,7 +240,12 @@ class OperationAdmissionService:
             messages = {
                 "server_busy": "PolicyNIM is at capacity. Retry after active work finishes.",
                 "principal_busy": "Your operation limit is active. Retry after your work finishes.",
-                "quota_exceeded": "Work-unit allowance exhausted. Retry after 00:00 UTC.",
+                "quota_exceeded": (
+                    "This request exceeds the entire daily work-unit allowance. "
+                    "Submit smaller suites or ask the operator to review the allowance."
+                    if daily_limit is not None and work_units > daily_limit
+                    else "Work-unit allowance exhausted. Retry after 00:00 UTC."
+                ),
                 "acceptance_conflict": (
                     "This submission key already reserved different work. "
                     "Use the original request or a new key."
@@ -261,6 +278,61 @@ class OperationAdmissionService:
                 raise OperationAdmissionError(_admission_storage_error(exc)) from exc
         raise AssertionError("Storage retry loop didn't return.")
 
+    def check_work_allowance(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        operation_name: str,
+        reservation_key: str,
+        request_digest: str,
+        work_units: int,
+        check_ready: Callable[[], object] | None = None,
+    ) -> AcceptedWork | None:
+        """Reject exhausted new work cheaply; matching keyed retries keep their existing charge.
+
+        This read doesn't reserve allowance. Final atomic acceptance is still required after
+        preparation because another request can spend the available units in the meantime.
+        """
+        _validate_work_identity(work_units, reservation_key, request_digest)
+        self._require_ready(principal, operation_name, lambda: False, check_ready)
+        snapshot = self._retry_storage(
+            lambda: self.store.inspect_work_allowance(
+                principal_id=principal_identity(principal.issuer, principal.subject),
+                reservation_key=reservation_key,
+                credential_id=principal.credential_id,
+            )
+        )
+        self._require_ready(principal, operation_name, lambda: False, check_ready)
+        credential = snapshot.credential
+        if principal.source == "beta_key" and (
+            credential is None
+            or credential.account_id != int(principal.subject)
+            or credential.account_status != "active"
+            or credential.revoked_at is not None
+        ):
+            self._check_decision(OperationAdmission(rejection="invalid_token"))
+        existing = snapshot.reservation
+        if existing is not None:
+            if (existing.operation, existing.request_digest, existing.work_units) != (
+                operation_name,
+                request_digest,
+                work_units,
+            ):
+                self._check_decision(OperationAdmission(rejection="acceptance_conflict"))
+            return AcceptedWork(existing.operation_id, existing.work_units, existing.outcome)
+        daily_limit = (
+            self.settings.beta_daily_request_quota
+            if principal.source == "beta_key"
+            else self.settings.mcp_principal_daily_operation_quota
+        )
+        if snapshot.daily_work_units + work_units > daily_limit:
+            self._check_decision(
+                OperationAdmission(rejection="quota_exceeded"),
+                work_units=work_units,
+                daily_limit=daily_limit,
+            )
+        return None
+
     def accept_work(
         self,
         *,
@@ -272,13 +344,7 @@ class OperationAdmissionService:
         check_ready: Callable[[], object] | None = None,
     ) -> AcceptedWork:
         """Commit idempotent weighted acceptance without acquiring an execution slot."""
-        if type(work_units) is not int or work_units < 1:
-            raise ValueError("Work units must be a positive integer.")
-        if any(
-            re.fullmatch(r"[0-9a-f]{64}", value) is None
-            for value in (reservation_key, request_digest)
-        ):
-            raise ValueError("Acceptance key and request digest must be SHA256 hex values.")
+        _validate_work_identity(work_units, reservation_key, request_digest)
 
         def accept() -> OperationAdmission:
             """Reserve against a write-locked daily allowance after checking current authority."""
@@ -305,7 +371,15 @@ class OperationAdmissionService:
                 request_digest=request_digest,
             )
 
-        decision = self._check_decision(self._retry_storage(accept))
+        decision = self._check_decision(
+            self._retry_storage(accept),
+            work_units=work_units,
+            daily_limit=(
+                self.settings.beta_daily_request_quota
+                if principal.source == "beta_key"
+                else self.settings.mcp_principal_daily_operation_quota
+            ),
+        )
         assert decision.operation_id is not None
         return AcceptedWork(decision.operation_id, decision.work_units, decision.outcome)
 
@@ -318,6 +392,7 @@ class OperationAdmissionService:
         operation_name: str,
         cancelled: Callable[[], bool],
         check_ready: Callable[[], object] | None = None,
+        interrupted: Callable[[], bool] | None = None,
     ) -> _Result:
         """Activate previously accepted work once without charging its units again."""
 
@@ -356,7 +431,7 @@ class OperationAdmissionService:
 
         decision = self._check_decision(self._retry_storage(activate))
         assert decision.operation_id is not None
-        return self._execute(operation, decision.operation_id, cancelled)
+        return self._execute(operation, decision.operation_id, cancelled, interrupted)
 
     def finish_accepted(
         self,
@@ -395,7 +470,11 @@ class OperationAdmissionService:
         return result
 
     def _execute(
-        self, operation: Callable[[], _Result], operation_id: str, cancelled: Callable[[], bool]
+        self,
+        operation: Callable[[], _Result],
+        operation_id: str,
+        cancelled: Callable[[], bool],
+        interrupted: Callable[[], bool] | None = None,
     ) -> _Result:
         """Keep execution cleanup and uncertain terminal accounting identical for both paths."""
         outcome: OperationOutcome = "failed"
@@ -410,7 +489,9 @@ class OperationAdmissionService:
         finally:
             cancellation_error: BaseException | None = None
             try:
-                if cancelled():
+                if interrupted is not None and interrupted():
+                    outcome = "interrupted"
+                elif cancelled():
                     outcome = "cancelled"
             except BaseException as exc:
                 cancellation_error = exc
@@ -440,6 +521,7 @@ class OperationAdmissionService:
         operation_name: str,
         cancelled: Callable[[], bool],
         check_ready: Callable[[], object] | None = None,
+        interrupted: Callable[[], bool] | None = None,
     ) -> _Result:
         """Charge admitted work once and retain its terminal outcome after cleanup."""
 
@@ -466,9 +548,9 @@ class OperationAdmissionService:
                     if principal.source == "beta_key"
                     else None,
                     credential_id=principal.credential_id,
-                    before_accept=require_ready,
                     correlation_id=current_correlation_id(),
                     retention_days=self.settings.mcp_operation_retention_days,
+                    before_accept=require_ready,
                 )
                 break
             except (sqlite3.Error, OSError, ValueError) as exc:
@@ -481,4 +563,4 @@ class OperationAdmissionService:
         self.store.prune_owner_leases()
         self._check_decision(decision)
         assert decision.operation_id is not None
-        return self._execute(operation, decision.operation_id, cancelled)
+        return self._execute(operation, decision.operation_id, cancelled, interrupted)
