@@ -163,6 +163,22 @@ def test_ci_checks_supported_python_versions_from_locked_dependencies() -> None:
     assert all("--locked" in command for command in sync_commands)
 
 
+def test_ci_checks_real_optional_nemo_packages_on_supported_platforms() -> None:
+    job = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]["nvidia-eval"]
+    assert job["strategy"]["matrix"] == {
+        "os": ["ubuntu-24.04", "windows-2022"],
+        "python-version": ["3.11", "3.12"],
+    }
+    assert job["env"]["NVIDIA_API_KEY"] == ""
+    commands = [step["run"] for step in job["steps"] if "run" in step]
+    assert any(
+        "uv sync --locked" in command and "--extra nvidia-eval" in command for command in commands
+    )
+    assert "uv pip check" in commands
+    assert any("from nemo_evaluator import evaluate" in command for command in commands)
+    assert any("tests/test_nemo_evaluator_policy_conformance.py" in command for command in commands)
+
+
 def test_hosted_smoke_workflow_is_manual_and_secret_gated() -> None:
     """Ensure the hosted smoke workflow is opt-in and requires deployed beta secrets."""
     text = _read_text(HOSTED_SMOKE_WORKFLOW)
