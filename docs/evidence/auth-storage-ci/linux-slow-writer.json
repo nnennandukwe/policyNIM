@@ -1,0 +1,130 @@
+{
+  "configuration": {
+    "chunks": 100,
+    "distribution": "uniform",
+    "embedding_dimensions": 4,
+    "embedding_model": "synthetic-orthogonal-4",
+    "global_active_limit": 10,
+    "principal_active_limit": 2,
+    "reranker": null,
+    "tool": "policy_search",
+    "users": 12
+  },
+  "evidence_kind": "synthetic_provider_real_http_and_sqlite_vec",
+  "hardware": {
+    "logical_cpus": 12,
+    "machine": "aarch64",
+    "platform": "Linux-6.10.14-linuxkit-aarch64-with-glibc2.41",
+    "python": "3.11.15"
+  },
+  "harness_sha256": "1b4d10a5c01efe378ecde5aa669b0b3fc452f8c5c1bb30176bdf11dd8c3fe3b0",
+  "limits": [
+    "Only search is measured; other tools require separate workload evidence.",
+    "Synthetic vectors don't measure model quality or NVIDIA latency.",
+    "Short local runs don't establish a production capacity envelope.",
+    "Disconnect/server-shutdown outcomes depend on observed worker drain.",
+    "Generation publication and durable job backlog aren't exercised."
+  ],
+  "live_nvidia_calls": 0,
+  "measurement_complete": true,
+  "production_capacity_verified": false,
+  "scenarios": [
+    {
+      "accepted_operation_latency_ms": {
+        "p50": 783.093,
+        "p95": 1427.794,
+        "p99": 1427.794
+      },
+      "active_work_observed_before_intervention": null,
+      "attempted_requests": 12,
+      "cheap_probe_outcomes": {
+        "health_200": 84,
+        "ok": 84
+      },
+      "client_concurrency": 10,
+      "client_task_completed_before_intervention": null,
+      "completed_client_responses": 12,
+      "discovery_latency_ms": {
+        "p50": 2.006,
+        "p95": 2.378,
+        "p99": 10.15
+      },
+      "drain_observation": null,
+      "duration_seconds": 1.443,
+      "health_latency_ms": {
+        "p50": 1.23,
+        "p95": 1.574,
+        "p99": 1.863
+      },
+      "intervention": null,
+      "intervention_probe_observed": null,
+      "intervention_started_with_active_work": null,
+      "live_provider_usage": null,
+      "measurement_complete": true,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 7,
+      "operator_report": {
+        "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
+        "inactive_accepted_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 604.41,
+        "latency_p95_ms": 1419.738,
+        "latency_p99_ms": 1419.738,
+        "latency_sample_count": 9,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_timed_terminal_operations",
+        "outcomes": {
+          "completed": 9
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "reserved_operations": 0,
+        "reserved_work_units": 9,
+        "retained_rows": 9,
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
+      },
+      "outcomes": {
+        "admission_busy": 4,
+        "ok": 8
+      },
+      "peak_server_rss_bytes": 131002368,
+      "peak_server_rss_scope": "process_max_at_application_shutdown",
+      "provider_delay_seconds": 0.2,
+      "provider_stage_counts": {
+        "embed_query": 9,
+        "search": 9
+      },
+      "provider_stage_event_count": 18,
+      "rejected_response_latency_ms": {
+        "p50": 448.428,
+        "p95": 451.869,
+        "p99": 451.869
+      },
+      "response_latency_ms": {
+        "p50": 694.019,
+        "p95": 1427.794,
+        "p99": 1427.794
+      },
+      "responses_per_second": 8.314,
+      "sampled_peak_server_rss_bytes": null,
+      "scenario": "baseline",
+      "server_exit_code": -15,
+      "state_read_failure_counts": {},
+      "successful_operations_per_second": 5.542,
+      "successful_search_hit_counts": {
+        "5": 8
+      },
+      "successful_state_observations": {
+        "final": 1,
+        "probe": 168
+      },
+      "warmup_operations": 1
+    }
+  ],
+  "source_revision": "51b116af1d625cef265a1843961ac4fd2e5cc6ba",
+  "working_tree_dirty": false
+}
