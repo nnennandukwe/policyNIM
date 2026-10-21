@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import stat
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
@@ -25,6 +26,7 @@ from policynim.job_types import (
     EvaluationJobUsage,
     StoredEvaluationJobReport,
 )
+from policynim.storage.file_lock import try_exclusive_file_lock
 from policynim.types import EvalCaseResult
 
 REPORT_PART_SIZE = 128 * 1024
@@ -65,6 +67,23 @@ class EvaluationJobStore:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if path.is_symlink():
             raise EvaluationJobError("job_store_invalid: Job storage can't be a symlink.")
+        self.capture_lock_path = path.with_suffix(".capture.lock")
+        if self.capture_lock_path.is_symlink():
+            raise EvaluationJobError(
+                "job_store_invalid: Archive capture coordination can't be a symlink."
+            )
+        descriptor = os.open(
+            self.capture_lock_path,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise EvaluationJobError(
+                    "job_store_invalid: Archive capture coordination isn't a regular file."
+                )
+        finally:
+            os.close(descriptor)
         try:
             descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
         except FileExistsError:
@@ -815,7 +834,10 @@ class EvaluationJobStore:
 
     def purge_expired(self) -> int:
         """Delete only expired caller payloads and archives no retained job still references."""
-        with self._transaction() as connection:
+        with (
+            try_exclusive_file_lock(self.capture_lock_path) as collect_archives,
+            self._transaction() as connection,
+        ):
             rows = connection.execute(
                 "SELECT job_id FROM evaluation_jobs WHERE expires_at<=? "
                 "AND state NOT IN ('queued','running') AND result_expired=0",
@@ -831,10 +853,11 @@ class EvaluationJobStore:
                     "report_json=NULL WHERE job_id=?",
                     (row[0],),
                 )
-            connection.execute(
-                "DELETE FROM evaluation_job_archives WHERE generation_id NOT IN "
-                "(SELECT generation_id FROM evaluation_jobs WHERE result_expired=0)"
-            )
+            if collect_archives:
+                connection.execute(
+                    "DELETE FROM evaluation_job_archives WHERE generation_id NOT IN "
+                    "(SELECT generation_id FROM evaluation_jobs WHERE result_expired=0)"
+                )
             return len(rows)
 
     def aggregate_counts(self) -> dict[str, int]:

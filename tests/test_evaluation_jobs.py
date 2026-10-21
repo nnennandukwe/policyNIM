@@ -2290,3 +2290,204 @@ def test_rejected_principal_never_blocks_another_owners_global_capture(
     assert not entered.is_set()
     assert service.store.aggregate_counts() == {"queued": 2}
     assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
+
+
+def test_archive_capture_survives_retention_until_publication_and_consumer_expiry(
+    generation, tmp_path, monkeypatch
+):
+    """Real expiry can't erase observed archive bytes before their new consumer commits."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    previous = service.submit(suite, idempotency_key="expired-source", principal=principal())
+    service.cancel(previous.job_id, principal=principal())
+    now = [previous.expires_at + 1]
+    service.store.clock = lambda: now[0]
+    verify = service.store.retained_archive_digest
+    observed = []
+
+    def verify_then_expire(generation_id):
+        """Observe the real digest, then perform expiry before publication resumes."""
+        digest = verify(generation_id)
+        assert digest is not None
+        observed.append(service.prune_expired())
+        return digest
+
+    with monkeypatch.context() as concurrent:
+        concurrent.setattr(service.store, "retained_archive_digest", verify_then_expire)
+        accepted = service.submit(suite, idempotency_key="retained-capture", principal=principal())
+    assert observed == [1]
+    assert service.inspect(previous.job_id, principal=principal()).result_expired
+    assert verify(accepted.generation_id) is not None
+    calls = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        completed = worker.run_once()
+        assert completed is not None and completed.state == "completed"
+    finally:
+        worker.close()
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.snapshot_digest == accepted.snapshot_digest
+    assert calls == ["case-0", "closed"]
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
+    now[0] = completed.expires_at + 1
+    assert service.prune_expired() == 1
+    assert verify(accepted.generation_id) is None
+
+
+def test_aborted_capture_defers_archive_gc_then_restart_prune_recovers(
+    generation, tmp_path, monkeypatch
+):
+    """A storage-full effect under the self-held lock leaves a later public prune entry."""
+    import errno
+    import time
+
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    previous = service.submit(suite, idempotency_key="expired-before-abort", principal=principal())
+    service.cancel(previous.job_id, principal=principal())
+    now = previous.expires_at + 1
+    service.store.clock = lambda: now
+    verify = service.store.retained_archive_digest
+    observed = []
+
+    def expire_then_abort(generation_id):
+        """Keep actual maintenance and model its following storage-full write effect."""
+        assert verify(generation_id) is not None
+        observed.append(service.prune_expired())
+        assert verify(generation_id) is not None
+        raise OSError(errno.ENOSPC, "private-storage-full-sentinel")
+
+    started = time.monotonic()
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(service.store, "retained_archive_digest", expire_then_abort)
+        with pytest.raises(EvaluationJobError, match="job_storage_unavailable") as failure:
+            service.submit(suite, idempotency_key="abort-before-publication", principal=principal())
+    assert time.monotonic() - started < 2
+    assert "private-storage" not in str(failure.value)
+    assert observed == [1]
+    assert service.store.aggregate_counts() == {"cancelled": 1}
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 1
+    restarted = EvaluationJobService(service.settings)
+    restarted.store.clock = lambda: now
+    assert restarted.prune_expired() == 0
+    assert restarted.store.retained_archive_digest(previous.generation_id) is None
+    accepted = restarted.submit(
+        suite, idempotency_key="abort-before-publication", principal=principal()
+    )
+    assert accepted.state == "queued"
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
+
+
+def test_process_exit_releases_capture_for_archive_gc(generation, tmp_path):
+    """A killed public capture leaves no durable lease that can prevent later collection."""
+    import json
+    import os
+    import subprocess
+    import sys
+    import time
+
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    previous = service.submit(suite, idempotency_key="old-before-process", principal=principal())
+    service.cancel(previous.job_id, principal=principal())
+    now = previous.expires_at + 1
+    service.store.clock = lambda: now
+    settings_path = tmp_path / "capture-settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "eval_workspace_dir": str(service.settings.eval_workspace_dir),
+                    "beta_auth_db_path": str(service.settings.beta_auth_db_path),
+                    "generations_dir": str(service.settings.generations_dir),
+                    "nvidia_embed_model": service.settings.nvidia_embed_model,
+                    "nvidia_base_url": service.settings.nvidia_base_url,
+                },
+                "suite": suite.model_dump(mode="json"),
+                "now": now,
+            }
+        )
+    )
+    ready = tmp_path / "capture-observed"
+    script = """
+import json, sys, time
+from pathlib import Path
+from policynim.settings import Settings
+from policynim.types import EvalSuite
+from policynim.services.authorization import AuthenticatedPrincipal
+from policynim.services.evaluation_jobs import EvaluationJobService
+payload = json.loads(Path(sys.argv[1]).read_text())
+service = EvaluationJobService(Settings(**payload['settings'], _env_file=None))
+service.store.clock = lambda: payload['now']
+verify = service.store.retained_archive_digest
+def hold_capture(generation_id):
+    "Observe the real archive before holding this process inside its public capture."
+    digest = verify(generation_id)
+    assert digest is not None
+    Path(sys.argv[2]).write_text(digest)
+    time.sleep(60)
+    return digest
+service.store.retained_archive_digest = hold_capture
+caller = AuthenticatedPrincipal(
+    issuer='https://issuer.example', subject='owner', client_id='test-client',
+    scopes=frozenset({'policies:read', 'policies:evaluate'}), source='oauth')
+service.submit(EvalSuite.model_validate(payload['suite']),
+               idempotency_key='process-aborted-capture', principal=caller)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(settings_path), str(ready)],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        assert service.prune_expired() == 1
+        assert service.store.retained_archive_digest(previous.generation_id) is not None
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
+    restarted = EvaluationJobService(service.settings)
+    restarted.store.clock = lambda: now
+    assert restarted.prune_expired() == 0
+    assert restarted.store.retained_archive_digest(previous.generation_id) is None
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 1
+
+
+def test_capture_coordination_inode_survives_store_reopen(tmp_path):
+    """Constructor reuse keeps the persistent lock inode and another holder's exclusion."""
+    from policynim.storage.file_lock import try_exclusive_file_lock
+
+    first = EvaluationJobStore(tmp_path / "jobs.sqlite3")
+    path = first.capture_lock_path
+    identity = path.stat().st_ino
+    with try_exclusive_file_lock(path) as acquired:
+        assert acquired
+        second = EvaluationJobStore(first.path)
+        assert second.capture_lock_path.stat().st_ino == identity
+        with try_exclusive_file_lock(path) as other_acquired:
+            assert not other_acquired
+    with try_exclusive_file_lock(path) as released:
+        assert released
+
+
+def test_capture_coordination_rejects_a_link_without_changing_target(tmp_path):
+    """A configured capture-file symlink can't redirect constructor coordination."""
+    target = tmp_path / "operator-note"
+    target.write_bytes(b"retained-operator-content")
+    path = tmp_path / "jobs.sqlite3"
+    path.with_suffix(".capture.lock").symlink_to(target)
+    with pytest.raises(EvaluationJobError, match="job_store_invalid"):
+        EvaluationJobStore(path)
+    assert target.read_bytes() == b"retained-operator-content"
