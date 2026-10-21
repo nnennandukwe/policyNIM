@@ -22,7 +22,8 @@ from release_evidence_io import (
 )
 
 Hex = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
-Revision = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{40}$")]
+REVISION_PATTERN = r"^[0-9a-f]{40}$"
+Revision = Annotated[str, StringConstraints(strict=True, pattern=REVISION_PATTERN)]
 Digest = Annotated[str, StringConstraints(strict=True, pattern=r"^sha256:[0-9a-f]{64}$")]
 Identifier = Annotated[
     str, StringConstraints(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$")
@@ -134,6 +135,25 @@ REQUIREMENT_SCHEMA_EXTRA: dict[str, Any] = {
             },
         },
         {
+            "if": {"properties": {"kind": {"const": "rollback"}}},
+            "then": {
+                "required": ["context"],
+                "properties": {
+                    "context": {
+                        "required": ["rollback_target_source_sha"],
+                        "properties": {
+                            "rollback_target_source_sha": {
+                                "type": "string",
+                                "pattern": REVISION_PATTERN,
+                                "minLength": 40,
+                                "maxLength": 40,
+                            }
+                        },
+                    }
+                },
+            },
+        },
+        {
             "if": {"properties": {"kind": {"const": "published_install"}}},
             "then": {
                 "required": ["context"],
@@ -182,6 +202,8 @@ class Requirement(StrictModel):
             if self.kind == "deployment"
             else {"channel", "distribution"}
             if self.kind == "published_install"
+            else {"rollback_target_source_sha"}
+            if self.kind == "rollback"
             else set()
         )
         allowed = required if self.kind in {"client", "deployment"} else OTHER_CONTEXT
@@ -189,6 +211,10 @@ class Requirement(StrictModel):
             allowed = allowed | {"image_digest", "auth_mode"}
         if not required <= self.context.keys() or self.context.keys() - allowed:
             raise ValueError("Required context is missing or unsupported.")
+        if self.kind == "rollback" and not re.fullmatch(
+            REVISION_PATTERN, self.context["rollback_target_source_sha"]
+        ):
+            raise ValueError("Rollback target source must be a lowercase full Git revision.")
         if self.kind == "client":
             if self.context["client"] not in CLIENT_VALUES or self.context["transport"] not in {
                 "stdio",

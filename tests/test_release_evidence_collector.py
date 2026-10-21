@@ -655,3 +655,88 @@ def test_output_cant_replace_selected_input_or_mutate_asset_inventory(candidate,
     process, report = run_collector(path, assets, "--output", str(output))
     assert process.returncode == 2 and report["decision"] == "hold"
     assert (output.read_bytes() if output.exists() else None) == before
+
+
+@pytest.mark.parametrize(
+    "target", [None, "f" * 39, "f" * 41, "F" * 40, "g" * 40, "f" * 40 + "\n", "\n" + "f" * 40]
+)
+def test_rollback_cli_rejects_omitted_or_malformed_selected_target(
+    candidate, tmp_path: Path, target: str | None
+) -> None:
+    """A passing rollback receipt can't hide an absent or invalid selected revision."""
+    path, selection, assets = candidate
+    context = {} if target is None else {"rollback_target_source_sha": target}
+    selection["required_checks"] = [
+        {"id": "rollback", "kind": "rollback", "context": context, "cases": ["restore"]}
+    ]
+    path.write_text(json.dumps(selection))
+    receipt = execution_receipt(selection)
+    receipt.update(
+        check_id="rollback", context=context, cases=[{"id": "restore", "status": "passed"}]
+    )
+    receipt_path = tmp_path / "rollback.json"
+    receipt_path.write_text(json.dumps(receipt))
+    process, report = run_collector(path, assets, "--execution-receipt", str(receipt_path))
+    assert process.returncode == 2 and report["reason"] == "invalid_selection"
+
+
+@pytest.mark.parametrize(
+    "target", [None, "f" * 39, "f" * 41, "F" * 40, "g" * 40, "f" * 40 + "\n", "\n" + "f" * 40]
+)
+def test_rollback_schema_rejects_omitted_or_malformed_selected_target(
+    candidate, target: str | None
+) -> None:
+    """Schema-only producers must name the same lowercase full revision as the CLI."""
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import ValidationError as JSONSchemaValidationError
+
+    _, selection, _ = candidate
+    selection["required_checks"] = [
+        {
+            "id": "rollback",
+            "kind": "rollback",
+            "context": {} if target is None else {"rollback_target_source_sha": target},
+            "cases": ["restore"],
+        }
+    ]
+    schema = json.loads((ROOT / "docs/release-evidence-selection.schema.json").read_text())
+    with pytest.raises(JSONSchemaValidationError):
+        Draft202012Validator(schema).validate(selection)
+
+
+@pytest.mark.parametrize("target", ["a" * 40, "f" * 40])
+@pytest.mark.parametrize("receipt_target", ["matching", "changed", "missing"])
+def test_rollback_receipt_must_match_the_explicit_selected_target(
+    candidate, tmp_path: Path, target: str, receipt_target: str
+) -> None:
+    """Policy-only rollback may retain source, but its receipt must name that exact target."""
+    from jsonschema import Draft202012Validator
+
+    path, selection, assets = candidate
+    context = {"rollback_target_source_sha": target}
+    selection["required_checks"] = [
+        {"id": "rollback", "kind": "rollback", "context": context, "cases": ["restore"]}
+    ]
+    schema = json.loads((ROOT / "docs/release-evidence-selection.schema.json").read_text())
+    Draft202012Validator(schema).validate(selection)
+    path.write_text(json.dumps(selection))
+    observed_context = (
+        context
+        if receipt_target == "matching"
+        else {"rollback_target_source_sha": "b" * 40}
+        if receipt_target == "changed"
+        else {}
+    )
+    receipt = execution_receipt(selection)
+    receipt.update(
+        check_id="rollback", context=observed_context, cases=[{"id": "restore", "status": "passed"}]
+    )
+    receipt_path = tmp_path / "rollback.json"
+    receipt_path.write_text(json.dumps(receipt))
+    process, report = run_collector(path, assets, "--execution-receipt", str(receipt_path))
+    if receipt_target == "matching":
+        assert process.returncode == 0 and report["decision"] == "evidence_consistent"
+        assert report["checks"][0]["producer_authenticated"] is False
+    else:
+        assert process.returncode == 1 and report["decision"] == "hold"
+        assert report["checks"][0]["reason"] == "context_mismatch"

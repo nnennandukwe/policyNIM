@@ -20,6 +20,12 @@ service, deployment and application source. Published installation checks requir
 channel and distribution. Select every client/protocol/transport
 combination that's required; one SDK receipt can't substitute for a coding-client run.
 
+Rollback checks require `context.rollback_target_source_sha`, a lowercase 40-character
+Git revision. The execution receipt must contain the same target; missing or different
+targets hold the gate. The target may equal the selected release source for a policy-only
+rollback. This validates supplied identity consistency; it doesn't independently witness
+rollback execution.
+
 The artifact check recomputes local download sizes and checksums against the selected
 manifest. An optional manifest repository must match the selection when present;
 an absent value remains unavailable rather than authenticated. The provenance check consumes the existing attestation verifier's receipt
