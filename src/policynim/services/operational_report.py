@@ -83,7 +83,7 @@ def _generation_readiness(
     settings: Settings,
 ) -> tuple[IndexReadinessReport, str | None, str | None, str]:
     """Validate configured retrieval while keeping its selection separate from activation."""
-    root = resolve_runtime_path(settings.generations_dir)
+    root = resolve_runtime_path(settings.generations_dir.parent) / settings.generations_dir.name
     active_generation: str | None = None
     try:
         try:
