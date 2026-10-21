@@ -105,6 +105,16 @@ No file replacement or deletion is used as the job commit point. Temporary archi
 
 ## Failure And Recovery Rules
 
+### Final public-operation review boundaries
+
+Queued cancellation's job/report COMMIT remains its cancellation confirmation point. A later quota-finalization failure must leave that committed state inspectable and return it to the caller, with a safe pending-accounting event and the existing reconciliation marker unchanged. The worker still pauses on unconfirmed accounting before accepting more execution. A real quota trigger failure followed by repair and worker reconciliation must retain the report hash, charge and zero-provider outcome.
+
+Progress inspection reads only `EvaluationJobInfo` columns; it doesn't load retained snapshot or report bodies. Actual SQLite authorizer denial of those body columns must still allow the authenticated owner to inspect while another owner remains denied.
+
+Generation captures have a fixed 256 MiB archive limit. Check the exported file's size before buffering, and validate supplied bytes before hashing or inserting them. Retained restoration checks BLOB length and digest under one read transaction before loading it. Rejection creates no new job or quota charge; an already accepted job with over-limit retained bytes fails without provider work. The export itself still performs disk/compression work under the existing capture slot. The sparse-file size witness injects that export boundary; it doesn't establish an actual 257 MiB policy corpus or a production memory measurement. The reduced-bound restore test uses a real accepted generation archive without huge fixture buffers.
+
+The real generation exporter already enforces 256 MiB compressed and 512 MiB expanded limits before writing its output. Preserve those limits and identify their existing rejections with a `GenerationError` subclass so job submission can give smaller-generation guidance without matching error text. Actual exporter traversal/compression under reduced test bounds must reject before job acceptance. The post-export file guard remains defensive; the sparse-file test doesn't represent the normal exporter path.
+
 Rejected submissions remain absent. A duplicate key returns the accepted job even after client disconnect. Interrupted running jobs become terminal interrupted after a new worker obtains the exclusive lock; queued jobs can start because they haven't invoked providers. Explicit cancellation and deadlines remain separate. A failed case retains completed cases and names unfinished ones. Reports expire after the configured retention; cross-principal or unauthenticated report requests never return content.
 
 ## Commit Plan
