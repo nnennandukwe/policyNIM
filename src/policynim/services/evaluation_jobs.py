@@ -219,11 +219,7 @@ class EvaluationJobService:
             capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
         )
         os.close(descriptor)
-        global_capture_lock = self.store.path.with_suffix(".capture.lock")
-        descriptor = os.open(
-            global_capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
-        )
-        os.close(descriptor)
+        global_capture_lock = self.store.capture_lock_path
         with try_exclusive_file_lock(capture_lock) as acquired:
             if not acquired:
                 raise EvaluationJobError(
