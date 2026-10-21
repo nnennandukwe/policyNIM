@@ -224,96 +224,95 @@ class EvaluationJobService:
             global_capture_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
         )
         os.close(descriptor)
-        with (
-            try_exclusive_file_lock(capture_lock) as acquired,
-            try_exclusive_file_lock(global_capture_lock) as global_acquired,
-        ):
+        with try_exclusive_file_lock(capture_lock) as acquired:
             if not acquired:
                 raise EvaluationJobError(
                     "principal_busy: Another submission is capturing this principal's inputs. "
                     "Retry later with the same idempotency key."
                 )
-            if not global_acquired:
-                raise EvaluationJobError(
-                    "server_busy: Another submission is capturing generation inputs. "
-                    "Retry later with the same idempotency key."
-                )
-            existing = self.store.find_submission(owner, idempotency_key, request_digest)
-            if existing is not None:
-                return existing
-            self.store.ensure_capacity(owner)
-            reservation_key = payload_digest(
-                {
-                    "namespace": "evaluation-job",
-                    "job_store_id": self.store.store_id,
-                    "owner_id": owner,
-                    "idempotency_key": idempotency_key,
-                }
-            ).removeprefix("sha256:")
-            generation_store = GenerationStore(
-                root=resolve_runtime_path(self.settings.generations_dir),
-                embedding=EmbeddingIdentity(
-                    model=configuration.nvidia_embed_model, endpoint=configuration.nvidia_base_url
-                ),
-            )
-            with generation_store.pin(self.settings.generation_id) as snapshot:
-                validate_suite_generation(suite, snapshot)
-                allowance = OperationAdmissionService(self.settings)
-                try:
-                    allowance.check_work_allowance(
-                        principal=principal,
-                        operation_name="eval_submit",
-                        reservation_key=reservation_key,
-                        request_digest=request_digest.removeprefix("sha256:"),
-                        work_units=len(suite.cases),
-                        check_ready=check_budget,
+            with try_exclusive_file_lock(global_capture_lock) as global_acquired:
+                if not global_acquired:
+                    raise EvaluationJobError(
+                        "server_busy: Another submission is capturing generation inputs. "
+                        "Retry later with the same idempotency key."
                     )
-                finally:
-                    allowance.store.close()
-                archive: bytes | None = None
-                digest = self.store.retained_archive_digest(snapshot.generation_id)
-                if digest is None:
-                    with TemporaryDirectory(
-                        prefix="job-capture-", dir=self.store.path.parent
-                    ) as directory:
-                        path = Path(directory) / "generation.zip"
-                        digest = generation_store.export_bundle(path, snapshot.generation_id)
-                        archive = path.read_bytes()
-                captured = EvaluationJobSnapshot(
-                    generation_id=snapshot.generation_id,
-                    generation_archive_digest=digest,
-                    suite_digest=payload_digest(suite.model_dump(mode="json")),
-                    configuration_digest=payload_digest(configuration.model_dump(mode="json")),
-                    suite=suite,
-                    configuration=configuration,
-                    authorization=_authorization(principal),
-                    limits=limits,
+                existing = self.store.find_submission(owner, idempotency_key, request_digest)
+                if existing is not None:
+                    return existing
+                self.store.ensure_capacity(owner)
+                reservation_key = payload_digest(
+                    {
+                        "namespace": "evaluation-job",
+                        "job_store_id": self.store.store_id,
+                        "owner_id": owner,
+                        "idempotency_key": idempotency_key,
+                    }
+                ).removeprefix("sha256:")
+                generation_store = GenerationStore(
+                    root=resolve_runtime_path(self.settings.generations_dir),
+                    embedding=EmbeddingIdentity(
+                        model=configuration.nvidia_embed_model,
+                        endpoint=configuration.nvidia_base_url,
+                    ),
                 )
-
-            def accept_work() -> tuple[str, int]:
-                """Charge validated case executions once before publishing the queued job."""
-                admission = OperationAdmissionService(self.settings)
-                try:
-                    accepted = admission.accept_work(
-                        principal=principal,
-                        operation_name="eval_submit",
-                        reservation_key=reservation_key,
-                        request_digest=request_digest.removeprefix("sha256:"),
-                        work_units=len(suite.cases),
-                        check_ready=check_budget,
+                with generation_store.pin(self.settings.generation_id) as snapshot:
+                    validate_suite_generation(suite, snapshot)
+                    allowance = OperationAdmissionService(self.settings)
+                    try:
+                        allowance.check_work_allowance(
+                            principal=principal,
+                            operation_name="eval_submit",
+                            reservation_key=reservation_key,
+                            request_digest=request_digest.removeprefix("sha256:"),
+                            work_units=len(suite.cases),
+                            check_ready=check_budget,
+                        )
+                    finally:
+                        allowance.store.close()
+                    archive: bytes | None = None
+                    digest = self.store.retained_archive_digest(snapshot.generation_id)
+                    if digest is None:
+                        with TemporaryDirectory(
+                            prefix="job-capture-", dir=self.store.path.parent
+                        ) as directory:
+                            path = Path(directory) / "generation.zip"
+                            digest = generation_store.export_bundle(path, snapshot.generation_id)
+                            archive = path.read_bytes()
+                    captured = EvaluationJobSnapshot(
+                        generation_id=snapshot.generation_id,
+                        generation_archive_digest=digest,
+                        suite_digest=payload_digest(suite.model_dump(mode="json")),
+                        configuration_digest=payload_digest(configuration.model_dump(mode="json")),
+                        suite=suite,
+                        configuration=configuration,
+                        authorization=_authorization(principal),
+                        limits=limits,
                     )
-                    return accepted.operation_id, accepted.work_units
-                finally:
-                    admission.store.close()
 
-            return self.store.submit(
-                owner_id=owner,
-                idempotency_key=idempotency_key,
-                request_digest=request_digest,
-                snapshot=captured,
-                archive=archive,
-                accept_work=accept_work,
-            )
+                def accept_work() -> tuple[str, int]:
+                    """Charge validated case executions once before publishing the queued job."""
+                    admission = OperationAdmissionService(self.settings)
+                    try:
+                        accepted = admission.accept_work(
+                            principal=principal,
+                            operation_name="eval_submit",
+                            reservation_key=reservation_key,
+                            request_digest=request_digest.removeprefix("sha256:"),
+                            work_units=len(suite.cases),
+                            check_ready=check_budget,
+                        )
+                        return accepted.operation_id, accepted.work_units
+                    finally:
+                        admission.store.close()
+
+                return self.store.submit(
+                    owner_id=owner,
+                    idempotency_key=idempotency_key,
+                    request_digest=request_digest,
+                    snapshot=captured,
+                    archive=archive,
+                    accept_work=accept_work,
+                )
 
     @_job_storage_boundary
     def prune_expired(self) -> int:
