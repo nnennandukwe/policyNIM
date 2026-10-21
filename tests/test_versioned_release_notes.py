@@ -222,11 +222,14 @@ def test_setext_version_heading_uses_its_complete_line_map(tmp_path: Path) -> No
     assert output.read_text() == "# PolicyNIM 0.2.0\n\nReviewed visible entry.\n"
 
 
-def test_an_unrelated_h2_cant_supply_empty_versions_notes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("heading", ["# Contributor guide", "## Contributor guide", "Guide\n====="])
+def test_an_unrelated_heading_cant_supply_empty_versions_notes(
+    tmp_path: Path, heading: str
+) -> None:
     """Content in the next top-level section can't fill an empty selected release."""
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
     (tmp_path / "CHANGELOG.md").write_text(
-        "## [Unreleased]\n\n## [0.2.0]\n### Added\n\n## Contributor guide\nUnrelated text.\n"
+        "## [Unreleased]\n\n## [0.2.0]\n### Added\n\n" + heading + "\nUnrelated text.\n"
     )
     output = tmp_path / "notes.md"
     output.write_text("prior reviewed notes")
@@ -291,3 +294,29 @@ def test_commented_version_heading_isnt_a_release_section(tmp_path: Path) -> Non
         check=False,
     )
     assert process.returncode == 1 and output.read_text() == "prior notes"
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r", "\r\n"])
+@pytest.mark.parametrize(
+    "separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+)
+def test_parser_line_maps_preserve_non_markdown_separators(
+    tmp_path: Path, separator: str, line_ending: str
+) -> None:
+    """Only CommonMark line endings affect section offsets; other source bytes stay intact."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
+    body = f"First{separator}continued{line_ending}Retain later entry."
+    changelog = line_ending.join(
+        ["## [Unreleased]", "", "## [0.2.0]", body, "## [0.1.0]", "Earlier notes.", ""]
+    )
+    (tmp_path / "CHANGELOG.md").write_bytes(changelog.encode())
+    output = tmp_path / "notes.md"
+    process = subprocess.run(
+        [sys.executable, str(CHECKER), "--repo-root", str(tmp_path), "--output", str(output)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert process.returncode == 0, process.stdout
+    assert output.read_bytes().decode() == f"# PolicyNIM 0.2.0\n\n{body}\n"

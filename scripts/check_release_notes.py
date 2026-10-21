@@ -34,16 +34,17 @@ def version_notes(root: Path) -> tuple[str, str]:
     tokens = parser.parse(changelog)
     headers: list[tuple[str | None, int, int]] = []
     for index, token in enumerate(tokens):
-        if token.type == "heading_open" and token.tag == "h2" and token.level == 0:
+        if token.type == "heading_open" and token.tag in {"h1", "h2"} and token.level == 0:
             assert token.map is not None
-            title = tokens[index + 1].content
+            title = tokens[index + 1].content if token.tag == "h2" else ""
             label, closing, _ = title[1:].partition("]") if title.startswith("[") else ("", "", "")
             headers.append((label if closing else None, token.map[0], token.map[1]))
     current = [index for index, header in enumerate(headers) if header[0] == version]
     if len(current) != 1 or sum(header[0] == "Unreleased" for header in headers) != 1:
         raise ValueError("Missing or duplicate version/Unreleased section.")
     index = current[0]
-    lines = changelog.splitlines(keepends=True)
+    # CommonMark counts CR/LF endings; other Unicode separators remain source content.
+    lines = re.split(r"(?<=\n)|(?<=\r)(?!\n)", changelog)
     start = headers[index][2]
     end = headers[index + 1][1] if index + 1 < len(headers) else len(lines)
     while start < end and not lines[start].strip():

@@ -106,7 +106,8 @@ uv run --no-sync python scripts/check_release_notes.py \
 The checker reads the actual project version and requires one matching nonempty
 CHANGELOG section plus one Unreleased section, using the pinned Markdown parser's
 top-level h2 headings and source-line boundaries. Fenced examples and commented
-headings can't create or truncate version sections. Empty bodies or bodies containing only draft-marker entries (TODO, TBD, placeholder,
+headings can't create or truncate version sections. A subsequent top-level h1 or h2
+ends the selected version, so appendix text can't fill an empty release. Empty bodies or bodies containing only draft-marker entries (TODO, TBD, placeholder,
 or coming soon at the start of an entry)
 fail before rendering or replacing earlier notes. Only paragraph and code content
 counts as notes; subheading lines such as
