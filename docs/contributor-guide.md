@@ -171,7 +171,7 @@ uv sync --extra nvidia-eval --group test --group dev
 
 The `nvidia-eval` extra pins `nemo-evaluator==0.2.8` outside Windows and
 `nemo-evaluator==0.2.5` on Windows, alongside
-`nvidia-simple-evals==26.3`, and `nvidia-nat-eval==1.6.0`. The conformance
+`nvidia-simple-evals==26.3` and `nvidia-nat-eval==1.6.0`. The conformance
 adapters check installed distribution metadata without importing these SDKs and
 delegate to the configured NVIDIA judge endpoint. Offline CI and the default
 local workflow do not need the extra.
