@@ -187,7 +187,15 @@ def test_release_gate_order_and_locked_environment() -> None:
         "uv run --no-sync python scripts/check_release_notes.py "
         "--repo-root . --output release-notes.md" in by_name["Prepare release assets"]["run"]
     )
-    assert by_name["Retain artifact promotion evidence"]["if"] == "always()"
+    assert by_name["Prepare release assets"]["id"] == "prepare_release_assets"
+    diagnostic_condition = (
+        "${{ !cancelled() && steps.prepare_release_assets.outcome == 'success' }}"
+    )
+    for name in ["Select artifact promotion evidence", "Gate artifact and provenance consistency"]:
+        assert by_name[name]["if"] == diagnostic_condition
+    assert by_name["Retain artifact promotion evidence"]["if"] == (
+        "${{ always() && steps.prepare_release_assets.outcome == 'success' }}"
+    )
     assert by_name["Retain artifact promotion evidence"]["with"]["path"] == "release-evidence/"
     for name in ["Gate artifact and provenance consistency", "Select artifact promotion evidence"]:
         assert not by_name[name].get("continue-on-error", False)
@@ -235,3 +243,75 @@ def test_publication_rejects_changed_wheel_with_matching_receipts(gate_fixture: 
     assert "differs from the reviewed-source rebuild" in rejected.stderr
     candidate.write_bytes(original)
     assert invoke().returncode == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The release verifier executes on Ubuntu.")
+def test_rejected_attestation_produces_a_retained_held_gate(
+    gate_fixture: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual rejecting verifier output remains reportable without signing or publication."""
+    binaries = gate_fixture / "private-bin"
+    binaries.mkdir()
+    executable = binaries / "gh"
+    executable.write_text(f"#!{sys.executable}\nraise SystemExit(1)\n")
+    executable.chmod(0o700)
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ.get("PATH", ""))
+    provenance = gate_fixture / "attestation-evidence/verification.json"
+    provenance.parent.mkdir()
+    verified = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/verify_release_attestations.py"),
+            str(gate_fixture / "release-assets"),
+            "--repository",
+            "nnennandukwe/policyNIM",
+            "--revision",
+            "a" * 40,
+            "--output",
+            str(provenance),
+        ],
+        cwd=gate_fixture,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert verified.returncode == 1, verified.stdout + verified.stderr
+    assert json.loads(provenance.read_text())["failure"] == "attestation_rejected"
+    assert run_selection(gate_fixture).returncode == 0
+    report = gate_fixture / "release-evidence/report.json"
+    collected = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/collect_release_evidence.py"),
+            "--selection",
+            str(gate_fixture / "release-evidence/selection.json"),
+            "--artifact-dir",
+            str(gate_fixture / "release-assets"),
+            "--provenance-receipt",
+            str(provenance),
+            "--output",
+            str(report),
+        ],
+        cwd=gate_fixture,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert collected.returncode == 1, collected.stdout + collected.stderr
+    result = json.loads(report.read_text())
+    assert result["decision"] == "hold"
+    failed = next(check for check in result["checks"] if check["kind"] == "provenance")
+    assert failed["recorded_failure"] == "attestation_rejected"
+    assert failed["status"] == "failed"
+    steps = {step["name"]: step for step in release_steps()}
+    for name in ["Select artifact promotion evidence", "Gate artifact and provenance consistency"]:
+        assert steps[name]["if"] == (
+            "${{ !cancelled() && steps.prepare_release_assets.outcome == 'success' }}"
+        )
+    assert steps["Retain artifact promotion evidence"]["if"] == (
+        "${{ always() && steps.prepare_release_assets.outcome == 'success' }}"
+    )
+    assert "if" not in steps["Create draft GitHub release"]
+    assert not steps["Gate artifact and provenance consistency"].get("continue-on-error", False)

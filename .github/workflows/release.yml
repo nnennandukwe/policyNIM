@@ -330,6 +330,7 @@ jobs:
         run: uv build --wheel --out-dir release-source-wheel
 
       - name: Prepare release assets
+        id: prepare_release_assets
         run: |
           mkdir -p release-assets
           find release-downloads -type f -exec cp {} release-assets/ \;
@@ -383,6 +384,7 @@ jobs:
           if-no-files-found: error
 
       - name: Select artifact promotion evidence
+        if: ${{ !cancelled() && steps.prepare_release_assets.outcome == 'success' }}
         run: |
           uv run --no-sync python - <<'PY'
           import hashlib
@@ -434,6 +436,7 @@ jobs:
           PY
 
       - name: Gate artifact and provenance consistency
+        if: ${{ !cancelled() && steps.prepare_release_assets.outcome == 'success' }}
         run: >-
           uv run --no-sync python scripts/collect_release_evidence.py
           --selection release-evidence/selection.json
@@ -442,7 +445,7 @@ jobs:
           --output release-evidence/report.json
 
       - name: Retain artifact promotion evidence
-        if: always()
+        if: ${{ always() && steps.prepare_release_assets.outcome == 'success' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: artifact-promotion-evidence

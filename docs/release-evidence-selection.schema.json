@@ -136,6 +136,35 @@
           "if": {
             "properties": {
               "kind": {
+                "const": "rollback"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context": {
+                "properties": {
+                  "rollback_target_source_sha": {
+                    "maxLength": 40,
+                    "minLength": 40,
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "rollback_target_source_sha"
+                ]
+              }
+            },
+            "required": [
+              "context"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
                 "const": "published_install"
               }
             }

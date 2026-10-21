@@ -212,7 +212,12 @@ reviewed CHANGELOG section with `check_release_notes.py`. After actual attestati
 verification, it runs the existing evidence collector with artifact/provenance checks.
 Expected identities come from CI and the checked-out lock/public bundle; downloaded
 receipts can't choose them. Selection and report are retained in `release-evidence/`
-outside the signed assets. A missing, failed or mismatched receipt stops draft creation.
+outside the signed assets. Once asset preparation succeeds, selection and collection
+also run after a failed signing/tag/provenance step unless the run was cancelled.
+That preserves a held report for missing or failed attestation evidence; the original
+failed step still blocks draft creation. Retention runs after failed collection,
+but skips when asset preparation never completed. A missing, failed or mismatched
+receipt stops draft creation.
 See [the scoped evidence guide](release-evidence.md) for its trust boundary. This gate
 doesn't establish actual coding-client, published installation, deployment or rollback
 acceptance. Those phases still need their own executed receipts.
