@@ -29,8 +29,10 @@ from pydantic import Field, model_validator
 from policynim.contracts import Embedder
 from policynim.errors import (
     ConfigurationError,
+    GenerationBundleSizeError,
     GenerationError,
     IndexCompatibilityError,
+    MissingGenerationError,
     MissingIndexError,
     PolicyNIMError,
     ProviderError,
@@ -62,6 +64,8 @@ _FILES = _ARTIFACTS | {"manifest.json"}
 _OWNER = b'{"owner":"policynim-generations","schema_version":1}\n'
 _STAGE_OWNER = b"policynim-generation-stage-v1\n"
 LOGGER = logging.getLogger(__name__)
+_MAX_EXPORT_ARCHIVE_BYTES = 256 * 1024 * 1024
+_MAX_EXPORT_EXPANDED_BYTES = 512 * 1024 * 1024
 
 
 class GenerationManifest(StrictModel):
@@ -334,9 +338,11 @@ class _CachedGeneration:
 
 
 _VALIDATION_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
+_READINESS_CACHE: OrderedDict[tuple[str, str, str], _CachedGeneration] = OrderedDict()
 _CACHE_LOCK = Lock()
 _VALIDATION_LOCKS = tuple(Lock() for _ in range(16))
 _CACHE_MAX_ENTRIES = 8
+_READINESS_CACHE_MAX_ENTRIES = 8
 _CACHE_MAX_BYTES = 32 * 1024 * 1024
 
 
@@ -449,7 +455,7 @@ class GenerationStore:
                 self._step("root_parent_fsync")
                 _sync_directory(directory.parent)
         if not self.root.exists():
-            raise GenerationError(
+            raise MissingGenerationError(
                 "open",
                 "No managed generation exists.",
                 recovery=(
@@ -798,20 +804,22 @@ class GenerationStore:
                     + sum(len(doc.model_dump_json().encode()) for doc in snapshot.documents)
                 )
                 with _CACHE_LOCK:
-                    _VALIDATION_CACHE.pop(key, None)
-                    retained_size = size if size <= _CACHE_MAX_BYTES else 0
-                    while _VALIDATION_CACHE and (
-                        len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
-                        or sum(entry.size for entry in _VALIDATION_CACHE.values()) + retained_size
-                        > _CACHE_MAX_BYTES
-                    ):
-                        _VALIDATION_CACHE.popitem(last=False)
-                    _VALIDATION_CACHE[key] = _CachedGeneration(
-                        token,
-                        snapshot if retained_size else None,
-                        retained_size,
-                        GenerationReadiness(snapshot.generation_id, snapshot.manifest.chunk_count),
+                    readiness = GenerationReadiness(
+                        snapshot.generation_id, snapshot.manifest.chunk_count
                     )
+                    _READINESS_CACHE.pop(key, None)
+                    while len(_READINESS_CACHE) >= _READINESS_CACHE_MAX_ENTRIES:
+                        _READINESS_CACHE.popitem(last=False)
+                    _READINESS_CACHE[key] = _CachedGeneration(token, None, 0, readiness)
+                    _VALIDATION_CACHE.pop(key, None)
+                    if size <= _CACHE_MAX_BYTES:
+                        while _VALIDATION_CACHE and (
+                            len(_VALIDATION_CACHE) >= _CACHE_MAX_ENTRIES
+                            or sum(entry.size for entry in _VALIDATION_CACHE.values()) + size
+                            > _CACHE_MAX_BYTES
+                        ):
+                            _VALIDATION_CACHE.popitem(last=False)
+                        _VALIDATION_CACHE[key] = _CachedGeneration(token, snapshot, size, readiness)
             return deepcopy(snapshot)
 
     def _remove_failed_lease_directory(self, directory: Path, identity: tuple[int, int]) -> None:
@@ -848,10 +856,14 @@ class GenerationStore:
             cached = None
             if self._fault is None and all(item[-1] is not None for item in token):
                 with _CACHE_LOCK:
-                    candidate = _VALIDATION_CACHE.get(key)
+                    candidate = _READINESS_CACHE.get(key)
                     if candidate is not None and candidate.token == token:
                         cached = candidate
-                        _VALIDATION_CACHE.move_to_end(key)
+                        _READINESS_CACHE.move_to_end(key)
+                    else:
+                        candidate = _VALIDATION_CACHE.get(key)
+                        if candidate is not None and candidate.token == token:
+                            cached = candidate
             if cached is not None:
                 result = cached.readiness
                 try:
@@ -895,7 +907,7 @@ class GenerationStore:
                     try:
                         object_mode = (self.root / "objects" / selected).lstat().st_mode
                     except FileNotFoundError as exc:
-                        raise GenerationError(
+                        raise MissingGenerationError(
                             "pin", "The selected generation doesn't exist."
                         ) from exc
                     if not stat.S_ISDIR(object_mode):
@@ -1607,14 +1619,20 @@ class GenerationStore:
                             "An artifact changed after validation; preserve and inspect it.",
                         )
                     expanded_size += len(artifact)
-                    if expanded_size > 512 * 1024 * 1024:
-                        raise GenerationError(
-                            "export", "Expanded bundle exceeds the 512 MiB limit."
+                    if expanded_size > _MAX_EXPORT_EXPANDED_BYTES:
+                        raise GenerationBundleSizeError(
+                            "export",
+                            "Expanded bundle exceeds the 512 MiB limit.",
+                            recovery="Use a smaller policy generation before retrying.",
                         )
                     archive.writestr(info, artifact)
             data = buffer.getvalue()
-            if len(data) > 256 * 1024 * 1024:
-                raise GenerationError("export", "Compressed bundle exceeds the 256 MiB limit.")
+            if len(data) > _MAX_EXPORT_ARCHIVE_BYTES:
+                raise GenerationBundleSizeError(
+                    "export",
+                    "Compressed bundle exceeds the 256 MiB limit.",
+                    recovery="Use a smaller policy generation before retrying.",
+                )
             expected_digest = digest_bytes(data)
             destination.parent.mkdir(parents=True, exist_ok=True)
             descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -1,0 +1,42 @@
+{
+  "schema_version": "1",
+  "expected": {
+    "repository": "nnennandukwe/policyNIM",
+    "release_tag": "v0.2.0",
+    "source_sha": "0000000000000000000000000000000000000000",
+    "dependency_lock": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "generation_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "catalog_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "public_bundle_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "required_checks": [
+    {
+      "id": "artifacts",
+      "kind": "artifacts"
+    },
+    {
+      "id": "provenance",
+      "kind": "provenance"
+    },
+    {
+      "id": "codex-http",
+      "kind": "client",
+      "context": {
+        "client": "codex",
+        "client_version": "0.0.0",
+        "server_sdk": "mcp==2.2.0",
+        "protocol": "2026-07-28",
+        "transport": "http",
+        "auth_mode": "beta_key"
+      },
+      "cases": [
+        "tools",
+        "resources",
+        "errors",
+        "cancellation",
+        "jobs"
+      ]
+    }
+  ]
+}

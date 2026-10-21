@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from types import TracebackType
 
 from policynim.contracts import Embedder, IndexStore, PolicyCompiler, Reranker
+from policynim.errors import PolicyContextError
 from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
 from policynim.services.router import PolicyRouterService, create_policy_router_service
 from policynim.settings import Settings, get_settings
+from policynim.source_units import MAX_OUTPUT_BYTES, SourceCatalog, SourceContext
 from policynim.types import (
     Citation,
     CompiledPolicyConstraint,
@@ -36,9 +38,11 @@ class PolicyCompilerService:
         index_store: IndexStore | None = None,
         reranker: Reranker | None = None,
         operation_timeout_seconds: float = 120.0,
+        source_catalog_resolver: Callable[[Sequence[ScoredChunk]], SourceCatalog] | None = None,
     ) -> None:
         """Assign operation-local dependencies and the outer deadline default."""
         self._operation_timeout_seconds = operation_timeout_seconds
+        self._source_catalog_resolver = source_catalog_resolver
         if router is None:
             if embedder is None or index_store is None or reranker is None:
                 raise ValueError(
@@ -52,6 +56,12 @@ class PolicyCompilerService:
             )
         self._router = router
         self._compiler = compiler
+
+    def source_catalog(self, context: Sequence[ScoredChunk]) -> SourceCatalog:
+        """Expose only source bodies owned by the same router and held reader lease."""
+        if self._source_catalog_resolver is not None:
+            return self._source_catalog_resolver(context)
+        return source_catalog_for(self._router, context)
 
     def __enter__(self) -> PolicyCompilerService:
         return self
@@ -89,22 +99,44 @@ class PolicyCompilerService:
                 generation_id=route_result.generation_id,
             )
 
+        catalog = self.source_catalog(route_result.retained_context)
+        if not catalog.units:
+            return CompileResult(
+                packet=_insufficient_packet_from_selection(selection_packet).model_copy(
+                    update={"generation_id": route_result.generation_id}
+                ),
+                retained_context=route_result.retained_context,
+                generation_id=route_result.generation_id,
+            )
         check_budget()
         generated_draft = self._compiler.compile_policy_packet(
             request,
             selection_packet,
-            route_result.retained_context,
+            SourceContext(tuple(route_result.retained_context), catalog),
         )
+        if self.source_catalog(
+            route_result.retained_context
+        ) != catalog or not catalog.accepts_compiler(generated_draft):
+            generated_draft = GeneratedCompiledPolicyDraft(insufficient_context=True)
         compiled_packet = _materialize_compiled_packet(
             selection_packet,
             route_result.retained_context,
             generated_draft,
-        )
+        ).model_copy(update={"generation_id": route_result.generation_id})
+        if len(compiled_packet.model_dump_json().encode("utf-8")) > MAX_OUTPUT_BYTES:
+            raise PolicyContextError(output_budget=True)
         return CompileResult(
-            packet=compiled_packet.model_copy(update={"generation_id": route_result.generation_id}),
+            packet=compiled_packet,
             retained_context=route_result.retained_context,
             generation_id=route_result.generation_id,
         )
+
+
+def source_catalog_for(owner: object, context: Sequence[ScoredChunk]) -> SourceCatalog:
+    """Fail closed when an injected service doesn't own complete pinned source documents."""
+    resolver = getattr(owner, "source_catalog", None)
+    catalog = resolver(context) if callable(resolver) else None
+    return catalog if isinstance(catalog, SourceCatalog) else SourceCatalog()
 
 
 def create_policy_compiler_service(settings: Settings | None = None) -> PolicyCompilerService:
@@ -200,9 +232,10 @@ def _compile_constraint_list(
     generated_constraints: Sequence[GeneratedPolicyConstraint],
     context_by_id: dict[str, ScoredChunk],
 ) -> list[CompiledPolicyConstraint] | None:
+    """Map exact whole-source statements to citation owners without trimming their text."""
     compiled_constraints: list[CompiledPolicyConstraint] = []
     for generated_constraint in generated_constraints:
-        statement = generated_constraint.statement.strip()
+        statement = generated_constraint.statement
         citation_ids = ordered_unique(
             [citation_id.strip() for citation_id in generated_constraint.citation_ids]
         )

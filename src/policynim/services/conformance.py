@@ -265,6 +265,7 @@ def _citation_support_metric(
 def _judge_metrics(
     draft: GeneratedPolicyConformanceDraft,
 ) -> list[PolicyConformanceMetric]:
+    """Apply the shared acceptance thresholds to final and optional trajectory judgments."""
     thresholds = conformance_thresholds()
     final_failure_reasons = list(draft.failure_reasons)
     final_passed = draft.final_adherence_score >= thresholds.final_adherence

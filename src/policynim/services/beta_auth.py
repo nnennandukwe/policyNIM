@@ -12,10 +12,12 @@ from urllib.parse import urlencode
 import httpx
 
 from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
+from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import legacy_identity, principal_identity
 from policynim.settings import Settings, get_settings
 from policynim.storage import AuthStore
+from policynim.storage.auth_database import AuthDatabaseError
 from policynim.types import (
     BetaAccount,
     BetaAuditEvent,
@@ -54,21 +56,21 @@ class BetaAuthService:
         """Return the public hosted MCP URL."""
         if self._settings.mcp_public_base_url is None:
             raise ConfigurationError("POLICYNIM_MCP_PUBLIC_BASE_URL must be configured.")
-        return str(self._settings.mcp_public_base_url).rstrip("/") + "/mcp"
+        return public_route_url(self._settings.mcp_public_base_url, "/mcp")
 
     @property
     def portal_url(self) -> str:
         """Return the public hosted beta portal URL."""
         if self._settings.mcp_public_base_url is None:
             raise ConfigurationError("POLICYNIM_MCP_PUBLIC_BASE_URL must be configured.")
-        return str(self._settings.mcp_public_base_url).rstrip("/") + "/beta"
+        return public_route_url(self._settings.mcp_public_base_url, "/beta")
 
     @property
     def github_callback_url(self) -> str:
         """Return the configured GitHub OAuth callback URL."""
         if self._settings.mcp_public_base_url is None:
             raise ConfigurationError("POLICYNIM_MCP_PUBLIC_BASE_URL must be configured.")
-        return str(self._settings.mcp_public_base_url).rstrip("/") + "/auth/github/callback"
+        return public_route_url(self._settings.mcp_public_base_url, "/auth/github/callback")
 
     def list_accounts(self) -> list[BetaAccount]:
         """Return all hosted beta accounts."""
@@ -330,7 +332,16 @@ def _parse_json_mapping(
 def create_beta_auth_service(settings: Settings | None = None) -> BetaAuthService:
     """Build the default hosted beta auth service from application settings."""
     active_settings = settings or get_settings()
-    return BetaAuthService(
-        store=AuthStore(path=resolve_runtime_path(active_settings.beta_auth_db_path)),
-        settings=active_settings,
-    )
+    try:
+        store = AuthStore(
+            path=resolve_runtime_path(active_settings.beta_auth_db_path.parent)
+            / active_settings.beta_auth_db_path.name
+        )
+    except AuthDatabaseError as exc:
+        raise ConfigurationError(str(exc)) from None
+    except OSError:
+        raise ConfigurationError(
+            "auth_storage_unavailable: Private auth storage couldn't be prepared. "
+            "Preserve the database and inspect service ownership, permissions and file aliases."
+        ) from None
+    return BetaAuthService(store=store, settings=active_settings)

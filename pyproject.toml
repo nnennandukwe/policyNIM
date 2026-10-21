@@ -1,6 +1,6 @@
 [project]
 name = "policynim"
-version = "0.1.0"
+version = "0.2.0"
 description = "A policy-aware NVIDIA NIM engineering preflight layer for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -10,7 +10,7 @@ authors = [
 license = { file = "LICENSE" }
 keywords = ["ai-agents", "mcp", "nvidia-nim", "policy", "preflight"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
@@ -62,6 +62,9 @@ policynim = "policynim.interfaces.cli:main"
 [build-system]
 requires = ["hatchling==1.29.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["/.gitignore", "/src/policynim", "/policies", "/evals", "/README.md", "/LICENSE", "/pyproject.toml", "/uv.lock"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/policynim"]

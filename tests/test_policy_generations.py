@@ -1503,10 +1503,6 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
     from policynim.services.runtime_execution import create_runtime_execution_service
     from policynim.types import (
         FileWriteActionRequest,
-        GeneratedCompiledPolicyDraft,
-        GeneratedPolicyConstraint,
-        GeneratedPolicyGuidance,
-        GeneratedPreflightDraft,
         PreflightRequest,
         SearchRequest,
     )
@@ -1529,12 +1525,14 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
     class Compiler:
         def compile_policy_packet(self, request, selection_packet, context):
             """Compile a cited constraint from the actual retrieved generation context."""
-            return GeneratedCompiledPolicyDraft(
-                required_steps=[
-                    GeneratedPolicyConstraint(
-                        statement="Review deployment evidence.", citation_ids=[context[0].chunk_id]
-                    )
-                ]
+            from policynim.source_units import SourceContext, SourceSelection
+
+            assert isinstance(context, SourceContext)
+            return context.catalog.compiler_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
 
         def close(self):
@@ -1546,18 +1544,14 @@ def test_default_search_preflight_and_execution_keep_generation_evidence(
             self, request, context, *, compiled_packet=None, regeneration_context=None
         ):
             """Return a grounded draft using the actual retained chunk and policy IDs."""
-            return GeneratedPreflightDraft(
-                summary="Review deployment evidence.",
-                applicable_policies=[
-                    GeneratedPolicyGuidance(
-                        policy_id=context[0].policy.policy_id,
-                        title=context[0].policy.title,
-                        rationale="Selected policy evidence.",
-                        citation_ids=[context[0].chunk_id],
-                    )
-                ],
-                plan_steps=["Review deployment evidence."],
-                citation_ids=[context[0].chunk_id],
+            from policynim.source_units import SourceContext, SourceSelection
+
+            assert isinstance(context, SourceContext)
+            return context.catalog.preflight_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
 
         def close(self):
@@ -3332,3 +3326,93 @@ def test_warm_public_health_probes_sqlite_readability_and_recovers(
         recovered = client.get("/healthz")
         assert recovered.status_code == 200
         assert recovered.json()["generation_id"] == first.generation_id
+
+
+def test_oversized_retained_readiness_doesnt_evict_warm_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A metadata-only generation can't consume the reusable body's sole test slot."""
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    small = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    monkeypatch.setattr(generations, "_CACHE_MAX_ENTRIES", 1)
+    monkeypatch.setattr(generations, "_CACHE_MAX_BYTES", 64 * 1024)
+    assert settings.corpus_dir is not None
+    member = settings.corpus_dir / "A.md"
+    member.write_text(member.read_text() + "\n" + "Bounded cache fixture. " * 5000)
+    large = store.build(settings, MockEmbedder()).generation_id
+    original_read = generations._read_regular
+    validated: list[str] = []
+
+    def read(path: Path, **kwargs):
+        """Count actual sealed snapshot reads while preserving ordinary artifact validation."""
+        if path.name == "snapshot.json" and path.parent.parent == store.root / "objects":
+            validated.append(path.parent.name)
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(generations, "_read_regular", read)
+    with store.pin(small) as snapshot:
+        expected = snapshot.documents[0].body
+    if any(stamp[-1] is None for stamp in store._artifact_token(store.root / "objects" / small)):
+        pytest.skip("Reliable change stamps aren't available; every reader must revalidate.")
+    assert validated.count(small) == 1
+    assert store.readiness(large).generation_id == large
+    assert store.readiness(large).generation_id == large
+    with store.pin(large) as snapshot:
+        assert len(snapshot.documents[0].body.encode()) > 64 * 1024
+    with store.pin(small) as snapshot:
+        assert snapshot.documents[0].body == expected
+    assert validated.count(small) == 1
+
+
+def test_mixed_generation_cache_capacities_stay_bounded_and_tamper_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Metadata churn stays bounded and can't hide changed bytes or force a warm body clone."""
+    from policynim.errors import GenerationError
+    from policynim.services import generations
+
+    settings, identity, index, rules = seed_legacy(tmp_path)
+    store = GenerationStore(root=tmp_path / "generations", embedding=identity)
+    small = store.migrate(settings, index_path=index, rules_path=rules).generation_id
+    monkeypatch.setattr(generations, "_CACHE_MAX_ENTRIES", 2)
+    monkeypatch.setattr(generations, "_READINESS_CACHE_MAX_ENTRIES", 2)
+    monkeypatch.setattr(generations, "_CACHE_MAX_BYTES", 64 * 1024)
+    assert settings.corpus_dir is not None
+    member = settings.corpus_dir / "A.md"
+    initial = member.read_text()
+    with store.pin(small) as retained:
+        if any(stamp[-1] is None for stamp in store._artifact_token(retained.index_path.parent)):
+            pytest.skip("Reliable change stamps aren't available; every reader must revalidate.")
+        for revision in range(4):
+            member.write_text(initial + "\n" + f"Cache revision {revision}. " * 5000)
+            large = store.build(settings, MockEmbedder()).generation_id
+            assert store.readiness(large).generation_id == large
+            assert len(generations._READINESS_CACHE) <= 2
+            assert all(
+                entry.snapshot is None and entry.size == 0
+                for entry in generations._READINESS_CACHE.values()
+            )
+            assert len(generations._VALIDATION_CACHE) <= 2
+            assert sum(entry.size for entry in generations._VALIDATION_CACHE.values()) <= 64 * 1024
+            assert all(
+                entry.snapshot is not None for entry in generations._VALIDATION_CACHE.values()
+            )
+        assert not any(key[1] == small for key in generations._READINESS_CACHE)
+        original_copy = generations.deepcopy
+
+        def copy(value, memo=None):
+            """Reject corpus cloning when readiness can use a retained validated body record."""
+            assert not isinstance(value, generations.GenerationSnapshot)
+            return original_copy(value, memo)
+
+        monkeypatch.setattr(generations, "deepcopy", copy)
+        assert store.readiness(small).generation_id == small
+        pointer = (store.root / "active.json").read_bytes()
+        artifact = retained.index_path.parent / "snapshot.json"
+        artifact.write_bytes(artifact.read_bytes() + b"\n")
+        with pytest.raises(GenerationError):
+            store.readiness(small)
+        assert (store.root / "active.json").read_bytes() == pointer

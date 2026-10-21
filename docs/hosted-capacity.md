@@ -34,8 +34,17 @@ Principal identifiers, client tokens, request bodies, task text, source text and
 individual operation IDs aren't aggregate report labels. Provider usage/retry
 totals remain `null` in this ledger. Existing provider stage/attempt logs retain
 actual token usage when supplied, with an explicit unknown marker otherwise.
-Generation identity and durable job backlog remain unavailable in this slice;
-#93/#101 integration must supply those fields before #103 can close.
+The report validates the active managed generation without provider calls and
+reports its ID only when it's ready. An absent generation is `missing`; damaged
+generation metadata is `invalid`. The owned generation reader closes after
+inspection. Generation inspection registers a temporary reader lease to protect
+retention. The operator needs write access to generation lock/lease metadata;
+a read-only mount yields `unreadable` readiness. Canonical generation contents
+and operation/job records aren't changed by the report. `job_backlog` reads aggregate durable job state counts from the private
+evaluation workspace. If job storage hasn't been created, its value remains `null`
+with `job_telemetry_status=unavailable_no_job_store`; the report doesn't create it.
+Job worker executions mint a fresh correlation ID for provider work and admission,
+independent of the submitting client's connection.
 
 `POLICYNIM_MCP_OPERATION_RETENTION_DAYS` defaults to `30` and accepts 1–365.
 Each admission prunes at most 1,000 older terminal rows inside its write transaction. It never
@@ -100,6 +109,26 @@ are four-dimensional orthogonal vectors; reranking is disabled. The uniform corp
 spreads chunks over four domains. The skewed corpus places 90% in one domain and
 spreads the remainder across the other three. Requests use domain filters and
 record returned hit counts. Synthetic vectors don't test retrieval quality.
+Before measurement, the child writes up to four synthetic Markdown policies and
+publishes their requested sections through the normal managed-generation build.
+Health and search use their normal service factories, generation validation and
+reader admission; only provider-component construction is doubled. The child's
+normal environment-backed settings point at its owned fixture state, with private
+home/config/data paths and dotenv discovery disabled. Bearer tokens use the
+supported comma-separated environment contract. It doesn't read personal profiles
+or call an external issuer.
+
+Each scenario records the expected published generation ID/count separately from
+observed health IDs/counts. Typed health responses must match that publication,
+and every successful search response must carry its generation ID, the expected
+number of unique hits and the requested domain on each hit. A mismatch
+can't count as a successful probe/search or a complete managed measurement. The
+report names this scope as `configuration.index_scope=managed_generation`.
+Discovery probes must advertise the fixture's eight tools; an empty or changed
+tool set can't establish a successful paired probe or complete managed evidence.
+Compilation/preflight, concurrent publication/retention and durable job backlog
+still need separate evidence. Fixture publication happens before load starts;
+it isn't a publication-throughput measurement.
 
 Reports include the source revision, dirty-state flag, harness digest, platform,
 CPU count, Python version, provider delay, configured/client concurrency, throughput,
@@ -111,8 +140,21 @@ The samples include setup/ingestion memory that remains resident; they can miss
 short peaks. The server captures its process maximum at application lifespan shutdown,
 before Uvicorn restores SIGTERM, and names that phase in `peak_server_rss_scope`.
 A failed or missing shutdown measurement stays `null`. A
-warmup search contributes one explicitly identified ledger charge per scenario.
+warmup search attempt is reported separately with `warmup_outcome`. A successful
+warmup contributes one ledger charge; failed attempts retain their actual ledger
+outcome and leave the scenario incomplete.
 Provider usage stays unavailable; `live_nvidia_calls` stays zero.
+
+`paired_active_work_probe_observed` records whether one successful discovery and
+health probe cycle had active ledger work both before and after its HTTP responses.
+Baseline, saturation and slow-provider scenarios require that paired observation
+for `measurement_complete=true`. Successful probes only before work starts, after
+it finishes, or without active work leave those measurements incomplete. The
+locked-database scenario intentionally admits no work and doesn't require this
+signal. Disconnect/shutdown also require the existing paired observation before
+the intervention; disconnect additionally requires an observed terminal drain.
+An incomplete scenario remains in the report and makes the harness exit nonzero.
+This overlap check doesn't define a latency SLO or prove continuous peak load.
 
 The six named scenarios cover bounded baseline load, saturation above ten active
 operations, a slow provider double, a write-locked quota database, client disconnect
@@ -169,6 +211,13 @@ disconnect and shutdown outcomes. These short local search measurements don't
 establish production latency, sustained throughput, live provider behavior or
 capacity for preflight, compilation or evaluation work.
 
+Those historical receipts used the standalone SQLite fixture and replaced its
+health/search factories. They also predate the explicit paired-probe completeness
+gate. Their recorded timings and revision remain intact; they aren't final-source
+proof of managed-generation readiness or cheap probes overlapping active work.
+Run the current managed path against the final candidate before using new receipts
+for #103 acceptance.
+
 Fault receipts report one configured concurrent client when only one request is
 attempted. If a client task already completed before cancellation, the intervention
 is labeled `client_task_already_completed`; that run doesn't prove a disconnect.
@@ -197,8 +246,14 @@ owned location helps identify a failure stage without exposing a raw traceback.
 
 The harness validates JSON-RPC version/request identity and typed MCP discovery/tool
 results before counting success. HTTP 200 protocol errors, missing results and malformed
-search payloads produce explicit error outcomes; warmup fails instead of inflating
-successful throughput. Responses and validation error text never enter the receipt.
+search payloads produce explicit error outcomes. A bad warmup leaves its scenario
+incomplete while preserving earlier scenarios and subsequent bounded measurements
+in the receipt. Initial malformed or mismatched ready responses also stay in the
+failing report with `readiness_outcome`, preserving prior scenarios.
+`unexpected_probe_failure_counts` retains failed discovery/readiness
+classes during measurement; those failures also leave managed evidence incomplete.
+Availability failures after the intentional shutdown intervention remain expected.
+Responses and validation error text never enter the receipt.
 
 On POSIX hosts, recovery and read-only reporting use compatible shared lease probes,
 while workers retain exclusive ownership. A report observer can't delay committed

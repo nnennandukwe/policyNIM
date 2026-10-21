@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from pathlib import Path
@@ -23,6 +24,7 @@ def _workflow_files(directory: Path) -> tuple[Path, ...]:
 
 WORKFLOW_FILES = _workflow_files(REPO_ROOT / ".github/workflows")
 NODE24_ACTION_MAJOR_COMMENTS = {
+    "actions/attest": {"v4"},
     "actions/checkout": {"v5", "v6", "v7"},
     "actions/setup-python": {"v6"},
     "actions/upload-artifact": {"v6", "v7"},
@@ -158,9 +160,12 @@ def test_release_workflow_runs_offline_verification_before_release_artifacts() -
         "tags:",
         '- "v*.*.*"',
         "uv lock --check",
-        "uv run --no-sync ruff check .",
-        "uv run --no-sync pyright",
-        'uv run --no-sync pytest -q -m "not live and not docker_live"',
+        "uv run --no-sync --python ${{ matrix.python-version }} ruff check .",
+        "uv run --no-sync --python ${{ matrix.python-version }} pyright",
+        (
+            "uv run --no-sync --python ${{ matrix.python-version }} "
+            'pytest -q -m "not live and not docker_live"'
+        ),
         "uv build --out-dir dist",
         "wheel-smoke:",
         "standalone-build:",
@@ -388,3 +393,234 @@ def test_shell_wrappers_cant_hide_unlocked_uv_commands() -> None:
     """The release gate doesn't assume a quoted shell script is harmless data."""
     with pytest.raises(AssertionError):
         _release_uv_commands('bash -c "uv sync --group test"')
+
+
+def test_release_publication_joins_checked_artifact_evidence_before_upload() -> None:
+    """Publication can't omit the source-bound manifest or archive-linked receipts."""
+    jobs = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]
+    publication = jobs["publish-github-release"]
+    assert {"wheel-smoke", "standalone-build"} <= set(publication["needs"])
+    commands = [step.get("run", "") for step in publication["steps"]]
+    joined = next(
+        index for index, command in enumerate(commands) if "scripts/release_manifest.py" in command
+    )
+    published = next(
+        index for index, command in enumerate(commands) if "gh release create" in command
+    )
+    assert joined < published
+    assert '--source-sha "$GITHUB_SHA"' in commands[joined]
+    assert '--tag "$RELEASE_TAG"' in commands[joined]
+    assert "uv run --no-sync" in commands[joined]
+    assert any("uv sync --locked" in command for command in commands)
+    assert any("astral-sh/setup-uv@" in step.get("uses", "") for step in publication["steps"])
+    wheel = "\n".join(step.get("run", "") for step in jobs["wheel-smoke"]["steps"])
+    assert '"export", "--locked"' in wheel
+    assert '"--require-hashes", "--no-deps"' in wheel
+    assert "verify_installed_package.py" in wheel
+    names = [step["name"] for step in jobs["standalone-build"]["steps"]]
+    assert names.index("Archive Unix standalone bundle") < names.index(
+        "Verify standalone generation and transports"
+    )
+    assert names.index("Archive Windows standalone bundle") < names.index(
+        "Verify standalone generation and transports"
+    )
+    assert names.index("Verify standalone generation and transports") < names.index(
+        "Retain standalone verification evidence"
+    )
+
+
+def test_standalone_upload_excludes_committed_generation_sources() -> None:
+    """A committed artifacts directory mustn't enter the standalone download set."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["standalone-build"]
+    upload = next(step for step in job["steps"] if step["name"] == "Upload standalone bundle")
+    assert upload["with"]["path"] == "standalone-archives/*"
+    binding = next(
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify standalone generation and transports"
+    )
+    assert '(root / "standalone-archives").iterdir()' in binding
+
+
+def test_standalone_verification_requires_requested_release_version() -> None:
+    """A stale binary can't pass a version-tagged standalone build gate."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["standalone-build"]["steps"]
+        if "scripts/verify_standalone.py" in step.get("run", "")
+    )
+    assert '"--expected-version"' in command
+    assert 'os.environ["RELEASE_TAG"].removeprefix("v")' in command
+
+
+def test_release_validates_both_supported_python_runtimes() -> None:
+    """Publication waits for full source and fresh wheel checks on Python3.11 and3.12."""
+    jobs = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]
+    for name in ["verify", "wheel-smoke"]:
+        job = jobs[name]
+        assert job["strategy"]["matrix"]["python-version"] == ["3.11", "3.12"]
+        setup = next(step for step in job["steps"] if step["name"] == "Set up Python")
+        assert setup["with"]["python-version"] == "${{ matrix.python-version }}"
+    wheel = jobs["wheel-smoke"]
+    evidence = next(
+        step for step in wheel["steps"] if step["name"] == "Retain wheel verification evidence"
+    )
+    assert "matrix.python-version" in evidence["with"]["name"]
+    assert "matrix.python-version" in evidence["with"]["path"]
+
+
+def test_release_attests_and_verifies_every_asset_before_publication() -> None:
+    """A checksum manifest alone can't establish the trusted release producer."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["publish-github-release"]
+    names = [step["name"] for step in job["steps"]]
+    assert (
+        names.index("Generate release asset attestations")
+        < names.index("Verify release asset attestations")
+        < names.index("Create draft GitHub release")
+    )
+    assert job["permissions"]["id-token"] == "write"
+    assert job["permissions"]["attestations"] == "write"
+    attest = next(
+        step for step in job["steps"] if step["name"] == "Generate release asset attestations"
+    )
+    assert attest["with"]["subject-checksums"] == "release-assets/SHA256SUMS"
+    assert names.index("Check release tag source") < names.index(
+        "Generate release asset attestations"
+    )
+
+
+def _assert_release_source_python_selection(job: dict) -> None:
+    """Every uv source-check command must override the repository interpreter pin."""
+    for step in job["steps"]:
+        command = step.get("run", "")
+        if command.startswith(("uv sync", "uv run")):
+            assert "--python ${{ matrix.python-version }}" in command
+
+
+def test_release_source_checks_override_local_python_pin() -> None:
+    """Setting PATH alone can't change uv's project interpreter selection."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["verify"]
+    _assert_release_source_python_selection(job)
+
+
+def test_release_python_guard_detects_removed_override() -> None:
+    """A matrix label can't hide a command that still selects Python3.11."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["verify"]
+    step = next(step for step in job["steps"] if step.get("run", "").startswith("uv sync"))
+    step["run"] = step["run"].replace(" --python ${{ matrix.python-version }}", "")
+    with pytest.raises(AssertionError):
+        _assert_release_source_python_selection(job)
+
+
+def test_wheel_export_uses_the_running_matrix_interpreter() -> None:
+    """Fresh wheel dependencies must use the interpreter that created their environment."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["wheel-smoke"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Verify fresh wheel from locked dependencies"
+    )
+    script = command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exports = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.List)
+        and len(node.elts) >= 2
+        and isinstance(node.elts[0], ast.Constant)
+        and node.elts[0].value == "uv"
+        and isinstance(node.elts[1], ast.Constant)
+        and node.elts[1].value == "export"
+    ]
+    assert len(exports) == 1
+    arguments = exports[0].elts
+    selection = next(
+        (
+            index
+            for index, node in enumerate(arguments)
+            if isinstance(node, ast.Constant) and node.value == "--python"
+        ),
+        None,
+    )
+    assert selection is not None, "uv export must override the repository's Python pin"
+    assert ast.dump(arguments[selection + 1]) == ast.dump(
+        ast.parse("sys.executable", mode="eval").body
+    )
+
+
+def _assert_release_verification_dependencies(workflow: dict) -> None:
+    """Keep helper dependencies in each isolated release verification environment."""
+    jobs = workflow["jobs"]
+    publication_syncs = [
+        tokens
+        for step in jobs["publish-github-release"]["steps"]
+        for tokens in _release_uv_commands(step.get("run", ""))
+        if tokens[:2] == ["uv", "sync"]
+    ]
+    assert len(publication_syncs) == 1
+    assert any(
+        publication_syncs[0][index : index + 2] == ["--group", "verification"]
+        for index in range(len(publication_syncs[0]))
+    ), "Manifest verification needs the locked verification group."
+    wheel_command = next(
+        step["run"]
+        for step in jobs["wheel-smoke"]["steps"]
+        if step["name"] == "Verify fresh wheel from locked dependencies"
+    )
+    script = wheel_command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exports = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.List)
+        and len(node.elts) >= 2
+        and isinstance(node.elts[0], ast.Constant)
+        and node.elts[0].value == "uv"
+        and isinstance(node.elts[1], ast.Constant)
+        and node.elts[1].value == "export"
+    ]
+    assert len(exports) == 1
+    arguments = [node.value if isinstance(node, ast.Constant) else None for node in exports[0].elts]
+    assert any(
+        arguments[index : index + 2] == ["--group", "verification"]
+        for index in range(len(arguments))
+    ), "Fresh wheel verification needs the locked verification group."
+
+
+def test_release_verifiers_install_locked_helper_dependencies() -> None:
+    """Runtime-only installs don't provide the packaging helpers used by release checks."""
+    _assert_release_verification_dependencies(yaml.safe_load(_read_text(RELEASE_WORKFLOW)))
+
+
+@pytest.mark.parametrize("job_name", ["wheel-smoke", "publish-github-release"])
+def test_release_verifier_guard_rejects_missing_helper_group(job_name: str) -> None:
+    """Removing helper dependencies from either release gate must block promotion."""
+    workflow = yaml.safe_load(_read_text(RELEASE_WORKFLOW))
+    for step in workflow["jobs"][job_name]["steps"]:
+        if "run" in step:
+            step["run"] = (
+                step["run"]
+                .replace(" --group verification", "")
+                .replace(', "--group", "verification"', "")
+            )
+    with pytest.raises(AssertionError):
+        _assert_release_verification_dependencies(workflow)
+
+
+def test_standalone_archive_payload_runs_before_receipt_binding() -> None:
+    """The actual compressed payload must run before evidence can authorize upload."""
+    steps = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["standalone-build"]["steps"]
+    verification = next(
+        i for i, step in enumerate(steps) if "scripts/verify_standalone.py" in step.get("run", "")
+    )
+    assert (
+        next(i for i, step in enumerate(steps) if step["name"] == "Archive Unix standalone bundle")
+        < verification
+    )
+    assert (
+        next(
+            i for i, step in enumerate(steps) if step["name"] == "Archive Windows standalone bundle"
+        )
+        < verification
+    )
+    assert '"--archive"' in steps[verification]["run"]
+    assert not any(step["name"] == "Bind standalone receipt to archive" for step in steps)

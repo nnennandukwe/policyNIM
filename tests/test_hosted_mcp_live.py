@@ -80,12 +80,18 @@ def test_hosted_healthz_reports_ready_index_live() -> None:
 
 
 def test_hosted_mcp_lists_tools_live() -> None:
+    """Check the hosted endpoint advertises the authenticated application tools."""
+
     async def run() -> set[str]:
         async with _authenticated_session() as session:
             result = await session.list_tools()
             return {tool.name for tool in result.tools}
 
     assert asyncio.run(run()) == {
+        "eval_submit",
+        "eval_inspect",
+        "eval_cancel",
+        "eval_result",
         "policy_search",
         "policy_compile",
         "policy_preflight",

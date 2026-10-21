@@ -1,0 +1,257 @@
+{
+  "$defs": {
+    "CaseResult": {
+      "additionalProperties": false,
+      "description": "Retain one named recorded outcome without response bodies or query content.",
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "skipped",
+            "not_run",
+            "timed_out"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "title": "CaseResult",
+      "type": "object"
+    },
+    "ObservedSubject": {
+      "additionalProperties": false,
+      "description": "Retain only validated observed identity fields; absent values remain unavailable.",
+      "properties": {
+        "repository": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        },
+        "release_tag": {
+          "anyOf": [
+            {
+              "pattern": "^v[0-9][A-Za-z0-9.+-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Tag"
+        },
+        "source_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Sha"
+        },
+        "dependency_lock": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dependency Lock"
+        },
+        "generation_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generation Id"
+        },
+        "catalog_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Digest"
+        },
+        "public_bundle_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Public Bundle Digest"
+        },
+        "manifest_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Sha256"
+        }
+      },
+      "title": "ObservedSubject",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Accept recorded results as supplied evidence, without authenticating their producer.",
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "evidence_type": {
+      "const": "execution_receipt",
+      "title": "Evidence Type",
+      "type": "string"
+    },
+    "check_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+      "title": "Check Id",
+      "type": "string"
+    },
+    "producer": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "producer_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+=-]{0,199}$",
+      "title": "Producer Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "skipped",
+        "not_run",
+        "timed_out"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "maximum": 255,
+          "minimum": -255,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exit Code"
+    },
+    "observed": {
+      "$ref": "#/$defs/ObservedSubject"
+    },
+    "context": {
+      "maxProperties": 16,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+=-]{0,199}$",
+          "type": "string"
+        }
+      },
+      "title": "Context",
+      "type": "object"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/CaseResult"
+      },
+      "maxItems": 64,
+      "title": "Cases",
+      "type": "array"
+    },
+    "reference": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference"
+    },
+    "failure_class": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Class"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evidence_type",
+    "check_id",
+    "producer",
+    "producer_version",
+    "status"
+  ],
+  "title": "ExecutionReceipt",
+  "type": "object"
+}
