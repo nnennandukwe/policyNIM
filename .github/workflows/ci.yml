@@ -185,6 +185,24 @@ jobs:
           path: package-evidence.json
           if-no-files-found: error
 
+      - name: Download installed-package verification evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-evidence-${{ matrix.os }}-${{ matrix.python-version }}
+          path: downloaded-package-evidence
+
+      - name: Verify installed-package evidence round trip
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          original = Path("package-evidence.json").read_bytes()
+          downloaded = Path("downloaded-package-evidence/package-evidence.json").read_bytes()
+          assert downloaded == original, "Downloaded package evidence differs from the original."
+          print("Verified package evidence artifact round trip.")
+          PY
+
   docker-offline:
     name: Offline Docker images
     runs-on: ubuntu-24.04

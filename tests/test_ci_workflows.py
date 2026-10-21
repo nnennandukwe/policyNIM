@@ -311,6 +311,94 @@ def test_fresh_wheel_install_uses_locked_hashed_dependencies() -> None:
     assert '"--requirements"' in command
 
 
+def test_package_evidence_round_trip_uses_pinned_download_after_upload() -> None:
+    """Exercise artifact downloads on every offline package matrix combination."""
+    jobs = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]
+    job = jobs["package-offline"]
+    assert job["strategy"]["matrix"] == {
+        "os": ["ubuntu-24.04", "windows-2022"],
+        "python-version": ["3.11", "3.12"],
+    }
+    steps = job["steps"]
+    upload = next(
+        step for step in steps if step["name"] == "Retain installed-package verification evidence"
+    )
+    download = next(
+        step for step in steps if step["name"] == "Download installed-package verification evidence"
+    )
+    verification = next(
+        step for step in steps if step["name"] == "Verify installed-package evidence round trip"
+    )
+    assert steps.index(upload) < steps.index(download) < steps.index(verification)
+    assert download["uses"] == (
+        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+    )
+    assert upload["with"]["path"] == "package-evidence.json"
+    assert download["with"] == {
+        "name": upload["with"]["name"],
+        "path": "downloaded-package-evidence",
+    }
+    assert verification["shell"] == "bash"
+    assert "continue-on-error" not in job
+    for step in (download, verification):
+        assert "if" not in step
+        assert "continue-on-error" not in step
+
+
+@pytest.mark.parametrize(
+    "downloaded",
+    [b'{"verified": true}\n', b'{"verified": false}\n', b'{"verified": true}\r\n', None],
+    ids=["identical", "changed-content", "changed-line-endings", "missing"],
+)
+def test_package_evidence_round_trip_checks_actual_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, downloaded: bytes | None
+) -> None:
+    """The workflow accepts identical receipts but rejects changed or missing files."""
+    steps = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]["package-offline"]["steps"]
+    command = next(
+        step["run"]
+        for step in steps
+        if step["name"] == "Verify installed-package evidence round trip"
+    )
+    script = command.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    code = compile(script, str(CI_WORKFLOW), "exec")
+    monkeypatch.chdir(tmp_path)
+    original = b'{"verified": true}\n'
+    (tmp_path / "package-evidence.json").write_bytes(original)
+    destination = tmp_path / "downloaded-package-evidence" / "package-evidence.json"
+    destination.parent.mkdir()
+    if downloaded is not None:
+        destination.write_bytes(downloaded)
+
+    if downloaded is None:
+        with pytest.raises(FileNotFoundError):
+            exec(code, {})
+    elif downloaded != original:
+        with pytest.raises(AssertionError, match="Downloaded package evidence differs"):
+            exec(code, {})
+        destination.write_bytes(original)
+        exec(code, {})
+    else:
+        exec(code, {})
+
+
+def test_artifact_downloads_keep_digest_mismatches_fatal() -> None:
+    """CI and release downloads must retain v8's fail-closed digest behavior."""
+    for path in (CI_WORKFLOW, RELEASE_WORKFLOW):
+        jobs = yaml.safe_load(_read_text(path))["jobs"]
+        downloads = [
+            (job, step)
+            for job in jobs.values()
+            for step in job["steps"]
+            if step.get("uses", "").startswith("actions/download-artifact@")
+        ]
+        assert downloads
+        for job, step in downloads:
+            assert step["with"].get("digest-mismatch", "error") == "error"
+            assert "continue-on-error" not in step
+            assert "continue-on-error" not in job
+
+
 def _release_uv_commands(script: str) -> list[list[str]]:
     """Inspect each shell command; reject wrapped uv invocations rather than guess."""
     commands = []
