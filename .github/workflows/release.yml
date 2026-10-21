@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload Python distribution
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-dist
           path: dist/*
@@ -134,7 +134,7 @@ jobs:
 
       - name: Retain wheel verification evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-evidence-${{ matrix.python-version }}
           path: wheel-evidence-${{ matrix.python-version }}.json
@@ -261,7 +261,7 @@ jobs:
 
       - name: Retain standalone verification evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: standalone-evidence-${{ matrix.platform }}
           path: standalone-evidence-${{ matrix.platform }}.json
@@ -269,7 +269,7 @@ jobs:
 
       - name: Upload standalone bundle
         if: always() && hashFiles('standalone-archives/*') != ''
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: standalone-${{ matrix.platform }}
           path: standalone-archives/*
@@ -386,7 +386,7 @@ jobs:
 
       - name: Retain release provenance evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-provenance-evidence
           path: |
@@ -457,7 +457,7 @@ jobs:
 
       - name: Retain artifact promotion evidence
         if: ${{ always() && steps.prepare_release_assets.outcome == 'success' }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: artifact-promotion-evidence
           path: release-evidence/
