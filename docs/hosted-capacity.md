@@ -248,7 +248,9 @@ The harness validates JSON-RPC version/request identity and typed MCP discovery/
 results before counting success. HTTP 200 protocol errors, missing results and malformed
 search payloads produce explicit error outcomes. A bad warmup leaves its scenario
 incomplete while preserving earlier scenarios and subsequent bounded measurements
-in the receipt. `unexpected_probe_failure_counts` retains failed discovery/readiness
+in the receipt. Initial malformed or mismatched ready responses also stay in the
+failing report with `readiness_outcome`, preserving prior scenarios.
+`unexpected_probe_failure_counts` retains failed discovery/readiness
 classes during measurement; those failures also leave managed evidence incomplete.
 Availability failures after the intentional shutdown intervention remain expected.
 Responses and validation error text never enter the receipt.

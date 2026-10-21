@@ -45,3 +45,9 @@ records the warmup failure class and returns a failing status. These checks keep
 accepted application outcomes separate from whether their evidence passed. The
 eight-tool fixture contract has a named expected set passed explicitly to discovery
 validation, independently of retrieval generation identity.
+
+The next full-coverage review found the same preservation gap in the initial HTTP
+200 readiness check. Three actual second-scenario controls reproduce generation,
+count and malformed-response failures before the fix. Their readiness classification
+now stays in the failing report alongside earlier scenarios and actual completed
+work; a later valid probe can't erase that initial failure.

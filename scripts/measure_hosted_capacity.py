@@ -597,16 +597,14 @@ async def _measure(
             try:
                 response = await client.get("/healthz")
                 if response.status_code == 200:
+                    readiness_outcome = "health_200"
                     if config.get("fixture_mode") == "managed_generation":
                         fixture = _read_fixture_state(root, config["chunks"])
-                        outcome, health = _inspect_health(response, fixture)
-                        if outcome != "health_200" or health is None:
-                            raise RuntimeError(
-                                "Synthetic managed readiness identity doesn't match."
-                            )
-                        assert health.generation_id is not None
-                        observed_health_ids.add(health.generation_id)
-                        observed_health_counts[health.row_count] += 1
+                        readiness_outcome, health = _inspect_health(response, fixture)
+                        if health is not None:
+                            if health.generation_id is not None:
+                                observed_health_ids.add(health.generation_id)
+                            observed_health_counts[health.row_count] += 1
                     break
             except httpx.HTTPError:
                 pass
@@ -845,7 +843,10 @@ async def _measure(
         report = await observe_state("final", attempts=3)
         workload_observations = state_observations["probe"] + state_observations["intervention"]
         measurement_complete = (
-            warmup[1] == "ok" and report is not None and workload_observations > 0
+            readiness_outcome == "health_200"
+            and warmup[1] == "ok"
+            and report is not None
+            and workload_observations > 0
         )
         if scenario in {"baseline", "saturation", "slow-provider"}:
             measurement_complete = measurement_complete and active_probe_observed.is_set()
@@ -863,6 +864,7 @@ async def _measure(
         outcomes = Counter(sample[1] for sample in samples)
         managed_identity_verified = (
             fixture is not None
+            and readiness_outcome == "health_200"
             and warmup[1] == "ok"
             and not unexpected_probe_failures
             and observed_health_ids == {fixture["generation_id"]}
@@ -916,6 +918,7 @@ async def _measure(
                 Counter(str(sample[2]) for sample in samples if sample[1] == "ok")
             ),
             "operator_report": report.model_dump(mode="json") if report is not None else None,
+            "readiness_outcome": readiness_outcome,
             "warmup_operations": 1,
             "warmup_outcome": warmup[1],
             "intervention": intervention,

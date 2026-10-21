@@ -327,6 +327,74 @@ def test_bad_warmup_retains_the_scenario_and_earlier_measurements(
     assert second["operator_report"]["outcomes"]["completed"] == 2
 
 
+@pytest.mark.parametrize("mutation", ["generation", "count", "malformed"])
+def test_bad_initial_readiness_retains_earlier_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Keep both real scenarios when a later initial ready response has invalid evidence."""
+    import runpy
+
+    import httpx
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_get = httpx.AsyncClient.get
+    servers: set[str] = set()
+    injected = False
+
+    async def get(client, *args, **kwargs):
+        """Corrupt only the second server's first actual healthy response."""
+        nonlocal injected
+        response = await original_get(client, *args, **kwargs)
+        server = str(client.base_url)
+        if response.status_code == 200 and server not in servers:
+            servers.add(server)
+            if len(servers) == 2:
+                injected = True
+                content = response.json()
+                if mutation == "generation":
+                    content["generation_id"] = "b" * 64
+                elif mutation == "count":
+                    content["row_count"] = 19
+                else:
+                    content = {}
+                return httpx.Response(200, json=content)
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "initial-readiness-failure.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+            "slow-provider",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    result = json.loads(output.read_text())
+    assert injected
+    assert status == 1 and result["measurement_complete"] is False
+    first, second = result["scenarios"]
+    assert first["measurement_complete"] is True
+    assert second["measurement_complete"] is False
+    assert second["readiness_outcome"] == (
+        "health_invalid_response" if mutation == "malformed" else "health_identity_mismatch"
+    )
+    assert second["warmup_outcome"] == "ok"
+    assert second["operator_report"]["outcomes"]["completed"] == 2
+
+
 @pytest.mark.parametrize(
     ("distribution", "chunks", "fault"),
     [
