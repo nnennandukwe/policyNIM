@@ -250,6 +250,7 @@ def run_unix_installer(
     os_name: str = "Linux",
     arch: str = "x86_64",
     path: str | None = None,
+    attestation_mode: str = "",
     creation_mask: int = -1,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     """Run the Unix installer against a local fake release directory."""
@@ -260,6 +261,7 @@ def run_unix_installer(
         {
             "HOME": str(home),
             "POLICYNIM_VERSION": VERSION,
+            "POLICYNIM_VERIFY_ATTESTATION": attestation_mode,
             "POLICYNIM_RELEASE_BASE_URL": release_dir.as_uri(),
             "POLICYNIM_INSTALLER_TEST_OS": os_name,
             "POLICYNIM_INSTALLER_TEST_ARCH": arch,
@@ -277,3 +279,51 @@ def run_unix_installer(
         umask=creation_mask,
     )
     return result, home
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires a POSIX installer process.")
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_requested_signature_check_precedes_install_replacement(
+    tmp_path: Path, monkeypatch, exit_code: int
+) -> None:
+    """A fake gh rejection preserves the existing install; it isn't signature evidence."""
+    import json
+    import sys
+
+    release = tmp_path / "release"
+    release.mkdir()
+    create_unix_release_asset(release)
+    binary_dir = tmp_path / "fake-bin"
+    binary_dir.mkdir()
+    log = tmp_path / "gh-argv.jsonl"
+    fake = binary_dir / "gh"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json,sys\n"
+        f"with open({str(log)!r},'a') as log: log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "if sys.argv[1]=='api': print('a'*40); raise SystemExit(0)\n"
+        f"raise SystemExit({exit_code})\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(binary_dir) + os.pathsep + os.environ.get("PATH", ""))
+    install = tmp_path / "home/.local/share/policynim" / VERSION
+    install.mkdir(parents=True)
+    marker = install / "preserved.txt"
+    marker.write_text("existing install")
+    result, _ = run_unix_installer(tmp_path, release, attestation_mode="required")
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    assert len(calls) == 2
+    verify = calls[1]
+    assert verify[:2] == ["attestation", "verify"]
+    assert verify[verify.index("--source-digest") + 1] == "a" * 40
+    assert (
+        verify[verify.index("--signer-workflow") + 1]
+        == "nnennandukwe/policyNIM/.github/workflows/release.yml"
+    )
+    if exit_code:
+        assert result.returncode != 0
+        assert marker.read_text() == "existing install"
+        assert "attestation verification failed" in result.stdout + result.stderr
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (install / "policynim").exists()

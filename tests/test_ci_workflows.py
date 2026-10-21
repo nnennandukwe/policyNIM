@@ -24,6 +24,7 @@ def _workflow_files(directory: Path) -> tuple[Path, ...]:
 
 WORKFLOW_FILES = _workflow_files(REPO_ROOT / ".github/workflows")
 NODE24_ACTION_MAJOR_COMMENTS = {
+    "actions/attest": {"v4"},
     "actions/checkout": {"v5", "v6", "v7"},
     "actions/setup-python": {"v6"},
     "actions/upload-artifact": {"v6", "v7"},
@@ -467,6 +468,26 @@ def test_release_validates_both_supported_python_runtimes() -> None:
     )
     assert "matrix.python-version" in evidence["with"]["name"]
     assert "matrix.python-version" in evidence["with"]["path"]
+
+
+def test_release_attests_and_verifies_every_asset_before_publication() -> None:
+    """A checksum manifest alone can't establish the trusted release producer."""
+    job = yaml.safe_load(_read_text(RELEASE_WORKFLOW))["jobs"]["publish-github-release"]
+    names = [step["name"] for step in job["steps"]]
+    assert (
+        names.index("Generate release asset attestations")
+        < names.index("Verify release asset attestations")
+        < names.index("Create draft GitHub release")
+    )
+    assert job["permissions"]["id-token"] == "write"
+    assert job["permissions"]["attestations"] == "write"
+    attest = next(
+        step for step in job["steps"] if step["name"] == "Generate release asset attestations"
+    )
+    assert attest["with"]["subject-checksums"] == "release-assets/SHA256SUMS"
+    assert names.index("Check release tag source") < names.index(
+        "Generate release asset attestations"
+    )
 
 
 def _assert_release_source_python_selection(job: dict) -> None:
