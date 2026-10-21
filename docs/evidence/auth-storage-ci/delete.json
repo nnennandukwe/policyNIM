@@ -1,0 +1,129 @@
+{
+  "configuration": {
+    "chunks": 100,
+    "distribution": "uniform",
+    "embedding_dimensions": 4,
+    "embedding_model": "synthetic-orthogonal-4",
+    "global_active_limit": 10,
+    "principal_active_limit": 2,
+    "reranker": null,
+    "tool": "policy_search",
+    "users": 12
+  },
+  "evidence_kind": "synthetic_provider_real_http_and_sqlite_vec",
+  "hardware": {
+    "logical_cpus": 12,
+    "machine": "arm64",
+    "platform": "macOS-26.6-arm64-arm-64bit",
+    "python": "3.11.13"
+  },
+  "harness_sha256": "1b4d10a5c01efe378ecde5aa669b0b3fc452f8c5c1bb30176bdf11dd8c3fe3b0",
+  "limits": [
+    "Only search is measured; other tools require separate workload evidence.",
+    "Synthetic vectors don't measure model quality or NVIDIA latency.",
+    "Short local runs don't establish a production capacity envelope.",
+    "Disconnect/server-shutdown outcomes depend on observed worker drain.",
+    "Generation publication and durable job backlog aren't exercised."
+  ],
+  "live_nvidia_calls": 0,
+  "measurement_complete": true,
+  "production_capacity_verified": false,
+  "scenarios": [
+    {
+      "accepted_operation_latency_ms": {
+        "p50": 307.896,
+        "p95": 318.794,
+        "p99": 318.794
+      },
+      "active_work_observed_before_intervention": null,
+      "attempted_requests": 12,
+      "cheap_probe_outcomes": {
+        "health_200": 1,
+        "ok": 1
+      },
+      "client_concurrency": 10,
+      "client_task_completed_before_intervention": null,
+      "completed_client_responses": 12,
+      "discovery_latency_ms": {
+        "p50": 4.481,
+        "p95": 4.481,
+        "p99": 4.481
+      },
+      "drain_observation": null,
+      "duration_seconds": 0.642,
+      "health_latency_ms": {
+        "p50": 4.278,
+        "p95": 4.278,
+        "p99": 4.278
+      },
+      "intervention": null,
+      "intervention_probe_observed": null,
+      "intervention_started_with_active_work": null,
+      "live_provider_usage": null,
+      "measurement_complete": true,
+      "memory_sampling": "POSIX ps RSS during readiness/discovery probes",
+      "observed_peak_active_operations": 0,
+      "operator_report": {
+        "active_operations": 0,
+        "active_state_basis": "kernel_owner_lease_observation",
+        "inactive_accepted_operations": 0,
+        "job_backlog": null,
+        "latency_clock": "persisted_utc_wall_timestamps",
+        "latency_p50_ms": 269.628,
+        "latency_p95_ms": 282.701,
+        "latency_p99_ms": 282.701,
+        "latency_sample_count": 13,
+        "latency_sample_limit": 1000,
+        "latency_window": "most_recent_timed_terminal_operations",
+        "outcomes": {
+          "completed": 13
+        },
+        "provider_retry_totals": null,
+        "provider_usage": null,
+        "reserved_operations": 0,
+        "reserved_work_units": 13,
+        "retained_rows": 13,
+        "scope": "local_single_instance",
+        "unknown_owner_operations": 0,
+        "unreconciled_operations": 0
+      },
+      "outcomes": {
+        "ok": 12
+      },
+      "peak_server_rss_bytes": 125632512,
+      "peak_server_rss_scope": "process_max_at_application_shutdown",
+      "provider_delay_seconds": 0.2,
+      "provider_stage_counts": {
+        "embed_query": 13,
+        "search": 13
+      },
+      "provider_stage_event_count": 26,
+      "rejected_response_latency_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "response_latency_ms": {
+        "p50": 307.896,
+        "p95": 318.794,
+        "p99": 318.794
+      },
+      "responses_per_second": 18.704,
+      "sampled_peak_server_rss_bytes": 123043840,
+      "scenario": "baseline",
+      "server_exit_code": -15,
+      "state_read_failure_counts": {},
+      "successful_operations_per_second": 18.704,
+      "successful_search_hit_counts": {
+        "5": 12
+      },
+      "successful_state_observations": {
+        "final": 1,
+        "probe": 2
+      },
+      "warmup_operations": 1
+    }
+  ],
+  "source_revision": "9346404f4f020c9a48009feebe9434580f94a276",
+  "working_tree_dirty": true
+}
