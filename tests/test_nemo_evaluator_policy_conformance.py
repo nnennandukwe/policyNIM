@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as installed_version
 
 import pytest
 
@@ -69,6 +70,24 @@ def test_nemo_evaluator_adapter_delegates_to_configured_judge(monkeypatch) -> No
     assert result.final_adherence_score == 0.91
     assert evaluator.calls == 1
     adapter.close()
+    assert evaluator.closed is True
+
+
+def test_nemo_evaluator_adapter_accepts_real_installed_distributions() -> None:
+    for distribution in ("nemo-evaluator", "nvidia-simple-evals"):
+        try:
+            installed_version(distribution)
+        except PackageNotFoundError:
+            pytest.skip(f"Install the nvidia-eval extra to check real {distribution} metadata.")
+
+    evaluator = MockEvaluator()
+    adapter = NeMoEvaluatorPolicyConformanceEvaluator(evaluator=evaluator)
+    try:
+        result = adapter.evaluate_policy_conformance(make_request())
+        assert result.final_adherence_score == 0.91
+        assert evaluator.calls == 1
+    finally:
+        adapter.close()
     assert evaluator.closed is True
 
 

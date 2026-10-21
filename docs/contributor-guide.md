@@ -169,10 +169,16 @@ Toolkit evaluation packages. Install them only when you need the optional
 uv sync --extra nvidia-eval --group test --group dev
 ```
 
-The `nvidia-eval` extra pins `nemo-evaluator==0.2.5`,
-`nvidia-simple-evals==26.3`, and `nvidia-nat-eval==1.6.0`. The adapters import
-those packages lazily, so offline CI and the default local workflow do not need
-them.
+The `nvidia-eval` extra pins `nemo-evaluator==0.2.8`,
+`nvidia-simple-evals==26.3`, and `nvidia-nat-eval==1.6.0`. The conformance
+adapters check installed distribution metadata without importing these SDKs and
+delegate to the configured NVIDIA judge endpoint. Offline CI and the default
+local workflow do not need the extra.
+
+NeMo Evaluator 0.2.8 itself cannot be imported on Windows because its adapter
+server imports the Unix-only `resource` module. The locked extra still installs
+on Windows and PolicyNIM's metadata-gated conformance adapter remains usable,
+but that does not establish Windows SDK or launcher compatibility.
 
 The optional NeMo launcher runs in a separate tool environment. See
 [installation profiles](runtime-install-profiles.md).

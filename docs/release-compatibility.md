@@ -48,7 +48,7 @@ inferred from bearer-key checks or mocked introspection.
 | Extra | Exact project pins | Verified scope |
 | --- | --- | --- |
 | `nvidia-guardrails` | `nemoguardrails[nvidia]==0.21.0` | Locked install and offline tests; internal adapter only. No live rail-quality claim. |
-| `nvidia-eval` | `nemo-evaluator==0.2.5`, `nvidia-nat-eval==1.6.0`, `nvidia-simple-evals==26.3` | Locked install and offline tests. Package-gated conformance adapters still use the configured NVIDIA judge endpoint. |
+| `nvidia-eval` | `nemo-evaluator==0.2.8`, `nvidia-nat-eval==1.6.0`, `nvidia-simple-evals==26.3` | Package-gated conformance adapters use installed distribution metadata and the configured NVIDIA judge endpoint, not the NeMo SDK. NeMo Evaluator 0.2.8 SDK imports fail on Windows because upstream imports Unix-only `resource`; a successful locked install does not prove SDK compatibility. |
 | External NeMo launcher | Separate upstream tool environment | Not bundled, served, or verified as a PolicyNIM runtime backend. |
 
 Verify the combined extra set with a fresh locked install, `uv pip check` and the

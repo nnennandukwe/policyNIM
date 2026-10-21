@@ -31,10 +31,16 @@ Current automated coverage includes:
   Phoenix startup, deterministic span publishing, and synchronous code
   annotations
 - Optional NeMo Evaluator and NeMo Agent Toolkit adapter gating with
-  mock-backed import-injected package modules; default CI doesn't import live optional
-  NVIDIA eval packages
+  mock-backed package metadata; default CI doesn't import the optional NVIDIA
+  eval SDKs. An additional installed-distribution gate check runs when the
+  `nvidia-eval` extra is present and otherwise skips explicitly.
 - Optional NVIDIA evaluation adapter dependency resolution through
-  `uv sync --extra nvidia-eval --group test --group dev`
+  `uv sync --locked --extra nvidia-eval --group test --group dev`
+- A separate Ubuntu CI matrix installs that extra on Python 3.11/3.12, runs
+  `uv pip check`, imports the real `nemo_evaluator` public exports, and exercises
+  offline conformance delegation without provider calls. This does not cover
+  Windows SDK imports: NeMo Evaluator 0.2.8 imports Unix-only `resource` and
+  fails there, although PolicyNIM's metadata-only adapter gate still works.
 - Internal NeMo Guardrails output-rail wrapper coverage for lazy package
   gating, packaged assets, malformed rail output, blocked output, citation drift,
   regeneration context pass-through, and default factory isolation
