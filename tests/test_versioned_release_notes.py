@@ -222,11 +222,14 @@ def test_setext_version_heading_uses_its_complete_line_map(tmp_path: Path) -> No
     assert output.read_text() == "# PolicyNIM 0.2.0\n\nReviewed visible entry.\n"
 
 
-def test_an_unrelated_h2_cant_supply_empty_versions_notes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("heading", ["# Contributor guide", "## Contributor guide", "Guide\n====="])
+def test_an_unrelated_heading_cant_supply_empty_versions_notes(
+    tmp_path: Path, heading: str
+) -> None:
     """Content in the next top-level section can't fill an empty selected release."""
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
     (tmp_path / "CHANGELOG.md").write_text(
-        "## [Unreleased]\n\n## [0.2.0]\n### Added\n\n## Contributor guide\nUnrelated text.\n"
+        "## [Unreleased]\n\n## [0.2.0]\n### Added\n\n" + heading + "\nUnrelated text.\n"
     )
     output = tmp_path / "notes.md"
     output.write_text("prior reviewed notes")
