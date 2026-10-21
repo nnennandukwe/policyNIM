@@ -26,7 +26,7 @@ WORKFLOW_FILES = _workflow_files(REPO_ROOT / ".github/workflows")
 NODE24_ACTION_MAJOR_COMMENTS = {
     "actions/attest": {"v4"},
     "actions/checkout": {"v5", "v6", "v7"},
-    "actions/setup-python": {"v6"},
+    "actions/setup-python": {"v6", "v7"},
     "actions/upload-artifact": {"v6", "v7"},
     "actions/download-artifact": {"v7", "v8"},
     "astral-sh/setup-uv": {"v8"},
@@ -87,6 +87,40 @@ def test_workflows_pin_node24_compatible_actions() -> None:
     """Keep all workflows on reviewed Node 24 action commits."""
     assert WORKFLOW_FILES
     for path in WORKFLOW_FILES:
+        _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize(
+    ("reference", "version"),
+    [
+        ("a309ff8b426b58ec0e2a45f0f869d46889d02405", "v6.2.0"),
+        ("5fda3b95a4ea91299a34e894583c3862153e4b97", "v7.0.0"),
+    ],
+)
+def test_setup_python_accepts_reviewed_node24_majors(
+    tmp_path: Path, reference: str, version: str
+) -> None:
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
+    _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v8"])
+def test_setup_python_rejects_unreviewed_majors(tmp_path: Path, version: str) -> None:
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: actions/setup-python@{'a' * 40} # {version}.0.0\n")
+    with pytest.raises(AssertionError):
+        _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize("version", ["v6.2.0", "v7.0.0"])
+@pytest.mark.parametrize("reference", ["main", "v6", "v7", "abc123", "A" * 40])
+def test_setup_python_still_requires_full_commit_pins(
+    tmp_path: Path, reference: str, version: str
+) -> None:
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
+    with pytest.raises(AssertionError):
         _assert_workflow_pins(path)
 
 
