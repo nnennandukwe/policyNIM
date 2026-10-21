@@ -184,8 +184,8 @@ def test_release_gate_order_and_locked_environment() -> None:
         "--python ${{ env.PYTHON_VERSION }}"
     )
     assert (
-        "check_release_notes.py --repo-root . --output release-notes.md"
-        in by_name["Prepare release assets"]["run"]
+        "uv run --no-sync python scripts/check_release_notes.py "
+        "--repo-root . --output release-notes.md" in by_name["Prepare release assets"]["run"]
     )
     assert by_name["Retain artifact promotion evidence"]["if"] == "always()"
     assert by_name["Retain artifact promotion evidence"]["with"]["path"] == "release-evidence/"

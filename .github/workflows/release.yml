@@ -353,7 +353,7 @@ jobs:
               raise SystemExit("Downloaded wheel differs from the reviewed-source rebuild.")
           PY
           uv run --no-sync --python ${{ env.PYTHON_VERSION }} python scripts/release_manifest.py release-assets --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
-          python scripts/check_release_notes.py --repo-root . --output release-notes.md
+          uv run --no-sync python scripts/check_release_notes.py --repo-root . --output release-notes.md
 
       - name: Check release tag source
         run: python scripts/verify_release_tag.py --tag "$RELEASE_TAG" --revision "$GITHUB_SHA"

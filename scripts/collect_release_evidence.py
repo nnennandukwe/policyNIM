@@ -341,6 +341,8 @@ def artifact_facts(directory: Path | None, expected: Subject) -> dict[str, Any]:
         ).model_dump()
         result["observed"] = observed
         selected = expected.model_dump()
+        if observed["repository"] is not None and observed["repository"] != expected.repository:
+            raise ValueError("Manifest repository differs.")
         if any(observed[name] != value for name, value in selected.items() if name != "repository"):
             raise ValueError("Manifest identity differs.")
         entries = manifest.get("assets")

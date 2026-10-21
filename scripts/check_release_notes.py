@@ -9,7 +9,16 @@ import re
 import tomllib
 from pathlib import Path
 
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 from release_evidence_io import read_bytes, require_separate_output, write_document
+
+
+def _has_html_comment(token: Token) -> bool:
+    """Refuse hidden comment syntax in parsed HTML while preserving quoted code tokens."""
+    return (token.type in {"html_block", "html_inline"} and "<!--" in token.content) or any(
+        _has_html_comment(child) for child in token.children or []
+    )
 
 
 def version_notes(root: Path) -> tuple[str, str]:
@@ -21,22 +30,50 @@ def version_notes(root: Path) -> tuple[str, str]:
     ):
         raise ValueError("Invalid project version.")
     changelog = read_bytes(root / "CHANGELOG.md").decode("utf-8")
-    changelog = re.sub(
-        r"(?P<code>(?<!`)(?P<ticks>`+)(?!`)[\s\S]*?(?<!`)(?P=ticks)(?!`))"
-        r"|<!--[\s\S]*?(?:-->|$)",
-        lambda match: match[0] if match["code"] is not None else "",
-        changelog,
-    )
-    headers = list(re.finditer(r"^## \[([^\]\n]+)\][^\n]*$", changelog, re.MULTILINE))
-    current = [index for index, match in enumerate(headers) if match[1] == version]
-    if len(current) != 1 or sum(match[1] == "Unreleased" for match in headers) != 1:
+    parser = MarkdownIt("commonmark")
+    tokens = parser.parse(changelog)
+    headers: list[tuple[str | None, int, int]] = []
+    for index, token in enumerate(tokens):
+        if token.type == "heading_open" and token.tag in {"h1", "h2"} and token.level == 0:
+            assert token.map is not None
+            title = tokens[index + 1].content if token.tag == "h2" else ""
+            label, closing, _ = title[1:].partition("]") if title.startswith("[") else ("", "", "")
+            headers.append((label if closing else None, token.map[0], token.map[1]))
+    current = [index for index, header in enumerate(headers) if header[0] == version]
+    if len(current) != 1 or sum(header[0] == "Unreleased" for header in headers) != 1:
         raise ValueError("Missing or duplicate version/Unreleased section.")
     index = current[0]
-    end = headers[index + 1].start() if index + 1 < len(headers) else len(changelog)
-    body = changelog[headers[index].end() : end].strip()
-    content = re.sub(r"(?m)^[ \t]{0,3}#{1,6}(?:[ \t]+|$)[^\n]*(?:\n|$)", "", body)
-    plain = content.strip("#*- \t\r\n.!:").casefold()
-    if not plain or plain in {"todo", "tbd", "placeholder", "coming soon"}:
+    # CommonMark counts CR/LF endings; other Unicode separators remain source content.
+    lines = re.split(r"(?<=\n)|(?<=\r)(?!\n)", changelog)
+    start = headers[index][2]
+    end = headers[index + 1][1] if index + 1 < len(headers) else len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    body = "".join(lines[start:end]).rstrip("\r\n")
+    body_tokens = parser.parse(body)
+    if any(_has_html_comment(token) for token in body_tokens):
+        raise ValueError("Current version contains an HTML comment; finish its notes first.")
+    content: list[str] = []
+    for index, token in enumerate(body_tokens):
+        if token.type in {"fence", "code_block"}:
+            content.append(token.content)
+        elif (
+            token.type == "inline" and index > 0 and body_tokens[index - 1].type == "paragraph_open"
+        ):
+            content.append(
+                "".join(
+                    child.content if child.type in {"text", "code_inline", "image"} else " "
+                    for child in token.children or []
+                    if child.type in {"text", "code_inline", "image", "softbreak", "hardbreak"}
+                )
+            )
+    plain = [" ".join(value.strip("#*- \t\r\n.!:").split()).casefold() for value in content]
+    if not any(
+        value and re.match(r"^(?:todo|tbd|placeholder|coming soon)(?:$|[\s:])", value) is None
+        for value in plain
+    ):
         raise ValueError("Current version needs nonempty release notes.")
     return version, body
 
