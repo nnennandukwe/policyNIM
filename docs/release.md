@@ -141,7 +141,10 @@ checksum. Changed, unsafe or incomplete archives fail before publication; failed
 receipts retain the requested source, platform, version and digest context as
 incomplete execution.
 
-The lock digest identifies the selected build checkout. The workflow performs a
+The lock digest identifies the selected build checkout. Git attributes preserve
+`uv.lock` with LF line endings on every platform so Windows receipts and the
+publisher hash the same bytes. A platform-specific hash remains a promotion failure.
+The workflow performs a
 locked dependency sync before building from that checkout; the standalone receipt
 alone doesn't independently inspect every dependency version inside the frozen
 executable.
