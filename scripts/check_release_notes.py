@@ -43,7 +43,8 @@ def version_notes(root: Path) -> tuple[str, str]:
     if len(current) != 1 or sum(header[0] == "Unreleased" for header in headers) != 1:
         raise ValueError("Missing or duplicate version/Unreleased section.")
     index = current[0]
-    lines = changelog.splitlines(keepends=True)
+    # CommonMark counts CR/LF endings; other Unicode separators remain source content.
+    lines = re.split(r"(?<=\n)|(?<=\r)(?!\n)", changelog)
     start = headers[index][2]
     end = headers[index + 1][1] if index + 1 < len(headers) else len(lines)
     while start < end and not lines[start].strip():

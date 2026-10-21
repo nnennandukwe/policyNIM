@@ -291,3 +291,29 @@ def test_commented_version_heading_isnt_a_release_section(tmp_path: Path) -> Non
         check=False,
     )
     assert process.returncode == 1 and output.read_text() == "prior notes"
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r", "\r\n"])
+@pytest.mark.parametrize(
+    "separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+)
+def test_parser_line_maps_preserve_non_markdown_separators(
+    tmp_path: Path, separator: str, line_ending: str
+) -> None:
+    """Only CommonMark line endings affect section offsets; other source bytes stay intact."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n')
+    body = f"First{separator}continued{line_ending}Retain later entry."
+    changelog = line_ending.join(
+        ["## [Unreleased]", "", "## [0.2.0]", body, "## [0.1.0]", "Earlier notes.", ""]
+    )
+    (tmp_path / "CHANGELOG.md").write_bytes(changelog.encode())
+    output = tmp_path / "notes.md"
+    process = subprocess.run(
+        [sys.executable, str(CHECKER), "--repo-root", str(tmp_path), "--output", str(output)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert process.returncode == 0, process.stdout
+    assert output.read_bytes().decode() == f"# PolicyNIM 0.2.0\n\n{body}\n"
