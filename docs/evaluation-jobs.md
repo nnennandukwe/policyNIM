@@ -6,6 +6,8 @@ A live evaluation can outlast a client connection. PolicyNIM's application jobs 
 
 The suite must pin its catalog digest or policy revisions. Submission captures its JSON, provider/model configuration, limits and complete generation archive in one SQLite transaction. Provider credentials and bearer tokens aren't stored. Changing source files, activating another generation or pruning the original generation can't change an accepted job's inputs.
 
+Captured generation archives can't exceed 256 MiB. Submission checks the exported file before buffering it or accepting quota, and restoration checks retained BLOB size before loading it. `archive_too_large` requires a smaller selected policy generation. Export still performs compression and disk work under the bounded capture slot; this limit isn't a production capacity measurement. Progress inspection reads summary columns without loading retained input or report bodies.
+
 ```console
 policynim eval-jobs submit suite.json --idempotency-key demo-2026 \
   --deadline-seconds 600 --max-provider-calls 100
@@ -46,6 +48,8 @@ Reports record the exact generation, suite/configuration/snapshot hashes, comple
 ## Recovery and retention
 
 States progress from `queued` to `running`, then `completed`, `failed`, `cancelled`, `deadline_exceeded`, `budget_exhausted` or `interrupted`. Queued cancellation and deadline expiry can finish without any provider call. A running cancellation first sets a durable request; synchronous in-flight HTTP work drains before cleanup and terminal state. Worker shutdown follows the same cleanup boundary and records `interrupted` in both the job and quota outcomes. A stop observed before execution or a pre-provider capacity rejection leaves unstarted work queued within its original deadline.
+
+Once queued cancellation commits, `eval_cancel` returns that cancelled state even if later accounting reconciliation fails. The original report and prepaid units remain retained, a safe `evaluation.cancellation_accounting_pending` event records the failure, and the worker's existing pending-finalization pass retries accounting after storage repair. Returning the committed job state doesn't mark its accounting finalized or permit new work while accounting remains unconfirmed.
 
 Each completed case commits before the next case begins. A crashed worker's running job becomes `interrupted` on the next worker's recovery pass. Completed cases remain in the report; an active case is marked uncertain. The worker doesn't replay terminal or uncertain provider work automatically. Inspect its evidence, then submit a new key if another evaluation's needed. A provider may have accepted a request whose response wasn't persisted, so interruption doesn't prove the provider performed no work.
 

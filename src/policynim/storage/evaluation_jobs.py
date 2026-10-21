@@ -30,6 +30,7 @@ from policynim.storage.file_lock import try_exclusive_file_lock
 from policynim.types import EvalCaseResult
 
 REPORT_PART_SIZE = 128 * 1024
+MAX_GENERATION_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
 def canonical_json(value: object) -> str:
@@ -208,10 +209,19 @@ class EvaluationJobStore:
         values["result_expired"] = bool(row["result_expired"]) or self.clock() >= row["expires_at"]
         return EvaluationJobInfo.model_validate(values)
 
-    def _owned(self, connection: sqlite3.Connection, job_id: str, owner_id: str) -> sqlite3.Row:
+    def _owned(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        owner_id: str,
+        *,
+        summary_only: bool = False,
+    ) -> sqlite3.Row:
         """Make unknown and other-owner references indistinguishable to callers."""
+        columns = ",".join(EvaluationJobInfo.model_fields) if summary_only else "*"
         row = connection.execute(
-            "SELECT * FROM evaluation_jobs WHERE job_id=? AND owner_id=?", (job_id, owner_id)
+            f"SELECT {columns} FROM evaluation_jobs WHERE job_id=? AND owner_id=?",
+            (job_id, owner_id),
         ).fetchone()
         if row is None:
             raise EvaluationJobError("job_unavailable: This job isn't available to this principal.")
@@ -285,8 +295,11 @@ class EvaluationJobStore:
         with connection.blobopen(
             "evaluation_job_archives", "archive", row["archive_rowid"], readonly=True
         ) as archive:
-            if len(archive) > 256 * 1024 * 1024:
-                raise EvaluationJobError("archive_invalid: Preserve job storage for inspection.")
+            if len(archive) > MAX_GENERATION_ARCHIVE_BYTES:
+                raise EvaluationJobError(
+                    "archive_too_large: Evaluation archives can't exceed 256 MiB. "
+                    "Use a smaller policy generation; preserve any accepted job's evidence."
+                )
             while chunk := archive.read(64 * 1024):
                 digest.update(chunk)
         verified = "sha256:" + digest.hexdigest()
@@ -330,6 +343,11 @@ class EvaluationJobStore:
                     "queue_full: No job was accepted. Retry after active work finishes."
                 )
             if archive is not None:
+                if len(archive) > MAX_GENERATION_ARCHIVE_BYTES:
+                    raise EvaluationJobError(
+                        "archive_too_large: Evaluation archives can't exceed 256 MiB. "
+                        "Use a smaller policy generation before retrying."
+                    )
                 digest = archive_digest(archive)
                 if digest != snapshot.generation_archive_digest:
                     raise EvaluationJobError(
@@ -381,7 +399,7 @@ class EvaluationJobStore:
     def inspect(self, job_id: str, owner_id: str) -> EvaluationJobInfo:
         """Expose only the authenticated owner's progress."""
         with closing(self._connect()) as connection:
-            return self._info(self._owned(connection, job_id, owner_id))
+            return self._info(self._owned(connection, job_id, owner_id, summary_only=True))
 
     def _finish(
         self,
@@ -729,19 +747,20 @@ class EvaluationJobStore:
     ) -> tuple[EvaluationJobSnapshot, bytes]:
         """Return the accepted snapshot and authenticated archive only to its current worker."""
         with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
             row = self._running(connection, job_id, worker_token)
             snapshot = EvaluationJobSnapshot.model_validate_json(row["snapshot_json"])
             if payload_digest(snapshot.model_dump(mode="json")) != row["snapshot_digest"]:
                 raise EvaluationJobError("snapshot_invalid: Preserve job storage for inspection.")
-            archive = connection.execute(
-                "SELECT * FROM evaluation_job_archives WHERE generation_id=?",
-                (snapshot.generation_id,),
-            ).fetchone()
             if (
-                archive is None
-                or archive_digest(archive["archive"]) != snapshot.generation_archive_digest
+                self._verified_archive_digest(connection, snapshot.generation_id)
+                != snapshot.generation_archive_digest
             ):
                 raise EvaluationJobError("archive_invalid: Preserve job storage for inspection.")
+            archive = connection.execute(
+                "SELECT archive FROM evaluation_job_archives WHERE generation_id=?",
+                (snapshot.generation_id,),
+            ).fetchone()
             return snapshot, archive["archive"]
 
     def begin_case(self, job_id: str, worker_token: str, case_id: str) -> None:

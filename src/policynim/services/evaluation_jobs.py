@@ -52,6 +52,7 @@ from policynim.services.operation_admission import (
 )
 from policynim.settings import Settings
 from policynim.storage.evaluation_jobs import (
+    MAX_GENERATION_ARCHIVE_BYTES,
     EvaluationJobStore,
     archive_digest,
     payload_digest,
@@ -273,6 +274,11 @@ class EvaluationJobService:
                         ) as directory:
                             path = Path(directory) / "generation.zip"
                             digest = generation_store.export_bundle(path, snapshot.generation_id)
+                            if path.stat().st_size > MAX_GENERATION_ARCHIVE_BYTES:
+                                raise EvaluationJobError(
+                                    "archive_too_large: Evaluation archives can't exceed 256 MiB. "
+                                    "Use a smaller policy generation before retrying."
+                                )
                             archive = path.read_bytes()
                     captured = EvaluationJobSnapshot(
                         generation_id=snapshot.generation_id,
@@ -324,7 +330,15 @@ class EvaluationJobService:
     def cancel(self, job_id: str, *, principal: AuthenticatedPrincipal) -> EvaluationJobInfo:
         """Keep cancellation requests separate from drained terminal cancellation."""
         job = self.store.cancel(job_id, self._owner(principal, "eval_cancel"))
-        self.finalize_admission(job)
+        try:
+            self.finalize_admission(job)
+        except (OperationAdmissionError, OSError, sqlite3.Error) as exc:
+            emit_operation_event(
+                level=logging.ERROR,
+                event="evaluation.cancellation_accounting_pending",
+                job_id=job.job_id,
+                **safe_exception_diagnostics(exc),
+            )
         return job
 
     def finalize_admission(self, job: EvaluationJobInfo) -> None:
