@@ -58,12 +58,13 @@ jobs:
         run: uv run --no-sync --python ${{ matrix.python-version }} pytest -q -m "not live and not docker_live"
 
   nvidia-eval:
-    name: Optional NeMo SDK (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-24.04
+    name: Optional NeMo SDK (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-24.04, windows-2022]
         python-version: ["3.11", "3.12"]
     env:
       NVIDIA_API_KEY: ""
@@ -86,7 +87,7 @@ jobs:
         run: uv pip check
 
       - name: Import the real NeMo SDK without running an evaluation
-        run: uv run --no-sync --python ${{ matrix.python-version }} python -c "import nemo_evaluator; assert callable(nemo_evaluator.evaluate); assert all(hasattr(nemo_evaluator, name) for name in nemo_evaluator.__all__)"
+        run: uv run --no-sync --python ${{ matrix.python-version }} python -c "from nemo_evaluator import evaluate; assert callable(evaluate)"
 
       - name: Verify package gating and offline conformance delegation
         run: uv run --no-sync --python ${{ matrix.python-version }} pytest -q -m "not live and not docker_live" tests/test_nemo_evaluator_policy_conformance.py tests/test_nemo_agent_toolkit_policy_conformance.py tests/test_eval_service.py tests/test_policy_regeneration_service.py

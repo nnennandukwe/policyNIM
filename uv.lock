@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'win32'",
@@ -1447,8 +1447,39 @@ wheels = [
 
 [[package]]
 name = "nemo-evaluator"
+version = "0.2.5"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+]
+dependencies = [
+    { name = "flask" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "psutil" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "structlog" },
+    { name = "typing-extensions" },
+    { name = "werkzeug" },
+    { name = "yq" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7a/30/5cf0fafffbf9f0ceac3b121b31360ab2fceb39520be4a30da823167e35bf/nemo_evaluator-0.2.5.tar.gz", hash = "sha256:e71ce5bc43567f74d92cfcec2c1dee7d62018dbdedc441757574c3f258fbcfce", size = 167840, upload-time = "2026-03-18T01:35:36.771Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/98/f119292fec8d1f22a859ed1426d01d84d444ab673aef6e1919cd924a5936/nemo_evaluator-0.2.5-py3-none-any.whl", hash = "sha256:8e2bd0cfea8653daec4018efa3b11fb8f4327b5295226898971ba78361902345", size = 214912, upload-time = "2026-03-18T01:35:34.964Z" },
+]
+
+[[package]]
+name = "nemo-evaluator"
 version = "0.2.8"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'win32'",
+]
 dependencies = [
     { name = "flask" },
     { name = "httpx" },
@@ -1594,7 +1625,8 @@ dependencies = [
     { name = "blobfile" },
     { name = "datasets" },
     { name = "jinja2" },
-    { name = "nemo-evaluator" },
+    { name = "nemo-evaluator", version = "0.2.5", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
+    { name = "nemo-evaluator", version = "0.2.8", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
     { name = "openai" },
     { name = "pandas" },
     { name = "pylatexenc" },
@@ -1974,7 +2006,8 @@ dependencies = [
 
 [package.optional-dependencies]
 nvidia-eval = [
-    { name = "nemo-evaluator" },
+    { name = "nemo-evaluator", version = "0.2.5", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
+    { name = "nemo-evaluator", version = "0.2.8", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
     { name = "nvidia-nat-eval" },
     { name = "nvidia-simple-evals" },
 ]
@@ -2010,7 +2043,8 @@ requires-dist = [
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "markdown-it-py", specifier = "==4.0.0" },
     { name = "mcp", extras = ["cli"], specifier = "==2.2.0" },
-    { name = "nemo-evaluator", marker = "extra == 'nvidia-eval'", specifier = "==0.2.8" },
+    { name = "nemo-evaluator", marker = "sys_platform == 'win32' and extra == 'nvidia-eval'", specifier = "==0.2.5" },
+    { name = "nemo-evaluator", marker = "sys_platform != 'win32' and extra == 'nvidia-eval'", specifier = "==0.2.8" },
     { name = "nemoguardrails", extras = ["nvidia"], marker = "extra == 'nvidia-guardrails'", specifier = "==0.21.0" },
     { name = "nvidia-nat-eval", marker = "extra == 'nvidia-eval'", specifier = "==1.6.0" },
     { name = "nvidia-simple-evals", marker = "extra == 'nvidia-eval'", specifier = "==26.3" },

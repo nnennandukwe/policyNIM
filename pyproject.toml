@@ -51,7 +51,9 @@ nvidia-guardrails = [
   "nemoguardrails[nvidia]==0.21.0",
 ]
 nvidia-eval = [
-  "nemo-evaluator==0.2.8",
+  # NeMo 0.2.8 imports Unix-only resource; retain the working Windows SDK.
+  "nemo-evaluator==0.2.8; sys_platform != 'win32'",
+  "nemo-evaluator==0.2.5; sys_platform == 'win32'",
   "nvidia-nat-eval==1.6.0",
   "nvidia-simple-evals==26.3",
 ]
