@@ -79,6 +79,9 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert scenarios["locked-database"]["outcomes"] == {"admission_busy": 12}, failure_summary
     assert scenarios["locked-database"]["operator_report"]["retained_rows"] == 1  # warmup only
     assert scenarios["locked-database"]["provider_stage_counts"]["embed_query"] == 1
+    assert scenarios["locked-database"]["paired_active_work_probe_observed"] is False
+    assert scenarios["baseline"]["paired_active_work_probe_observed"] is True
+    assert scenarios["saturation"]["paired_active_work_probe_observed"] is True
     assert scenarios["locked-database"]["server_failure_diagnostics"]["tool_failure_counts"] == {
         "admission_busy": 12
     }, failure_summary
@@ -780,3 +783,87 @@ def test_capacity_diagnostics_preserve_owned_provider_failure_reason(failure: st
     )
     assert result["tool_failure_counts"] == {failure: 1}
     assert result["tool_failure_latency_ms"] == {"p50": 5.0, "p95": 5.0, "p99": 5.0}
+
+
+@pytest.mark.parametrize("scenario", ["baseline", "saturation", "slow-provider"])
+@pytest.mark.parametrize("reservation_pattern", ["zero_active", "before_only", "paired"])
+def test_load_completeness_requires_paired_probes_during_active_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    reservation_pattern: str,
+) -> None:
+    """Successful probes before/without actual work can't certify an active-load measurement."""
+    import asyncio
+    import runpy
+    from unittest.mock import AsyncMock, Mock
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "measure_hosted_capacity.py")
+    )
+    measure = namespace["_measure"]
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.get.return_value = httpx.Response(200)
+    monkeypatch.setattr(httpx, "AsyncClient", Mock(return_value=client))
+    store = OperationStore(tmp_path / "auth.sqlite3")
+    operation_id = None
+    if reservation_pattern != "zero_active":
+        operation_id = store.reserve(
+            principal_id="fixture", operation="policy_search", decide=lambda _: None
+        ).operation_id
+        assert operation_id is not None
+    process = Mock(pid=123)
+    process.poll.return_value = None
+
+    async def exercise() -> dict:
+        """Complete one probe cycle before allowing the measured request to finish."""
+        probe_done = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        sample_calls = 0
+        request_calls = 0
+
+        def sample(pid: int) -> int:
+            """Signal the next cycle only after both first-cycle state observations completed."""
+            nonlocal sample_calls
+            sample_calls += 1
+            if sample_calls == 3:
+                loop.call_soon_threadsafe(probe_done.set)
+            return 1
+
+        async def rpc(*args, discovery=False, **kwargs) -> tuple[float, str, int]:
+            """End real work between probe samples for the before-only negative control."""
+            nonlocal request_calls
+            if discovery:
+                if reservation_pattern == "before_only" and operation_id is not None:
+                    store.finish(operation_id, "completed")
+                return 1.0, "ok", 0
+            request_calls += 1
+            if request_calls > 1:
+                await probe_done.wait()
+                if reservation_pattern == "paired" and operation_id is not None:
+                    store.finish(operation_id, "completed")
+            return 1.0, "ok", 5
+
+        monkeypatch.setitem(measure.__globals__, "_sample_rss", sample)
+        monkeypatch.setitem(measure.__globals__, "_rpc", rpc)
+        return await measure(
+            {"port": 1234, "tokens": ["fixture"], "users": 1, "requests_per_user": 1, "delay": 0},
+            tmp_path,
+            process,
+            scenario,
+        )
+
+    try:
+        result = asyncio.run(exercise())
+    finally:
+        store.close()
+    assert result["cheap_probe_outcomes"]["ok"] > 0
+    assert result["cheap_probe_outcomes"]["health_200"] > 0
+    assert result["operator_report"]["active_operations"] == 0
+    assert result["measurement_complete"] is (reservation_pattern == "paired")
+    assert result["paired_active_work_probe_observed"] is (reservation_pattern == "paired")
