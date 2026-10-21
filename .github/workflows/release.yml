@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version or tag, for example 0.2.0 or v0.2.0."
+        description: "Release version or tag, for example 0.2.1 or v0.2.1."
         required: false
         type: string
+      build_only:
+        description: "Validate source, wheels and native archives without signing or publishing."
+        required: false
+        default: false
+        type: boolean
       publish_pypi:
         description: "Publish the built Python distribution to PyPI using trusted publishing."
         required: false
@@ -154,6 +159,8 @@ jobs:
             platform: windows-amd64
             archive: zip
     runs-on: ${{ matrix.os }}
+    env:
+      NATIVE_PYTHON_VERSION: "3.11.13"
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -161,17 +168,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install managed native Python
+        run: uv python install --managed-python ${{ env.NATIVE_PYTHON_VERSION }}
 
       - name: Resolve release tag
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
-          python - <<'PY' >> "$GITHUB_ENV"
+          uv run --no-project --no-sync --managed-python --python ${{ env.NATIVE_PYTHON_VERSION }} python - <<'PY' >> "$GITHUB_ENV"
           import os
           import tomllib
           from pathlib import Path
@@ -198,10 +203,13 @@ jobs:
           PY
 
       - name: Sync release dependencies
-        run: uv sync --locked --group release
+        run: uv sync --locked --managed-python --python ${{ env.NATIVE_PYTHON_VERSION }} --group release
+
+      - name: Check native build runtime
+        run: uv run --no-sync --managed-python --python ${{ env.NATIVE_PYTHON_VERSION }} python scripts/check_standalone_runtime.py --expected-python ${{ env.NATIVE_PYTHON_VERSION }}
 
       - name: Build standalone bundle
-        run: uv run --no-sync pyinstaller --clean --noconfirm packaging/pyinstaller.spec
+        run: uv run --no-sync --managed-python --python ${{ env.NATIVE_PYTHON_VERSION }} pyinstaller --clean --noconfirm packaging/pyinstaller.spec
 
       - name: Archive Unix standalone bundle
         if: matrix.archive == 'tar'
@@ -228,7 +236,7 @@ jobs:
       - name: Verify standalone generation and transports
         shell: bash
         run: |
-          python - <<'PY'
+          uv run --no-project --no-sync --managed-python --python ${{ env.NATIVE_PYTHON_VERSION }} python - <<'PY'
           import hashlib
           import os
           from pathlib import Path
@@ -238,7 +246,8 @@ jobs:
           bundle = root / "artifacts/public-generation"
           archive, = (root / "standalone-archives").iterdir()
           subprocess.run([
-              "uv", "run", "--no-sync", "python", "scripts/verify_standalone.py",
+              "uv", "run", "--no-sync", "--managed-python", "--python", os.environ["NATIVE_PYTHON_VERSION"],
+              "python", "scripts/verify_standalone.py",
               "--archive", str(archive),
               "--bundle", str(bundle / "generation.zip"),
               "--bundle-digest", (bundle / "generation.sha256").read_text().strip(),
@@ -259,6 +268,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload standalone bundle
+        if: always() && hashFiles('standalone-archives/*') != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: standalone-${{ matrix.platform }}
@@ -266,6 +276,7 @@ jobs:
           if-no-files-found: error
 
   publish-github-release:
+    if: ${{ !inputs.build_only }}
     runs-on: ubuntu-24.04
     needs:
       - verify
@@ -468,7 +479,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs:
       - publish-github-release
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_pypi)
+    if: ${{ !inputs.build_only && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_pypi)) }}
     environment: pypi
     permissions:
       id-token: write

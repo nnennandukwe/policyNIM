@@ -79,6 +79,37 @@ The verifier refuses an installation resolved back to a source checkout. It neve
 calls model providers; protocol discovery doesn't establish live retrieval quality
 or Codex/Claude UI interoperability. Retain those acceptance results separately.
 
+Native standalone builds use uv-managed CPython 3.11.13 on every platform. The
+workflow selects that interpreter explicitly for dependency sync, runtime checks,
+PyInstaller and archive verification; the source/wheel test jobs still cover
+Python 3.11 and 3.12. To check the native build interpreter locally:
+
+```bash
+uv python install --managed-python 3.11.13
+uv sync --locked --managed-python --python 3.11.13 --group release
+uv run --no-sync --managed-python --python 3.11.13 python scripts/check_standalone_runtime.py --expected-python 3.11.13
+uv run --no-sync --managed-python --python 3.11.13 pyinstaller --clean --noconfirm packaging/pyinstaller.spec
+```
+
+The runtime check prints JSON identifying the executing Python, SQLite vector
+extension and both Python/cryptography OpenSSL implementations. It enables SQLite
+extension loading, loads the real vector extension, queries its version, then
+disables loading and closes the in-memory connection. Missing APIs, native imports,
+cleanup failures and an unexpected interpreter version block freezing. Error
+records retain a fixed phase and exception class without native loader payloads.
+This check doesn't verify the later frozen library layout: each compressed archive
+must still pass the existing generation and transport checks below.
+
+The failed v0.2.0 macOS artifacts remain failed evidence. A Python.org 3.11.9
+SQLite component lacked the required extension-loading API; the Intel archive also
+failed to load a cryptographic binding because of an OpenSSL symbol mismatch.
+Selecting the managed runtime doesn't establish either architecture's recovery
+until its new archive passes verification. If verification fails after an archive
+has been created, the workflow retains that archive under the existing standalone
+artifact name for diagnosis. The failed job still blocks publication. Runtime
+check output stays in job logs and doesn't add a release asset or change the
+publisher's inputs.
+
 Standalone builds must also import the public generation and negotiate both MCP
 protocols over stdio and authenticated HTTP. Run `scripts/verify_standalone.py`
 with `--command` pointing to a local build or `--archive` selecting a compressed
@@ -124,11 +155,22 @@ the artifact source commit. An existing lightweight or annotated tag must resolv
 to that commit. A missing tag can be created at the verified source; an unavailable
 remote or mismatched existing tag blocks publication. The gate never moves tags.
 
+Before creating an immutable tag for a native-runtime change, run the `Release`
+workflow manually at the reviewed branch with `build_only=true` and version
+`0.2.1`. This mode runs the source, wheel and native archive jobs and retains their
+existing verification reports and archives. Both publisher jobs are disabled:
+it doesn't sign assets, create a draft, create a tag or upload to PyPI. The hold
+also applies if `publish_pypi=true` was selected. Wait for both macOS archive checks
+to pass at the selected revision before tagging; don't infer recovery from a
+preflight pass or a different platform's result. `build_only` defaults to false,
+so ordinary manual runs still prepare a GitHub draft and tag runs keep the normal
+publication gates.
+
 Create and push a version tag from the commit you want to release:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 The `Release` workflow builds the wheel, source distribution, and standalone
