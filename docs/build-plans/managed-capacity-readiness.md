@@ -17,3 +17,12 @@ Preserve all six scenarios, request distributions, delays, admission bounds, can
 Before changing the harness, retain a failing public-boundary test showing that its healthy fixture lacks a generation ID. Add managed positive controls with exact 10,000-row uniform and skewed distributions, plus smaller missing-pointer and corrupt-manifest rejection/recovery controls through actual HTTP health and search. Mismatched health IDs/counts or search IDs must fail evidence validation. Keep the existing six SQLite/probe failure controls and three active-probe positive controls.
 
 Run the focused harness suite, static checks and the offline full suite with the existing owned standard environment. The separately prepared optional-extra environment stays untouched. Use local Qodo before the ready PR, then completed exact-head remote Qodo and CI. Root owns merging and the final 25-user profiles after the managed path is native.
+
+The initial full run retained a timing-sensitive positive control: its one-user,
+100 ms operation finished without a probe bracket, correctly leaving that scenario
+incomplete. The test now gates only the synthetic provider's second query until
+two real active observations bracket the probe responses. No production delay,
+assertion or measurement gate is relaxed. A public HTTP-response corruption
+regression also rejects malformed JSON-RPC/search envelopes and wrong generation
+IDs after valid warmup and active probing, preserving the server's actual completed
+operation outcomes.

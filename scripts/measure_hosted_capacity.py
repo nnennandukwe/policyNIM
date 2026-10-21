@@ -799,6 +799,10 @@ async def _measure(
             and observed_health_ids == {fixture["generation_id"]}
             and set(observed_health_counts) == {fixture["chunk_count"]}
             and not outcomes["generation_identity_mismatch"]
+            and not outcomes["invalid_rpc_response"]
+            and not outcomes["jsonrpc_error"]
+            and not cheap_outcomes["invalid_rpc_response"]
+            and not cheap_outcomes["jsonrpc_error"]
             and not cheap_outcomes["health_identity_mismatch"]
             and not cheap_outcomes["health_invalid_response"]
         )

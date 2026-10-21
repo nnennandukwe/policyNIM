@@ -6,8 +6,76 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+
+def _coordinate_first_workload_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold only the first child's second synthetic query for two actual active observations."""
+    from policynim.storage.operation_store import OperationStore
+
+    bootstrap = tmp_path / "coordinated-provider.py"
+    bootstrap.write_text(
+        '''
+import json, runpy, sys
+from pathlib import Path
+from types import SimpleNamespace
+
+script, config = sys.argv[1:]
+namespace = runpy.run_path(script)
+state = namespace["_serve"].__globals__
+clock = state["time"]
+release = Path(config).parent / "provider-probe-observed"
+calls = 0
+
+def sleep(seconds):
+    """Keep accepted provider work active until its probe responses are bracketed."""
+    global calls
+    calls += 1
+    if calls == 2:
+        deadline = clock.monotonic() + 5
+        while not release.exists():
+            if clock.monotonic() >= deadline:
+                raise RuntimeError("Controlled provider probe wasn't observed.")
+            clock.sleep(0.005)
+    clock.sleep(seconds)
+
+state["time"] = SimpleNamespace(
+    sleep=sleep, monotonic=clock.monotonic, perf_counter=clock.perf_counter
+)
+namespace["_serve"](Path(config))
+''',
+        encoding="utf-8",
+    )
+    original_report = OperationStore.report
+    first_root: Path | None = None
+    active_observations = 0
+
+    class ControlledProcess(subprocess.Popen[str]):
+        """Keep the real process class contract while routing one fixture through its gate."""
+
+        def __init__(self, command: list[str], *args: Any, **kwargs: Any) -> None:
+            """Change only the first synthetic server's provider timing."""
+            nonlocal first_root
+            if "--serve-config" in command and first_root is None:
+                config = Path(command[command.index("--serve-config") + 1])
+                first_root = config.parent
+                command = [command[0], str(bootstrap), command[1], str(config)]
+            super().__init__(command, *args, **kwargs)
+
+    def report(path: Path):
+        """Publish the gate only after two real snapshots retain accepted workload capacity."""
+        nonlocal active_observations
+        observed = original_report(path)
+        if path.parent == first_root and observed.active_operations > 0:
+            active_observations += 1
+            if active_observations >= 2:
+                (path.parent / "provider-probe-observed").touch()
+        return observed
+
+    monkeypatch.setattr(subprocess, "Popen", ControlledProcess)
+    monkeypatch.setattr(OperationStore, "report", staticmethod(report))
 
 
 @pytest.mark.parametrize(
@@ -68,9 +136,10 @@ def serve(application, **kwargs):
                 observed = Counter(chunk.policy.domain for chunk in index.list_chunks())
             finally:
                 index.close()
-        expected = Counter(
-            f"domain-{i % 4 if distribution == 'uniform' else (0 if i % 10 else 1 + (i // 10) % 3)}"
-            for i in range(int(count))
+        expected = (
+            {f"domain-{domain}": int(count) // 4 for domain in range(4)}
+            if distribution == "uniform"
+            else {"domain-0": 9000, "domain-1": 334, "domain-2": 333, "domain-3": 333}
         )
         assert observed == expected
         headers = {
@@ -229,6 +298,82 @@ def test_health_binds_readiness_to_published_generation_and_count(
         response, {"generation_id": "a" * 64, "chunk_count": 20}
     )
     assert result == outcome
+
+
+@pytest.mark.parametrize(
+    "failure", ["invalid_rpc_response", "jsonrpc_error", "generation_identity_mismatch"]
+)
+def test_malformed_workload_response_cant_complete_managed_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Reject a malformed response after real warmup, active probes and accepted HTTP work."""
+    import runpy
+
+    import httpx
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_post = httpx.AsyncClient.post
+    calls = 0
+
+    async def corrupt_workload(client, *args, **kwargs):
+        """Keep real server execution and corrupt only the measured response after warmup."""
+        nonlocal calls
+        response = await original_post(client, *args, **kwargs)
+        payload = kwargs.get("json", {})
+        if payload.get("method") == "tools/call":
+            calls += 1
+            if calls > 1:
+                if failure == "jsonrpc_error":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "error": {"code": -32603, "message": "private-response-sentinel"},
+                        },
+                    )
+                if failure == "generation_identity_mismatch":
+                    envelope = response.json()
+                    envelope["result"]["structuredContent"]["generation_id"] = "b" * 64
+                    return httpx.Response(200, json=envelope)
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": payload["id"],
+                        "result": {"content": [], "structuredContent": {"hits": []}},
+                    },
+                )
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", corrupt_workload)
+    output = tmp_path / "malformed-capacity.json"
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    scenario = json.loads(output.read_text())["scenarios"][0]
+    assert scenario["paired_active_work_probe_observed"] is True
+    assert scenario["outcomes"] == {failure: 1}
+    assert scenario["operator_report"]["outcomes"]["completed"] == 2
+    assert status == 1 and scenario["measurement_complete"] is False
+    assert scenario["managed_identity_verified"] is False
+    assert "private-response-sentinel" not in output.read_text()
 
 
 def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path: Path) -> None:
@@ -492,6 +637,7 @@ def test_public_harness_preserves_prior_scenarios_when_final_state_is_locked(
 
     from policynim.storage.operation_store import HostedOperationReport, OperationStore
 
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
     original = OperationStore.report
     first: Path | None = None
 
