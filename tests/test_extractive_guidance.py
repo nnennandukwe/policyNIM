@@ -913,3 +913,93 @@ def test_custom_generator_can_preserve_only_compiler_selected_source(
     assert not result.insufficient_context
     assert len(result.applicable_policies) == len(result.plan_steps) == 1
     assert {policy.policy_id for policy in result.applicable_policies} == {"A"}
+
+
+@pytest.mark.parametrize("regeneration", [False, True])
+@pytest.mark.parametrize("guardrails_enabled", [False, True])
+@pytest.mark.parametrize("drop_source", [False, True])
+def test_service_requires_every_compiled_owner_after_provider_or_rail_output(
+    tmp_path: Path, regeneration: bool, guardrails_enabled: bool, drop_source: bool
+) -> None:
+    """Neither a custom provider nor an output rail can remove compiled authority."""
+    import json
+
+    from test_policy_regeneration_service import MockConformanceService, make_conformance_result
+
+    from policynim.providers.nvidia_guardrails import NeMoGuardrailsPreflightGenerator
+    from policynim.services.preflight import PreflightService
+    from policynim.services.regeneration import PolicyRegenerationService
+    from policynim.types import (
+        GeneratedPreflightDraft,
+        PreflightRegenerationRequest,
+        PreflightRequest,
+    )
+
+    def omit_second_owner(draft: GeneratedPreflightDraft) -> GeneratedPreflightDraft:
+        """Keep one whole canonical body and all of its own valid references."""
+        assert len(draft.applicable_policies) == len(draft.plan_steps) == 2
+        return draft.model_copy(
+            update={
+                "applicable_policies": draft.applicable_policies[:1],
+                "plan_steps": draft.plan_steps[:1],
+                "citation_ids": draft.applicable_policies[0].citation_ids,
+            }
+        )
+
+    class ControlledGenerator(SourceGenerator):
+        """Return the full catalog unless the custom-provider control drops one owner."""
+
+        def generate_preflight(
+            self, request, context, *, compiled_packet=None, regeneration_context=None
+        ):
+            """Mutate only after the ordinary complete typed provider result exists."""
+            draft = super().generate_preflight(
+                request,
+                context,
+                compiled_packet=compiled_packet,
+                regeneration_context=regeneration_context,
+            )
+            return omit_second_owner(draft) if drop_source and not guardrails_enabled else draft
+
+    class ControlledRails:
+        """Exercise the real Guardrails wrapper's accepted modified-result path."""
+
+        def check(self, messages, rail_types=None):
+            """Preserve valid source text while optionally removing a complete policy."""
+            draft = GeneratedPreflightDraft.model_validate_json(messages[0]["content"])
+            if drop_source:
+                draft = omit_second_owner(draft)
+            return type(
+                "RailResult",
+                (),
+                {"status": "modified", "content": json.dumps(draft.model_dump(mode="json"))},
+            )()
+
+    generator = ControlledGenerator()
+    active_generator = (
+        NeMoGuardrailsPreflightGenerator(base_generator=generator, rails=ControlledRails())
+        if guardrails_enabled
+        else generator
+    )
+    compiler = pinned_compiler(tmp_path, ids=["A", "B"])
+    if regeneration:
+        judge = MockConformanceService([make_conformance_result(passed=True)])
+        with PolicyRegenerationService(
+            compiler_service=compiler,
+            generator=active_generator,
+            conformance_service=judge,
+        ) as service:
+            output = service.regenerate(
+                PreflightRegenerationRequest(task="Review both policies", top_k=2)
+            )
+        result = output.attempts[0].result
+        assert output.passed is (not drop_source)
+        assert len(judge.requests) == (0 if drop_source else 1)
+        if drop_source:
+            assert output.stop_reason == "insufficient_context"
+    else:
+        with PreflightService(compiler_service=compiler, generator=active_generator) as service:
+            result = service.preflight(PreflightRequest(task="Review both policies", top_k=2))
+    assert result.insufficient_context is drop_source
+    assert len(result.applicable_policies) == (0 if drop_source else 2)
+    assert generator.calls == 1
