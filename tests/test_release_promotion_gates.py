@@ -167,6 +167,7 @@ def test_release_gate_order_and_locked_environment() -> None:
     assert names.index("Sync locked evidence dependencies") < names.index(
         "Select artifact promotion evidence"
     )
+    assert names.index("Rebuild wheel from reviewed source") < names.index("Prepare release assets")
     assert names.index("Prepare release assets") < names.index(
         "Generate release asset attestations"
     )
@@ -190,3 +191,47 @@ def test_release_gate_order_and_locked_environment() -> None:
     assert by_name["Retain artifact promotion evidence"]["with"]["path"] == "release-evidence/"
     for name in ["Gate artifact and provenance consistency", "Select artifact promotion evidence"]:
         assert not by_name[name].get("continue-on-error", False)
+
+
+def test_publication_rejects_changed_wheel_with_matching_receipts(gate_fixture: Path) -> None:
+    """Co-produced receipts can't authorize bytes that differ from the publisher's rebuild."""
+    steps = {step["name"]: step for step in release_steps()}
+    assert steps["Rebuild wheel from reviewed source"]["run"] == (
+        "uv build --wheel --out-dir release-source-wheel"
+    )
+    command = steps["Prepare release assets"]["run"]
+    assert command.index("python - <<'PY'") < command.index("scripts/release_manifest.py")
+    script = command.split("python - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    reference = gate_fixture / "release-source-wheel"
+    reference.mkdir()
+    candidate = gate_fixture / "release-assets/fixture.whl"
+    original = candidate.read_bytes()
+    (reference / candidate.name).write_bytes(original)
+
+    def invoke() -> subprocess.CompletedProcess[str]:
+        """Execute the actual publication comparison independently of supplied receipts."""
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=gate_fixture,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+    assert invoke().returncode == 0
+    candidate.write_bytes(b"altered executable wheel")
+    for runtime in ("3.11", "3.12"):
+        (candidate.parent / f"wheel-evidence-{runtime}.json").write_text(
+            json.dumps(
+                {
+                    "status": "passed",
+                    "wheel": {"sha256": hashlib.sha256(candidate.read_bytes()).hexdigest()},
+                }
+            )
+        )
+    rejected = invoke()
+    assert rejected.returncode != 0
+    assert "differs from the reviewed-source rebuild" in rejected.stderr
+    candidate.write_bytes(original)
+    assert invoke().returncode == 0

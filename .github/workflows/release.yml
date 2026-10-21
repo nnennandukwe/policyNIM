@@ -326,6 +326,9 @@ jobs:
           print(f"RELEASE_TAG={tag}")
           PY
 
+      - name: Rebuild wheel from reviewed source
+        run: uv build --wheel --out-dir release-source-wheel
+
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
@@ -334,6 +337,21 @@ jobs:
           cp scripts/install.ps1 release-assets/install.ps1
           cp artifacts/public-generation/generation.zip release-assets/policynim-public-generation.zip
           cp artifacts/public-generation/generation.sha256 release-assets/policynim-public-generation.sha256
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          candidate, = Path("release-assets").glob("*.whl")
+          reference, = Path("release-source-wheel").glob("*.whl")
+          with candidate.open("rb") as downloaded, reference.open("rb") as rebuilt:
+              matches = (
+                  candidate.name == reference.name
+                  and hashlib.file_digest(downloaded, "sha256").digest()
+                  == hashlib.file_digest(rebuilt, "sha256").digest()
+              )
+          if not matches:
+              raise SystemExit("Downloaded wheel differs from the reviewed-source rebuild.")
+          PY
           uv run --no-sync --python ${{ env.PYTHON_VERSION }} python scripts/release_manifest.py release-assets --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
           python scripts/check_release_notes.py --repo-root . --output release-notes.md
 

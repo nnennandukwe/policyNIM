@@ -174,6 +174,12 @@ offline release artifact build.
 
 Before creating the draft, publication runs
 `uv run --no-sync python scripts/release_manifest.py release-assets --tag vX.Y.Z --source-sha <40-character-commit>`.
+The publishing job independently rebuilds the wheel from its reviewed checkout
+with the pinned build backend. The downloaded wheel must have the same filename
+and byte-for-byte checksum as that rebuild before manifest creation or signing.
+Matching receipts supplied by the build job can't authorize a changed wheel.
+This comparison trusts the publisher's checkout and build environment; it doesn't
+establish a hermetic build or protect a compromised publishing job.
 The source revision must match the checked-out commit and the tag must match
 `pyproject.toml`. The gate requires fresh wheel receipts for Python 3.11 and 3.12 plus four standalone platform
 receipts with the same dependency lock, generation and catalog. Every wheel and
