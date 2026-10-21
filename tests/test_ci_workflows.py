@@ -100,6 +100,7 @@ def test_workflows_pin_node24_compatible_actions() -> None:
 def test_setup_python_accepts_reviewed_node24_majors(
     tmp_path: Path, reference: str, version: str
 ) -> None:
+    """Accept the setup-python majors reviewed for the current runner runtime."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
     _assert_workflow_pins(path)
@@ -107,6 +108,7 @@ def test_setup_python_accepts_reviewed_node24_majors(
 
 @pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v8"])
 def test_setup_python_rejects_unreviewed_majors(tmp_path: Path, version: str) -> None:
+    """Reject setup-python majors that haven't passed the workflow contract review."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{'a' * 40} # {version}.0.0\n")
     with pytest.raises(AssertionError):
@@ -118,6 +120,7 @@ def test_setup_python_rejects_unreviewed_majors(tmp_path: Path, version: str) ->
 def test_setup_python_still_requires_full_commit_pins(
     tmp_path: Path, reference: str, version: str
 ) -> None:
+    """Require immutable setup-python references even for an accepted major."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
     with pytest.raises(AssertionError):
@@ -164,6 +167,7 @@ def test_ci_checks_supported_python_versions_from_locked_dependencies() -> None:
 
 
 def test_ci_checks_real_optional_nemo_packages_on_supported_platforms() -> None:
+    """Cover the installed optional SDK on each supported platform and Python version."""
     job = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]["nvidia-eval"]
     assert job["strategy"]["matrix"] == {
         "os": ["ubuntu-24.04", "windows-2022"],

@@ -77,6 +77,7 @@ def test_nemo_evaluator_adapter_delegates_to_configured_judge(monkeypatch) -> No
 
 
 def test_nemo_evaluator_installed_package_contract() -> None:
+    """Verify the installed SDK and delegated conformance without provider calls."""
     for distribution in ("nemo-evaluator", "nvidia-simple-evals"):
         try:
             installed_version(distribution)
