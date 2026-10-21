@@ -103,11 +103,17 @@ uv run --no-sync python scripts/check_release_notes.py \
 ```
 
 The checker reads the actual project version and requires one matching nonempty
-CHANGELOG section plus one Unreleased section. Empty/comment-only/placeholder bodies
-fail before rendering or replacing earlier notes. Subheading lines such as
+CHANGELOG section plus one Unreleased section, using the pinned Markdown parser's
+top-level h2 headings and source-line boundaries. Fenced examples and commented
+headings can't create or truncate version sections. Empty/placeholder bodies
+fail before rendering or replacing earlier notes. Only paragraph and code content
+counts as notes; subheading lines such as
 `### Added` don't count as release-note content. Candidate feature status remains
 in the authored body; the checker doesn't turn pending integration into a shipped claim.
-HTML comments are omitted; comment syntax quoted in backtick code spans is retained.
+The selected version body fails closed if a parsed HTML token contains comment syntax;
+the checker doesn't silently remove it. Literal syntax inside inline code, fenced
+examples or indented code remains unchanged. Comments elsewhere can't supply a
+version heading. Rejection leaves any previous rendered output untouched.
 
 For later integration, the release workflow can call the notes checker after resolving the
 release version and before draft creation. Call the collector after existing manifest
