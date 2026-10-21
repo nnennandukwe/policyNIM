@@ -575,24 +575,30 @@ class EvaluationJobWorker:
                 """Hold shared quota admission through every case and provider cleanup."""
                 nonlocal execution_started
                 execution_started = True
-                _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
-                settings = self._restore(snapshot, archive)
-                clients = NVIDIAClients()
-                try:
-                    with borrow_clients(clients), operation_scope(budget):
-                        with closing(self.evaluator_factory(settings)) as evaluator:
-                            for case in snapshot.suite.cases:
-                                budget.remaining()
-                                self.store.begin_case(job.job_id, self.worker_token, case.case_id)
-                                result = evaluator.evaluate_case(
-                                    snapshot.suite,
-                                    case.case_id,
-                                    rerank_enabled=snapshot.configuration.rerank_enabled,
-                                )
-                                self.store.save_case(job.job_id, self.worker_token, result)
-                                budget.remaining()
-                finally:
-                    clients.close()
+                with operation_scope(budget):
+                    budget.remaining()
+                    _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
+                    budget.remaining()
+                    settings = self._restore(snapshot, archive)
+                    budget.remaining()
+                    clients = NVIDIAClients()
+                    try:
+                        with borrow_clients(clients):
+                            with closing(self.evaluator_factory(settings)) as evaluator:
+                                for case in snapshot.suite.cases:
+                                    budget.remaining()
+                                    self.store.begin_case(
+                                        job.job_id, self.worker_token, case.case_id
+                                    )
+                                    result = evaluator.evaluate_case(
+                                        snapshot.suite,
+                                        case.case_id,
+                                        rerank_enabled=snapshot.configuration.rerank_enabled,
+                                    )
+                                    self.store.save_case(job.job_id, self.worker_token, result)
+                                    budget.remaining()
+                    finally:
+                        clients.close()
 
             admission = OperationAdmissionService(self.service.settings)
             accounting_cancelled = False

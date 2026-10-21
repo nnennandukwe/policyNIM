@@ -2151,3 +2151,79 @@ def test_reused_archive_corruption_is_rejected_before_new_charge(generation, tmp
     with pytest.raises(EvaluationJobError, match="archive_invalid"):
         service.submit(suite, idempotency_key="next-capture", principal=principal("other"))
     assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 1
+
+
+@pytest.mark.parametrize("control", ["cancel", "deadline", "shutdown"])
+def test_restore_lock_wait_observes_job_control_before_provider_work(
+    generation, tmp_path, monkeypatch, control
+) -> None:
+    """Real generation-lock contention must remain interruptible throughout input restoration."""
+    import time
+    from threading import Event, Thread
+
+    from policynim.job_types import EvaluationJobLimits
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.generations import GenerationStore
+    from policynim.storage.file_lock import exclusive_file_lock
+    from policynim.types import EmbeddingIdentity
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    root = service.store.path.parent / "worker-generations"
+    bundle = tmp_path / "restorable-generation.zip"
+    digest = generation[1].export_bundle(bundle, generation[2])
+    GenerationStore(
+        root=root,
+        embedding=EmbeddingIdentity(
+            model=service.settings.nvidia_embed_model, endpoint=service.settings.nvidia_base_url
+        ),
+    ).import_bundle(bundle, expected_digest=digest)
+    accepted = service.submit(
+        suite,
+        idempotency_key="controlled-restore",
+        principal=principal(),
+        limits=EvaluationJobLimits(deadline_seconds=0.4 if control == "deadline" else 30),
+    )
+    restoring = Event()
+    original = GenerationStore.import_bundle
+
+    def observe_import(store, *args, **kwargs):
+        """Observe the actual import before it waits for the held generation writer lease."""
+        restoring.set()
+        return original(store, *args, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "import_bundle", observe_import)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    closer = None
+    try:
+        with exclusive_file_lock(root / ".writer.lock"):
+            worker.start()
+            assert restoring.wait(5)
+            if control == "cancel":
+                assert service.cancel(accepted.job_id, principal=principal()).state == "running"
+            elif control == "shutdown":
+                closer = Thread(target=worker.close)
+                closer.start()
+            deadline = time.monotonic() + 1.5
+            while True:
+                observed = service.inspect(accepted.job_id, principal=principal())
+                if observed.state != "running" or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+            expected = {
+                "cancel": "cancelled",
+                "deadline": "deadline_exceeded",
+                "shutdown": "interrupted",
+            }
+            assert observed.state == expected[control]
+            assert calls == []
+            if closer is not None:
+                closer.join(1)
+                assert not closer.is_alive()
+        report = service.result(accepted.job_id, principal=principal()).report
+        assert report.usage.provider_attempts == 0
+        assert report.completed_cases == [] and report.uncertain_case_id is None
+    finally:
+        worker.close()
+        if closer is not None:
+            closer.join(5)
