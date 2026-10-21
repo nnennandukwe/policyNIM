@@ -6,8 +6,738 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+
+def _coordinate_first_workload_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold one synthetic query through active snapshots bracketing a real health response."""
+    from threading import Lock
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    bootstrap = tmp_path / "coordinated-provider.py"
+    bootstrap.write_text(
+        '''
+import json, runpy, sys
+from pathlib import Path
+from types import SimpleNamespace
+
+script, config = sys.argv[1:]
+namespace = runpy.run_path(script)
+state = namespace["_serve"].__globals__
+clock = state["time"]
+release = Path(config).parent / "provider-probe-observed"
+calls = 0
+
+def sleep(seconds):
+    """Keep accepted provider work active until its probe responses are bracketed."""
+    global calls
+    calls += 1
+    if calls == 2:
+        deadline = clock.monotonic() + 5
+        while not release.exists():
+            if clock.monotonic() >= deadline:
+                raise RuntimeError("Controlled provider probe wasn't observed.")
+            clock.sleep(0.005)
+    clock.sleep(seconds)
+
+state["time"] = SimpleNamespace(
+    sleep=sleep, monotonic=clock.monotonic, perf_counter=clock.perf_counter
+)
+namespace["_serve"](Path(config))
+''',
+        encoding="utf-8",
+    )
+    original_report = OperationStore.report
+    original_get = httpx.AsyncClient.get
+    first_root: Path | None = None
+    active_before_health = False
+    health_returned = False
+    probe_lock = Lock()
+
+    class ControlledProcess(subprocess.Popen[str]):
+        """Keep the real process class contract while routing one fixture through its gate."""
+
+        def __init__(self, command: list[str], *args: Any, **kwargs: Any) -> None:
+            """Change only the first synthetic server's provider timing."""
+            nonlocal first_root
+            if "--serve-config" in command and first_root is None:
+                config = Path(command[command.index("--serve-config") + 1])
+                first_root = config.parent
+                command = [command[0], str(bootstrap), command[1], str(config)]
+            super().__init__(command, *args, **kwargs)
+
+    def report(path: Path):
+        """Release only after an actual response lies between two active snapshots."""
+        nonlocal active_before_health, health_returned
+        observed = original_report(path)
+        if path.parent == first_root:
+            with probe_lock:
+                if active_before_health and health_returned and observed.active_operations > 0:
+                    (path.parent / "provider-probe-observed").touch()
+                active_before_health = observed.active_operations > 0
+                health_returned = False
+        return observed
+
+    async def get(client, *args, **kwargs):
+        """Mark a successful health response without replacing its real transport or payload."""
+        nonlocal health_returned
+        response = await original_get(client, *args, **kwargs)
+        if args and str(args[0]) == "/healthz" and response.status_code == 200:
+            with probe_lock:
+                health_returned = True
+        return response
+
+    monkeypatch.setattr(subprocess, "Popen", ControlledProcess)
+    monkeypatch.setattr(OperationStore, "report", staticmethod(report))
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+
+def test_provider_gate_waits_for_one_bracketed_probe_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep work active through the post-snapshot when two cycles share active observations."""
+    import asyncio
+    import runpy
+    import threading
+    import time
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    actual_report = OperationStore.report
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    coordinated_report = OperationStore.report
+    original_post, original_get = httpx.AsyncClient.post, httpx.AsyncClient.get
+    zero_observed = threading.Event()
+    ledger_paths: list[Path] = []
+    active_trace: list[int] = []
+    calls, health_calls = 0, 0
+
+    def report(path: Path):
+        """Retain actual public snapshots and start the request only after an empty pre-probe."""
+        observed = coordinated_report(path)
+        if not ledger_paths:
+            ledger_paths.append(path)
+        active_trace.append(observed.active_operations)
+        if observed.active_operations == 0:
+            zero_observed.set()
+        return observed
+
+    async def post(client, *args, **kwargs):
+        """Delay submission until the first cycle's real pre-probe has no active work."""
+        nonlocal calls
+        if kwargs.get("json", {}).get("method") == "tools/call":
+            calls += 1
+            if calls > 1:
+                deadline = time.monotonic() + 5
+                while not zero_observed.is_set():
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.005)
+        return await original_post(client, *args, **kwargs)
+
+    async def get(client, *args, **kwargs):
+        """Force a zero/active first cycle and pause the next response beyond provider delay."""
+        nonlocal health_calls
+        response = await original_get(client, *args, **kwargs)
+        if calls > 1:
+            health_calls += 1
+            if health_calls == 1:
+                deadline = time.monotonic() + 5
+                while (
+                    await asyncio.to_thread(actual_report, ledger_paths[0])
+                ).active_operations == 0:
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.005)
+            elif health_calls == 2:
+                await asyncio.sleep(0.25)
+        return response
+
+    monkeypatch.setattr(OperationStore, "report", staticmethod(report))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "bracketed-capacity.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    scenario = json.loads(output.read_text())["scenarios"][0]
+    assert active_trace[:3] == [0, 1, 1]
+    assert scenario["outcomes"] == {"ok": 1}
+    assert status == 0, {"active_trace": active_trace, "scenario": scenario}
+    assert scenario["paired_active_work_probe_observed"] is True
+
+
+def test_readiness_loss_after_a_paired_probe_cant_complete_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retain a real transient missing-generation 503 after an earlier successful bracket."""
+    import runpy
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_report, original_get = OperationStore.report, httpx.AsyncClient.get
+    fixture_roots: list[Path] = []
+    injected = False
+
+    def report(path: Path):
+        """Locate only the fixture whose public operation report is being measured."""
+        if not fixture_roots:
+            fixture_roots.append(path.parent)
+        return original_report(path)
+
+    async def get(client, *args, **kwargs):
+        """Remove and restore the actual active pointer around one later health request."""
+        nonlocal injected
+        if (
+            fixture_roots
+            and not injected
+            and (fixture_roots[0] / "provider-probe-observed").exists()
+        ):
+            injected = True
+            pointer = fixture_roots[0] / "generations" / "active.json"
+            previous = pointer.read_bytes()
+            pointer.unlink()
+            try:
+                response = await original_get(client, *args, **kwargs)
+                assert response.status_code == 503
+                return response
+            finally:
+                pointer.write_bytes(previous)
+        return await original_get(client, *args, **kwargs)
+
+    monkeypatch.setattr(OperationStore, "report", staticmethod(report))
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "readiness-loss.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--provider-delay",
+            "0.5",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    scenario = json.loads(output.read_text())["scenarios"][0]
+    assert injected
+    assert scenario["paired_active_work_probe_observed"] is True
+    assert scenario["cheap_probe_outcomes"]["health_503"] == 1
+    assert scenario["unexpected_probe_failure_counts"] == {"health:health_503": 1}
+    assert scenario["outcomes"] == {"ok": 1}
+    assert status == 1 and scenario["measurement_complete"] is False
+    assert scenario["managed_identity_verified"] is False
+
+
+@pytest.mark.parametrize("mutation", ["generation", "count", "domain"])
+def test_bad_warmup_retains_the_scenario_and_earlier_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Keep an earlier valid scenario when a later real warmup response has invalid evidence."""
+    import runpy
+
+    import httpx
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_post = httpx.AsyncClient.post
+    calls: dict[str, int] = {}
+
+    async def post(client, *args, **kwargs):
+        """Corrupt only the second server's first completed search response."""
+        response = await original_post(client, *args, **kwargs)
+        if kwargs.get("json", {}).get("method") == "tools/call":
+            server = str(client.base_url)
+            calls[server] = calls.get(server, 0) + 1
+            if len(calls) == 2 and calls[server] == 1:
+                envelope = response.json()
+                content = envelope["result"]["structuredContent"]
+                if mutation == "generation":
+                    content["generation_id"] = "b" * 64
+                elif mutation == "count":
+                    content["hits"] = []
+                else:
+                    content["hits"][0]["policy"]["domain"] = "domain-1"
+                return httpx.Response(200, json=envelope)
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "warmup-failure.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+            "slow-provider",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    result = json.loads(output.read_text())
+    assert status == 1 and result["measurement_complete"] is False
+    first, second = result["scenarios"]
+    assert first["measurement_complete"] is True
+    assert second["measurement_complete"] is False
+    assert second["warmup_outcome"] == (
+        "generation_identity_mismatch" if mutation == "generation" else "retrieval_result_mismatch"
+    )
+    assert second["operator_report"]["outcomes"]["completed"] == 2
+
+
+@pytest.mark.parametrize("mutation", ["generation", "count", "malformed"])
+def test_bad_initial_readiness_retains_earlier_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Keep both real scenarios when a later initial ready response has invalid evidence."""
+    import runpy
+
+    import httpx
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_get = httpx.AsyncClient.get
+    servers: set[str] = set()
+    injected = False
+
+    async def get(client, *args, **kwargs):
+        """Corrupt only the second server's first actual healthy response."""
+        nonlocal injected
+        response = await original_get(client, *args, **kwargs)
+        server = str(client.base_url)
+        if response.status_code == 200 and server not in servers:
+            servers.add(server)
+            if len(servers) == 2:
+                injected = True
+                content = response.json()
+                if mutation == "generation":
+                    content["generation_id"] = "b" * 64
+                elif mutation == "count":
+                    content["row_count"] = 19
+                else:
+                    content = {}
+                return httpx.Response(200, json=content)
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "initial-readiness-failure.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+            "slow-provider",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    result = json.loads(output.read_text())
+    assert injected
+    assert status == 1 and result["measurement_complete"] is False
+    first, second = result["scenarios"]
+    assert first["measurement_complete"] is True
+    assert second["measurement_complete"] is False
+    assert second["readiness_outcome"] == (
+        "health_invalid_response" if mutation == "malformed" else "health_identity_mismatch"
+    )
+    assert second["warmup_outcome"] == "ok"
+    assert second["operator_report"]["outcomes"]["completed"] == 2
+
+
+@pytest.mark.parametrize(
+    ("distribution", "chunks", "fault"),
+    [
+        ("uniform", 10000, "none"),
+        ("skewed", 10000, "none"),
+        ("uniform", 20, "pointer"),
+        ("uniform", 20, "manifest"),
+    ],
+)
+def test_fixture_uses_managed_health_and_search_with_recovery(
+    tmp_path: Path, distribution: str, chunks: int, fault: str
+) -> None:
+    """Exercise the actual application routes and managed reader failures in an owned child."""
+    root = Path(__file__).resolve().parents[1]
+    control = r'''
+import json, runpy, sys
+from collections import Counter
+from pathlib import Path
+from unittest.mock import patch
+from starlette.testclient import TestClient
+from policynim.services.generations import GenerationStore
+from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+from policynim.types import EmbeddingIdentity
+
+script, directory, distribution, count, fault = sys.argv[1:]
+root = Path(directory)
+config = {
+    "chunks": int(count),
+    "distribution": distribution,
+    "tokens": ["fixture"],
+    "port": 12345,
+    "delay": 0,
+}
+config_path = root / "fixture.json"
+config_path.write_text(json.dumps(config))
+
+
+def serve(application, **kwargs):
+    """Inspect normal HTTP routes before, during and after owned generation corruption."""
+    with TestClient(application, base_url="http://127.0.0.1:12345") as client:
+        health = client.get("/healthz")
+        assert health.status_code == 200
+        generation_id = health.json()["generation_id"]
+        assert generation_id is not None, "Harness bypasses managed-generation health."
+        assert health.json()["row_count"] == int(count)
+        identity = EmbeddingIdentity(
+            model="synthetic-orthogonal-4", endpoint="https://synthetic.invalid"
+        )
+        generations = GenerationStore(root=root / "generations", embedding=identity)
+        with generations.pin() as snapshot:
+            assert snapshot.generation_id == generation_id
+            index = SQLiteVecIndexStore(
+                path=snapshot.index_path, embedding_identity=identity
+            )
+            try:
+                observed = Counter(chunk.policy.domain for chunk in index.list_chunks())
+            finally:
+                index.close()
+        expected = (
+            {f"domain-{domain}": int(count) // 4 for domain in range(4)}
+            if distribution == "uniform"
+            else {"domain-0": 9000, "domain-1": 334, "domain-2": 333, "domain-3": 333}
+        )
+        assert observed == expected
+        headers = {
+            "Authorization": "Bearer fixture",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/call",
+            "Mcp-Name": "policy_search",
+        }
+        discovery_headers = {**headers, "Mcp-Method": "tools/list"}
+        discovery_headers.pop("Mcp-Name")
+        discovered = client.post(
+            "/mcp",
+            headers=discovery_headers,
+            json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/list",
+                "params": {"_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                }},
+            },
+        ).json()["result"]
+        assert {tool["name"] for tool in discovered["tools"]} == {
+            "policy_preflight", "policy_search", "policy_compile",
+            "policy_preflight_evidence", "eval_submit", "eval_inspect",
+            "eval_cancel", "eval_result",
+        }
+        assert (root / "eval-workspace" / "jobs" / "jobs.sqlite3").is_file()
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+                "name": "policy_search",
+                "arguments": {
+                    "query": "synthetic-domain-0",
+                    "domain": "domain-0",
+                    "top_k": 5,
+                },
+            },
+        }
+        response = client.post("/mcp", headers=headers, json=payload).json()["result"]
+        assert not response.get("isError", False), response
+        assert response["structuredContent"]["generation_id"] == generation_id
+        assert len(response["structuredContent"]["hits"]) == 5
+        if fault != "none":
+            target = (
+                root / "generations" / "active.json"
+                if fault == "pointer"
+                else root / "generations" / "objects" / generation_id / "manifest.json"
+            )
+            original = target.read_bytes()
+            if fault == "pointer":
+                target.unlink()
+            else:
+                target.write_bytes(b"invalid-generation-manifest")
+            try:
+                assert client.get("/healthz").status_code == 503
+                rejected = client.post("/mcp", headers=headers, json=payload).json()[
+                    "result"
+                ]
+                assert rejected["isError"] is True
+            finally:
+                target.write_bytes(original)
+            recovered = client.get("/healthz")
+            assert recovered.status_code == 200
+            assert recovered.json()["generation_id"] == generation_id
+            response = client.post("/mcp", headers=headers, json=payload).json()["result"]
+            assert not response.get("isError", False)
+            assert response["structuredContent"]["generation_id"] == generation_id
+        print(
+            json.dumps(
+                {"managed_fixture_verified": True, "chunks": int(count), "fault": fault}
+            )
+        )
+
+
+with patch("uvicorn.run", serve):
+    runpy.run_path(script)["_serve"](config_path)
+'''
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            control,
+            str(root / "scripts/measure_hosted_capacity.py"),
+            str(tmp_path),
+            distribution,
+            str(chunks),
+            fault,
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("generation_id", [None, "b" * 64, "a" * 64])
+def test_rpc_binds_success_to_the_published_generation(generation_id: str | None) -> None:
+    """A valid HTTP search envelope from a different or legacy index isn't successful evidence."""
+    import asyncio
+    import runpy
+
+    import httpx
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py")
+    )
+
+    async def inspect() -> tuple[float, str, int]:
+        """Exercise the existing HTTP response parser with a typed search payload."""
+        transport = httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "content": [],
+                        "structuredContent": {
+                            "query": "synthetic-domain-0",
+                            "top_k": 5,
+                            "hits": [],
+                            "generation_id": generation_id,
+                        },
+                    },
+                },
+            )
+        )
+        async with httpx.AsyncClient(base_url="http://fixture", transport=transport) as client:
+            return await namespace["_rpc"](client, "fixture", expected_generation_id="a" * 64)
+
+    _, outcome, count = asyncio.run(inspect())
+    assert outcome == ("ok" if generation_id == "a" * 64 else "generation_identity_mismatch")
+    assert count == 0
+
+
+@pytest.mark.parametrize(
+    ("generation_id", "row_count", "outcome"),
+    [
+        ("a" * 64, 20, "health_200"),
+        (None, 20, "health_identity_mismatch"),
+        ("b" * 64, 20, "health_identity_mismatch"),
+        ("a" * 64, 21, "health_identity_mismatch"),
+    ],
+)
+def test_health_binds_readiness_to_published_generation_and_count(
+    generation_id: str | None, row_count: int, outcome: str
+) -> None:
+    """Neither a legacy response nor a different managed fixture can establish readiness."""
+    import runpy
+
+    import httpx
+
+    namespace = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py")
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "ready": True,
+            "table_name": "policy_chunks",
+            "row_count": row_count,
+            "generation_id": generation_id,
+        },
+    )
+    result, _ = namespace["_inspect_health"](
+        response, {"generation_id": "a" * 64, "chunk_count": 20}
+    )
+    assert result == outcome
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "invalid_rpc_response",
+        "jsonrpc_error",
+        "generation_identity_mismatch",
+        "empty_hits",
+        "wrong_domain",
+        "empty_discovery",
+    ],
+)
+def test_invalid_server_response_cant_complete_managed_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Reject invalid server responses after real warmup and accepted HTTP work."""
+    import runpy
+
+    import httpx
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_post = httpx.AsyncClient.post
+    calls = 0
+
+    async def corrupt_workload(client, *args, **kwargs):
+        """Keep real server execution and corrupt only the measured response after warmup."""
+        nonlocal calls
+        response = await original_post(client, *args, **kwargs)
+        payload = kwargs.get("json", {})
+        if failure == "empty_discovery" and payload.get("method") == "tools/list":
+            envelope = response.json()
+            envelope["result"]["tools"] = []
+            return httpx.Response(200, json=envelope)
+        if payload.get("method") == "tools/call" and failure != "empty_discovery":
+            calls += 1
+            if calls > 1:
+                if failure in {"empty_hits", "wrong_domain"}:
+                    envelope = response.json()
+                    content = envelope["result"]["structuredContent"]
+                    if failure == "empty_hits":
+                        content["hits"] = []
+                    else:
+                        content["hits"][0]["policy"]["domain"] = "domain-1"
+                    return httpx.Response(200, json=envelope)
+                if failure == "jsonrpc_error":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "error": {"code": -32603, "message": "private-response-sentinel"},
+                        },
+                    )
+                if failure == "generation_identity_mismatch":
+                    envelope = response.json()
+                    envelope["result"]["structuredContent"]["generation_id"] = "b" * 64
+                    return httpx.Response(200, json=envelope)
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": payload["id"],
+                        "result": {"content": [], "structuredContent": {"hits": []}},
+                    },
+                )
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", corrupt_workload)
+    output = tmp_path / "malformed-capacity.json"
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    scenario = json.loads(output.read_text())["scenarios"][0]
+    if failure == "empty_discovery":
+        assert scenario["paired_active_work_probe_observed"] is False
+        assert scenario["cheap_probe_outcomes"]["discovery_tool_mismatch"] > 0
+        assert scenario["outcomes"] == {"ok": 1}
+    else:
+        assert scenario["paired_active_work_probe_observed"] is True
+        outcome = (
+            "retrieval_result_mismatch" if failure in {"empty_hits", "wrong_domain"} else failure
+        )
+        assert scenario["outcomes"] == {outcome: 1}
+    assert scenario["operator_report"]["outcomes"]["completed"] == 2
+    assert status == 1 and scenario["measurement_complete"] is False
+    assert scenario["managed_identity_verified"] is False
+    assert "private-response-sentinel" not in output.read_text()
 
 
 def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path: Path) -> None:
@@ -31,6 +761,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
             "--scenarios",
             "baseline",
             "saturation",
+            "slow-provider",
             "locked-database",
             "disconnect",
             "shutdown",
@@ -45,6 +776,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert report["evidence_kind"] == "synthetic_provider_real_http_and_sqlite_vec"
     assert report["live_nvidia_calls"] == 0
     assert report["production_capacity_verified"] is False
+    assert report["configuration"]["index_scope"] == "managed_generation"
     scenarios = {item["scenario"]: item for item in report["scenarios"]}
     failure_summary = json.dumps(
         {
@@ -82,6 +814,7 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
     assert scenarios["locked-database"]["paired_active_work_probe_observed"] is False
     assert scenarios["baseline"]["paired_active_work_probe_observed"] is True
     assert scenarios["saturation"]["paired_active_work_probe_observed"] is True
+    assert scenarios["slow-provider"]["paired_active_work_probe_observed"] is True
     assert scenarios["locked-database"]["server_failure_diagnostics"]["tool_failure_counts"] == {
         "admission_busy": 12
     }, failure_summary
@@ -89,6 +822,12 @@ def test_real_http_capacity_harness_records_limits_and_failure_outcomes(tmp_path
         failure_summary
     )
     for scenario in scenarios.values():
+        fixture = scenario["fixture_publication"]
+        assert fixture["chunk_count"] == 100
+        assert scenario["managed_identity_verified"] is True
+        assert scenario["observed_health_generation_ids"] == [fixture["generation_id"]]
+        assert set(scenario["observed_health_row_counts"]) == {"100"}
+        assert scenario["successful_search_identity_validation"] == "published_generation"
         assert scenario["observed_peak_active_operations"] <= 10
         assert scenario["cheap_probe_outcomes"].get("health_200", 0) > 0
         assert scenario["operator_report"]["active_operations"] == 0
@@ -262,6 +1001,7 @@ def test_public_harness_preserves_prior_scenarios_when_final_state_is_locked(
 
     from policynim.storage.operation_store import HostedOperationReport, OperationStore
 
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
     original = OperationStore.report
     first: Path | None = None
 
