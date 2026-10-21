@@ -77,6 +77,11 @@ class NeMoGuardrailsPreflightGenerator(Generator):
         self._rail_type_output = rail_type_output
         self._owns_rails = owns_rails
 
+    @property
+    def source_extractive(self) -> bool:
+        """Preserve the wrapped generator's explicit no-revision capability."""
+        return getattr(self._base_generator, "source_extractive", False) is True
+
     @classmethod
     def from_settings(cls, settings: Settings) -> NeMoGuardrailsPreflightGenerator:
         """Construct an internal Guardrails-backed generator from settings."""

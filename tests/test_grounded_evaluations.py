@@ -180,7 +180,7 @@ def test_stale_or_impossible_suite_rejected_before_providers(
 
 
 def test_custom_suite_cannot_be_presented_as_offline_quality(tmp_path: Path) -> None:
-    """Synthetic fixtures cannot establish real-corpus evaluation results."""
+    """Synthetic fixtures can't establish real-corpus evaluation results."""
     with pytest.raises(PolicyNIMError, match="Custom suites require --mode live"):
         EvalService(settings=Settings()).run(suite_path=tmp_path / "suite.json")
 
@@ -228,10 +228,6 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
     from policynim.services.search import SearchService
     from policynim.types import (
         EmbeddingIdentity,
-        GeneratedCompiledPolicyDraft,
-        GeneratedPolicyConstraint,
-        GeneratedPolicyGuidance,
-        GeneratedPreflightDraft,
     )
 
     baseline = write_pack(tmp_path / "baseline", "public.baseline", ["A", "B", "C"])
@@ -301,11 +297,14 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
 
         def compile_policy_packet(self, request, selection_packet, context):
             """Compile constraints from the exact supplied source chunks."""
-            return GeneratedCompiledPolicyDraft(
-                required_steps=[
-                    GeneratedPolicyConstraint(statement=chunk.text, citation_ids=[chunk.chunk_id])
-                    for chunk in context
-                ]
+            from policynim.source_units import SourceContext, SourceSelection
+
+            assert isinstance(context, SourceContext)
+            return context.catalog.compiler_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
 
     class Generator:
@@ -313,22 +312,18 @@ def test_real_pipeline_respects_profile_exclusions_and_archives_expectations(
 
         def generate_preflight(self, request, context, *, compiled_packet=None, **kwargs):
             """Return controlled output with the exact supplied policy citations."""
-            return GeneratedPreflightDraft(
-                summary="Apply the selected deployment controls.",
-                applicable_policies=[
-                    GeneratedPolicyGuidance(
-                        policy_id=chunk.policy.policy_id,
-                        title=chunk.policy.title,
-                        rationale="Selected deployment rule",
-                        citation_ids=[chunk.chunk_id],
-                    )
-                    for chunk in context
-                ],
-                citation_ids=[chunk.chunk_id for chunk in context],
+            from policynim.source_units import SourceContext, SourceSelection
+
+            assert isinstance(context, SourceContext)
+            return context.catalog.preflight_draft(
+                SourceSelection(
+                    source_ids=[unit.source_id for unit in context.catalog.units],
+                    insufficient_context=False,
+                )
             )
 
     def search_factory(active_settings, *, rerank_enabled):
-        """Mutating the input file after capture cannot rewrite the job expectations."""
+        """Mutating the input file after capture can't rewrite the job expectations."""
         suite_path.write_text('{"name":"changed","cases":[]}')
         return SearchService(
             embedder=QueryEmbedder(),
@@ -439,13 +434,13 @@ def test_mixed_suite_metrics_include_every_applicable_expectation() -> None:
 def test_shipped_live_expectations_match_the_shipped_catalog(installed_generation) -> None:
     """Policy changes require an explicit reviewed fixture update in offline CI."""
     from policynim.services.catalog import build_policy_catalog
-    from policynim.services.eval import _load_eval_suite, _validate_suite_generation
+    from policynim.services.eval import _load_eval_suite, validate_suite_generation
 
     suite = _load_eval_suite(ROOT / "evals/grounded_cases.json")
     _, generations = installed_generation
     with generations.pin() as snapshot:
         assert snapshot.catalog.digest == build_policy_catalog(ROOT / "policies").digest
-        _validate_suite_generation(suite, snapshot)
+        validate_suite_generation(suite, snapshot)
     assert all(
         case.expected_chunk_ids for case in suite.cases if not case.expected_insufficient_context
     )

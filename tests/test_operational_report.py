@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import sqlite3
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from test_grounded_mcp import generation as generation_fixture
 from typer.testing import CliRunner
 
 from policynim.errors import PolicyNIMError
@@ -22,6 +24,8 @@ from policynim.services.operation_admission import admit_operation
 from policynim.services.operational_report import inspect_operational_report
 from policynim.settings import Settings
 from policynim.storage.operation_store import OperationStore
+
+generation = generation_fixture
 
 
 def test_retention_preserves_active_and_current_day_usage(tmp_path: Path) -> None:
@@ -331,6 +335,7 @@ def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
             "mcp_bearer_tokens": ["fixture-key"],
             "beta_auth_db_path": tmp_path / "auth.sqlite3",
             "index_db_path": tmp_path / "index.sqlite3",
+            "eval_workspace_dir": tmp_path / "evaluations",
         }
     )
     failures: list[str | None] = []
@@ -376,28 +381,96 @@ def test_unexpected_http_tool_exception_never_reaches_sdk_trace_logs(
     assert "private-token" not in json.dumps(diagnostic)
 
 
+def test_report_observes_active_generation_and_real_job_backlog(generation, tmp_path: Path) -> None:
+    """Provider-free telemetry reflects the served generation and persisted application jobs."""
+    from test_evaluation_jobs import job_setup, principal
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    operations = OperationStore(service.settings.beta_auth_db_path)
+    try:
+        service.submit(suite, idempotency_key="report", principal=principal())
+        report = inspect_operational_report(service.settings)
+        assert report["index_state"] == "ready"
+        assert report["active_generation"] == generation_id
+        assert report["served_generation"] == generation_id
+        assert report["generation_selection"] == "active"
+        assert report["job_backlog"] == {"queued": 1}
+        assert report["job_telemetry_status"] == "available"
+        assert "report" not in json.dumps(report["job_backlog"])
+    finally:
+        operations.close()
+
+
+def test_report_doesnt_claim_damaged_generation_is_ready(generation, tmp_path: Path) -> None:
+    """A malformed activation pointer yields invalid readiness without guessing an identity."""
+    settings, _, _ = generation
+    operations = OperationStore(tmp_path / "operator.sqlite3")
+    settings = settings.model_copy(
+        update={"beta_auth_db_path": operations.path, "eval_workspace_dir": tmp_path / "absent"}
+    )
+    (settings.generations_dir / "active.json").write_text("{}")
+    try:
+        report = inspect_operational_report(settings)
+        assert report["index_state"] == "invalid" and report["active_generation"] is None
+        assert report["job_backlog"] is None
+        assert report["job_telemetry_status"] == "unavailable_no_job_store"
+        assert not settings.eval_workspace_dir.exists()
+    finally:
+        operations.close()
+
+
+@pytest.mark.parametrize("fail_inspect", [False, True])
+def test_report_closes_generation_adapter_after_success_or_failed_inspection(
+    generation, tmp_path: Path, monkeypatch, fail_inspect: bool
+) -> None:
+    """A factory-owned generation lease drains even when its inspector raises unexpectedly."""
+    from policynim.services import operational_report as module
+    from policynim.storage.index_readiness import IndexReadinessReport
+
+    settings, _, generation_id = generation
+    operations = OperationStore(tmp_path / "operator.sqlite3")
+    settings = settings.model_copy(update={"beta_auth_db_path": operations.path})
+    closed: list[bool] = []
+    adapter = SimpleNamespace(generation_id=generation_id, close=lambda: closed.append(True))
+    monkeypatch.setattr(module, "create_index_store", lambda _: adapter)
+
+    def inspect(_):
+        """Inject at the public adapter inspector, retaining real activation validation."""
+        if fail_inspect:
+            raise RuntimeError("fixture inspector failed")
+        return IndexReadinessReport(state="ready", chunk_count=2, compatible=True)
+
+    monkeypatch.setattr(module, "inspect_index_readiness", inspect)
+    try:
+        if fail_inspect:
+            with pytest.raises(RuntimeError, match="fixture inspector failed"):
+                inspect_operational_report(settings)
+        else:
+            assert inspect_operational_report(settings)["active_generation"] == generation_id
+    finally:
+        operations.close()
+    assert closed == [True]
+
+
 @pytest.mark.parametrize("inspection_fails", [False, True])
 def test_report_closes_owned_index_after_inspection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inspection_fails: bool
+    generation, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inspection_fails: bool
 ) -> None:
     """Release a generation-capable index handle on success and inspection failure."""
     from unittest.mock import Mock
 
-    from policynim.services import inventory
+    from policynim.services import operational_report
     from policynim.storage.index_readiness import IndexReadinessReport
 
     store = OperationStore(tmp_path / "auth.sqlite3")
-    settings = Settings().model_copy(update={"beta_auth_db_path": store.path})
-    index = Mock(path=tmp_path / "index.sqlite3")
-    monkeypatch.setattr(inventory, "create_index_store", lambda settings: index)
-    monkeypatch.setattr(
-        inventory, "pinned_generation", lambda index: SimpleNamespace(generation_id="a" * 64)
-    )
+    settings = generation[0].model_copy(update={"beta_auth_db_path": store.path})
+    index = Mock()
+    monkeypatch.setattr(operational_report, "create_index_store", lambda settings: index)
     inspect = Mock(
         side_effect=RuntimeError("inspection failed") if inspection_fails else None,
         return_value=IndexReadinessReport(state="missing"),
     )
-    monkeypatch.setattr(inventory, "inspect_index_readiness", inspect)
+    monkeypatch.setattr(operational_report, "inspect_index_readiness", inspect)
     if inspection_fails:
         with pytest.raises(RuntimeError, match="inspection failed"):
             inspect_operational_report(settings)
@@ -475,8 +548,37 @@ def test_retention_backlog_is_batched_during_concurrent_admission(tmp_path: Path
     assert report.retained_rows == 3002 and report.active_operations == 2
 
 
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("failure_errno", [errno.EROFS, errno.ENOSPC, errno.EIO, errno.EDQUOT])
+def test_report_marks_inaccessible_lease_metadata_unreadable(
+    generation, tmp_path: Path, monkeypatch, wrapped: bool, failure_errno: int
+) -> None:
+    """Storage access failure at reader admission can't masquerade as index corruption."""
+    from policynim.errors import GenerationError
+    from policynim.services import operational_report as module
+
+    settings, _, _ = generation
+    store = OperationStore(tmp_path / "operator.sqlite3")
+    settings = settings.model_copy(update={"beta_auth_db_path": store.path})
+
+    def reject_lease(*args, **kwargs):
+        """Represent disk capacity, I/O and permission failures at reader admission."""
+        error = OSError(failure_errno, "private-generation-path")
+        if wrapped:
+            raise GenerationError("pin", "Reader metadata isn't writable.") from error
+        raise error
+
+    monkeypatch.setattr(module.GenerationStore, "read_activation", reject_lease)
+    try:
+        report = inspect_operational_report(settings)
+        assert report["index_state"] == "unreadable" and report["active_generation"] is None
+        assert "private-generation-path" not in json.dumps(report)
+    finally:
+        store.close()
+
+
 def test_callback_storage_error_keeps_cause_class_without_payload(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The real browser callback doesn't label unknown local failures as upstream failures."""
     from urllib.parse import parse_qs, urlsplit
@@ -499,7 +601,9 @@ def test_callback_storage_error_keeps_cause_class_without_payload(
     with (
         caplog.at_level(logging.ERROR),
         TestClient(
-            mcp._build_streamable_http_app(_self_serve_hosted_settings()),
+            mcp._build_streamable_http_app(
+                _self_serve_hosted_settings(eval_workspace_dir=tmp_path / "evaluations")
+            ),
             base_url="https://beta.example.com",
         ) as client,
     ):
@@ -562,6 +666,50 @@ def test_readonly_report_separates_live_crashed_and_unknown_ownership(tmp_path: 
     assert report.unknown_owner_operations == report.reserved_operations == 1
 
 
+@pytest.mark.parametrize("damage", ["legacy", "symlink", "broken_symlink", "corrupt"])
+def test_report_preserves_generation_when_job_store_is_unavailable(generation, tmp_path, damage):
+    """One damaged telemetry source can't hide independently verified generation readiness."""
+    settings, _, generation_id = generation
+    operations = OperationStore(tmp_path / "operator.sqlite3")
+    workspace = tmp_path / "evaluations"
+    path = workspace / "jobs" / "jobs.sqlite3"
+    path.parent.mkdir(parents=True)
+    if damage == "legacy":
+        with sqlite3.connect(path) as db:
+            db.execute("PRAGMA user_version=1")
+    elif damage in {"symlink", "broken_symlink"}:
+        target = tmp_path / "private-target.sqlite3"
+        if damage == "symlink":
+            target.write_bytes(b"private-content")
+        path.symlink_to(target)
+    else:
+        path.write_bytes(b"private-corrupt-database")
+    before = path.read_bytes() if damage != "broken_symlink" else None
+    settings = settings.model_copy(
+        update={"beta_auth_db_path": operations.path, "eval_workspace_dir": workspace}
+    )
+    try:
+        report = inspect_operational_report(settings)
+        assert report["index_state"] == "ready"
+        assert report["active_generation"] == generation_id
+        assert report["job_backlog"] is None
+        assert report["job_telemetry_status"] == "unavailable"
+        assert (
+            report["job_telemetry_reason"]
+            == {
+                "legacy": "job_store_version",
+                "symlink": "job_store_invalid",
+                "broken_symlink": "job_store_invalid",
+                "corrupt": "job_store_unreadable",
+            }[damage]
+        )
+        assert (path.read_bytes() if damage != "broken_symlink" else None) == before
+        assert path.is_symlink() == (damage in {"symlink", "broken_symlink"})
+        assert "private" not in json.dumps(report)
+    finally:
+        operations.close()
+
+
 @pytest.mark.parametrize("corrupt_pointer", [False, True])
 def test_operational_report_inspects_managed_generation_without_legacy_fallback(
     tmp_path: Path, corrupt_pointer: bool
@@ -596,3 +744,222 @@ def test_operational_report_inspects_managed_generation_without_legacy_fallback(
         assert report["active_generation"] == published.generation_id
         assert isinstance(report["indexed_chunks"], int) and report["indexed_chunks"] > 0
     assert not list((settings.generations_dir / "leases").rglob("*.lock"))
+
+
+@pytest.mark.parametrize(
+    "code", [sqlite3.SQLITE_CANTOPEN, sqlite3.SQLITE_IOERR, sqlite3.SQLITE_READONLY]
+)
+def test_report_classifies_wrapped_sqlite_access_errors_as_unreadable(
+    generation, tmp_path: Path, monkeypatch, code: int
+) -> None:
+    """Index inspection access errors stay separate from damaged generation content."""
+    from policynim.errors import GenerationError
+    from policynim.services import operational_report as module
+
+    settings, _, _ = generation
+    settings = settings.model_copy(update={"beta_auth_db_path": tmp_path / "operator.sqlite3"})
+    OperationStore(settings.beta_auth_db_path).close()
+
+    def inaccessible_index(*args, **kwargs):
+        """Inject the typed SQLite error surfaced by the public index factory."""
+        error = sqlite3.OperationalError("private-state-path")
+        error.sqlite_errorcode = code
+        try:
+            raise error
+        except sqlite3.Error as cause:
+            raise GenerationError("pin", "Index couldn't be read.") from cause
+
+    monkeypatch.setattr(module, "create_index_store", inaccessible_index)
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == "unreadable"
+    assert "private-state-path" not in json.dumps(report)
+
+
+def test_bad_embedding_configuration_uses_operator_configuration_error(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """The actual operator command returns recovery guidance instead of Pydantic details."""
+    from policynim.errors import ConfigurationError
+
+    settings, _, _ = generation
+    settings = settings.model_copy(
+        update={"beta_auth_db_path": tmp_path / "operator.sqlite3", "nvidia_embed_model": ""}
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    with pytest.raises(ConfigurationError, match="POLICYNIM_NVIDIA_EMBED_MODEL"):
+        inspect_operational_report(settings)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    result = CliRunner().invoke(cli.app, ["beta-admin", "operations"])
+    assert result.exit_code == 1
+    assert "POLICYNIM_NVIDIA_EMBED_MODEL" in result.output
+    assert "ValidationError" not in result.output and "input_value" not in result.output
+
+
+@pytest.mark.parametrize("without_pointer", [False, True])
+def test_operator_report_separates_active_pointer_from_served_pin(
+    generation, tmp_path, without_pointer: bool
+) -> None:
+    """A retained serving pin stays ready even when no active pointer exists."""
+    from test_ingest_service import MockEmbedder
+
+    settings, generations, served_id = generation
+    source = Path(settings.corpus_dir) / "A.md"
+    source.write_text(source.read_text() + "\nA later reviewed revision.\n")
+    active = generations.build(settings, embedder=MockEmbedder())
+    assert active.generation_id != served_id
+    pointer = settings.generations_dir / "active.json"
+    if without_pointer:
+        pointer.unlink()
+    before = pointer.read_bytes() if pointer.exists() else None
+    settings = settings.model_copy(
+        update={"generation_id": served_id, "beta_auth_db_path": tmp_path / "operator.sqlite3"}
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    report = inspect_operational_report(settings)
+    assert report["generation_state"] == report["index_state"] == "ready"
+    assert report["served_generation"] == served_id
+    assert report["generation_selection"] == "pinned"
+    assert report["active_generation"] == (None if without_pointer else active.generation_id)
+    assert isinstance(report["indexed_chunks"], int) and report["indexed_chunks"] > 0
+    assert (pointer.read_bytes() if pointer.exists() else None) == before
+    assert not list((settings.generations_dir / "leases").rglob("*.lock"))
+
+
+def test_operator_generation_sample_uses_the_reader_admission_pointer(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """Publication between preliminary pointer read and pin can't split the reported selection."""
+    from test_ingest_service import MockEmbedder
+
+    from policynim.services import operational_report as module
+
+    settings, generations, original_id = generation
+    settings = settings.model_copy(update={"beta_auth_db_path": tmp_path / "operator.sqlite3"})
+    OperationStore(settings.beta_auth_db_path).close()
+    create = module.create_index_store
+    published: list[str] = []
+
+    def rotate_before_pin(values: Settings):
+        """Publish through the real generation service just before the reader factory runs."""
+        assert values.corpus_dir is not None
+        source = values.corpus_dir / "A.md"
+        source.write_text(source.read_text() + "\nA concurrent reviewed revision.\n")
+        published.append(generations.build(values, embedder=MockEmbedder()).generation_id)
+        return create(values)
+
+    monkeypatch.setattr(module, "create_index_store", rotate_before_pin)
+    report = inspect_operational_report(settings)
+    assert published and published[0] != original_id
+    assert report["active_generation"] == report["served_generation"] == published[0]
+    assert report["generation_selection"] == "active" and report["generation_state"] == "ready"
+
+
+@pytest.mark.parametrize(
+    ("damage", "expected"), [("absent_pin", "missing"), ("missing_artifact", "invalid")]
+)
+def test_operator_report_separates_absent_selection_from_damaged_artifacts(
+    generation, tmp_path, damage: str, expected: str
+) -> None:
+    """An absent retained object differs from corruption inside an existing sealed object."""
+    settings, generations, active_id = generation
+    selected = "f" * 64 if damage == "absent_pin" else active_id
+    if damage == "missing_artifact":
+        with generations.pin(active_id) as snapshot:
+            artifact = snapshot.index_path
+        artifact.unlink()
+    settings = settings.model_copy(
+        update={"generation_id": selected, "beta_auth_db_path": tmp_path / "operator.sqlite3"}
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == report["generation_state"] == expected
+    assert report["active_generation"] == active_id
+    assert report["served_generation"] is None and report["generation_selection"] == "pinned"
+
+
+def test_operator_report_retains_legacy_inventory_without_serving_it(tmp_path: Path) -> None:
+    """An unmigrated local index remains visible without claiming managed retrieval is ready."""
+    from test_policy_generations import seed_legacy
+
+    settings, _, index, _ = seed_legacy(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "generations_dir": tmp_path / "absent-managed-root",
+            "beta_auth_db_path": tmp_path / "operator.sqlite3",
+            "index_db_path": index,
+        }
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    before = index.read_bytes()
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == "ready" and report["generation_state"] == "migration_required"
+    assert report["indexed_chunks"] == 4
+    assert report["index_build_id"] is not None
+    assert report["active_generation"] is report["served_generation"] is None
+    assert index.read_bytes() == before and not settings.generations_dir.exists()
+
+
+@pytest.mark.parametrize("explicit_pin", [False, True])
+def test_operator_report_dangling_active_target_is_invalid(generation, tmp_path, explicit_pin):
+    """A pointer naming a removed sealed object represents damaged managed state."""
+    settings, generations, active_id = generation
+    with generations.pin(active_id) as snapshot:
+        directory = snapshot.directory
+    directory.rename(tmp_path / "moved-sealed-object")
+    settings = settings.model_copy(
+        update={
+            "beta_auth_db_path": tmp_path / "operator.sqlite3",
+            "generation_id": active_id if explicit_pin else None,
+        }
+    )
+    OperationStore(settings.beta_auth_db_path).close()
+    report = inspect_operational_report(settings)
+    assert report["index_state"] == report["generation_state"] == "invalid"
+    assert report["active_generation"] == active_id and report["served_generation"] is None
+
+
+@pytest.mark.parametrize("root_state", ["absent", "file", "unowned", "symlink", "dangling_symlink"])
+@pytest.mark.parametrize("relative", [False, True])
+def test_missing_pinned_generation_root_stays_separate_from_invalid_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_state: str, relative: bool
+) -> None:
+    """An absent historical selection isn't evidence that a managed store's damaged."""
+    root = tmp_path / "generations"
+    if root_state == "file":
+        root.write_bytes(b"retained-private-root-file")
+    elif root_state == "unowned":
+        root.mkdir()
+    elif root_state == "symlink":
+        target = tmp_path / "existing-target"
+        target.mkdir()
+        root.symlink_to(target, target_is_directory=True)
+    elif root_state == "dangling_symlink":
+        root.symlink_to(tmp_path / "absent-target", target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    auth_path = tmp_path / "auth.sqlite3"
+    OperationStore(auth_path).close()
+    settings = Settings().model_copy(
+        update={
+            "beta_auth_db_path": auth_path,
+            "generations_dir": Path("generations") if relative else root,
+            "generation_id": "0" * 64,
+            "index_db_path": tmp_path / "absent-index.sqlite3",
+            "eval_workspace_dir": tmp_path / "evaluations",
+        }
+    )
+    report = inspect_operational_report(settings)
+    expected = "missing" if root_state == "absent" else "invalid"
+    assert report["generation_state"] == report["index_state"] == expected
+    assert report["active_generation"] is report["served_generation"] is None
+    assert report["generation_selection"] == "pinned"
+    assert "retained-private" not in json.dumps(report)
+    if root_state == "absent":
+        assert not root.exists()
+    elif root_state == "file":
+        assert root.read_bytes() == b"retained-private-root-file"
+    elif root_state == "unowned":
+        assert list(root.iterdir()) == []
+    elif root_state == "symlink":
+        assert root.is_symlink() and list((tmp_path / "existing-target").iterdir()) == []
+    else:
+        assert root.is_symlink() and not root.exists()

@@ -3,8 +3,10 @@
 ## Purpose
 
 PolicyNIM is a policy-aware preflight layer for AI coding agents. It turns a small
-Markdown policy corpus into grounded implementation guidance with citations, while
-keeping the public system easy to inspect from the terminal.
+Markdown policy corpus into selected whole-source quotations with citations, while
+keeping the public system easy to inspect from the terminal. Source fidelity
+doesn't establish applicability or source trust; see the
+[source-extractive guidance contract](source-extractive-guidance.md).
 
 The architecture stays intentionally small:
 
@@ -78,7 +80,7 @@ Current retrieval design choices:
 ### Task-Aware Routing Flow
 
 `PolicyRouterService` is the selection-only layer between raw retrieval and
-grounded synthesis.
+whole-source compilation and preflight.
 
 Routing flow:
 
@@ -102,14 +104,14 @@ Compiler flow:
 
 1. route the task into a retained `PolicySelectionPacket`
 2. stop before NVIDIA compilation when routed evidence is weak
-3. send selected policy evidence to the NVIDIA policy compiler
-4. validate every compiled constraint citation against retained chunk IDs
-5. materialize public citations and source policy IDs
+3. bind complete policy bodies to the held generation
+4. ask NVIDIA for compact source IDs and materialize full bodies locally
+5. validate exact source text, owner metadata and complete citations
 6. return a JSON-first `CompiledPolicyPacket`
 
 Policy compilation adds no new environment variable or artifact directory. It
 reuses the existing NVIDIA chat model setting and fails closed when generated
-constraints are malformed, unsupported, or uncited.
+selections or custom-provider statements are malformed, unsupported, or uncited.
 
 ### Grounded Preflight Flow
 
@@ -118,12 +120,11 @@ constraints are malformed, unsupported, or uncited.
 Preflight flow:
 
 1. compile the task into a retained `CompiledPolicyPacket`
-2. pass compiled constraints plus retained policy evidence to the grounded
-   generator
-3. receive a structured draft that cites retrieved chunk IDs
-4. merge compiled plan steps, guidance, flags, and test expectations
-5. validate every cited chunk ID against the retained result set
-6. materialize public citations and policy guidance
+2. bind the same held complete sources at the generator boundary
+3. ask for compact IDs retaining the compiled source set
+4. materialize each full body once, with fixed service summary and rationale
+5. reject any unsupported custom-provider prose or altered source metadata
+6. materialize canonical citations; leave synthesized advisory lists empty
 7. return a JSON-first `PreflightResult`
 
 When the CLI passes `--trace`, `PreflightService.preflight_with_trace()` exposes
@@ -159,10 +160,13 @@ Regeneration flow:
    chunk set, and citation IDs
 7. stop on pass, max retry, no material trigger, or insufficient context
 
-The regeneration prompt receives the previous validated `PreflightResult`, typed
-triggers, the unchanged compiled packet, and the retained chunks. It does not use
-loose prose feedback as control flow. Provider and configuration failures remain
-explicit errors and do not trigger retries.
+Regeneration retains the unchanged compiled source set and complete source
+ownership. Attempt and typed-trigger records stay compatible, but each accepted
+attempt materializes the same quotations; it can't synthesize a corrected recipe.
+Explicit NVIDIA extractive mode, including its Guardrails wrapper, stops after a
+failed judgment with `no_material_trigger` rather than repeating paid calls.
+Custom providers retain their existing retry contract unless they opt into that mode.
+Provider and configuration failures remain explicit errors and don't trigger retries.
 
 Regeneration is intentionally not exposed through MCP. It is a CLI and eval
 quality workflow, not a generic agent runner or persistent trace database.
@@ -258,8 +262,8 @@ Important evaluation rules:
   reranking, selected-policy grouping, and citation-preserving route packets.
 - `PolicyCompilerService` handles routed evidence selection, constraint
   compilation, and compiled-packet citation validation.
-- `PreflightService` handles compiled evidence conditioning, grounded synthesis,
-  and citation validation.
+- `PreflightService` handles held-source binding, exact quotation validation,
+  and canonical citations.
 - `PolicyRegenerationService` handles the bounded compile-once,
   generate/evaluate/regenerate loop for CLI and eval preflight cases.
 - `RuntimeDecisionService` compiles and matches runtime rules against the local
@@ -431,8 +435,8 @@ NVIDIA-hosted APIs are used for:
 - document embeddings during ingest
 - query embeddings during search, route, and preflight
 - reranking retrieved candidates
-- policy compilation for planning and generation constraints
-- grounded generation for preflight
+- compact whole-source selection for compilation
+- compact source-set confirmation for preflight
 - live `eval --backend nemo` final-adherence judging
 - live `eval --backend nemo_evaluator|nat` and `preflight --regenerate` package
   adapter paths when the optional packages are installed

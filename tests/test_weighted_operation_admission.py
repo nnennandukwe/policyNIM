@@ -736,3 +736,77 @@ def test_terminal_reconciliation_recovers_from_bounded_writer_contention(tmp_pat
         assert pending.result(timeout=3) == "cancelled"
     assert accept(admission, "after-lock", units=1).work_units == 1
     admission.store.close()
+
+
+@pytest.mark.parametrize("preflight", [False, True])
+def test_oversized_work_doesnt_get_impossible_midnight_retry_advice(tmp_path, preflight):
+    """A request exceeding the whole daily allowance needs splitting instead of a later date."""
+    admission = service(tmp_path, quota=5)
+    try:
+        operation = admission.check_work_allowance if preflight else admission.accept_work
+        with pytest.raises(OperationAdmissionError) as caught:
+            operation(
+                principal=principal(),
+                operation_name="policy_search",
+                reservation_key="a" * 64,
+                request_digest="b" * 64,
+                work_units=6,
+            )
+        message = str(caught.value)
+        assert message.startswith("quota_exceeded:")
+        assert "smaller" in message and "00:00" not in message
+        assert admission.store.usage(principal_identity(principal().issuer, "alice")).accepted == 0
+        accept(admission, units=4)
+        with pytest.raises(OperationAdmissionError, match="00:00 UTC"):
+            operation(
+                principal=principal(),
+                operation_name="policy_search",
+                reservation_key="c" * 64,
+                request_digest="d" * 64,
+                work_units=2,
+            )
+    finally:
+        admission.store.close()
+
+
+@pytest.mark.parametrize("prepaid", [False, True])
+def test_operator_stop_probe_records_interrupted_after_operation_cleanup(tmp_path, prepaid):
+    """Both public execution APIs keep operator stops separate from caller cancellation."""
+    admission = service(tmp_path)
+    stopped = [False]
+
+    def operation():
+        """Finish the owned work before exposing the operator stop signal."""
+        stopped[0] = True
+        return "drained"
+
+    try:
+        if prepaid:
+            accepted = accept(admission, units=1)
+            assert (
+                admission.run_accepted(
+                    operation,
+                    operation_id=accepted.operation_id,
+                    principal=principal(),
+                    operation_name="policy_search",
+                    cancelled=lambda: False,
+                    interrupted=lambda: stopped[0],
+                )
+                == "drained"
+            )
+        else:
+            assert (
+                admission.run(
+                    operation,
+                    principal=principal(),
+                    operation_name="policy_search",
+                    cancelled=lambda: False,
+                    interrupted=lambda: stopped[0],
+                )
+                == "drained"
+            )
+        report = admission.store.report(admission.store.path)
+        assert report.outcomes == {"interrupted": 1}
+        assert report.active_operations == 0
+    finally:
+        admission.store.close()

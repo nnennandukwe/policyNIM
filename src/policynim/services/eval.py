@@ -17,6 +17,8 @@ from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
 
+import httpx
+
 from policynim.contracts import Generator, IndexStore, Reranker
 from policynim.errors import PolicyNIMError
 from policynim.ingest import chunk_policy_documents
@@ -36,6 +38,7 @@ from policynim.services.preflight import PreflightService
 from policynim.services.regeneration import PolicyRegenerationService
 from policynim.services.search import SearchService
 from policynim.settings import Settings, get_settings
+from policynim.source_units import SourceCatalog, SourceContext, SourceSelection, SourceUnit
 from policynim.types import (
     Citation,
     CompiledPolicyConstraint,
@@ -57,7 +60,6 @@ from policynim.types import (
     EvalSuite,
     GeneratedCompiledPolicyDraft,
     GeneratedPolicyConformanceDraft,
-    GeneratedPolicyConstraint,
     GeneratedPolicyGuidance,
     GeneratedPreflightDraft,
     GenerationID,
@@ -140,7 +142,7 @@ class EvalService:
                 snapshot = pinned_generation(store)
                 if snapshot is None:
                     raise PolicyNIMError("Live evaluation requires a verified policy generation.")
-                _validate_suite_generation(suite, snapshot)
+                validate_suite_generation(suite, snapshot)
                 worker = EvalService(
                     settings=self._settings.model_copy(
                         update={"generation_id": snapshot.generation_id}, deep=True
@@ -191,7 +193,7 @@ class EvalService:
             snapshot = pinned_generation(store)
             if snapshot is None or snapshot.generation_id != self._settings.generation_id:
                 raise PolicyNIMError("Case evaluation couldn't pin its requested generation.")
-            _validate_suite_generation(captured, snapshot)
+            validate_suite_generation(captured, snapshot)
             results = self._run_suite_cases(
                 captured.model_copy(update={"cases": [case]}),
                 mode="live",
@@ -379,11 +381,14 @@ class EvalService:
             reranker=_OfflineReranker() if rerank_enabled else None,
         )
         preflight_service = PreflightService(
-            embedder=embedder,
-            index_store=store,
-            reranker=_OfflineReranker() if rerank_enabled else _PassThroughReranker(),
+            compiler_service=PolicyCompilerService(
+                embedder=embedder,
+                index_store=store,
+                reranker=_OfflineReranker() if rerank_enabled else _PassThroughReranker(),
+                compiler=_OfflinePolicyCompiler(),
+                source_catalog_resolver=_offline_source_catalog,
+            ),
             generator=_OfflineGenerator(),
-            compiler=_OfflinePolicyCompiler(),
         )
         conformance_service = (
             PolicyConformanceService(evaluator=_OfflinePolicyConformanceEvaluator())
@@ -397,6 +402,7 @@ class EvalService:
                     index_store=store,
                     reranker=_OfflineReranker() if rerank_enabled else _PassThroughReranker(),
                     compiler=_OfflinePolicyCompiler(),
+                    source_catalog_resolver=_offline_source_catalog,
                 ),
                 generator=_OfflineGenerator(),
                 conformance_service=PolicyConformanceService(
@@ -901,27 +907,8 @@ def _score_preflight_case(
     missing_chunks = [value for value in case.expected_chunk_ids if value not in matched_chunk_ids]
     if missing_chunks:
         failure_reasons.append("missing expected chunk_id values: " + ", ".join(missing_chunks))
-    observed_policies = set(actual_policy_ids) | {item.policy_id for item in result.citations}
-    if evidence_trace is not None:
-        observed_policies.update(item.policy_id for item in evidence_trace.chunks)
-        observed_policies.update(item.policy_id for item in evidence_trace.selected_policies)
-        for constraint in evidence_trace.constraints:
-            observed_policies.update(constraint.source_policy_ids)
-    narrative = "\n".join(
-        [
-            result.summary,
-            *result.plan_steps,
-            *result.implementation_guidance,
-            *result.review_flags,
-            *result.tests_required,
-            *(policy.rationale for policy in result.applicable_policies),
-            *(policy.title for policy in result.applicable_policies),
-        ]
-    )
-    observed_policies.update(
-        policy_id
-        for policy_id in case.forbidden_policy_ids
-        if re.search(r"(?<![\w-])" + re.escape(policy_id) + r"(?![\w-])", narrative)
+    observed_policies = _observed_preflight_policy_ids(
+        result, evidence_trace, case.forbidden_policy_ids
     )
     failure_reasons.extend(_forbidden_policy_failures(case, observed_policies))
     if result.insufficient_context and (
@@ -985,6 +972,69 @@ def _score_preflight_case(
     )
 
 
+def _observed_preflight_policy_ids(
+    result: PreflightResult,
+    evidence_trace: PolicyEvidenceTrace | None,
+    forbidden_ids: Sequence[str],
+    *,
+    canonical_quotes: set[str] | None = None,
+) -> set[str]:
+    """Keep metadata authoritative while scanning unmatched prose for forbidden IDs."""
+    observed = {policy.policy_id for policy in result.applicable_policies}
+    observed.update(citation.policy_id for citation in result.citations)
+    if evidence_trace is not None:
+        observed.update(chunk.policy_id for chunk in evidence_trace.chunks)
+        observed.update(policy.policy_id for policy in evidence_trace.selected_policies)
+        for constraint in evidence_trace.constraints:
+            observed.update(constraint.source_policy_ids)
+    prose = [
+        result.summary,
+        *result.plan_steps,
+        *result.implementation_guidance,
+        *result.review_flags,
+        *result.tests_required,
+        *(policy.rationale for policy in result.applicable_policies),
+    ]
+    narrative = "\n".join(
+        [
+            *(text for text in prose if text not in (canonical_quotes or set())),
+            *(policy.title for policy in result.applicable_policies),
+        ]
+    )
+    observed.update(
+        policy_id
+        for policy_id in forbidden_ids
+        if re.search(r"(?<![\w-])" + re.escape(policy_id) + r"(?![\w-])", narrative)
+    )
+    return observed
+
+
+def _canonical_full_source_quotes(
+    result: PreflightResult, snapshot: GenerationSnapshot
+) -> set[str]:
+    """Independently prove complete source text and owner coordinates from the held generation."""
+    if result.generation_id != snapshot.generation_id:
+        return set()
+    citations = {citation.chunk_id: citation for citation in result.citations}
+    guidance = {policy.policy_id: policy for policy in result.applicable_policies}
+    if len(citations) != len(result.citations) or len(guidance) != len(result.applicable_policies):
+        return set()
+    quotes: set[str] = set()
+    for document in snapshot.documents:
+        owner = guidance.get(document.metadata.policy_id)
+        if owner is None or owner.title != document.metadata.title:
+            continue
+        expected = {
+            chunk.chunk_id: _eval_citation(chunk) for chunk in chunk_policy_documents([document])
+        }
+        if sorted(owner.citation_ids) != sorted(expected):
+            continue
+        if any(citations.get(chunk_id) != citation for chunk_id, citation in expected.items()):
+            continue
+        quotes.add(document.body)
+    return quotes
+
+
 def _build_failure_reasons(
     *,
     expected_insufficient_context: bool,
@@ -1006,6 +1056,7 @@ def _build_failure_reasons(
 
 
 def _aggregate_metrics(case_results: Sequence[EvalCaseResult]) -> EvalAggregateMetrics:
+    """Aggregate executed case outcomes while keeping missing expectations separately counted."""
     search_results = [result for result in case_results if result.kind == "search"]
     preflight_results = [result for result in case_results if result.kind == "preflight"]
     conformance_results = [
@@ -1167,7 +1218,7 @@ def _forbidden_policy_failures(case: EvalCase, observed: Sequence[str] | set[str
     return ["forbidden policy_id values: " + ", ".join(unexpected)] if unexpected else []
 
 
-def _validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
+def validate_suite_generation(suite: EvalSuite, snapshot: GenerationSnapshot) -> None:
     """Reject stale or impossible custom fixtures before constructing provider services."""
     if suite.expected_catalog_digest is None and not suite.expected_policy_revisions:
         raise PolicyNIMError(
@@ -1210,6 +1261,24 @@ def _validate_case_evidence(
     }
     for result in results:
         failures = list(result.failure_reasons)
+        if result.preflight_result is not None:
+            quotes = _canonical_full_source_quotes(result.preflight_result, snapshot)
+            if quotes:
+                failures = [
+                    failure
+                    for failure in failures
+                    if not failure.startswith("forbidden policy_id values: ")
+                ]
+                observed = _observed_preflight_policy_ids(
+                    result.preflight_result,
+                    result.evidence_trace,
+                    result.forbidden_policy_ids,
+                    canonical_quotes=quotes,
+                )
+                forbidden = sorted(set(result.forbidden_policy_ids) & observed)
+                if forbidden:
+                    failures.append("forbidden policy_id values: " + ", ".join(forbidden))
+
         for citation in result.actual_citations:
             if expected.get(citation.chunk_id) != citation:
                 failures.append(
@@ -1615,9 +1684,12 @@ def _publish_phoenix_annotations(client: Any, annotations: Any) -> None:
 
 
 def _ensure_phoenix_project(client: Any, project_name: str) -> None:
+    """Create a missing project only after the pinned client confirms HTTP 404."""
     try:
         client.projects.get(project_name=project_name)
-    except Exception:
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
         client.projects.create(name=project_name)
 
 
@@ -2093,30 +2165,16 @@ class _OfflineGenerator(Generator):
         compiled_packet: CompiledPolicyPacket | None = None,
         regeneration_context: RegenerationContext | None = None,
     ) -> GeneratedPreflightDraft:
-        del compiled_packet
-        del regeneration_context
-        context_by_id = {chunk.chunk_id: chunk for chunk in context}
-        if request.task == "Implement a refresh-token cleanup background job":
-            return _cleanup_job_draft(context_by_id)
-        if request.task == "Add request ids to backend logs":
-            if "BACKEND-LOG-1" not in context_by_id:
-                return _insufficient_draft()
-            return GeneratedPreflightDraft(
-                summary="Use explicit request ids in backend logs.",
-                applicable_policies=[
-                    GeneratedPolicyGuidance(
-                        policy_id="BACKEND-LOG-001",
-                        title="Backend Logging Standard",
-                        rationale="Request identifiers keep backend logs traceable.",
-                        citation_ids=["BACKEND-LOG-1"],
-                    )
-                ],
-                implementation_guidance=["Thread request ids through log context."],
-                review_flags=["Do not emit unstructured log lines."],
-                tests_required=["Add a regression test for request-id logging."],
-                citation_ids=["BACKEND-LOG-1"],
+        """Return exact authored synthetic source output through the ordinary generator contract."""
+        del request, compiled_packet, regeneration_context
+        if not isinstance(context, SourceContext):
+            return _insufficient_draft()
+        return context.catalog.preflight_draft(
+            SourceSelection(
+                source_ids=[unit.source_id for unit in context.catalog.units],
+                insufficient_context=not context.catalog.units,
             )
-        return _insufficient_draft()
+        )
 
     def close(self) -> None:
         return None
@@ -2131,51 +2189,15 @@ class _OfflinePolicyCompiler:
         selection_packet: PolicySelectionPacket,
         context: Sequence[ScoredChunk],
     ) -> GeneratedCompiledPolicyDraft:
+        """Select the declared complete synthetic sources without generating policy wording."""
         del request, selection_packet
-        context_by_id = {chunk.chunk_id: chunk for chunk in context}
-        required_steps: list[GeneratedPolicyConstraint] = []
-        test_expectations: list[GeneratedPolicyConstraint] = []
-        forbidden_patterns: list[GeneratedPolicyConstraint] = []
-
-        if "BACKGROUND-JOB-1" in context_by_id:
-            required_steps.append(
-                GeneratedPolicyConstraint(
-                    statement="Make the cleanup job idempotent and observable.",
-                    citation_ids=["BACKGROUND-JOB-1"],
-                )
+        if not isinstance(context, SourceContext):
+            return GeneratedCompiledPolicyDraft(insufficient_context=True)
+        return context.catalog.compiler_draft(
+            SourceSelection(
+                source_ids=[unit.source_id for unit in context.catalog.units],
+                insufficient_context=not context.catalog.units,
             )
-            test_expectations.append(
-                GeneratedPolicyConstraint(
-                    statement="Add coverage for repeated cleanup runs.",
-                    citation_ids=["BACKGROUND-JOB-1"],
-                )
-            )
-        if "SECURITY-TOKEN-1" in context_by_id:
-            forbidden_patterns.append(
-                GeneratedPolicyConstraint(
-                    statement="Do not log raw refresh-token values.",
-                    citation_ids=["SECURITY-TOKEN-1"],
-                )
-            )
-            test_expectations.append(
-                GeneratedPolicyConstraint(
-                    statement="Add a test that active tokens are preserved.",
-                    citation_ids=["SECURITY-TOKEN-1"],
-                )
-            )
-        if "BACKEND-LOG-1" in context_by_id:
-            required_steps.append(
-                GeneratedPolicyConstraint(
-                    statement="Thread request ids through log context.",
-                    citation_ids=["BACKEND-LOG-1"],
-                )
-            )
-
-        return GeneratedCompiledPolicyDraft(
-            required_steps=required_steps,
-            forbidden_patterns=forbidden_patterns,
-            test_expectations=test_expectations,
-            insufficient_context=not (required_steps or forbidden_patterns or test_expectations),
         )
 
     def close(self) -> None:
@@ -2374,3 +2396,33 @@ _OFFLINE_RERANK_ORDERS: dict[str, list[str]] = {
     ],
     "Add request ids to backend logs": ["BACKEND-LOG-1", "BACKGROUND-JOB-1"],
 }
+
+
+def _offline_source_catalog(context: Sequence[ScoredChunk]) -> SourceCatalog:
+    """Bind explicitly authored synthetic whole sources, without deriving bodies from chunks."""
+    authored = {
+        "BACKGROUND-JOB-1": "Background cleanup jobs must be idempotent and observable.",
+        "SECURITY-TOKEN-1": "Do not log raw token values and preserve revocation semantics.",
+        "BACKEND-LOG-1": "Use request ids in backend logs for write paths.",
+    }
+    canonical = {
+        chunk.chunk_id: chunk
+        for chunk in (_BACKGROUND_JOB_CHUNK, _SECURITY_TOKEN_CHUNK, _BACKEND_LOG_CHUNK)
+    }
+    units = []
+    for chunk in context:
+        expected = canonical.get(chunk.chunk_id)
+        if expected is None or chunk.model_dump(exclude={"score"}) != expected.model_dump(
+            exclude={"score"}
+        ):
+            return SourceCatalog()
+        units.append(
+            SourceUnit(
+                source_id=f"s{len(units) + 1}",
+                policy_id=expected.policy.policy_id,
+                title=expected.policy.title,
+                body=authored[expected.chunk_id],
+                citation_ids=(expected.chunk_id,),
+            )
+        )
+    return SourceCatalog(tuple(units))

@@ -1,0 +1,2292 @@
+"""Durable job lifecycle through real SQLite, generation archives and worker ownership."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from test_grounded_mcp import generation as generation_fixture
+
+from policynim.job_types import EvaluationJobLimits
+from policynim.services.authorization import AuthenticatedPrincipal
+from policynim.services.evaluation_jobs import EvaluationJobError, EvaluationJobService
+from policynim.storage.evaluation_jobs import EvaluationJobStore
+from policynim.types import EvalCase, EvalSuite
+
+generation = generation_fixture
+
+
+def principal(subject: str = "owner") -> AuthenticatedPrincipal:
+    """Create a verified test principal without a bearer or provider secret."""
+    return AuthenticatedPrincipal(
+        issuer="https://issuer.example",
+        subject=subject,
+        client_id="test-client",
+        scopes=frozenset({"policies:read", "policies:evaluate"}),
+        source="oauth",
+    )
+
+
+def suite_for(store) -> EvalSuite:
+    """Pin one authored scenario to the real generation catalog."""
+    with store.pin() as snapshot:
+        digest = snapshot.catalog.digest
+    return EvalSuite(
+        name="durable fixture",
+        expected_catalog_digest=digest,
+        cases=[
+            EvalCase(
+                case_id="case-one",
+                kind="search",
+                input="review",
+                expected_insufficient_context=True,
+            )
+        ],
+    )
+
+
+def test_submission_deduplicates_and_survives_service_restart(generation, tmp_path: Path) -> None:
+    """Repeated submissions return the original accepted identity without changing its inputs."""
+    settings, generations, generation_id = generation
+    settings = settings.model_copy(update={"eval_workspace_dir": tmp_path / "jobs"})
+    service = EvaluationJobService(settings)
+    suite = suite_for(generations)
+    accepted = service.submit(suite, idempotency_key="first", principal=principal())
+    assert accepted.state == "queued"
+    assert accepted.generation_id == generation_id
+    duplicate = service.submit(suite, idempotency_key="first", principal=principal())
+    assert duplicate.job_id == accepted.job_id
+    restarted = EvaluationJobService(settings)
+    assert restarted.inspect(accepted.job_id, principal=principal()) == accepted
+    changed = suite.model_copy(update={"name": "changed"})
+    with pytest.raises(EvaluationJobError, match="idempotency_conflict"):
+        service.submit(changed, idempotency_key="first", principal=principal())
+
+
+def test_owner_isolation_covers_inspect_cancel_and_result(generation, tmp_path: Path) -> None:
+    """Another principal can't inspect, cancel or read even a known job ID."""
+    settings, generations, _ = generation
+    settings = settings.model_copy(update={"eval_workspace_dir": tmp_path / "jobs"})
+    service = EvaluationJobService(settings)
+    accepted = service.submit(
+        suite_for(generations), idempotency_key="first", principal=principal()
+    )
+    for operation in (service.inspect, service.cancel, service.result):
+        with pytest.raises(EvaluationJobError, match="job_unavailable"):
+            operation(accepted.job_id, principal=principal("another-owner"))
+    assert service.inspect(accepted.job_id, principal=principal()).state == "queued"
+
+
+def test_bounded_admission_and_queued_cancellation(generation, tmp_path: Path) -> None:
+    """Queue rejection doesn't accept another job, and queued cancellation starts no provider."""
+    settings, generations, _ = generation
+    settings = settings.model_copy(update={"eval_workspace_dir": tmp_path / "jobs"})
+    store = EvaluationJobStore(tmp_path / "jobs.sqlite3", queue_limit=1)
+    service = EvaluationJobService(settings, store=store)
+    suite = suite_for(generations)
+    accepted = service.submit(suite, idempotency_key="first", principal=principal())
+    with pytest.raises(EvaluationJobError, match="queue_full"):
+        service.submit(suite, idempotency_key="second", principal=principal())
+    cancelled = service.cancel(accepted.job_id, principal=principal())
+    assert cancelled.state == "cancelled"
+    report = service.result(accepted.job_id, principal=principal())
+    assert report.report.unfinished_case_ids == ["case-one"]
+    assert report.report.usage.provider_attempts == 0
+    assert service.cancel(accepted.job_id, principal=principal()) == cancelled
+    assert service.submit(suite, idempotency_key="second", principal=principal()).state == "queued"
+
+
+def test_reject_invalid_limits_before_accepting_work() -> None:
+    """No unbounded deadline, call count or retention can enter the durable schema."""
+    from pydantic import ValidationError
+
+    for values in (
+        {"deadline_seconds": float("inf")},
+        {"deadline_seconds": 0},
+        {"max_provider_calls": 0},
+        {"max_cases": 0},
+        {"retention_seconds": 0},
+    ):
+        with pytest.raises(ValidationError):
+            EvaluationJobLimits.model_validate(values)
+
+
+def case_result(settings, suite: EvalSuite, case_id: str):
+    """Build a typed evaluator response at the sole model/scoring injection boundary."""
+    from policynim.types import EvalCaseMetrics, EvalCaseResult
+
+    case = next(item for item in suite.cases if item.case_id == case_id)
+    return EvalCaseResult(
+        generation_id=settings.generation_id,
+        case_id=case_id,
+        kind=case.kind,
+        input=case.input,
+        top_k=case.top_k,
+        rerank_enabled=True,
+        passed=True,
+        expected_insufficient_context=True,
+        actual_insufficient_context=True,
+        metrics=EvalCaseMetrics(insufficient_context_correct=True),
+    )
+
+
+def job_setup(generation_value, tmp_path: Path, *, cases: int = 1):
+    """Create private real job/auth stores and a captured catalog-pinned suite."""
+    settings, generations, generation_id = generation_value
+    settings = settings.model_copy(
+        update={
+            "eval_workspace_dir": tmp_path / "evaluations",
+            "beta_auth_db_path": tmp_path / "auth.sqlite3",
+        }
+    )
+    suite = suite_for(generations)
+    suite = suite.model_copy(
+        update={
+            "cases": [
+                suite.cases[0].model_copy(update={"case_id": f"case-{index}"})
+                for index in range(cases)
+            ]
+        }
+    )
+    return EvaluationJobService(settings), suite, generation_id
+
+
+def evaluator_factory(calls: list[str], *, configurations: list[bool] | None = None):
+    """Return an injected evaluator with real usage accounting and generation inspection."""
+    from policynim.operations import current_budget
+
+    class Evaluator:
+        """Replace only NVIDIA execution and scoring, preserving worker storage/lifecycle."""
+
+        def __init__(self, settings):
+            """Keep the restored immutable generation settings for public reads."""
+            assert settings.profile is None
+            self.settings = settings
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """Reserve and measure exactly one deterministic provider attempt."""
+            calls.append(case_id)
+            if configurations is not None:
+                configurations.append(rerank_enabled)
+            current_budget().reserve_provider_call()
+            current_budget().record_provider_usage(7)
+            return case_result(self.settings, suite, case_id).model_copy(
+                update={"rerank_enabled": rerank_enabled}
+            )
+
+        def close(self):
+            """Record cleanup as part of the owned active-job lifecycle."""
+            calls.append("closed")
+
+    return Evaluator
+
+
+def test_worker_uses_captured_generation_after_source_changes_and_purge(
+    generation, tmp_path
+) -> None:
+    """Accepted work restores exact archived inputs even after public retention removes them."""
+    from test_ingest_service import MockEmbedder
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.evaluation_jobs import payload_digest
+
+    service, suite, generation_id = job_setup(generation, tmp_path, cases=2)
+    accepted = service.submit(suite, idempotency_key="archived", principal=principal())
+    service.settings.profile = tmp_path / "changed-external-profile.toml"
+    settings, generations, _ = generation
+    source = Path(settings.corpus_dir) / "A.md"
+    for index in range(2):
+        source.write_text(source.read_text() + f"\nLater source revision {index}.\n")
+        generations.build(settings, embedder=MockEmbedder())
+    assert generation_id in generations.prune(keep_recent=0).removed
+    assert (
+        service.submit(suite, idempotency_key="archived", principal=principal()).job_id
+        == accepted.job_id
+    )
+    restarted = EvaluationJobService(service.settings)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(restarted, evaluator_factory=evaluator_factory(calls))
+    completed = worker.run_once()
+    assert completed is not None and completed.state == "completed"
+    assert calls == ["case-0", "case-1", "closed"]
+    report = restarted.result(accepted.job_id, principal=principal())
+    assert report.report.snapshot.generation_id == generation_id
+    assert report.report.snapshot.suite == suite
+    assert report.sha256 == payload_digest(report.report.model_dump(mode="json"))
+    assert report.report.usage.provider_attempts == 2
+    assert report.report.usage.measured_tokens == 14
+    assert report.report.usage.usage_status == "measured"
+    assert report.report.unfinished_case_ids == []
+    assert worker.run_once() is None
+    assert calls == ["case-0", "case-1", "closed"]
+
+
+def test_provider_budget_exhaustion_retains_completed_case(generation, tmp_path) -> None:
+    """The second case can't reserve a provider effect after the accepted budget is consumed."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    accepted = service.submit(
+        suite,
+        idempotency_key="bounded",
+        principal=principal(),
+        limits=EvaluationJobLimits(max_provider_calls=1),
+    )
+    calls: list[str] = []
+    result = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once()
+    assert result is not None and result.state == "budget_exhausted"
+    assert service.result(accepted.job_id, principal=principal()).report.uncertain_case_id is None
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert [item.case_id for item in report.completed_cases] == ["case-0"]
+    assert report.unfinished_case_ids == ["case-1"]
+    assert report.usage.provider_attempts == 1
+    assert report.usage.measured_tokens == 7
+
+
+def test_queued_deadline_expires_before_provider_allocation(generation, tmp_path) -> None:
+    """A restart can't reset the accepted wall-clock deadline."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [1000.0]
+    service.store.clock = lambda: now[0]
+    accepted = service.submit(
+        suite,
+        idempotency_key="deadline",
+        principal=principal(),
+        limits=EvaluationJobLimits(deadline_seconds=1),
+    )
+    now[0] += 2
+    calls: list[str] = []
+    finished = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once()
+    assert finished is not None and finished.state == "deadline_exceeded"
+    assert calls == []
+    assert (
+        service.result(accepted.job_id, principal=principal()).report.usage.provider_attempts == 0
+    )
+
+
+def test_cancellation_during_provider_work_drains_before_terminal_state(
+    generation, tmp_path
+) -> None:
+    """Cancellation remains requested until the active provider result and owned cleanup drain."""
+    from threading import Event, Thread
+
+    from policynim.operations import current_budget
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="cancel", principal=principal())
+    started, release = Event(), Event()
+    closed: list[str] = []
+
+    class Evaluator:
+        """Hold the provider seam while another client requests cancellation."""
+
+        def __init__(self, settings):
+            """Capture the restored generation for the eventual fixture response."""
+            self.settings = settings
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """Retain uncertain usage while blocked, then publish returned measured usage."""
+            current_budget().reserve_provider_call()
+            started.set()
+            assert release.wait(5)
+            current_budget().record_provider_usage(9)
+            current_budget().remaining()
+            return case_result(self.settings, suite, case_id)
+
+        def close(self):
+            """Prove provider ownership drains before terminal cancellation."""
+            closed.append("closed")
+
+    results: list = []
+    worker = EvaluationJobWorker(service, evaluator_factory=Evaluator)
+    thread = Thread(target=lambda: results.append(worker.run_once()))
+    thread.start()
+    assert started.wait(5)
+    second_client = EvaluationJobService(service.settings)
+    requested = second_client.cancel(accepted.job_id, principal=principal())
+    assert requested.state == "running" and requested.cancel_requested
+    assert closed == []
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert results[0].state == "cancelled"
+    assert closed == ["closed"]
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.uncertain_case_id == "case-0"
+    assert report.usage.measured_tokens == 9
+    assert report.unfinished_case_ids == ["case-0"]
+
+
+def test_expiry_purges_only_retained_owner_payloads(generation, tmp_path) -> None:
+    """Expired results fail explicitly while their digest and summary stay inspectable."""
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [1000.0]
+    service.store.clock = lambda: now[0]
+    accepted = service.submit(
+        suite,
+        idempotency_key="expiry",
+        principal=principal(),
+        limits=EvaluationJobLimits(retention_seconds=60),
+    )
+    cancelled = service.cancel(accepted.job_id, principal=principal())
+    assert cancelled.report_sha256
+    now[0] += 61
+    with pytest.raises(EvaluationJobError, match="result_expired"):
+        service.result(accepted.job_id, principal=principal())
+    assert service.store.purge_expired() == 1
+    summary = service.inspect(accepted.job_id, principal=principal())
+    assert summary.result_expired and summary.report_sha256 == cancelled.report_sha256
+    assert (
+        service.submit(
+            suite,
+            idempotency_key="expiry",
+            principal=principal(),
+            limits=EvaluationJobLimits(retention_seconds=60),
+        ).job_id
+        == accepted.job_id
+    )
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_submission_commit_failure_preserves_one_retry_path(generation, tmp_path, phase) -> None:
+    """Failure on either side of SQLite COMMIT never creates a second accepted job."""
+    import sqlite3
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    injected = [False]
+
+    def fault(observed: str) -> None:
+        """Interrupt exactly one transaction at the chosen commit boundary."""
+        if not injected[0] and observed == phase:
+            injected[0] = True
+            raise sqlite3.OperationalError("fixture transaction interruption")
+
+    service.store.fault = fault
+    with pytest.raises(EvaluationJobError, match="job_storage_unavailable"):
+        service.submit(suite, idempotency_key="commit", principal=principal())
+    service.store.fault = None
+    expected = 0 if phase == "before_commit" else 1
+    assert service.store.aggregate_counts().get("queued", 0) == expected
+    accepted = service.submit(suite, idempotency_key="commit", principal=principal())
+    assert accepted.state == "queued"
+    assert service.store.aggregate_counts() == {"queued": 1}
+
+
+def test_competing_workers_cannot_execute_the_same_job(generation, tmp_path) -> None:
+    """A competing lock holder can't recover or run the active provider stage."""
+    from threading import Event, Thread
+
+    from policynim.operations import current_budget
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="concurrent", principal=principal())
+    started, release = Event(), Event()
+    calls: list[str] = []
+
+    class Evaluator:
+        """Hold the sole supported worker's provider boundary."""
+
+        def __init__(self, settings):
+            """Capture accepted generation settings."""
+            self.settings = settings
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """Reserve one effect, keeping the competing process outside this stage."""
+            current_budget().reserve_provider_call()
+            calls.append(case_id)
+            started.set()
+            assert release.wait(5)
+            current_budget().record_provider_usage(1)
+            return case_result(self.settings, suite, case_id)
+
+        def close(self):
+            """This fixture owns no additional resource."""
+
+    first = EvaluationJobWorker(service, evaluator_factory=Evaluator)
+    second = EvaluationJobWorker(
+        EvaluationJobService(service.settings), evaluator_factory=Evaluator
+    )
+    results: list = []
+    thread = Thread(target=lambda: results.append(first.run_once()))
+    thread.start()
+    assert started.wait(5)
+    try:
+        with pytest.raises(EvaluationJobError, match="worker_busy"):
+            second.run_once()
+        assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+    finally:
+        release.set()
+        thread.join(5)
+    assert results[0].state == "completed"
+    assert calls == ["case-0"]
+    assert second.run_once() is None
+
+
+def test_case_persistence_failure_retains_uncertain_work_without_replay(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A response followed by a failed case commit can't cause an automatic provider repeat."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="save-failure", principal=principal())
+    calls: list[str] = []
+
+    def fail_save(*args, **kwargs):
+        """Inject failure after the fake provider has returned measured usage."""
+        raise sqlite3.OperationalError("fixture persistence failure")
+
+    monkeypatch.setattr(service.store, "save_case", fail_save)
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    result = worker.run_once()
+    assert result is not None and result.state == "interrupted"
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.uncertain_case_id == "case-0"
+    assert report.unfinished_case_ids == ["case-0"]
+    assert report.usage.measured_tokens == 7
+    assert worker.run_once() is None
+    assert calls == ["case-0", "closed"]
+
+
+def test_corrupt_archive_fails_without_provider_work(generation, tmp_path) -> None:
+    """Archived generation validation fails before a worker can allocate providers."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="corrupt", principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute("UPDATE evaluation_job_archives SET archive=?", (b"altered",))
+    calls: list[str] = []
+    result = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once()
+    assert result is not None and result.state == "failed"
+    assert result.failure_code == "archive_invalid"
+    assert calls == []
+    assert service.result(accepted.job_id, principal=principal()).report.unfinished_case_ids == [
+        "case-0"
+    ]
+
+
+def test_actual_worker_process_interruption_retains_unknown_provider_outcome(
+    generation, tmp_path
+) -> None:
+    """A killed process releases worker ownership; recovery never replays its uncertain call."""
+    import json
+    import os
+    import subprocess
+    import sys
+    import time
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="process", principal=principal())
+    ready = tmp_path / "provider-started"
+    settings_path = tmp_path / "worker-settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "eval_workspace_dir": str(service.settings.eval_workspace_dir),
+                "beta_auth_db_path": str(service.settings.beta_auth_db_path),
+                "generations_dir": str(service.settings.generations_dir),
+                "nvidia_embed_model": service.settings.nvidia_embed_model,
+                "nvidia_base_url": service.settings.nvidia_base_url,
+            }
+        )
+    )
+    script = """
+import json, sys, time
+from pathlib import Path
+from policynim.settings import Settings
+from policynim.operations import current_budget
+from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
+class Evaluator:
+    def __init__(self, settings):
+        "Keep the subprocess fixture free of provider clients."
+    def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+        "Persist an attempt, then hold the process at its simulated provider boundary."
+        current_budget().reserve_provider_call()
+        Path(sys.argv[2]).write_text("started")
+        time.sleep(60)
+    def close(self):
+        "The isolated fixture owns no additional resource."
+settings = Settings(**json.loads(Path(sys.argv[1]).read_text()), _env_file=None)
+EvaluationJobWorker(EvaluationJobService(settings), evaluator_factory=Evaluator).run_once()
+"""
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(settings_path), str(ready)],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                pytest.fail("isolated worker didn't reach its provider boundary")
+            time.sleep(0.01)
+        assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+    finally:
+        process.kill()
+        process.communicate(timeout=5)
+    calls: list[str] = []
+    replacement = EvaluationJobWorker(
+        EvaluationJobService(service.settings), evaluator_factory=evaluator_factory(calls)
+    )
+    assert replacement.run_once() is None
+    recovered = service.inspect(accepted.job_id, principal=principal())
+    assert recovered.state == "interrupted"
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.uncertain_case_id == "case-0"
+    assert report.usage.provider_attempts == 1
+    assert report.usage.unavailable_usage_attempts == 1
+    assert report.usage.usage_status == "unavailable"
+    assert calls == []
+
+
+def test_actual_nvidia_retry_boundary_respects_the_call_budget() -> None:
+    """The actual SDK can't retry after its accepted attempt budget is consumed."""
+    import httpx
+    from test_provider_recovery import invoke
+
+    from policynim.errors import ProviderError
+    from policynim.operations import OperationBudget, operation_scope
+
+    calls: list[str] = []
+    recorded: list[dict[str, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Return retryable failure at the actual wire boundary."""
+        calls.append(request.url.path)
+        return httpx.Response(503, json={"error": {"message": "fixture busy"}})
+
+    budget = OperationBudget(5, max_provider_calls=1, usage_callback=recorded.append)
+    with pytest.raises(ProviderError) as failure:
+        with operation_scope(budget):
+            invoke("query", handler)
+    assert failure.value.failure_class == "budget_exhausted"
+    assert len(calls) == 1
+    assert recorded[-1] == {
+        "provider_attempts": 1,
+        "measured_tokens": 0,
+        "unavailable_usage_attempts": 1,
+    }
+
+
+def test_invalid_snapshot_is_quarantined_without_blocking_other_jobs(
+    generation, tmp_path: Path
+) -> None:
+    """A damaged interrupted job can't wedge recovery or yield a fabricated report."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    damaged = service.submit(suite, idempotency_key="damaged", principal=principal())
+    intact = service.submit(suite, idempotency_key="intact", principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_jobs SET state='running',snapshot_json='{}' WHERE job_id=?",
+            (damaged.job_id,),
+        )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        completed = worker.run_once()
+        assert completed is not None and completed.job_id == intact.job_id
+        assert completed.state == "completed"
+        failed = service.inspect(damaged.job_id, principal=principal())
+        assert failed.state == "failed" and failed.failure_code == "job_artifact_invalid"
+        assert failed.report_sha256 is None
+        with pytest.raises(EvaluationJobError, match="report_unavailable"):
+            service.result(damaged.job_id, principal=principal())
+        assert worker.run_once() is None
+    finally:
+        worker.close()
+    assert calls == ["case-0", "closed"]
+
+
+def test_operator_backlog_read_doesnt_create_storage_or_expose_callers(
+    generation, tmp_path: Path
+) -> None:
+    """Operator counts reflect durable state while absent storage stays absent."""
+    from policynim.storage.evaluation_jobs import inspect_job_backlog
+
+    absent = tmp_path / "absent" / "jobs.sqlite3"
+    assert inspect_job_backlog(absent) is None and not absent.parent.exists()
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="operator", principal=principal())
+    assert inspect_job_backlog(service.store.path) == {"queued": 1}
+    service.cancel(accepted.job_id, principal=principal())
+    assert inspect_job_backlog(service.store.path) == {"cancelled": 1}
+
+
+def test_busy_worker_prunes_expired_payloads_before_queue_becomes_empty(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """Retention cleanup still runs while another accepted job's queued."""
+    import sqlite3
+    from threading import Event
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    expired = service.submit(suite, idempotency_key="expired", principal=principal())
+    service.cancel(expired.job_id, principal=principal())
+    with sqlite3.connect(service.store.path) as db:
+        db.execute("UPDATE evaluation_jobs SET expires_at=0 WHERE job_id=?", (expired.job_id,))
+    service.submit(suite, idempotency_key="first", principal=principal())
+    waiting = service.submit(suite, idempotency_key="second", principal=principal())
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    purge = service.store.purge_expired
+    cleaned = Event()
+
+    def stop_after_cleanup() -> int:
+        """Stop after the first real cleanup while retaining a second queued job."""
+        count = purge()
+        worker._stop.set()
+        cleaned.set()
+        return count
+
+    monkeypatch.setattr(service.store, "purge_expired", stop_after_cleanup)
+    worker.start()
+    try:
+        assert cleaned.wait(5)
+    finally:
+        worker.close()
+    with sqlite3.connect(service.store.path) as db:
+        snapshot = db.execute(
+            "SELECT snapshot_json FROM evaluation_jobs WHERE job_id=?", (expired.job_id,)
+        ).fetchone()[0]
+    assert snapshot is None
+    assert service.inspect(waiting.job_id, principal=principal()).state == "queued"
+
+
+@pytest.mark.parametrize(
+    "invalid", ["blank-input", "blank-domain", "revision", "policy", "chunk", "case-id"]
+)
+def test_submission_rejects_invalid_case_before_acceptance_or_quota(
+    generation, tmp_path: Path, invalid: str
+) -> None:
+    """Invalid case contracts and absent evidence can't enter an admitted worker job."""
+    from pydantic import ValidationError
+
+    from policynim.errors import PolicyNIMError
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    updates = {
+        "case-id": {"case_id": "x" * 257},
+        "blank-input": {"input": "   "},
+        "blank-domain": {"domain": " "},
+        "policy": {
+            "expected_policy_ids": ["missing-policy"],
+            "expected_insufficient_context": False,
+        },
+        "chunk": {"expected_chunk_ids": ["missing-chunk"], "expected_insufficient_context": False},
+    }
+    if invalid == "revision":
+        suite = suite.model_copy(update={"expected_policy_revisions": {"A": "sha256:" + "0" * 64}})
+    else:
+        suite = suite.model_copy(
+            update={"cases": [suite.cases[0].model_copy(update=updates[invalid])]}
+        )
+    with pytest.raises((PolicyNIMError, ValidationError)):
+        service.submit(suite, idempotency_key="invalid", principal=principal())
+    assert service.store.aggregate_counts() == {}
+    assert not service.settings.beta_auth_db_path.exists()
+
+
+@pytest.mark.parametrize("previous_version", [1, 2])
+def test_concurrent_schema_upgrade_keeps_accepted_jobs(
+    generation, tmp_path: Path, previous_version: int
+) -> None:
+    """Competing process-style constructors serialize migration against the same durable row."""
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="before-upgrade", principal=principal())
+    with sqlite3.connect(service.store.path) as db:
+        # The historical schema didn't have indexes introduced by the current worker.
+        for name in (
+            "evaluation_jobs_pending_finalization",
+            "evaluation_jobs_state",
+            "evaluation_jobs_expiring_payloads",
+            "evaluation_jobs_retained_generations",
+        ):
+            db.execute(f"DROP INDEX {name}")
+        if previous_version == 1:
+            db.execute("ALTER TABLE evaluation_jobs DROP COLUMN active_case_start_attempts")
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN work_units")
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN admission_id")
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN admission_finalized")
+        db.execute("ALTER TABLE evaluation_jobs DROP COLUMN report_part_count")
+        db.execute(f"PRAGMA user_version={previous_version}")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        stores = list(pool.map(lambda _: EvaluationJobStore(service.store.path), range(6)))
+    assert {store.store_id for store in stores} == {service.store.store_id}
+    for store in stores:
+        restored = store.inspect(accepted.job_id, accepted.owner_id)
+        assert restored.job_id == accepted.job_id
+        assert restored.work_units == 1 and restored.admission_id is None
+    with sqlite3.connect(service.store.path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+        names = [row[1] for row in db.execute("PRAGMA table_info(evaluation_jobs)")]
+    assert names.count("active_case_start_attempts") == 1
+
+
+def test_concurrent_submissions_deduplicate_and_keep_owner_queue_bound(
+    generation, tmp_path: Path
+) -> None:
+    """Parallel callers share one accepted key and can't race past the durable owner limit."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    service, suite, _ = job_setup(generation, tmp_path)
+
+    def submit(key: str):
+        """Capture only a typed accepted handle or its expected saturation code."""
+        try:
+            return service.submit(suite, idempotency_key=key, principal=principal())
+        except EvaluationJobError as error:
+            assert error.code in {"queue_full", "principal_busy"}
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        repeated = list(pool.map(submit, ["same-key"] * 6))
+    assert any(item is not None for item in repeated)
+    repeated = [submit("same-key") for _ in repeated]
+    assert len({item.job_id for item in repeated if item is not None}) == 1
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        bounded = list(pool.map(submit, [f"unique-{index}" for index in range(6)]))
+    assert len([item for item in bounded if item is not None]) == 1
+    assert service.store.aggregate_counts() == {"queued": 2}
+    from policynim.storage.operation_store import OperationStore
+
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
+
+
+def test_archive_capture_is_bounded_per_owner_before_global_worker_work(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """A blocked capture bounds both owner overlap and shared archive memory before charging."""
+    from threading import Event, Thread, current_thread
+
+    from policynim.services.generations import GenerationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    entered, release = Event(), Event()
+    exported = GenerationStore.export_bundle
+
+    def blocked_capture(self, *args, **kwargs):
+        """Hold only the first owner's real export at its public archive boundary."""
+        if current_thread().name == "capturing-owner":
+            entered.set()
+            assert release.wait(5)
+        return exported(self, *args, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", blocked_capture)
+    accepted: list = []
+    thread = Thread(
+        name="capturing-owner",
+        target=lambda: accepted.append(
+            service.submit(suite, idempotency_key="first", principal=principal())
+        ),
+    )
+    thread.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(EvaluationJobError, match="principal_busy"):
+            service.submit(suite, idempotency_key="overlap", principal=principal())
+        with pytest.raises(EvaluationJobError, match="server_busy"):
+            service.submit(suite, idempotency_key="other", principal=principal("other"))
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive() and len(accepted) == 1
+    another = service.submit(suite, idempotency_key="other", principal=principal("other"))
+    assert another.state == "queued"
+    assert service.submit(suite, idempotency_key="first", principal=principal()) == accepted[0]
+    from policynim.storage.operation_store import OperationStore
+
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
+
+
+def test_job_execution_mints_fresh_correlation_for_admission_and_provider(
+    generation, tmp_path: Path, caplog
+) -> None:
+    """A recovered worker context doesn't reuse its submitting caller's correlation identity."""
+    import json
+    import logging
+    import sqlite3
+
+    from policynim import operations
+    from policynim.operations import current_correlation_id, operation_correlation
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    observed: list[str | None] = []
+    base = evaluator_factory([])
+
+    class Evaluator(base):
+        """Observe only the public execution context at the provider scoring seam."""
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """Keep evaluator behavior identical while recording its opaque context."""
+            observed.append(current_correlation_id())
+            return super().evaluate_case(suite, case_id, rerank_enabled=rerank_enabled)
+
+    operations._LOG.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.INFO), operation_correlation() as submitting:
+            accepted = service.submit(
+                suite, idempotency_key="fresh-correlation", principal=principal()
+            )
+            result = EvaluationJobWorker(service, evaluator_factory=Evaluator).run_once()
+            assert result is not None and result.state == "completed"
+            assert current_correlation_id() == submitting
+    finally:
+        operations._LOG.removeHandler(caplog.handler)
+    assert len(observed) == 1 and observed[0] is not None and observed[0] != submitting
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        persisted = db.execute("SELECT correlation_id FROM operation_usage").fetchone()[0]
+    assert persisted == observed[0]
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.getMessage().startswith("{")
+    ]
+    event = next(item for item in events if item["event"] == "evaluation.job")
+    assert event == {
+        "event": "evaluation.job",
+        "correlation_id": persisted,
+        "job_id": accepted.job_id,
+        "phase": "admission",
+    }
+
+
+def test_worker_pauses_queue_after_quota_accounting_failure(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """A new per-job admission service can't bypass this process's accounting pause."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="uncertain-accounting", principal=principal())
+    queued = service.submit(suite, idempotency_key="wait-for-recovery", principal=principal())
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+
+    def fail_accounting(*args, **kwargs):
+        """Leave an accepted quota row uncertain after the provider's completed work."""
+        raise sqlite3.OperationalError("fixture terminal accounting lock")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(OperationStore, "finish", fail_accounting)
+        failed = worker.run_once()
+    assert failed is not None and failed.failure_code == "accounting_incomplete"
+    with pytest.raises(EvaluationJobError, match="accounting_incomplete"):
+        worker.run_once()
+    with pytest.raises(EvaluationJobError, match="accounting_incomplete"):
+        worker.start()
+    assert service.inspect(queued.job_id, principal=principal()).state == "queued"
+    assert calls == ["case-0", "closed"]
+    worker.close()
+
+
+@pytest.mark.parametrize("code", ["server_busy", "principal_busy", "admission_busy"])
+def test_transient_pre_provider_admission_retries_without_duplicate_charge(
+    generation, tmp_path: Path, monkeypatch, code: str
+) -> None:
+    """Accepted work waits durably for capacity; no provider attempt or quota charge repeats."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import (
+        OperationAdmissionError,
+        OperationAdmissionService,
+    )
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [service.store.clock()]
+    monkeypatch.setattr(service.store, "clock", lambda: now[0])
+    accepted = service.submit(suite, idempotency_key="retry-capacity", principal=principal())
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+
+    def reject(*args, **kwargs):
+        """Inject only an admission outcome before the evaluator closure can run."""
+        raise OperationAdmissionError(code + ": Retry shortly.")
+
+    with monkeypatch.context() as busy:
+        busy.setattr(
+            worker, "_restore", lambda *args: pytest.fail("archive restored before admission")
+        )
+        busy.setattr(OperationAdmissionService, "run_accepted", reject)
+        deferred = worker.run_once()
+    assert deferred is not None and deferred.state == "queued" and deferred.failure_code == code
+    assert deferred.next_attempt_at == now[0] + 1
+    assert deferred.deadline_at == accepted.deadline_at
+    assert calls == [] and worker.run_once() is None
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 1
+    now[0] += 2
+    completed = worker.run_once()
+    assert completed is not None and completed.state == "completed"
+    assert completed.failure_code is None
+    assert calls == ["case-0", "closed"]
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.usage.provider_attempts == 1 and report.uncertain_case_id is None
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM operation_usage").fetchone()[0] == 1
+    worker.close()
+
+
+def test_storage_cant_defer_a_started_case(generation, tmp_path: Path) -> None:
+    """The storage transition itself forbids replay after a case was marked active."""
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="no-replay", principal=principal())
+    claimed = service.store.claim("test-worker")
+    assert claimed is not None
+    service.store.begin_case(accepted.job_id, "test-worker", suite.cases[0].case_id)
+    with pytest.raises(EvaluationJobError, match="unsafe_job_retry"):
+        service.store.defer_admission(accepted.job_id, "test-worker", "admission_busy")
+    assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+
+
+def test_real_principal_capacity_defers_accepted_job_until_owner_releases(
+    generation, tmp_path: Path, monkeypatch
+) -> None:
+    """Actual quota storage and kernel ownership keep a busy principal's job queued safely."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import (
+        OperationAdmissionService,
+        admit_operation,
+        principal_identity,
+    )
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.settings.mcp_max_concurrent_operations_per_principal = 1
+    now = [service.store.clock()]
+    monkeypatch.setattr(service.store, "clock", lambda: now[0])
+    caller = principal()
+    held = OperationAdmissionService(service.settings)
+    admitted = admit_operation(
+        held.store,
+        principal_id=principal_identity(caller.issuer, caller.subject),
+        operation="policy_search",
+        daily_limit=500,
+        principal_limit=1,
+        global_limit=10,
+    )
+    assert admitted.operation_id is not None
+    accepted = service.submit(suite, idempotency_key="actual-capacity", principal=caller)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        waiting = worker.run_once()
+        assert waiting is not None and waiting.state == "queued"
+        assert waiting.failure_code == "principal_busy" and calls == []
+        held.store.finish(admitted.operation_id, "completed")
+        now[0] += 2
+        finished = worker.run_once()
+        assert finished is not None and finished.state == "completed"
+        assert service.result(accepted.job_id, principal=caller).report.usage.provider_attempts == 1
+        assert calls == ["case-0", "closed"]
+    finally:
+        worker.close()
+        held.store.close()
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_terminal_report_commit_fault_preserves_cases_and_restart_outcome(
+    generation, tmp_path: Path, phase: str
+) -> None:
+    """A terminal COMMIT fault keeps saved cases and never replays their provider work."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="terminal-fault", principal=principal())
+    claimed = service.store.claim("fixture-worker")
+    assert claimed is not None and claimed.job_id == accepted.job_id
+    service.store.begin_case(accepted.job_id, "fixture-worker", "case-0")
+    service.store.save_case(
+        accepted.job_id,
+        "fixture-worker",
+        case_result(
+            service.settings.model_copy(update={"generation_id": generation_id}), suite, "case-0"
+        ),
+    )
+
+    def interrupt(observed: str) -> None:
+        """Fail at the actual SQLite commit boundary after report construction."""
+        if observed == phase:
+            raise sqlite3.OperationalError("fixture terminal commit interruption")
+
+    service.store.fault = interrupt
+    with pytest.raises(sqlite3.OperationalError, match="terminal commit"):
+        service.store.finish(accepted.job_id, "fixture-worker", "completed")
+    service.store.fault = None
+    stored = service.inspect(accepted.job_id, principal=principal())
+    assert stored.completed_case_count == 1
+    assert stored.state == ("running" if phase == "before_commit" else "completed")
+    with sqlite3.connect(service.store.path) as connection:
+        part_count = connection.execute(
+            "SELECT COUNT(*) FROM evaluation_job_report_parts WHERE job_id=?", (accepted.job_id,)
+        ).fetchone()[0]
+    assert (part_count > 0) == (phase == "after_commit")
+    calls: list[str] = []
+    restarted = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    assert restarted.run_once() is None
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.state == ("interrupted" if phase == "before_commit" else "completed")
+    assert [case.case_id for case in report.completed_cases] == ["case-0"]
+    assert report.unfinished_case_ids == [] and report.uncertain_case_id is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_retention_commit_fault_keeps_owner_payloads_atomic(
+    generation, tmp_path: Path, phase: str
+) -> None:
+    """Retention atomically removes expired payloads while preserving another owner."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [1000.0]
+    service.store.clock = lambda: now[0]
+    expired = service.submit(
+        suite,
+        idempotency_key="short",
+        principal=principal(),
+        limits=EvaluationJobLimits(retention_seconds=60),
+    )
+    retained = service.submit(
+        suite,
+        idempotency_key="long",
+        principal=principal("other"),
+        limits=EvaluationJobLimits(retention_seconds=120),
+    )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    first = worker.run_once()
+    second = worker.run_once()
+    assert first is not None and first.state == "completed"
+    assert second is not None and second.state == "completed"
+    retained_report = service.result(retained.job_id, principal=principal("other"))
+    original_digest = service.inspect(expired.job_id, principal=principal()).report_sha256
+    now[0] += 61
+
+    def interrupt(observed: str) -> None:
+        """Fail before or after the transaction's actual durable COMMIT."""
+        if observed == phase:
+            raise sqlite3.OperationalError("fixture retention interruption")
+
+    service.store.fault = interrupt
+    with pytest.raises(sqlite3.OperationalError, match="retention interruption"):
+        service.store.purge_expired()
+    service.store.fault = None
+    with sqlite3.connect(service.store.path) as connection:
+        row = connection.execute(
+            "SELECT snapshot_json,report_json,result_expired FROM evaluation_jobs WHERE job_id=?",
+            (expired.job_id,),
+        ).fetchone()
+        case_count = connection.execute(
+            "SELECT COUNT(*) FROM evaluation_job_cases WHERE job_id=?", (expired.job_id,)
+        ).fetchone()[0]
+        assert (row[0] is None, row[1] is None, row[2], case_count) == (
+            (False, False, 0, 1) if phase == "before_commit" else (True, True, 1, 0)
+        )
+        assert connection.execute("SELECT COUNT(*) FROM evaluation_job_archives").fetchone()[0] == 1
+    assert service.result(retained.job_id, principal=principal("other")) == retained_report
+    assert service.store.purge_expired() == (1 if phase == "before_commit" else 0)
+    assert service.inspect(expired.job_id, principal=principal()).report_sha256 == original_digest
+    now[0] += 60
+    assert service.store.purge_expired() == 1
+    with sqlite3.connect(service.store.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM evaluation_job_archives").fetchone()[0] == 0
+    assert calls == ["case-0", "closed", "case-0", "closed"]
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_case_commit_fault_recovers_only_unconfirmed_provider_result(
+    generation, tmp_path: Path, phase: str
+) -> None:
+    """Case COMMIT recovery separates an unsaved response from a fully saved case."""
+    import sqlite3
+
+    from policynim.job_types import EvaluationJobUsage
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="case-commit", principal=principal())
+    assert service.store.claim("fixture-worker") is not None
+    service.store.begin_case(accepted.job_id, "fixture-worker", "case-0")
+    service.store.save_usage(
+        accepted.job_id,
+        "fixture-worker",
+        EvaluationJobUsage(provider_attempts=1, measured_tokens=7, usage_status="measured"),
+    )
+
+    def interrupt(observed: str) -> None:
+        """Interrupt the actual result transaction on either side of its COMMIT."""
+        if observed == phase:
+            raise sqlite3.OperationalError("fixture case commit interruption")
+
+    service.store.fault = interrupt
+    with pytest.raises(sqlite3.OperationalError, match="case commit"):
+        service.store.save_case(
+            accepted.job_id,
+            "fixture-worker",
+            case_result(
+                service.settings.model_copy(update={"generation_id": generation_id}),
+                suite,
+                "case-0",
+            ),
+        )
+    service.store.fault = None
+    calls: list[str] = []
+    assert (
+        EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once() is None
+    )
+    report = service.result(accepted.job_id, principal=principal()).report
+    assert report.state == "interrupted" and report.usage.measured_tokens == 7
+    assert report.uncertain_case_id == ("case-0" if phase == "before_commit" else None)
+    assert [case.case_id for case in report.completed_cases] == (
+        [] if phase == "before_commit" else ["case-0"]
+    )
+    assert calls == []
+
+
+def test_delayed_quarantine_retains_damaged_inputs_for_the_accepted_retention_window(
+    generation, tmp_path: Path
+) -> None:
+    """Recovery after long downtime leaves damaged artifacts available for bounded inspection."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    now = [1000.0]
+    service.store.clock = lambda: now[0]
+    accepted = service.submit(
+        suite,
+        idempotency_key="late-quarantine",
+        principal=principal(),
+        limits=EvaluationJobLimits(deadline_seconds=1, retention_seconds=60),
+    )
+    assert service.store.claim("crashed-worker") is not None
+    service.store.begin_case(accepted.job_id, "crashed-worker", "case-0")
+    service.store.save_case(
+        accepted.job_id,
+        "crashed-worker",
+        case_result(
+            service.settings.model_copy(update={"generation_id": generation_id}), suite, "case-0"
+        ),
+    )
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_jobs SET snapshot_json='{}' WHERE job_id=?", (accepted.job_id,)
+        )
+    now[0] = accepted.expires_at + 100
+    calls: list[str] = []
+    assert (
+        EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls)).run_once() is None
+    )
+    failed = service.inspect(accepted.job_id, principal=principal())
+    assert failed.failure_code == "job_artifact_invalid" and not failed.result_expired
+    assert failed.expires_at == now[0] + 60
+    assert service.store.purge_expired() == 0
+    with sqlite3.connect(service.store.path) as connection:
+        assert (
+            connection.execute(
+                "SELECT snapshot_json FROM evaluation_jobs WHERE job_id=?", (accepted.job_id,)
+            ).fetchone()[0]
+            == "{}"
+        )
+        assert connection.execute("SELECT COUNT(*) FROM evaluation_job_cases").fetchone()[0] == 1
+    with pytest.raises(EvaluationJobError, match="report_unavailable"):
+        service.result(accepted.job_id, principal=principal())
+    now[0] += 61
+    assert service.store.purge_expired() == 1
+    assert service.inspect(accepted.job_id, principal=principal()).result_expired
+    assert calls == []
+
+
+def test_background_worker_fault_has_safe_owned_location(generation, tmp_path, monkeypatch, caplog):
+    """Background maintenance faults retain a useful location without private exception text."""
+    import json
+    import logging
+    from threading import Event
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, _, _ = job_setup(generation, tmp_path)
+    worker = EvaluationJobWorker(service)
+    observed = Event()
+
+    def fail_purge():
+        """Raise at the real maintenance boundary after run_once finds no queued work."""
+        observed.set()
+        raise RuntimeError("private-task-bearer-path-sentinel")
+
+    monkeypatch.setattr(service.store, "purge_expired", fail_purge)
+    try:
+        with caplog.at_level(logging.ERROR):
+            worker.start()
+            assert observed.wait(5)
+            worker.close()
+        events = [
+            json.loads(record.message)
+            for record in caplog.records
+            if record.name == "policynim.operations"
+        ]
+        failure = next(event for event in events if event["event"] == "evaluation.worker_failure")
+        assert failure["exception_class"] == "RuntimeError"
+        assert any(frame["function"] == "_loop" for frame in failure["internal_frames"])
+        assert "private-task-bearer-path-sentinel" not in caplog.text
+        assert worker._thread is not None and not worker._thread.is_alive()
+    finally:
+        worker.close()
+
+
+def test_unexpected_case_failure_has_safe_owned_location(generation, tmp_path, caplog):
+    """Terminal failure diagnostics preserve the worker boundary without task or bearer text."""
+    import json
+    import logging
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="unexpected-case", principal=principal())
+
+    def fail_factory(settings):
+        """Reject at evaluator construction before a provider can receive the accepted case."""
+        raise RuntimeError("private-task-and-bearer-sentinel")
+
+    worker = EvaluationJobWorker(service, evaluator_factory=fail_factory)
+    try:
+        with caplog.at_level(logging.ERROR):
+            result = worker.run_once()
+        assert result is not None and result.state == "failed"
+        assert result.failure_code == "evaluation_failure"
+        events = [
+            json.loads(record.message)
+            for record in caplog.records
+            if record.name == "policynim.operations"
+        ]
+        failure = next(event for event in events if event["event"] == "evaluation.job_failure")
+        assert failure["job_id"] == result.job_id
+        assert any(frame["function"] == "run_owned" for frame in failure["internal_frames"])
+        assert "private-task-and-bearer-sentinel" not in caplog.text
+    finally:
+        worker.close()
+
+
+def test_job_store_namespace_is_stable_across_restart_and_relocation(tmp_path):
+    """Shared quota storage can't merge unrelated workspace keys or split a moved job store."""
+    import shutil
+
+    first = EvaluationJobStore(tmp_path / "first" / "jobs.sqlite3")
+    assert EvaluationJobStore(first.path).store_id == first.store_id
+    other = EvaluationJobStore(tmp_path / "other" / "jobs.sqlite3")
+    assert other.store_id != first.store_id
+    relocated = tmp_path / "relocated" / "jobs.sqlite3"
+    relocated.parent.mkdir()
+    shutil.copyfile(first.path, relocated)
+    assert EvaluationJobStore(relocated).store_id == first.store_id
+
+
+@pytest.mark.parametrize("rerank_enabled", [True, False])
+def test_weighted_acceptance_charges_cases_once_and_queued_jobs_use_no_active_slot(
+    generation, tmp_path, rerank_enabled: bool
+):
+    """A two-case suite prepays two units, then activates one slot without another charge."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionError
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 2
+    accepted = service.submit(
+        suite, idempotency_key="two-cases", principal=principal(), rerank_enabled=rerank_enabled
+    )
+    assert accepted.work_units == 2 and accepted.admission_id is not None
+    assert (
+        service.submit(
+            suite, idempotency_key="two-cases", principal=principal(), rerank_enabled=rerank_enabled
+        )
+        == accepted
+    )
+    assert OperationStore.report(service.settings.beta_auth_db_path).active_operations == 0
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="over-budget", principal=principal())
+    assert service.store.aggregate_counts() == {"queued": 1}
+    calls: list[str] = []
+    configurations: list[bool] = []
+    worker = EvaluationJobWorker(
+        service, evaluator_factory=evaluator_factory(calls, configurations=configurations)
+    )
+    try:
+        completed = worker.run_once()
+        assert completed is not None and completed.state == "completed"
+        assert calls == ["case-0", "case-1", "closed"]
+        assert configurations == [rerank_enabled, rerank_enabled]
+        with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+            assert db.execute(
+                "SELECT COUNT(*),SUM(work_units) FROM operation_usage"
+            ).fetchone() == (1, 2)
+        assert OperationStore.report(service.settings.beta_auth_db_path).active_operations == 0
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_uncertain_job_acceptance_never_recharges_weight(generation, tmp_path, phase):
+    """Quota acceptance survives either side of the job COMMIT and same-key retry reuses it."""
+    import sqlite3
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 2
+
+    def interrupt(observed):
+        """Fail after quota accepted work, at the real queued-job transaction boundary."""
+        if observed == phase:
+            raise sqlite3.OperationalError("private-acceptance-commit-fault")
+
+    service.store.fault = interrupt
+    with pytest.raises(EvaluationJobError, match="job_storage_unavailable"):
+        service.submit(suite, idempotency_key="uncertain-weight", principal=principal())
+    service.store.fault = None
+    assert service.store.aggregate_counts() == ({} if phase == "before_commit" else {"queued": 1})
+    changed = suite.model_copy(update={"name": "different-request"})
+    from policynim.errors import PolicyNIMError
+
+    with pytest.raises(PolicyNIMError, match="acceptance_conflict|idempotency_conflict"):
+        service.submit(changed, idempotency_key="uncertain-weight", principal=principal())
+    accepted = service.submit(suite, idempotency_key="uncertain-weight", principal=principal())
+    assert accepted.work_units == 2 and accepted.admission_id is not None
+    assert service.store.aggregate_counts() == {"queued": 1}
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT COUNT(*),SUM(work_units) FROM operation_usage").fetchone() == (
+            1,
+            2,
+        )
+
+
+def test_cancelled_queued_job_retains_prepaid_units(generation, tmp_path):
+    """Accepted cancellation consumes its units and duplicate submission keeps that outcome."""
+    import sqlite3
+
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 2
+    accepted = service.submit(suite, idempotency_key="cancel-weight", principal=principal())
+    cancelled = service.cancel(accepted.job_id, principal=principal())
+    assert cancelled.state == "cancelled"
+    assert service.store.pending_admission_finalizations() == []
+    assert (
+        service.submit(suite, idempotency_key="cancel-weight", principal=principal()) == cancelled
+    )
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="no-refund", principal=principal())
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT outcome,work_units FROM operation_usage").fetchone() == (
+            "cancelled",
+            2,
+        )
+
+
+def test_expired_accepted_authority_blocks_execution_but_allows_terminal_accounting(
+    generation, tmp_path, monkeypatch
+):
+    """A queued token's expiry rejects providers without losing its accepted unit or outcome."""
+    import sqlite3
+    import time
+    from dataclasses import replace
+
+    from policynim.services import authorization
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    expires_at = int(time.time()) + 30
+    caller = replace(principal(), expires_at=expires_at)
+    accepted = service.submit(suite, idempotency_key="expires-in-queue", principal=caller)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        with monkeypatch.context() as expired:
+            expired.setattr(authorization.time, "time", lambda: expires_at + 1)
+            result = worker.run_once()
+        assert result is not None and result.job_id == accepted.job_id
+        assert result.state == "failed" and result.failure_code == "invalid_token"
+        assert calls == []
+        assert service.store.pending_admission_finalizations() == []
+        with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+            assert db.execute("SELECT outcome,work_units FROM operation_usage").fetchone() == (
+                "failed",
+                1,
+            )
+    finally:
+        worker.close()
+
+
+def test_process_exit_after_quota_completion_never_replays_completed_cases(generation, tmp_path):
+    """A killed job-report boundary retains paid completed work without another provider attempt."""
+    import json
+    import os
+    import sqlite3
+    import subprocess
+    import sys
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="quota-job-commit-gap", principal=principal())
+    settings_path = tmp_path / "child-settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "eval_workspace_dir": str(service.settings.eval_workspace_dir),
+                "beta_auth_db_path": str(service.settings.beta_auth_db_path),
+                "generations_dir": str(service.settings.generations_dir),
+                "nvidia_embed_model": service.settings.nvidia_embed_model,
+                "nvidia_base_url": service.settings.nvidia_base_url,
+            }
+        )
+    )
+    evidence = tmp_path / "attempts.txt"
+    script = '''
+import json, os, sys
+from pathlib import Path
+from policynim.operations import current_budget
+from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
+from policynim.settings import Settings
+from policynim.types import EvalCaseResult, EvalCaseMetrics
+class Evaluator:
+    """Persist one known completed case before the process loses its report commit."""
+    def __init__(self, settings):
+        """Keep the restored generation identity without opening a provider client."""
+        self.settings = settings
+    def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+        """Record a durable attempt and a typed result at the injected provider boundary."""
+        current_budget().reserve_provider_call()
+        with Path(sys.argv[2]).open("a") as stream:
+            stream.write("attempt\\n")
+        case = suite.cases[0]
+        return EvalCaseResult(generation_id=self.settings.generation_id, case_id=case_id,
+            kind=case.kind, input=case.input, top_k=case.top_k, rerank_enabled=rerank_enabled,
+            passed=True, expected_insufficient_context=True, actual_insufficient_context=True,
+            metrics=EvalCaseMetrics(insufficient_context_correct=True))
+    def close(self):
+        """The test evaluator holds no external resource after its completed case."""
+settings = Settings(**json.loads(Path(sys.argv[1]).read_text()), _env_file=None)
+service = EvaluationJobService(settings)
+original = service.store.finish
+def stop_before_report(job_id, token, state, **kwargs):
+    """Exit after admission completion committed, before the job report can commit."""
+    if state == "completed":
+        os._exit(91)
+    return original(job_id, token, state, **kwargs)
+service.store.finish = stop_before_report
+EvaluationJobWorker(service, evaluator_factory=Evaluator).run_once()
+'''
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(settings_path), str(evidence)],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+        },
+        capture_output=True,
+        timeout=15,
+    )
+    assert process.returncode == 91, process.stderr.decode()
+    assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+    with sqlite3.connect(service.settings.beta_auth_db_path) as db:
+        assert db.execute("SELECT outcome,work_units FROM operation_usage").fetchone() == (
+            "completed",
+            1,
+        )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        assert worker.run_once() is None
+        report = service.result(accepted.job_id, principal=principal()).report
+        assert report.state == "interrupted"
+        assert len(report.completed_cases) == 1
+        assert report.unfinished_case_ids == [] and report.uncertain_case_id is None
+        assert report.usage.provider_attempts == 1
+        assert evidence.read_text().splitlines() == ["attempt"] and calls == []
+        assert service.store.pending_admission_finalizations() == []
+    finally:
+        worker.close()
+
+
+def test_suite_cannot_enter_queue_when_case_execution_weight_exceeds_allowance(
+    generation, tmp_path
+):
+    """Two validated executions can't be accepted under a one-unit daily allowance."""
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path, cases=2)
+    service.settings.mcp_principal_daily_operation_quota = 1
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="too-many-executions", principal=principal())
+    assert service.store.aggregate_counts() == {}
+
+
+@pytest.mark.parametrize("stop_reason", ["cancelled", "deadline_exhausted"])
+def test_capture_cannot_charge_after_submitting_request_budget_ends(
+    generation, tmp_path, monkeypatch, stop_reason
+):
+    """Cancellation or expiry during real archive capture rejects acceptance without a charge."""
+    from threading import Event
+
+    from policynim.errors import ProviderError
+    from policynim.operations import OperationBudget, operation_scope
+    from policynim.services.generations import GenerationStore
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    now = [0.0]
+    cancelled = Event()
+    budget = OperationBudget(30, clock=lambda: now[0], cancelled=cancelled)
+    original = GenerationStore.export_bundle
+
+    def finish_capture(*args, **kwargs):
+        """End the caller's budget only after the immutable archive is fully written."""
+        result = original(*args, **kwargs)
+        if stop_reason == "cancelled":
+            cancelled.set()
+        else:
+            now[0] = 31.0
+        return result
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", finish_capture)
+    with pytest.raises(ProviderError) as rejected, operation_scope(budget):
+        service.submit(suite, idempotency_key="expired-capture", principal=principal())
+    assert rejected.value.failure_class == stop_reason
+    assert service.store.aggregate_counts() == {}
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 0
+
+
+def test_background_worker_claims_ownership_before_start_returns(generation, tmp_path) -> None:
+    """A second background worker rejects startup while the first owns even an idle queue."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, _, _ = job_setup(generation, tmp_path)
+    first = EvaluationJobWorker(service)
+    second = EvaluationJobWorker(EvaluationJobService(service.settings))
+    first.start()
+    try:
+        with pytest.raises(EvaluationJobError, match="worker_busy"):
+            second.start()
+    finally:
+        second.close()
+        first.close()
+
+
+def test_missing_bound_accounting_record_pauses_before_another_claim(generation, tmp_path) -> None:
+    """A replaced accounting database produces a visible pause and leaves queued work untouched."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    first = service.submit(suite, idempotency_key="missing-ledger", principal=principal())
+    service.store.cancel(first.job_id, first.owner_id)
+    second = service.submit(suite, idempotency_key="still-queued", principal=principal())
+    with sqlite3.connect(service.settings.beta_auth_db_path) as connection:
+        connection.execute(
+            "DELETE FROM operation_usage WHERE operation_id=?", (first.admission_id,)
+        )
+    worker = EvaluationJobWorker(service)
+    try:
+        with pytest.raises(OperationAdmissionError, match="accounting_incomplete"):
+            worker.run_once()
+        with pytest.raises(EvaluationJobError, match="accounting_incomplete"):
+            worker.require_admission_ready()
+        assert service.inspect(second.job_id, principal=principal()).state == "queued"
+    finally:
+        worker.close()
+
+
+def test_cancellation_read_failure_releases_quota_and_preserves_worker_progress(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A real SQLite cancellation-read denial after evaluator drain can't strand quota capacity."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    first = service.submit(suite, idempotency_key="read-failure", principal=principal())
+    second = service.submit(suite, idempotency_key="after-read-failure", principal=principal())
+    deny_next_read = [False]
+    denied: list[bool] = []
+    reads_after_drain = [0]
+    connect = service.store._connect
+
+    def job_connection():
+        """Deny only the next real read of the persisted cancellation column."""
+        connection = connect()
+
+        def authorize(action, table, column, database, trigger):
+            """Deny one real SQLite read while leaving terminal writes available."""
+            if (
+                deny_next_read[0]
+                and action == sqlite3.SQLITE_READ
+                and table == "evaluation_jobs"
+                and column == "cancel_requested"
+            ):
+                reads_after_drain[0] += 1
+                if reads_after_drain[0] == 2:
+                    deny_next_read[0] = False
+                    denied.append(True)
+                    return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(authorize)
+        return connection
+
+    calls: list[str] = []
+    base = evaluator_factory(calls)
+
+    class Evaluator(base):
+        """Fail the cancellation observation only after the first evaluator has drained."""
+
+        def close(self):
+            """Arm one SQLite failure after the final budget check and provider cleanup."""
+            super().close()
+            if not denied:
+                deny_next_read[0] = True
+
+    monkeypatch.setattr(service.store, "_connect", job_connection)
+    worker = EvaluationJobWorker(service, evaluator_factory=Evaluator)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.job_id == first.job_id
+        assert result.state == "interrupted" and result.failure_code == "storage_failure"
+        assert denied == [True]
+        with sqlite3.connect(service.settings.beta_auth_db_path) as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM operation_usage WHERE active_slot=1"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                connection.execute(
+                    "SELECT outcome FROM operation_usage WHERE operation_id=?",
+                    (first.admission_id,),
+                ).fetchone()[0]
+                == "failed"
+            )
+        completed = worker.run_once()
+        assert completed is not None and completed.job_id == second.job_id
+        assert completed.state == "completed"
+        assert calls == ["case-0", "closed", "case-0", "closed"]
+    finally:
+        worker.close()
+
+
+def test_exhausted_allowance_rejects_before_generation_capture(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """An exhausted caller can't force another archive export by changing submission keys."""
+    from policynim.services.generations import GenerationStore
+    from policynim.services.operation_admission import OperationAdmissionError
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    service.settings.mcp_principal_daily_operation_quota = 1
+    accepted = service.submit(suite, idempotency_key="last-unit", principal=principal())
+    exports: list[bool] = []
+    export = GenerationStore.export_bundle
+
+    def record_export(self, *args, **kwargs):
+        """Observe the real archive-export boundary rather than substituting job admission."""
+        exports.append(True)
+        return export(self, *args, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", record_export)
+    with pytest.raises(OperationAdmissionError, match="quota_exceeded"):
+        service.submit(suite, idempotency_key="new-exhausted-key", principal=principal())
+    assert exports == []
+    assert service.submit(suite, idempotency_key="last-unit", principal=principal()) == accepted
+
+
+def test_cancel_during_attempt_reservation_reports_known_unsent_work(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """Cancellation before dispatch doesn't turn a reservation into an uncertain provider call."""
+    from policynim.operations import current_budget
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="unsent-cancel", principal=principal())
+    save_usage = service.store.save_usage
+    cancelled = [False]
+    calls: list[str] = []
+
+    def persist_then_cancel(job_id, worker_token, usage):
+        """Cancel through the ordinary service immediately after the first durable reservation."""
+        save_usage(job_id, worker_token, usage)
+        if usage.provider_attempts == 1 and not cancelled[0]:
+            cancelled[0] = True
+            service.cancel(job_id, principal=principal())
+
+    class Evaluator:
+        """Use the provider reservation boundary while recording whether dispatch was reached."""
+
+        def __init__(self, settings):
+            """Keep the accepted generation settings for the injected result."""
+            self.settings = settings
+
+        def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
+            """The reservation must reject cancellation before this evaluator can dispatch."""
+            current_budget().reserve_provider_call()
+            calls.append("would_send")
+            return case_result(self.settings, suite, case_id)
+
+        def close(self):
+            """Record evaluator drain even when pre-dispatch admission rejects."""
+            calls.append("closed")
+
+    monkeypatch.setattr(service.store, "save_usage", persist_then_cancel)
+    worker = EvaluationJobWorker(service, evaluator_factory=Evaluator)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "cancelled"
+        report = service.result(accepted.job_id, principal=principal()).report
+        assert report.usage.provider_attempts == report.usage.unavailable_usage_attempts == 0
+        assert report.usage.usage_status == "not_performed"
+        assert report.completed_cases == [] and report.uncertain_case_id is None
+        assert calls == ["closed"]
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("prepaid", [True, False])
+def test_late_cancellation_keeps_job_and_quota_terminal_outcomes_aligned(
+    generation, tmp_path, monkeypatch, prepaid: bool
+) -> None:
+    """Cancellation after the last budget check wins after cleanup in both durable stores."""
+    from policynim.providers.lifecycle import NVIDIAClients
+    from policynim.services import evaluation_jobs as module
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    if not prepaid:
+        submit = service.store.submit
+
+        def submit_unbound_historical_job(**kwargs):
+            """Use the public store's retained pre-prepayment queued-job contract."""
+            kwargs.pop("accept_work")
+            return submit(**kwargs)
+
+        monkeypatch.setattr(service.store, "submit", submit_unbound_historical_job)
+    accepted = service.submit(suite, idempotency_key="late-cancel", principal=principal())
+    assert (accepted.admission_id is not None) == prepaid
+    calls: list[str] = []
+
+    class Clients(NVIDIAClients):
+        """Request cancellation only after the operation scope's final budget check."""
+
+        def close(self):
+            """Use public job control after the actual provider pool drains."""
+            super().close()
+            service.cancel(accepted.job_id, principal=principal())
+
+    monkeypatch.setattr(module, "NVIDIAClients", Clients)
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "cancelled"
+        retained = service.result(accepted.job_id, principal=principal()).report
+        assert retained.state == "cancelled"
+        assert len(retained.completed_cases) == 1
+        assert calls == ["case-0", "closed"]
+        accounting = OperationStore.report(service.settings.beta_auth_db_path)
+        assert accounting.outcomes == {"cancelled": 1}
+        assert accounting.active_operations == 0
+    finally:
+        worker.close()
+
+
+def test_cancellation_after_accounting_completion_doesnt_rewrite_terminal_history(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A later cancellation request can't replace an already persisted completed outcome."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionService
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="after-accounting", principal=principal())
+    execute = OperationAdmissionService.run_accepted
+
+    def cancel_after_accounting(self, operation, **kwargs):
+        """Keep the real admission lifecycle, then cancel through public job control."""
+        result = execute(self, operation, **kwargs)
+        service.cancel(accepted.job_id, principal=principal())
+        return result
+
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", cancel_after_accounting)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "completed" and result.cancel_requested
+        retained = service.result(accepted.job_id, principal=principal()).report
+        assert retained.state == "completed" and len(retained.completed_cases) == 1
+        assert OperationStore.report(service.settings.beta_auth_db_path).outcomes == {
+            "completed": 1
+        }
+        assert calls == ["case-0", "closed"]
+    finally:
+        worker.close()
+
+
+def test_completed_job_doesnt_require_an_extra_terminal_quota_transaction(
+    generation, tmp_path, monkeypatch
+) -> None:
+    """A real quota writer lock after accounting can't turn completed work into a failed job."""
+    import sqlite3
+
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import OperationAdmissionService
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="post-accounting-lock", principal=principal())
+    execute = OperationAdmissionService.run_accepted
+    finish = service.store.finish
+    writer: sqlite3.Connection | None = None
+
+    def hold_writer_after_accounting(self, operation, **kwargs):
+        """Acquire an actual independent writer only after terminal accounting has committed."""
+        nonlocal writer
+        result = execute(self, operation, **kwargs)
+        writer = sqlite3.connect(service.settings.beta_auth_db_path, timeout=0.1)
+        writer.execute("BEGIN IMMEDIATE")
+        return result
+
+    def release_after_job_terminal(*args, **kwargs):
+        """Keep the quota writer locked until the real job state and report commit."""
+        nonlocal writer
+        result = finish(*args, **kwargs)
+        assert writer is not None
+        writer.rollback()
+        writer.close()
+        writer = None
+        return result
+
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", hold_writer_after_accounting)
+    monkeypatch.setattr(service.store, "finish", release_after_job_terminal)
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    try:
+        result = worker.run_once()
+        assert result is not None and result.job_id == accepted.job_id
+        assert result.state == "completed"
+        assert service.result(accepted.job_id, principal=principal()).report.state == "completed"
+    finally:
+        if writer is not None:
+            writer.rollback()
+            writer.close()
+        worker.close()
+
+
+def test_idle_worker_throttles_retention_between_polls(generation, tmp_path, monkeypatch):
+    """Idle polling keeps maintenance bounded even while retained summaries accumulate."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
+    service, _, _ = job_setup(generation, tmp_path)
+    worker = EvaluationJobWorker(service)
+    cleanups: list[int] = []
+    polls: list[int] = []
+    purge = service.store.purge_expired
+
+    def record_cleanup():
+        """Retain real cleanup while counting maintenance transactions."""
+        cleanups.append(1)
+        return purge()
+
+    def finish_after_five_polls(timeout):
+        """Drive the real idle loop without sleeping between its five polls."""
+        polls.append(1)
+        if len(polls) == 5:
+            worker._stop.set()
+        return worker._stop.is_set()
+
+    monkeypatch.setattr(service.store, "purge_expired", record_cleanup)
+    monkeypatch.setattr(worker._stop, "wait", finish_after_five_polls)
+    try:
+        worker._loop()
+        assert len(polls) == 5
+        assert len(cleanups) == 1
+    finally:
+        worker.close()
+
+
+def test_shutdown_drain_keeps_quota_and_job_interruption_outcomes_equal(
+    generation, tmp_path, monkeypatch
+):
+    """Operator shutdown after provider cleanup isn't recorded as caller cancellation."""
+    from policynim.services import evaluation_jobs as module
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="shutdown-drain", principal=principal())
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    original = module.NVIDIAClients
+
+    class Clients(original):
+        """Stop the actual worker after provider-owned clients have drained."""
+
+        def close(self):
+            """Keep cleanup before recording the operator's stop signal."""
+            super().close()
+            worker._stop.set()
+
+    monkeypatch.setattr(module, "NVIDIAClients", Clients)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "interrupted"
+        assert result.failure_code == "worker_stopped"
+        assert service.result(accepted.job_id, principal=principal()).report.state == "interrupted"
+        report = OperationStore.report(service.settings.beta_auth_db_path)
+        assert report.outcomes == {"interrupted": 1}
+        assert report.active_operations == 0
+    finally:
+        worker.close()
+
+
+def test_shutdown_before_capacity_admission_keeps_unstarted_job_queued(
+    generation, tmp_path, monkeypatch
+):
+    """A proven pre-dispatch rejection can resume after the operator restarts the worker."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.operation_admission import (
+        OperationAdmissionError,
+        OperationAdmissionService,
+    )
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(
+        suite, idempotency_key="shutdown-before-admission", principal=principal()
+    )
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    original = OperationAdmissionService.run_accepted
+
+    def busy_during_shutdown(self, operation, **kwargs):
+        """Stop before activation and reject at the real admission boundary."""
+        worker._stop.set()
+        raise OperationAdmissionError("server_busy: Retry after work drains.")
+
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", busy_during_shutdown)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "queued"
+        assert result.completed_case_count == 0
+        assert calls == []
+    finally:
+        worker.close()
+    monkeypatch.setattr(OperationAdmissionService, "run_accepted", original)
+    service.store.clock = lambda: accepted.accepted_at + 2
+    resumed = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    try:
+        result = resumed.run_once()
+        assert result is not None and result.state == "completed"
+        assert calls == ["case-0", "closed"]
+    finally:
+        resumed.close()
+
+
+def test_shutdown_after_claim_before_activation_preserves_queued_acceptance(
+    generation, tmp_path, monkeypatch
+):
+    """An operator stop seen by the real readiness guard doesn't terminalize unstarted work."""
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="stop-after-claim", principal=principal())
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory([]))
+    captured = service.store.captured_snapshot
+
+    def stop_after_capture(*args, **kwargs):
+        """Request shutdown after the actual claim and before quota activation."""
+        snapshot = captured(*args, **kwargs)
+        worker._stop.set()
+        return snapshot
+
+    monkeypatch.setattr(service.store, "captured_snapshot", stop_after_capture)
+    try:
+        result = worker.run_once()
+        assert result is not None and result.state == "queued"
+        assert result.job_id == accepted.job_id
+        report = OperationStore.report(service.settings.beta_auth_db_path)
+        assert report.active_operations == 0
+        assert report.inactive_accepted_operations == 1
+        assert report.outcomes == {"accepted": 1}
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize(
+    "query,parameters",
+    [
+        (
+            "SELECT job_id FROM evaluation_jobs WHERE expires_at<=? "
+            "AND state NOT IN ('queued','running') AND result_expired=0",
+            (100,),
+        ),
+        ("SELECT job_id FROM evaluation_jobs WHERE state='running'", ()),
+        (
+            "SELECT * FROM evaluation_jobs WHERE state NOT IN ('queued','running') "
+            "AND admission_id IS NOT NULL AND admission_finalized=0 "
+            "ORDER BY finished_at, rowid LIMIT ?",
+            (100,),
+        ),
+        ("SELECT generation_id FROM evaluation_jobs WHERE result_expired=0", ()),
+    ],
+)
+def test_worker_maintenance_queries_use_indexes_instead_of_full_history(
+    tmp_path, query, parameters
+):
+    """Actual SQLite query plans bound routine polling and retained-payload maintenance."""
+    import sqlite3
+
+    store = EvaluationJobStore(tmp_path / "jobs.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        plan = connection.execute("EXPLAIN QUERY PLAN " + query, parameters).fetchall()
+    assert any("USING" in row[3] and "INDEX" in row[3] for row in plan), plan
+
+
+def test_new_job_reuses_verified_retained_archive_without_export(generation, tmp_path, monkeypatch):
+    """New keys on the same immutable generation reuse its durable bytes without recompression."""
+    from policynim.services.generations import GenerationStore
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="first-capture", principal=principal())
+
+    def unexpected_export(*args, **kwargs):
+        """Any second generation export would repeat the expensive capture work."""
+        raise AssertionError("The retained generation archive should be reused.")
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", unexpected_export)
+    repeated = service.submit(suite, idempotency_key="second-capture", principal=principal("other"))
+    assert repeated.generation_id == generation_id and repeated.state == "queued"
+
+
+def test_distinct_principals_share_one_kernel_capture_slot(generation, tmp_path, monkeypatch):
+    """Real generation capture can't multiply its large buffers across independent principals."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from policynim.services.generations import GenerationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    entered, release = Event(), Event()
+    exported: list[str] = []
+    original = GenerationStore.export_bundle
+
+    def held_export(store, destination, generation_id=None):
+        """Pause one actual export while another principal tries its public submission."""
+        exported.append(str(destination))
+        entered.set()
+        assert release.wait(5)
+        return original(store, destination, generation_id)
+
+    monkeypatch.setattr(GenerationStore, "export_bundle", held_export)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.submit, suite, idempotency_key="one", principal=principal())
+        assert entered.wait(5)
+        try:
+            with pytest.raises(EvaluationJobError, match="server_busy"):
+                service.submit(suite, idempotency_key="two", principal=principal("other"))
+        finally:
+            release.set()
+        assert first.result(5).state == "queued"
+    assert len(exported) == 1
+
+
+def test_reused_archive_corruption_is_rejected_before_new_charge(generation, tmp_path):
+    """A matching metadata digest can't hide modified BLOB bytes on a new submission."""
+    import sqlite3
+
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, generation_id = job_setup(generation, tmp_path)
+    service.submit(suite, idempotency_key="first-capture", principal=principal())
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute(
+            "UPDATE evaluation_job_archives SET archive=? WHERE generation_id=?",
+            (b"corrupt-retained-archive", generation_id),
+        )
+    with pytest.raises(EvaluationJobError, match="archive_invalid"):
+        service.submit(suite, idempotency_key="next-capture", principal=principal("other"))
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 1
+
+
+@pytest.mark.parametrize("control", ["cancel", "deadline", "shutdown"])
+def test_restore_lock_wait_observes_job_control_before_provider_work(
+    generation, tmp_path, monkeypatch, control
+) -> None:
+    """Real generation-lock contention must remain interruptible throughout input restoration."""
+    import time
+    from threading import Event, Thread
+
+    from policynim.job_types import EvaluationJobLimits
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+    from policynim.services.generations import GenerationStore
+    from policynim.storage.file_lock import exclusive_file_lock
+    from policynim.types import EmbeddingIdentity
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    root = service.store.path.parent / "worker-generations"
+    bundle = tmp_path / "restorable-generation.zip"
+    digest = generation[1].export_bundle(bundle, generation[2])
+    GenerationStore(
+        root=root,
+        embedding=EmbeddingIdentity(
+            model=service.settings.nvidia_embed_model, endpoint=service.settings.nvidia_base_url
+        ),
+    ).import_bundle(bundle, expected_digest=digest)
+    accepted = service.submit(
+        suite,
+        idempotency_key="controlled-restore",
+        principal=principal(),
+        limits=EvaluationJobLimits(deadline_seconds=0.4 if control == "deadline" else 30),
+    )
+    restoring = Event()
+    original = GenerationStore.import_bundle
+
+    def observe_import(store, *args, **kwargs):
+        """Observe the actual import before it waits for the held generation writer lease."""
+        restoring.set()
+        return original(store, *args, **kwargs)
+
+    monkeypatch.setattr(GenerationStore, "import_bundle", observe_import)
+    calls: list[str] = []
+    worker = EvaluationJobWorker(service, evaluator_factory=evaluator_factory(calls))
+    closer = None
+    try:
+        with exclusive_file_lock(root / ".writer.lock"):
+            worker.start()
+            assert restoring.wait(5)
+            if control == "cancel":
+                assert service.cancel(accepted.job_id, principal=principal()).state == "running"
+            elif control == "shutdown":
+                closer = Thread(target=worker.close)
+                closer.start()
+            deadline = time.monotonic() + 1.5
+            while True:
+                observed = service.inspect(accepted.job_id, principal=principal())
+                if observed.state != "running" or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+            expected = {
+                "cancel": "cancelled",
+                "deadline": "deadline_exceeded",
+                "shutdown": "interrupted",
+            }
+            assert observed.state == expected[control]
+            assert calls == []
+            if closer is not None:
+                closer.join(1)
+                assert not closer.is_alive()
+        report = service.result(accepted.job_id, principal=principal()).report
+        assert report.usage.provider_attempts == 0
+        assert report.completed_cases == [] and report.uncertain_case_id is None
+    finally:
+        worker.close()
+        if closer is not None:
+            closer.join(5)
+
+
+def test_rejected_principal_never_blocks_another_owners_global_capture(
+    generation, tmp_path, monkeypatch
+):
+    """Hold a real owner lock and observe whether its rejected caller blocks another owner."""
+    import time
+    from collections.abc import Iterator
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Event, current_thread
+
+    from policynim.services import evaluation_jobs as module
+    from policynim.storage.file_lock import exclusive_file_lock
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="seed", principal=principal())
+    owner_lock = service.store.path.with_name(
+        service.store.path.name + "." + accepted.owner_id + ".submit.lock"
+    )
+    global_lock = service.store.path.with_suffix(".capture.lock")
+    entered, release = Event(), Event()
+    acquire = module.try_exclusive_file_lock
+
+    @contextmanager
+    def observe_actual_lock(path) -> Iterator[bool]:
+        """Delay only a real global lock acquired by an already-rejected principal."""
+        with acquire(path) as acquired:
+            if path == global_lock and acquired and current_thread().name.startswith("rejected"):
+                entered.set()
+                assert release.wait(5)
+            yield acquired
+
+    monkeypatch.setattr(module, "try_exclusive_file_lock", observe_actual_lock)
+
+    def rejected_submission():
+        """Call the actual service while another process-style owner lock is held."""
+        try:
+            service.submit(suite, idempotency_key="owner-rejected", principal=principal())
+        except EvaluationJobError as error:
+            return error.code
+        return None
+
+    with (
+        exclusive_file_lock(owner_lock),
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="rejected") as pool,
+    ):
+        blocked = pool.submit(rejected_submission)
+        try:
+            until = time.monotonic() + 1
+            while not entered.is_set() and not blocked.done() and time.monotonic() < until:
+                time.sleep(0.005)
+            other = service.submit(
+                suite, idempotency_key="other-owner", principal=principal("other")
+            )
+            assert other.state == "queued"
+        finally:
+            release.set()
+            assert blocked.result(5) == "principal_busy"
+    assert not entered.is_set()
+    assert service.store.aggregate_counts() == {"queued": 2}
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2

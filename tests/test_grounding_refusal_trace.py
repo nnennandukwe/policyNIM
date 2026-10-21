@@ -9,6 +9,7 @@ from test_preflight_service import (
     MockIndexStore,
     MockPolicyCompiler,
     MockReranker,
+    fixture_catalog,
     make_chunk,
 )
 
@@ -53,6 +54,7 @@ def test_public_trace_explains_grounding_refusal_without_weakening_result(refusa
     else:
         draft.applicable_policies = []
     service = PreflightService(
+        source_catalog_resolver=fixture_catalog,
         embedder=MockEmbedder(),
         index_store=MockIndexStore([chunk]),
         reranker=MockReranker(),

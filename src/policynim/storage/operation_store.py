@@ -55,6 +55,26 @@ class OperationSnapshot(BaseModel):
     credential: CredentialState | None = None
 
 
+class ReservedWork(BaseModel):
+    """Read one principal-bound keyed acceptance without altering its lifecycle."""
+
+    model_config = ConfigDict(frozen=True)
+    operation_id: str
+    operation: str
+    request_digest: str | None
+    work_units: int
+    outcome: str
+
+
+class WorkAllowanceSnapshot(BaseModel):
+    """Expose a consistent advisory read without charging or recovering operation state."""
+
+    model_config = ConfigDict(frozen=True)
+    daily_work_units: int
+    credential: CredentialState | None = None
+    reservation: ReservedWork | None = None
+
+
 class OperationAdmission(BaseModel):
     """Describe an admission decision without exposing account or credential data."""
 
@@ -173,6 +193,54 @@ class OperationStore:
     def _connect(self) -> sqlite3.Connection:
         """Open a bounded-wait connection with explicit transaction ownership."""
         return connect_auth_database(self.path, timeout=0.1)
+
+    def inspect_work_allowance(
+        self,
+        *,
+        principal_id: str,
+        reservation_key: str,
+        credential_id: str | None = None,
+        now: float | None = None,
+    ) -> WorkAllowanceSnapshot:
+        """Read a keyed reservation, credential and daily units in one nonmutating snapshot."""
+        timestamp = time.time() if now is None else now
+        usage_date = datetime.fromtimestamp(timestamp, UTC).date().isoformat()
+        with closing(self._connect()) as connection, connection:
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("BEGIN")
+            existing = connection.execute(
+                "SELECT operation_id, operation, request_digest, work_units, outcome "
+                "FROM operation_usage WHERE principal_id = ? AND reservation_key = ?",
+                (principal_id, reservation_key),
+            ).fetchone()
+            credential = None
+            if credential_id is not None:
+                row = connection.execute(
+                    "SELECT a.id, a.status, k.revoked_at FROM accounts a "
+                    "JOIN api_keys k ON k.account_id = a.id WHERE k.key_hash = ?",
+                    (credential_id,),
+                ).fetchone()
+                if row is not None:
+                    credential = CredentialState(
+                        account_id=row[0], account_status=row[1], revoked_at=row[2]
+                    )
+            return WorkAllowanceSnapshot(
+                daily_work_units=connection.execute(
+                    "SELECT COALESCE(SUM(work_units), 0) FROM operation_usage "
+                    "WHERE principal_id = ? AND usage_date = ?",
+                    (principal_id, usage_date),
+                ).fetchone()[0],
+                credential=credential,
+                reservation=ReservedWork(
+                    operation_id=existing[0],
+                    operation=existing[1],
+                    request_digest=existing[2],
+                    work_units=existing[3],
+                    outcome=existing[4],
+                )
+                if existing is not None
+                else None,
+            )
 
     def reserve(
         self,
