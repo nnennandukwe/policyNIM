@@ -36,3 +36,12 @@ count/domain, preserving accepted ledger outcomes while marking evidence incompl
 An actual HTTP empty-discovery control also rejects a schema-valid response that
 doesn't advertise the fixture's eight tools. Managed probe success requires that
 set; generic in-process counter controls keep their existing response contract.
+
+The exact-head review exposed two further evidence gaps. An actual missing-pointer
+health response after an earlier valid active bracket now makes that measurement
+incomplete; only availability failures after intentional shutdown are expected.
+Actual warmup response corruption in a later scenario now retains both scenarios,
+records the warmup failure class and returns a failing status. These checks keep
+accepted application outcomes separate from whether their evidence passed. The
+eight-tool fixture contract has a named expected set passed explicitly to discovery
+validation, independently of retrieval generation identity.

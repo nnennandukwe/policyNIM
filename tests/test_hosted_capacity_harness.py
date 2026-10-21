@@ -188,6 +188,145 @@ def test_provider_gate_waits_for_one_bracketed_probe_cycle(
     assert scenario["paired_active_work_probe_observed"] is True
 
 
+def test_readiness_loss_after_a_paired_probe_cant_complete_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retain a real transient missing-generation 503 after an earlier successful bracket."""
+    import runpy
+
+    import httpx
+
+    from policynim.storage.operation_store import OperationStore
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_report, original_get = OperationStore.report, httpx.AsyncClient.get
+    fixture_roots: list[Path] = []
+    injected = False
+
+    def report(path: Path):
+        """Locate only the fixture whose public operation report is being measured."""
+        if not fixture_roots:
+            fixture_roots.append(path.parent)
+        return original_report(path)
+
+    async def get(client, *args, **kwargs):
+        """Remove and restore the actual active pointer around one later health request."""
+        nonlocal injected
+        if (
+            fixture_roots
+            and not injected
+            and (fixture_roots[0] / "provider-probe-observed").exists()
+        ):
+            injected = True
+            pointer = fixture_roots[0] / "generations" / "active.json"
+            previous = pointer.read_bytes()
+            pointer.unlink()
+            try:
+                response = await original_get(client, *args, **kwargs)
+                assert response.status_code == 503
+                return response
+            finally:
+                pointer.write_bytes(previous)
+        return await original_get(client, *args, **kwargs)
+
+    monkeypatch.setattr(OperationStore, "report", staticmethod(report))
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "readiness-loss.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--provider-delay",
+            "0.5",
+            "--scenarios",
+            "baseline",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    scenario = json.loads(output.read_text())["scenarios"][0]
+    assert injected
+    assert scenario["paired_active_work_probe_observed"] is True
+    assert scenario["cheap_probe_outcomes"]["health_503"] == 1
+    assert scenario["unexpected_probe_failure_counts"] == {"health:health_503": 1}
+    assert scenario["outcomes"] == {"ok": 1}
+    assert status == 1 and scenario["measurement_complete"] is False
+    assert scenario["managed_identity_verified"] is False
+
+
+@pytest.mark.parametrize("mutation", ["generation", "count", "domain"])
+def test_bad_warmup_retains_the_scenario_and_earlier_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Keep an earlier valid scenario when a later real warmup response has invalid evidence."""
+    import runpy
+
+    import httpx
+
+    _coordinate_first_workload_probe(tmp_path, monkeypatch)
+    original_post = httpx.AsyncClient.post
+    calls: dict[str, int] = {}
+
+    async def post(client, *args, **kwargs):
+        """Corrupt only the second server's first completed search response."""
+        response = await original_post(client, *args, **kwargs)
+        if kwargs.get("json", {}).get("method") == "tools/call":
+            server = str(client.base_url)
+            calls[server] = calls.get(server, 0) + 1
+            if len(calls) == 2 and calls[server] == 1:
+                envelope = response.json()
+                content = envelope["result"]["structuredContent"]
+                if mutation == "generation":
+                    content["generation_id"] = "b" * 64
+                elif mutation == "count":
+                    content["hits"] = []
+                else:
+                    content["hits"][0]["policy"]["domain"] = "domain-1"
+                return httpx.Response(200, json=envelope)
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    script = Path(__file__).resolve().parents[1] / "scripts/measure_hosted_capacity.py"
+    output = tmp_path / "warmup-failure.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(script),
+            "--output",
+            str(output),
+            "--users",
+            "1",
+            "--chunks",
+            "20",
+            "--requests-per-user",
+            "1",
+            "--scenarios",
+            "baseline",
+            "slow-provider",
+        ],
+    )
+    status = runpy.run_path(str(script))["main"]()
+    result = json.loads(output.read_text())
+    assert status == 1 and result["measurement_complete"] is False
+    first, second = result["scenarios"]
+    assert first["measurement_complete"] is True
+    assert second["measurement_complete"] is False
+    assert second["warmup_outcome"] == (
+        "generation_identity_mismatch" if mutation == "generation" else "retrieval_result_mismatch"
+    )
+    assert second["operator_report"]["outcomes"]["completed"] == 2
+
+
 @pytest.mark.parametrize(
     ("distribution", "chunks", "fault"),
     [

@@ -140,7 +140,9 @@ The samples include setup/ingestion memory that remains resident; they can miss
 short peaks. The server captures its process maximum at application lifespan shutdown,
 before Uvicorn restores SIGTERM, and names that phase in `peak_server_rss_scope`.
 A failed or missing shutdown measurement stays `null`. A
-warmup search contributes one explicitly identified ledger charge per scenario.
+warmup search attempt is reported separately with `warmup_outcome`. A successful
+warmup contributes one ledger charge; failed attempts retain their actual ledger
+outcome and leave the scenario incomplete.
 Provider usage stays unavailable; `live_nvidia_calls` stays zero.
 
 `paired_active_work_probe_observed` records whether one successful discovery and
@@ -244,8 +246,12 @@ owned location helps identify a failure stage without exposing a raw traceback.
 
 The harness validates JSON-RPC version/request identity and typed MCP discovery/tool
 results before counting success. HTTP 200 protocol errors, missing results and malformed
-search payloads produce explicit error outcomes; warmup fails instead of inflating
-successful throughput. Responses and validation error text never enter the receipt.
+search payloads produce explicit error outcomes. A bad warmup leaves its scenario
+incomplete while preserving earlier scenarios and subsequent bounded measurements
+in the receipt. `unexpected_probe_failure_counts` retains failed discovery/readiness
+classes during measurement; those failures also leave managed evidence incomplete.
+Availability failures after the intentional shutdown intervention remain expected.
+Responses and validation error text never enter the receipt.
 
 On POSIX hosts, recovery and read-only reporting use compatible shared lease probes,
 while workers retain exclusive ownership. A report observer can't delay committed

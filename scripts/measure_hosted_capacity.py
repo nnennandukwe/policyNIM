@@ -33,6 +33,20 @@ if TYPE_CHECKING:
     from policynim.settings import Settings
 
 
+_MANAGED_FIXTURE_TOOL_NAMES = frozenset(
+    {
+        "policy_preflight",
+        "policy_search",
+        "policy_compile",
+        "policy_preflight_evidence",
+        "eval_submit",
+        "eval_inspect",
+        "eval_cancel",
+        "eval_result",
+    }
+)
+
+
 def _bounded_count(minimum: int, maximum: int) -> Callable[[str], int]:
     """Validate bounded experiment sizes without expanding every integer in help text."""
 
@@ -409,6 +423,7 @@ async def _rpc(
     discovery: bool = False,
     expected_generation_id: str | None = None,
     expected_hit_count: int | None = None,
+    expected_tool_names: frozenset[str] | None = None,
 ) -> tuple[float, str, int]:
     """Send one actual JSON-RPC request and retain only timing/classification/hit count."""
     method = "tools/list" if discovery else "tools/call"
@@ -458,16 +473,10 @@ async def _rpc(
         result = JSONRPCResponse.model_validate(envelope).result
         if discovery:
             tools = ListToolsResult.model_validate(result)
-            if expected_generation_id is not None and {tool.name for tool in tools.tools} != {
-                "policy_preflight",
-                "policy_search",
-                "policy_compile",
-                "policy_preflight_evidence",
-                "eval_submit",
-                "eval_inspect",
-                "eval_cancel",
-                "eval_result",
-            }:
+            if (
+                expected_tool_names is not None
+                and {tool.name for tool in tools.tools} != expected_tool_names
+            ):
                 return (time.perf_counter() - started) * 1000, "discovery_tool_mismatch", 0
             return (time.perf_counter() - started) * 1000, "ok", 0
         tool_result = CallToolResult.model_validate(result)
@@ -615,11 +624,11 @@ async def _measure(
                 else None
             ),
         )
-        if warmup[1] != "ok":
-            raise RuntimeError("Synthetic HTTP warmup failed.")
         cheap_latencies: list[float] = []
         health_latencies: list[float] = []
         cheap_outcomes: Counter[str] = Counter()
+        unexpected_probe_failures: Counter[str] = Counter()
+        intervention: str | None = None
         active_peak = 0
         sampled_peak_rss = _sample_rss(process.pid)
         stop = asyncio.Event()
@@ -664,12 +673,21 @@ async def _measure(
                     client,
                     config["tokens"][0],
                     discovery=True,
-                    expected_generation_id=expected_generation_id,
+                    expected_tool_names=(
+                        _MANAGED_FIXTURE_TOOL_NAMES if fixture is not None else None
+                    ),
                 )
                 cheap_latencies.append(latency)
                 cheap_outcomes[outcome] += 1
+                if outcome != "ok" and not (
+                    scenario == "shutdown"
+                    and intervention is not None
+                    and outcome in {"transport_failure", "http_502", "http_503", "http_504"}
+                ):
+                    unexpected_probe_failures["discovery:" + outcome] += 1
                 start = time.perf_counter()
                 health_ok = False
+                health_outcome = "health_transport_failure"
                 try:
                     health = await client.get("/healthz")
                 except httpx.HTTPError:
@@ -682,6 +700,13 @@ async def _measure(
                         if observed_health.generation_id is not None:
                             observed_health_ids.add(observed_health.generation_id)
                         observed_health_counts[observed_health.row_count] += 1
+                if health_outcome != "health_200" and not (
+                    scenario == "shutdown"
+                    and intervention is not None
+                    and health_outcome
+                    in {"health_transport_failure", "health_502", "health_503", "health_504"}
+                ):
+                    unexpected_probe_failures["health:" + health_outcome] += 1
                 health_latencies.append((time.perf_counter() - start) * 1000)
                 observed = await observe_state("probe")
                 if observed is not None:
@@ -734,7 +759,6 @@ async def _measure(
                 )
 
         started = time.perf_counter()
-        intervention: str | None = None
         drain_observation: str | None = None
         intervention_started_with_active_work: bool | None = None
         active_work_observed_before_intervention: bool | None = None
@@ -820,7 +844,9 @@ async def _measure(
         seconds = time.perf_counter() - started
         report = await observe_state("final", attempts=3)
         workload_observations = state_observations["probe"] + state_observations["intervention"]
-        measurement_complete = report is not None and workload_observations > 0
+        measurement_complete = (
+            warmup[1] == "ok" and report is not None and workload_observations > 0
+        )
         if scenario in {"baseline", "saturation", "slow-provider"}:
             measurement_complete = measurement_complete and active_probe_observed.is_set()
         if scenario in {"disconnect", "shutdown"}:
@@ -837,6 +863,8 @@ async def _measure(
         outcomes = Counter(sample[1] for sample in samples)
         managed_identity_verified = (
             fixture is not None
+            and warmup[1] == "ok"
+            and not unexpected_probe_failures
             and observed_health_ids == {fixture["generation_id"]}
             and set(observed_health_counts) == {fixture["chunk_count"]}
             and not outcomes["generation_identity_mismatch"]
@@ -872,6 +900,7 @@ async def _measure(
             "discovery_latency_ms": _percentiles(cheap_latencies),
             "health_latency_ms": _percentiles(health_latencies),
             "cheap_probe_outcomes": dict(cheap_outcomes),
+            "unexpected_probe_failure_counts": dict(unexpected_probe_failures),
             "fixture_publication": fixture,
             "managed_identity_verified": managed_identity_verified,
             "observed_health_generation_ids": sorted(observed_health_ids),
@@ -888,6 +917,7 @@ async def _measure(
             ),
             "operator_report": report.model_dump(mode="json") if report is not None else None,
             "warmup_operations": 1,
+            "warmup_outcome": warmup[1],
             "intervention": intervention,
             "drain_observation": drain_observation,
             "intervention_started_with_active_work": intervention_started_with_active_work,
