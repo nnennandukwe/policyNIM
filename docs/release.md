@@ -211,7 +211,7 @@ include each attempt's outcome and return code, plus static recovery hints deriv
 from at most 8 KiB of stderr. Raw command output isn't printed or retained in the
 receipt. On the Ubuntu publishing runner, stderr is drained through a pipe with
 only a bounded prefix held in memory; it isn't spooled to disk. Timeout cleanup
-terminates and reaps the owned verifier process group, including children that
+terminates the owned verifier process group, including children that
 retain the pipe. Hints don't establish the cause or relax any verification constraint.
 Signing permissions belong only to that job.
 The workflow retains the signing bundle and verification receipt as workflow
