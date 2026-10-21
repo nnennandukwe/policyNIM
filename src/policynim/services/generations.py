@@ -452,7 +452,7 @@ class GenerationStore:
                 self._step("root_parent_fsync")
                 _sync_directory(directory.parent)
         if not self.root.exists():
-            raise GenerationError(
+            raise MissingGenerationError(
                 "open",
                 "No managed generation exists.",
                 recovery=(

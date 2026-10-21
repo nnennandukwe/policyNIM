@@ -916,3 +916,50 @@ def test_operator_report_dangling_active_target_is_invalid(generation, tmp_path,
     report = inspect_operational_report(settings)
     assert report["index_state"] == report["generation_state"] == "invalid"
     assert report["active_generation"] == active_id and report["served_generation"] is None
+
+
+@pytest.mark.parametrize("root_state", ["absent", "file", "unowned", "symlink", "dangling_symlink"])
+@pytest.mark.parametrize("relative", [False, True])
+def test_missing_pinned_generation_root_stays_separate_from_invalid_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_state: str, relative: bool
+) -> None:
+    """An absent historical selection isn't evidence that a managed store's damaged."""
+    root = tmp_path / "generations"
+    if root_state == "file":
+        root.write_bytes(b"retained-private-root-file")
+    elif root_state == "unowned":
+        root.mkdir()
+    elif root_state == "symlink":
+        target = tmp_path / "existing-target"
+        target.mkdir()
+        root.symlink_to(target, target_is_directory=True)
+    elif root_state == "dangling_symlink":
+        root.symlink_to(tmp_path / "absent-target", target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    auth_path = tmp_path / "auth.sqlite3"
+    OperationStore(auth_path).close()
+    settings = Settings().model_copy(
+        update={
+            "beta_auth_db_path": auth_path,
+            "generations_dir": Path("generations") if relative else root,
+            "generation_id": "0" * 64,
+            "index_db_path": tmp_path / "absent-index.sqlite3",
+            "eval_workspace_dir": tmp_path / "evaluations",
+        }
+    )
+    report = inspect_operational_report(settings)
+    expected = "missing" if root_state == "absent" else "invalid"
+    assert report["generation_state"] == report["index_state"] == expected
+    assert report["active_generation"] is report["served_generation"] is None
+    assert report["generation_selection"] == "pinned"
+    assert "retained-private" not in json.dumps(report)
+    if root_state == "absent":
+        assert not root.exists()
+    elif root_state == "file":
+        assert root.read_bytes() == b"retained-private-root-file"
+    elif root_state == "unowned":
+        assert list(root.iterdir()) == []
+    elif root_state == "symlink":
+        assert root.is_symlink() and list((tmp_path / "existing-target").iterdir()) == []
+    else:
+        assert root.is_symlink() and not root.exists()
