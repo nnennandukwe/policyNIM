@@ -21,7 +21,12 @@ def version_notes(root: Path) -> tuple[str, str]:
     ):
         raise ValueError("Invalid project version.")
     changelog = read_bytes(root / "CHANGELOG.md").decode("utf-8")
-    changelog = re.sub(r"<!--.*?(?:-->|$)", "", changelog, flags=re.DOTALL)
+    changelog = re.sub(
+        r"(?P<code>(?<!`)(?P<ticks>`+)(?!`)[\s\S]*?(?<!`)(?P=ticks)(?!`))"
+        r"|<!--[\s\S]*?(?:-->|$)",
+        lambda match: match[0] if match["code"] is not None else "",
+        changelog,
+    )
     headers = list(re.finditer(r"^## \[([^\]\n]+)\][^\n]*$", changelog, re.MULTILINE))
     current = [index for index, match in enumerate(headers) if match[1] == version]
     if len(current) != 1 or sum(match[1] == "Unreleased" for match in headers) != 1:
@@ -29,7 +34,8 @@ def version_notes(root: Path) -> tuple[str, str]:
     index = current[0]
     end = headers[index + 1].start() if index + 1 < len(headers) else len(changelog)
     body = changelog[headers[index].end() : end].strip()
-    plain = body.strip("#*- \t\r\n.!:").casefold()
+    content = re.sub(r"(?m)^[ \t]{0,3}#{1,6}(?:[ \t]+|$)[^\n]*(?:\n|$)", "", body)
+    plain = content.strip("#*- \t\r\n.!:").casefold()
     if not plain or plain in {"todo", "tbd", "placeholder", "coming soon"}:
         raise ValueError("Current version needs nonempty release notes.")
     return version, body
