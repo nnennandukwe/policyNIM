@@ -2227,3 +2227,66 @@ def test_restore_lock_wait_observes_job_control_before_provider_work(
         worker.close()
         if closer is not None:
             closer.join(5)
+
+
+def test_rejected_principal_never_blocks_another_owners_global_capture(
+    generation, tmp_path, monkeypatch
+):
+    """Hold a real owner lock and observe whether its rejected caller blocks another owner."""
+    import time
+    from collections.abc import Iterator
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Event, current_thread
+
+    from policynim.services import evaluation_jobs as module
+    from policynim.storage.file_lock import exclusive_file_lock
+    from policynim.storage.operation_store import OperationStore
+
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key="seed", principal=principal())
+    owner_lock = service.store.path.with_name(
+        service.store.path.name + "." + accepted.owner_id + ".submit.lock"
+    )
+    global_lock = service.store.path.with_suffix(".capture.lock")
+    entered, release = Event(), Event()
+    acquire = module.try_exclusive_file_lock
+
+    @contextmanager
+    def observe_actual_lock(path) -> Iterator[bool]:
+        """Delay only a real global lock acquired by an already-rejected principal."""
+        with acquire(path) as acquired:
+            if path == global_lock and acquired and current_thread().name.startswith("rejected"):
+                entered.set()
+                assert release.wait(5)
+            yield acquired
+
+    monkeypatch.setattr(module, "try_exclusive_file_lock", observe_actual_lock)
+
+    def rejected_submission():
+        """Call the actual service while another process-style owner lock is held."""
+        try:
+            service.submit(suite, idempotency_key="owner-rejected", principal=principal())
+        except EvaluationJobError as error:
+            return error.code
+        return None
+
+    with (
+        exclusive_file_lock(owner_lock),
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="rejected") as pool,
+    ):
+        blocked = pool.submit(rejected_submission)
+        try:
+            until = time.monotonic() + 1
+            while not entered.is_set() and not blocked.done() and time.monotonic() < until:
+                time.sleep(0.005)
+            other = service.submit(
+                suite, idempotency_key="other-owner", principal=principal("other")
+            )
+            assert other.state == "queued"
+        finally:
+            release.set()
+            assert blocked.result(5) == "principal_busy"
+    assert not entered.is_set()
+    assert service.store.aggregate_counts() == {"queued": 2}
+    assert OperationStore.report(service.settings.beta_auth_db_path).retained_rows == 2
