@@ -249,3 +249,69 @@ def test_missing_verifier_has_safe_attempt_evidence(subjects, monkeypatch, tmp_p
         }
     ]
     assert "private-search-path-sentinel" not in json.dumps(report)
+
+
+def test_large_verifier_stderr_doesnt_write_a_temporary_spool(subjects) -> None:
+    """An actual child can emit a large stream without consuming regular-file storage."""
+    assets, log = subjects
+    fake = log.parent / "bin" / "gh"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import resource,sys\n"
+        "resource.setrlimit(resource.RLIMIT_FSIZE,(16384,16384))\n"
+        "sys.stderr.buffer.write(b'x' * 1048576)\n"
+        "sys.stderr.buffer.flush()\n"
+    )
+    report = verifier.verify_subjects(assets, "owner/project", "a" * 40)
+    assert report["status"] == "passed"
+    assert len(report["subjects"]) == 2
+    assert all(
+        subject["attempt_outcomes"][0]["stderr_prefix_truncated"] for subject in report["subjects"]
+    )
+    assert len(json.dumps(report)) < 3000
+
+
+def test_timeout_reaps_a_verifier_with_an_inherited_stderr_pipe(subjects, monkeypatch):
+    """A child that leaves an inherited pipe open can't escape timeout cleanup."""
+    import signal
+    import threading
+    import time
+
+    assets, log = subjects
+    descendants = log.parent / "descendant-pids"
+    monkeypatch.setenv("ATTESTATION_TEST_DESCENDANTS", str(descendants))
+    fake = log.parent / "bin" / "gh"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import os,time\n"
+        "child=os.fork()\n"
+        "if child==0:\n"
+        "    time.sleep(30)\n"
+        "    os._exit(0)\n"
+        "with open(os.environ['ATTESTATION_TEST_DESCENDANTS'],'a') as target:\n"
+        "    target.write(str(child)+'\\n')\n"
+    )
+    try:
+        report = verifier.verify_subjects(assets, "owner/project", "a" * 40, timeout=1)
+        assert report["failure"] == "verification_timeout"
+        assert report["subjects"][0]["attempts"] == 1
+        assert descendants.is_file()
+        deadline = time.monotonic() + 3
+        while True:
+            states = [
+                subprocess.run(
+                    ["ps", "-o", "stat=", "-p", pid], text=True, capture_output=True, check=False
+                ).stdout.strip()
+                for pid in descendants.read_text().splitlines()
+            ]
+            if all(not state or state.startswith("Z") for state in states):
+                break
+            assert time.monotonic() < deadline, states
+            threading.Event().wait(0.01)
+    finally:
+        if descendants.is_file():
+            for pid in descendants.read_text().splitlines():
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
