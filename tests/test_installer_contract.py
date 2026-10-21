@@ -283,8 +283,9 @@ def run_unix_installer(
 
 @pytest.mark.skipif(os.name == "nt", reason="Requires a POSIX installer process.")
 @pytest.mark.parametrize("exit_code", [0, 1])
+@pytest.mark.parametrize("attestation_mode", ["required", "Required", "rEqUiReD", "True", "Yes"])
 def test_requested_signature_check_precedes_install_replacement(
-    tmp_path: Path, monkeypatch, exit_code: int
+    tmp_path: Path, monkeypatch, exit_code: int, attestation_mode: str
 ) -> None:
     """A fake gh rejection preserves the existing install; it isn't signature evidence."""
     import json
@@ -310,7 +311,7 @@ def test_requested_signature_check_precedes_install_replacement(
     install.mkdir(parents=True)
     marker = install / "preserved.txt"
     marker.write_text("existing install")
-    result, _ = run_unix_installer(tmp_path, release, attestation_mode="required")
+    result, _ = run_unix_installer(tmp_path, release, attestation_mode=attestation_mode)
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
     assert len(calls) == 2
     verify = calls[1]
@@ -327,3 +328,24 @@ def test_requested_signature_check_precedes_install_replacement(
     else:
         assert result.returncode == 0, result.stdout + result.stderr
         assert (install / "policynim").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires a POSIX installer process.")
+@pytest.mark.parametrize("mode", ["False", "Off", "No", "fAlSe"])
+def test_unix_attestation_opt_out_is_case_insensitive(tmp_path: Path, monkeypatch, mode: str):
+    """Explicit opt-out values install without invoking the actual GitHub CLI."""
+    release = tmp_path / "release"
+    release.mkdir()
+    create_unix_release_asset(release)
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    marker = tmp_path / "unexpected-gh-call"
+    fake = binaries / "gh"
+    fake.write_text('#!/bin/sh\nprintf called > "$ATTESTATION_TEST_MARKER"\nexit 1\n')
+    monkeypatch.setenv("ATTESTATION_TEST_MARKER", str(marker))
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ.get("PATH", ""))
+    result, home = run_unix_installer(tmp_path, release, attestation_mode=mode)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not marker.exists()
+    assert (home / ".local/share/policynim" / VERSION / "policynim").is_file()
