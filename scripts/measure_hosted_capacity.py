@@ -270,6 +270,17 @@ def _server_failure_diagnostics(events: list[dict[str, Any]]) -> dict[str, objec
         "timeout",
         "connection",
         "rate_limit",
+        "retry_after_limit",
+        "budget_exhausted",
+        "invalid_response",
+        "auth",
+        "endpoint_not_found",
+        "endpoint_unavailable",
+        "shutdown",
+        "bad_request",
+        "http_status",
+        "unexpected",
+        "interrupted",
     }
     phases = {"initialization", "reservation", "finish", "beta_auth_initialization"}
     classes = {
