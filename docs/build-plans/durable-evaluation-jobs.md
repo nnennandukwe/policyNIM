@@ -134,3 +134,46 @@ Initial supported topology is one worker per local job database. An accepted job
 ## Verification scope
 
 Runtime tests exercise CLI/MCP disconnect recovery, process-kill recovery, generation pruning/restoration, case and terminal commit faults, provider retry bounds, ownership, weighted allowance, queue bounds, bounded report reads, report integrity/expiry and confirmed-404 Phoenix lookup. The PR records commands, tested revisions, review coverage and exact-head CI/Qodo results. Package receipts identify their source revision, artifact hash and public bundle separately. The fault matrix doesn't claim a separate executed test for every filesystem or physical-storage fault. Production volume, live evaluation quality and deployment evidence belong to the release gate.
+
+## Archive reuse and retention coordination
+
+This extension addresses `cd863977` after its real public submit/digest-read/expiry reproduction. It uses the existing capture kernel lock, without another lock framework or schema change. The prior capture-order correction checks principal acquisition before global acquisition.
+
+### Commit and ownership model
+
+Canonical accepted state remains the job database's committed job, immutable snapshot and referenced archive. The job commit point remains `connection.commit()` in the store's submission transaction, after the existing separate quota acceptance. This change doesn't make the two databases atomic or refund accepted units.
+
+An in-flight submission holds the store's existing `.capture.lock` from reusable-archive observation through job publication or abort. Retention can expire job payloads while that lock's held, but it can't delete unreferenced archives until it owns the same lock. Retention takes that lock without waiting before its SQLite transaction, retains it through COMMIT, and skips only archive deletion if another capture owns it. The store initializes the persistent lock inode before archive observation is possible. Normal code never unlinks it; process exit releases the kernel lock.
+
+| State | Transition | Visible result and recovery |
+|---|---|---|
+| Retained archive, no capture | Capture acquires existing kernel lock | Archive observation has an in-flight owner. |
+| In-flight capture, expired old job | Retention COMMIT expires old payloads and defers archive deletion | Old result reports expired; capture can still publish its verified bytes. |
+| Prepared new job | Submission COMMIT publishes snapshot/job/archive reference | The real worker and retained-result reader consume the accepted snapshot. |
+| Capture abort before publication | Existing context cleanup releases capture lock | No new job or provider execution; later `eval-jobs prune` or worker maintenance can collect the unreferenced archive. |
+| No capture and no retained reference | Retention COMMIT removes the archive | Public archive lookup returns absent. |
+| Process exit during capture | OS releases the kernel lock | A restarted service's existing prune entry can collect unreferenced bytes. |
+| Retention transaction error | Existing SQLite rollback or uncertain postcommit inspection | Preserve the store; inspect and repeat the idempotent prune entry. No accepted job or quota outcome is rewritten. |
+
+### Invariants and enforcement
+
+1. An archive verified for an in-flight capture is never deleted before that capture publishes or aborts; the existing global capture lock enforces ownership.
+2. Expired report/case/snapshot payloads are still deleted under the existing retention transaction even when archive GC is deferred.
+3. Archive deletion happens only when retention owns the capture lock and no retained job references that generation in the same write transaction.
+4. A rejected principal never acquires the global slot; a valid capture keeps it until publication or cleanup.
+5. Abort or process death never leaves a durable archive lease. The existing later purge entry reclaims unreferenced bytes after lock release; it doesn't wait on a lock held by the same submission.
+6. Capture failure, including an injected storage-full error, doesn't trigger provider replay, quota rewriting or inline recursive GC. A caller repairs volume access, then uses the existing prune/restart entry and same-key submission recovery.
+
+### Fault matrix and lifecycle closure
+
+| Boundary | Injected event or concurrent actor | Required observation and recovery | Test scope |
+|---|---|---|---|
+| Capture-lock initialization/open | Existing file, unsafe alias or OS open failure | Reuse the existing regular inode; existing typed storage boundary rejects access failures without a new accepted job | Existing lock/access guards plus focused initialization checks |
+| Verified archive read -> new job publication | Actual expiry purge removes the final old reference | Old payload expires, archive remains, valid public submit succeeds and real worker/report consumer accepts it | Named retention-between-observation/publication regression |
+| Busy capture -> retention COMMIT | Capture owns the real kernel lock | Payload expiry completes without waiting; archive deletion is deferred | Same public race regression |
+| Capture abort after deferred GC | Storage-full fault or explicit precommit failure | No new accepted row/charge; lock releases and later public prune collects archive | Named abort/space/recovery regression |
+| Capture process exit | Child exits while holding the real capture lock | Parent/restarted service can acquire it and reclaim unreferenced archive | Real process lock/restart regression |
+| Retention before/after COMMIT | Existing transaction fault injection | Rollback preserves prior rows; committed expiry remains observable and repeat prune is idempotent | Existing retention commit-fault lifecycle checks |
+| Published consumer finishes and expires | Real worker then real retention | Referenced archive remains until the new retained job also expires; later prune removes it | Named publish/consumer/expiry lifecycle regression |
+
+The physical-volume guarantees remain SQLite's and the local filesystem's guarantees. Storage-full injection models the reported OS effect; it doesn't claim a physically exhausted production volume. A cleanup or postcommit fault can't justify rewriting accepted quota history or replaying providers. The proof receipt will bind these tests, the inspector/consumer results, remaining warnings and exact final review/CI head.
