@@ -21,7 +21,8 @@ channel and distribution. Select every client/protocol/transport
 combination that's required; one SDK receipt can't substitute for a coding-client run.
 
 The artifact check recomputes local download sizes and checksums against the selected
-manifest. The provenance check consumes the existing attestation verifier's receipt
+manifest. An optional manifest repository must match the selection when present;
+an absent value remains unavailable rather than authenticated. The provenance check consumes the existing attestation verifier's receipt
 and requires its repository, workflow, source and complete verified subject set to
 match those bytes. Output paths must stay outside the release asset directory and
 can't replace selection or receipt inputs. The tools reject these aliases before writing.
@@ -105,7 +106,8 @@ uv run --no-sync python scripts/check_release_notes.py \
 The checker reads the actual project version and requires one matching nonempty
 CHANGELOG section plus one Unreleased section, using the pinned Markdown parser's
 top-level h2 headings and source-line boundaries. Fenced examples and commented
-headings can't create or truncate version sections. Empty/placeholder bodies
+headings can't create or truncate version sections. Empty bodies or bodies containing only draft-marker entries (TODO, TBD, placeholder,
+or coming soon at the start of an entry)
 fail before rendering or replacing earlier notes. Only paragraph and code content
 counts as notes; subheading lines such as
 `### Added` don't count as release-note content. Candidate feature status remains
