@@ -33,3 +33,6 @@ controls verify tool discovery and creation of the owned job store without
 submitting evaluation work. Another actual HTTP-response corruption regression
 rejects schema-valid empty or wrong-domain hits against the fixture's expected
 count/domain, preserving accepted ledger outcomes while marking evidence incomplete.
+An actual HTTP empty-discovery control also rejects a schema-valid response that
+doesn't advertise the fixture's eight tools. Managed probe success requires that
+set; generic in-process counter controls keep their existing response contract.

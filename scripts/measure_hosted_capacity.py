@@ -457,7 +457,18 @@ async def _rpc(
             return (time.perf_counter() - started) * 1000, "jsonrpc_error", 0
         result = JSONRPCResponse.model_validate(envelope).result
         if discovery:
-            ListToolsResult.model_validate(result)
+            tools = ListToolsResult.model_validate(result)
+            if expected_generation_id is not None and {tool.name for tool in tools.tools} != {
+                "policy_preflight",
+                "policy_search",
+                "policy_compile",
+                "policy_preflight_evidence",
+                "eval_submit",
+                "eval_inspect",
+                "eval_cancel",
+                "eval_result",
+            }:
+                return (time.perf_counter() - started) * 1000, "discovery_tool_mismatch", 0
             return (time.perf_counter() - started) * 1000, "ok", 0
         tool_result = CallToolResult.model_validate(result)
         if tool_result.is_error:
@@ -649,7 +660,12 @@ async def _measure(
                 before_probe = await observe_state("probe")
                 if before_probe is not None:
                     active_peak = max(active_peak, before_probe.active_operations)
-                latency, outcome, _ = await _rpc(client, config["tokens"][0], discovery=True)
+                latency, outcome, _ = await _rpc(
+                    client,
+                    config["tokens"][0],
+                    discovery=True,
+                    expected_generation_id=expected_generation_id,
+                )
                 cheap_latencies.append(latency)
                 cheap_outcomes[outcome] += 1
                 start = time.perf_counter()
@@ -829,6 +845,7 @@ async def _measure(
             and not outcomes["retrieval_result_mismatch"]
             and not cheap_outcomes["invalid_rpc_response"]
             and not cheap_outcomes["jsonrpc_error"]
+            and not cheap_outcomes["discovery_tool_mismatch"]
             and not cheap_outcomes["health_identity_mismatch"]
             and not cheap_outcomes["health_invalid_response"]
         )

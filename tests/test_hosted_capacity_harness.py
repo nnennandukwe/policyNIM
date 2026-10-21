@@ -327,12 +327,13 @@ def test_health_binds_readiness_to_published_generation_and_count(
         "generation_identity_mismatch",
         "empty_hits",
         "wrong_domain",
+        "empty_discovery",
     ],
 )
-def test_malformed_workload_response_cant_complete_managed_measurement(
+def test_invalid_server_response_cant_complete_managed_measurement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    """Reject a malformed response after real warmup, active probes and accepted HTTP work."""
+    """Reject invalid server responses after real warmup and accepted HTTP work."""
     import runpy
 
     import httpx
@@ -346,7 +347,11 @@ def test_malformed_workload_response_cant_complete_managed_measurement(
         nonlocal calls
         response = await original_post(client, *args, **kwargs)
         payload = kwargs.get("json", {})
-        if payload.get("method") == "tools/call":
+        if failure == "empty_discovery" and payload.get("method") == "tools/list":
+            envelope = response.json()
+            envelope["result"]["tools"] = []
+            return httpx.Response(200, json=envelope)
+        if payload.get("method") == "tools/call" and failure != "empty_discovery":
             calls += 1
             if calls > 1:
                 if failure in {"empty_hits", "wrong_domain"}:
@@ -402,9 +407,16 @@ def test_malformed_workload_response_cant_complete_managed_measurement(
     )
     status = runpy.run_path(str(script))["main"]()
     scenario = json.loads(output.read_text())["scenarios"][0]
-    assert scenario["paired_active_work_probe_observed"] is True
-    outcome = "retrieval_result_mismatch" if failure in {"empty_hits", "wrong_domain"} else failure
-    assert scenario["outcomes"] == {outcome: 1}
+    if failure == "empty_discovery":
+        assert scenario["paired_active_work_probe_observed"] is False
+        assert scenario["cheap_probe_outcomes"]["discovery_tool_mismatch"] > 0
+        assert scenario["outcomes"] == {"ok": 1}
+    else:
+        assert scenario["paired_active_work_probe_observed"] is True
+        outcome = (
+            "retrieval_result_mismatch" if failure in {"empty_hits", "wrong_domain"} else failure
+        )
+        assert scenario["outcomes"] == {outcome: 1}
     assert scenario["operator_report"]["outcomes"]["completed"] == 2
     assert status == 1 and scenario["measurement_complete"] is False
     assert scenario["managed_identity_verified"] is False

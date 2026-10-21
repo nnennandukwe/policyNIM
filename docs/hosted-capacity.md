@@ -124,6 +124,8 @@ and every successful search response must carry its generation ID, the expected
 number of unique hits and the requested domain on each hit. A mismatch
 can't count as a successful probe/search or a complete managed measurement. The
 report names this scope as `configuration.index_scope=managed_generation`.
+Discovery probes must advertise the fixture's eight tools; an empty or changed
+tool set can't establish a successful paired probe or complete managed evidence.
 Compilation/preflight, concurrent publication/retention and durable job backlog
 still need separate evidence. Fixture publication happens before load starts;
 it isn't a publication-throughput measurement.
