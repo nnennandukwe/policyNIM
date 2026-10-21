@@ -114,13 +114,12 @@ async def _exercise_client(client: Client, mode: str) -> None:
 
     listing = await client.list_tools()
     tools = {tool.name: tool for tool in listing.tools}
-    assert set(tools) == {
-        "policy_search",
-        "policy_preflight",
-        "policy_compile",
-        "policy_preflight_evidence",
-    }
-    for tool in tools.values():
+    guidance = {"policy_search", "policy_preflight", "policy_compile", "policy_preflight_evidence"}
+    application_jobs = {"eval_submit", "eval_inspect", "eval_cancel", "eval_result"}
+    assert set(tools) in (guidance, guidance | application_jobs)
+    for name, tool in tools.items():
+        if name in application_jobs:
+            continue
         assert tool.description and tool.description.strip()
         assert tool.annotations is not None
         assert tool.annotations.read_only_hint is True

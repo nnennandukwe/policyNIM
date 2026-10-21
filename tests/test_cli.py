@@ -1186,6 +1186,7 @@ def test_compile_command_closes_service_when_it_errors(monkeypatch) -> None:
 
 
 def test_eval_command_prints_json(monkeypatch) -> None:
+    """Check the typed offline summary and help keep case payloads out of default JSON."""
     service = MockEvalService()
     monkeypatch.setattr(
         "policynim.interfaces.cli.create_eval_service",

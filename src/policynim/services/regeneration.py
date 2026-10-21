@@ -7,9 +7,10 @@ from types import TracebackType
 from typing import Protocol
 
 from policynim.contracts import Generator
+from policynim.errors import PolicyContextError
 from policynim.iterables import ordered_unique
 from policynim.operations import bounded_stage, check_budget, close_components
-from policynim.services.compiler import create_policy_compiler_service
+from policynim.services.compiler import create_policy_compiler_service, source_catalog_for
 from policynim.services.conformance import PolicyConformanceService
 from policynim.services.evidence_trace import (
     PolicyEvidenceTraceService,
@@ -24,6 +25,7 @@ from policynim.services.preflight import (
     _validate_and_materialize_result,
 )
 from policynim.settings import Settings, get_settings
+from policynim.source_units import MAX_OUTPUT_BYTES, SourceContext
 from policynim.types import (
     CompiledPolicyConstraint,
     CompiledPolicyPacket,
@@ -185,6 +187,8 @@ class PolicyRegenerationService:
                 trace_steps=trace_steps,
             )
             result = result.model_copy(update={"generation_id": compiled_packet.generation_id})
+            if len(result.model_dump_json().encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyContextError(output_budget=True)
             trace_result = _trace_result(
                 result=result,
                 compiled_packet=compiled_packet,
@@ -260,7 +264,7 @@ class PolicyRegenerationService:
                 conformance_result,
                 compiled_packet,
             )
-            if not next_triggers:
+            if not next_triggers or getattr(self._generator, "source_extractive", False) is True:
                 return _result(
                     request=request,
                     passed=False,
@@ -288,15 +292,21 @@ class PolicyRegenerationService:
         trace_steps: list[PolicyConformanceTraceStep],
     ) -> PreflightResult:
         """Generate one candidate only if the shared budget still permits work."""
+        retained_catalog = source_catalog_for(self._compiler_service, retained_context)
+        catalog = retained_catalog.compiled_sources(compiled_packet)
+        if not catalog.units:
+            return _insufficient_context_result(request)
         check_budget()
         generated = self._generator.generate_preflight(
             request,
-            retained_context,
+            SourceContext(tuple(retained_context), retained_catalog),
             compiled_packet=compiled_packet,
             regeneration_context=regeneration_context,
         )
         draft = _coerce_generated_draft(generated)
-        draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
+        raw_valid = catalog.accepts_preflight(draft, allow_missing_references=True)
+        if raw_valid:
+            draft = _apply_compiled_packet_to_draft(draft, compiled_packet)
         step_kind = (
             "policy_regeneration" if regeneration_context is not None else "grounded_generation"
         )
@@ -304,11 +314,16 @@ class PolicyRegenerationService:
             _trace_step(
                 step_id=("regenerate" if regeneration_context is not None else "generate"),
                 kind=step_kind,
-                summary=draft.summary or "Generated preflight draft.",
-                citation_ids=draft.citation_ids,
+                summary="Provider source selection completed; local validation follows.",
+                citation_ids=draft.citation_ids if raw_valid else [],
             )
         )
-        validated = _validate_and_materialize_result(request, retained_context, draft)
+        validated = (
+            _validate_and_materialize_result(request, retained_context, draft, catalog=catalog)
+            if raw_valid
+            and source_catalog_for(self._compiler_service, retained_context) == retained_catalog
+            else None
+        )
         if validated is None:
             return _insufficient_context_result(request)
         return validated

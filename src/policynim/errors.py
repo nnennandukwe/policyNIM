@@ -24,9 +24,16 @@ class IndexReadLimitError(PolicyNIMError):
 class PolicyContextError(PolicyNIMError):
     """Refuse incomplete or unbound selected-policy context before generation."""
 
-    def __init__(self, *, identity_mismatch: bool = False) -> None:
+    def __init__(self, *, identity_mismatch: bool = False, output_budget: bool = False) -> None:
         """Expose fixed recovery guidance without including source content or paths."""
-        if identity_mismatch:
+        if output_budget:
+            message = (
+                "Full-source output exceeds the 1-MiB serialized result budget. "
+                "No partial output was returned. Narrow the task, top_k or domain "
+                "before retrying."
+            )
+            failure_class = "policy_output_budget_exceeded"
+        elif identity_mismatch:
             message = (
                 "Selected policy evidence doesn't match the pinned index. "
                 "Preserve the generation and ask the operator to inspect its integrity."
@@ -55,6 +62,10 @@ class GenerationError(PolicyNIMError):
             f"Generation {phase} failed: {detail} {action}",
             failure_class=f"generation_{phase}",
         )
+
+
+class MissingGenerationError(GenerationError):
+    """The selected generation object is absent; existing object corruption stays separate."""
 
 
 class ConfigurationError(PolicyNIMError):

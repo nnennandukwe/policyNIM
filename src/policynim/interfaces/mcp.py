@@ -9,6 +9,7 @@ import json
 import logging
 import secrets
 import socket
+import sqlite3
 import sys
 import time
 from collections.abc import AsyncIterator, Callable
@@ -19,7 +20,7 @@ from importlib.metadata import PackageNotFoundError, version
 from ipaddress import IPv6Address, ip_address
 from pathlib import Path
 from threading import BoundedSemaphore, Event, Lock
-from typing import Annotated, TypeVar
+from typing import TYPE_CHECKING, Annotated, TypeVar
 from urllib.parse import urlsplit
 
 import anyio
@@ -108,6 +109,10 @@ from policynim.types import (
     SearchResult,
     TopK,
 )
+
+if TYPE_CHECKING:
+    from policynim.services.evaluation_jobs import EvaluationJobWorker
+
 
 SUPPORTED_TRANSPORTS = ("stdio", "streamable-http")
 _STREAMABLE_HTTP_PATH = "/mcp"
@@ -647,9 +652,10 @@ async def _run_correlated_tool(
 
 def _safe_tool_error(exc: PolicyNIMError) -> str:
     """Describe recoverable failures without disclosing paths or upstream content."""
+    from policynim.job_types import EvaluationJobError
     from policynim.services.grounded_mcp import PolicyResourceError
 
-    if isinstance(exc, PolicyResourceError):
+    if isinstance(exc, (PolicyResourceError, EvaluationJobError)):
         return str(exc)
     if isinstance(exc, GenerationError):
         return (
@@ -659,7 +665,7 @@ def _safe_tool_error(exc: PolicyNIMError) -> str:
             "the retained generations with `policynim generation inspect`. Import a verified "
             "bundle or explicitly migrate standalone index and rules if no generation exists."
         )
-    if isinstance(exc, (PolicyContextError, OperationAdmissionError)):
+    if isinstance(exc, (OperationAdmissionError, PolicyContextError)):
         return str(exc)
     if isinstance(exc, IndexCompatibilityError):
         return (
@@ -719,6 +725,8 @@ class _ManagedMCPServer(MCPServer):
     """Keep tool dispatch and transport lifespan bound to the same resource owner."""
 
     runtime: _ToolExecutor
+    jobs: EvaluationJobWorker | None = None
+    jobs_enabled: bool = False
 
 
 def _register_tools(
@@ -726,6 +734,7 @@ def _register_tools(
 ) -> _ManagedMCPServer:
     """Register authorized tools against the executor already owned by this server."""
     executor = server.runtime
+    server.jobs_enabled = require_principal
     if capacity is not None:
         if executor._admission is not None:
             raise ValueError("Register tool capacity before serving requests.")
@@ -770,10 +779,11 @@ def _register_tools(
         *,
         ctx: Context,
     ) -> PreflightResult:
-        """Get citation-backed policy guidance, review flags and tests for a coding task.
+        """Return complete selected policy sources with canonical citations for a coding task.
 
-        Recommendations are generated advice. Review their cited source before applying
-        implementation details; they aren't independently verified policy facts.
+        Default responses quote whole policy bodies, including conditions and examples.
+        Review applicability before treating quoted text as an implementation requirement.
+        Source fidelity doesn't establish source trust or runtime policy compliance.
         """
         principal = get_principal("policy_preflight")
         try:
@@ -841,6 +851,26 @@ def _register_tools(
         run_tool=run_grounded_tool,
         resolve_top_k=_resolve_top_k,
     )
+    if require_principal:
+        from policynim.interfaces.evaluation_jobs_mcp import register_evaluation_jobs
+        from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
+
+        worker_creation_lock = Lock()
+
+        def get_job_worker() -> EvaluationJobWorker:
+            """Use one lazy server-owned job worker independently from request connections."""
+            with worker_creation_lock:
+                if not isinstance(server.jobs, EvaluationJobWorker):
+                    settings = executor._settings or get_settings()
+                    server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
+                return server.jobs
+
+        register_evaluation_jobs(
+            server,
+            get_principal=get_principal,
+            get_worker=get_job_worker,
+            run_tool=run_grounded_tool,
+        )
     return server
 
 
@@ -874,10 +904,33 @@ def _new_mcp_server(
         # SDK 2.2's HTTP manager owns this once for its application lifetime,
         # including stateless requests. Server.run owns it for stdio.
         # See test_stateless_http_retains_one_pool_across_sequential_and_concurrent_requests.
+        assert isinstance(server, _ManagedMCPServer)
+        if settings is not None and server.jobs_enabled:
+            from policynim.services.evaluation_jobs import EvaluationJobService, EvaluationJobWorker
+
+            try:
+                if not isinstance(server.jobs, EvaluationJobWorker):
+                    server.jobs = EvaluationJobWorker(EvaluationJobService(settings))
+                server.jobs.start()
+            except (PolicyNIMError, OSError, sqlite3.Error) as exc:
+                emit_operation_event(
+                    level=logging.ERROR,
+                    event="evaluation.worker_unavailable",
+                    phase="startup",
+                    **safe_exception_diagnostics(exc),
+                )
+                if server.jobs is not None:
+                    await _run_sync_until_complete(server.jobs.close)
+                    server.jobs = None
         try:
             yield {}
         finally:
-            await active_runtime.close()
+            try:
+                await active_runtime.close()
+            finally:
+                if server.jobs is not None:
+                    with anyio.CancelScope(shield=True):
+                        await _run_sync_until_complete(server.jobs.close)
 
     server = _ManagedMCPServer(
         "PolicyNIM",

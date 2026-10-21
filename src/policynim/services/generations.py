@@ -31,6 +31,7 @@ from policynim.errors import (
     ConfigurationError,
     GenerationError,
     IndexCompatibilityError,
+    MissingGenerationError,
     MissingIndexError,
     PolicyNIMError,
     ProviderError,
@@ -451,7 +452,7 @@ class GenerationStore:
                 self._step("root_parent_fsync")
                 _sync_directory(directory.parent)
         if not self.root.exists():
-            raise GenerationError(
+            raise MissingGenerationError(
                 "open",
                 "No managed generation exists.",
                 recovery=(
@@ -903,7 +904,7 @@ class GenerationStore:
                     try:
                         object_mode = (self.root / "objects" / selected).lstat().st_mode
                     except FileNotFoundError as exc:
-                        raise GenerationError(
+                        raise MissingGenerationError(
                             "pin", "The selected generation doesn't exist."
                         ) from exc
                     if not stat.S_ISDIR(object_mode):

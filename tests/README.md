@@ -52,6 +52,12 @@ Current automated coverage includes:
 - CLI output for `beta-admin` hosted operator commands, including audit-log filtering
 - MCP search, compilation, preflight and same-run evidence schemas, plus immutable
   catalog/policy/chunk resources and the review prompt
+- Durable evaluation jobs through real SQLite, generation archives, process-kill
+  recovery, interruption evidence, queue bounds, cancellation drain and usage budgets
+- Job CLI commands and authenticated MCP disconnect/reconnect, owner isolation and
+  bounded report fragments; native MCP Tasks capability isn't advertised
+- Aggregate operator reporting for validated generation identity, durable job
+  state counts, correlation and owned reader cleanup
 - MCP startup wiring for `stdio` and `streamable-http`
 - Hosted HTTP `/healthz` readiness checks and the optional bearer-auth wrapper
 - Hosted beta portal routes, signed-session flow, SQLite auth storage, and
