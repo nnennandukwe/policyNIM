@@ -70,7 +70,8 @@ def version_notes(root: Path) -> tuple[str, str]:
             )
     plain = [" ".join(value.strip("#*- \t\r\n.!:").split()).casefold() for value in content]
     if not any(
-        value and value not in {"todo", "tbd", "placeholder", "coming soon"} for value in plain
+        value and re.match(r"^(?:todo|tbd|placeholder|coming soon)(?:$|[\s:])", value) is None
+        for value in plain
     ):
         raise ValueError("Current version needs nonempty release notes.")
     return version, body

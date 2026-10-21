@@ -95,6 +95,30 @@ def test_artifact_facts_are_recomputed_and_report_is_reusable(candidate, tmp_pat
     assert repeated.returncode == 0 and output.read_bytes() == first
 
 
+@pytest.mark.parametrize("repository", ["nnennandukwe/policyNIM", "another/repository"])
+def test_explicit_artifact_repository_must_match_selection(candidate, repository: str) -> None:
+    """Matching hashes can't authorize an explicitly contradictory repository identity."""
+    path, selection, assets = candidate
+    manifest_path = assets / "RELEASE_MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["repository"] = repository
+    manifest_bytes = (json.dumps(manifest) + "\n").encode()
+    manifest_path.write_bytes(manifest_bytes)
+    selection["expected"]["manifest_sha256"] = digest(manifest_bytes)
+    path.write_text(json.dumps(selection))
+    (assets / "SHA256SUMS").write_text(
+        f"{digest((assets / 'fixture.whl').read_bytes())}  fixture.whl\n"
+        f"{digest(manifest_bytes)}  RELEASE_MANIFEST.json\n"
+    )
+    process, report = run_collector(path, assets)
+    expected_match = repository == selection["expected"]["repository"]
+    assert process.returncode == (0 if expected_match else 1)
+    assert report["decision"] == ("evidence_consistent" if expected_match else "hold")
+    assert report["checks"][0]["observed"]["repository"] == repository
+    if not expected_match:
+        assert report["checks"][0]["reason"] == "artifact_mismatch"
+
+
 def test_changed_artifact_holds_and_records_failure(candidate) -> None:
     """A source-bound manifest can't authorize changed local bytes."""
     selection, _, assets = candidate
