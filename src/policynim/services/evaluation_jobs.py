@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from policynim.errors import PolicyNIMError, ProviderError
+from policynim.errors import GenerationBundleSizeError, PolicyNIMError, ProviderError
 from policynim.job_types import (
     TERMINAL_JOB_STATES,
     EvaluationJobAuthorization,
@@ -273,7 +273,16 @@ class EvaluationJobService:
                             prefix="job-capture-", dir=self.store.path.parent
                         ) as directory:
                             path = Path(directory) / "generation.zip"
-                            digest = generation_store.export_bundle(path, snapshot.generation_id)
+                            try:
+                                digest = generation_store.export_bundle(
+                                    path, snapshot.generation_id
+                                )
+                            except GenerationBundleSizeError as exc:
+                                raise EvaluationJobError(
+                                    "archive_too_large: Generation export exceeds its compressed "
+                                    "or expanded size limit. Use a smaller policy generation "
+                                    "before retrying."
+                                ) from exc
                             if path.stat().st_size > MAX_GENERATION_ARCHIVE_BYTES:
                                 raise EvaluationJobError(
                                     "archive_too_large: Evaluation archives can't exceed 256 MiB. "
