@@ -152,11 +152,6 @@ def local_issuer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Lo
     (root / "realm.json").write_text(json.dumps(realm_profile(secret, password)))
     # Files contain only this disposable fixture's credentials. Docker's unprivileged
     # user reads them through individual read-only mounts, never a production secret.
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-    origin = f"https://localhost:{port}"
-    issuer = LocalIssuer(origin + "/realms/policynim-evaluation", tls, secret, password)
     container = "policynim-oauth-" + secrets.token_hex(8)
     command = ["docker", "run", "--detach", "--name", container, "--pull=never"]
     for filename, destination in (
@@ -168,14 +163,14 @@ def local_issuer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Lo
     command.extend(
         [
             "--publish",
-            f"127.0.0.1:{port}:8443",
+            "127.0.0.1::8443",
             KEYCLOAK_IMAGE,
             "start-dev",
             "--import-realm",
             "--http-enabled=false",
             "--https-certificate-file=/tmp/tls.crt",
             "--https-certificate-key-file=/tmp/tls.key",
-            "--hostname=" + origin,
+            "--hostname=localhost",
             "--features=resource-indicators",
         ]
     )
@@ -183,6 +178,20 @@ def local_issuer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Lo
         result = subprocess.run(command, capture_output=True, timeout=30, check=False)
         if result.returncode:
             pytest.fail("Local issuer couldn't start; check Docker and pull the pinned image.")
+        mapping = subprocess.run(
+            ["docker", "port", container, "8443/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        address, separator, port = mapping.stdout.strip().rpartition(":")
+        assert mapping.returncode == 0 and address == "127.0.0.1" and separator and port.isdigit()
+        # Docker owns the port reservation. The localhost-only hostname resolves
+        # its dynamic port from the request, and discovery must match it exactly.
+        issuer = LocalIssuer(
+            f"https://localhost:{port}/realms/policynim-evaluation", tls, secret, password
+        )
         with httpx.Client(verify=tls, trust_env=False, timeout=2) as client:
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
