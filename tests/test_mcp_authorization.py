@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import time
+from contextlib import closing
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -94,11 +95,13 @@ def rpc(
     method: str,
     params: dict[str, object] | None = None,
     token: str | None = "issuer-access-token",
+    *,
+    protocol_version: str = "2026-07-28",
 ) -> httpx2.Response:
     """Send an actual JSON-RPC request through the HTTP app and SDK dispatcher."""
     headers = {
         "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": "2026-07-28",
+        "MCP-Protocol-Version": protocol_version,
     }
     headers["Mcp-Method"] = method
     if params and isinstance(params.get("name"), str):
@@ -114,13 +117,136 @@ def rpc(
             "params": {
                 **(params or {}),
                 "_meta": {
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/protocolVersion": protocol_version,
                     "io.modelcontextprotocol/clientCapabilities": {},
                 },
             },
         },
         headers=headers,
     )
+
+
+@pytest.mark.parametrize("scope", ["", "policies:read", "policies:read policies:evaluate"])
+@pytest.mark.parametrize("protocol_version", ["2025-11-25", "2026-07-28"])
+def test_every_oauth_tool_enforces_its_declared_scopes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: str, protocol_version: str
+) -> None:
+    """Check every advertised operation before input validation or provider allocation."""
+    settings = oauth_settings(tmp_path)
+    install_issuer(monkeypatch, settings, token_claims(scope=scope))
+    forbidden = Mock(side_effect=AssertionError("Authorization matrix allocated a provider"))
+    monkeypatch.setattr(mcp_module, "create_search_service", forbidden)
+    monkeypatch.setattr(mcp_module, "create_preflight_service", forbidden)
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        tools = rpc(client, "tools/list", protocol_version=protocol_version).json()["result"][
+            "tools"
+        ]
+        assert len(tools) == 8
+        for tool in tools:
+            required = set(tool["securitySchemes"][0]["scopes"])
+            response = rpc(
+                client,
+                "tools/call",
+                {"name": tool["name"], "arguments": {}},
+                protocol_version=protocol_version,
+            )
+            if required.issubset(scope.split()):
+                # Missing inputs reach the SDK validator only after authorization.
+                assert response.status_code == 200
+                assert response.json()["result"]["isError"] is True
+                assert "mcp/www_authenticate" not in response.json()["result"].get("_meta", {})
+            else:
+                assert response.status_code == 403
+                assert 'error="insufficient_scope"' in response.headers["WWW-Authenticate"]
+    forbidden.assert_not_called()
+
+
+def test_scope_denied_tool_notification_has_no_jsonrpc_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the HTTP scope challenge without inventing a JSON-RPC notification result."""
+    settings = oauth_settings(tmp_path)
+    install_issuer(monkeypatch, settings, token_claims(scope="policies:read"))
+    with TestClient(
+        mcp_module._build_streamable_http_app(settings), base_url="https://policy.example"
+    ) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "policy_preflight", "arguments": {"task": "fixture"}},
+            },
+            headers={
+                "Authorization": "Bearer issuer-access-token",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2026-07-28",
+            },
+        )
+        assert response.status_code == 403
+        assert response.content == b""
+        assert 'error="insufficient_scope"' in response.headers["WWW-Authenticate"]
+
+
+def test_deferred_denial_preserves_notification_acknowledgment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the response replacement seam when a downstream layer records a denial."""
+    from mcp.server.auth.provider import AccessToken
+    from starlette.responses import Response
+
+    from policynim.interfaces import mcp_authorization as boundary
+
+    monkeypatch.setattr(
+        boundary,
+        "get_access_token",
+        lambda: AccessToken(
+            token="fixture",
+            client_id="fixture",
+            scopes=SUPPORTED_SCOPES,
+            resource=RESOURCE,
+        ),
+    )
+
+    async def downstream(scope, receive, send) -> None:
+        """Record a late denial after the bounded body passed its initial scope check."""
+        boundary.record_authorization_failure(AuthorizationError("fixture", code="invalid_token"))
+        await Response(status_code=202)(scope, receive, send)
+
+    app = boundary.OperationAuthorizationApp(
+        downstream, metadata_url="https://policy.example" + METADATA_PATH
+    )
+    with closing(TestClient(app)) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "policy_search", "arguments": {"query": "fixture"}},
+            },
+        )
+        assert response.status_code == 401
+        assert response.content == b""
+        assert 'error="invalid_token"' in response.headers["WWW-Authenticate"]
+
+
+@pytest.mark.parametrize("oauth", [False, True])
+def test_local_tool_discovery_doesnt_advertise_hosted_oauth(tmp_path: Path, oauth: bool) -> None:
+    """A stdio-style server stays trusted locally even with hosted OAuth settings."""
+    settings = oauth_settings(tmp_path) if oauth else Settings()
+    server = mcp_module._create_mcp_server(settings, require_principal=False)
+
+    async def inspect() -> None:
+        """Read the actual SDK wire response over its in-memory local transport."""
+        from mcp import Client
+
+        async with Client(server) as client:
+            result = await client.list_tools()
+            assert all(not tool.meta or "securitySchemes" not in tool.meta for tool in result.tools)
+
+    asyncio.run(inspect())
 
 
 @pytest.mark.parametrize(
@@ -201,6 +327,15 @@ def test_discovery_scope_challenges_and_principal_propagation(
         assert discovery.json()["authorization_servers"] == [ISSUER]
         assert discovery.json()["scopes_supported"] == SUPPORTED_SCOPES
         assert requests == []
+        tools = rpc(client, "tools/list").json()["result"]["tools"]
+        assert len(tools) == 8
+        for tool in tools:
+            scopes = (
+                ["policies:read"] if tool["name"] == "policy_search" else sorted(SUPPORTED_SCOPES)
+            )
+            schemes = [{"type": "oauth2", "scopes": scopes}]
+            assert tool["securitySchemes"] == schemes
+            assert tool["_meta"]["securitySchemes"] == schemes
         challenge = rpc(client, "tools/list", token=None)
         assert challenge.status_code == 401
         assert METADATA_PATH in challenge.headers["WWW-Authenticate"]
@@ -215,6 +350,12 @@ def test_discovery_scope_challenges_and_principal_propagation(
         assert 'error="insufficient_scope"' in restricted.headers["WWW-Authenticate"]
         assert 'scope="policies:evaluate policies:read"' in restricted.headers["WWW-Authenticate"]
         assert METADATA_PATH in restricted.headers["WWW-Authenticate"]
+        challenge_result = restricted.json()["result"]
+        assert challenge_result["isError"] is True
+        assert challenge_result["_meta"]["mcp/www_authenticate"] == [
+            restricted.headers["WWW-Authenticate"]
+        ]
+        assert 'error_description="' in restricted.headers["WWW-Authenticate"]
         assert rpc(client, "tools/list", token=None).status_code == 401
         assert client.get("/healthz").status_code == 503  # no index; no auth requirement
     denied.assert_not_called()
@@ -828,6 +969,10 @@ def test_local_stdio_works_with_hosted_auth_settings(tmp_path: Path, oauth: bool
         """Call a tool over stdio without creating an HTTP auth context or using an issuer."""
         async with asyncio.timeout(15):
             async with Client(params, read_timeout_seconds=5) as client:
+                tools = await client.list_tools()
+                assert all(
+                    not tool.meta or "securitySchemes" not in tool.meta for tool in tools.tools
+                )
                 result = await client.call_tool("policy_search", {"query": "local"})
                 assert result.is_error is False
                 assert result.structured_content is not None
@@ -936,7 +1081,10 @@ def test_dispatch_expiry_returns_http_challenge_before_provider_work(
         clock.update(checks=0, expire_at=expire_at_check)
         rejected = rpc(client, "tools/call", params)
         assert rejected.status_code == 401
-        assert rejected.json() == {"error": "invalid_token"}
+        assert rejected.json()["result"]["isError"] is True
+        assert rejected.json()["result"]["_meta"]["mcp/www_authenticate"] == [
+            rejected.headers["WWW-Authenticate"]
+        ]
         assert 'error="invalid_token"' in rejected.headers["WWW-Authenticate"]
         assert METADATA_PATH in rejected.headers["WWW-Authenticate"]
         assert len(factories) == 1
