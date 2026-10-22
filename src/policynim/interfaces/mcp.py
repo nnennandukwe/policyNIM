@@ -20,7 +20,7 @@ from importlib.metadata import PackageNotFoundError, version
 from ipaddress import IPv6Address, ip_address
 from pathlib import Path
 from threading import BoundedSemaphore, Event, Lock
-from typing import TYPE_CHECKING, Annotated, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 from urllib.parse import urlsplit
 
 import anyio
@@ -34,7 +34,11 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import (
+    CallToolResult,
+    InputRequiredResult,
+    ToolAnnotations,
+)
 from pydantic import AnyHttpUrl, Field, ValidationError
 from starlette._utils import get_route_path
 from starlette.datastructures import Headers
@@ -57,6 +61,8 @@ from policynim.errors import (
 )
 from policynim.interfaces.mcp_authorization import (
     OperationAuthorizationApp,
+    authorization_tool_result,
+    oauth_tool_declarations,
     record_authorization_failure,
 )
 from policynim.operations import (
@@ -727,6 +733,21 @@ class _ManagedMCPServer(MCPServer):
     runtime: _ToolExecutor
     jobs: EvaluationJobWorker | None = None
     jobs_enabled: bool = False
+    oauth_metadata_url: str | None = None
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Context | None = None
+    ) -> CallToolResult | InputRequiredResult:
+        """Preserve authorization challenges when a service denies admitted tool work."""
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as exc:
+            cause: BaseException | None = exc
+            while cause is not None:
+                if isinstance(cause, AuthorizationError) and self.oauth_metadata_url is not None:
+                    return authorization_tool_result(cause, self.oauth_metadata_url)
+                cause = cause.__cause__
+            raise
 
 
 def _register_tools(
@@ -960,6 +981,10 @@ def _create_mcp_server(
         _new_mcp_server(runtime, settings=settings, beta_auth_service=beta_auth_service),
         require_principal=settings.mcp_require_auth and require_principal,
     )
+    if require_principal and settings.mcp_oauth_issuer_url is not None:
+        resource = AnyHttpUrl(str(settings.mcp_public_base_url).rstrip("/") + "/mcp")
+        server.oauth_metadata_url = str(build_resource_metadata_url(resource))
+        server.middleware.append(oauth_tool_declarations)
     _register_health_route(server, settings)
     if settings.beta_signup_enabled and beta_auth_service is not None:
         _register_beta_routes(server, settings, beta_auth_service)

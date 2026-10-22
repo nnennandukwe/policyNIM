@@ -6,15 +6,29 @@ import asyncio
 import json
 from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Any
 
 from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp.types import CallToolResult, TextContent
 from starlette.requests import ClientDisconnect, Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from policynim.services.authorization import OPERATION_SCOPES, AuthorizationError
 
 MAX_AUTH_BODY_BYTES = 1024 * 1024
+
+
+async def oauth_tool_declarations(ctx: ServerRequestContext, call_next: CallNext) -> HandlerResult:
+    """Add ChatGPT's fields after SDK 2.2 sieves tools to the core MCP wire schema."""
+    result = await call_next(ctx)
+    if ctx.method == "tools/list" and isinstance(result, dict):
+        for tool in result["tools"]:
+            schemes = [{"type": "oauth2", "scopes": sorted(OPERATION_SCOPES[tool["name"]])}]
+            tool["securitySchemes"] = schemes
+            tool["_meta"] = {**(tool.get("_meta") or {}), "securitySchemes": schemes}
+    return result
 
 
 @dataclass
@@ -36,15 +50,54 @@ def record_authorization_failure(error: AuthorizationError) -> None:
         state.failure = error
 
 
-def _challenge_response(error: AuthorizationError, metadata_url: str) -> JSONResponse:
-    """Build the same RFC 6750 challenge for HTTP and service-level rejections."""
+def authorization_challenge(error: AuthorizationError, metadata_url: str) -> str:
+    """Build a sanitized challenge without interpolating exception or credential text."""
     parts = [f'error="{error.code}"', f'resource_metadata="{metadata_url}"']
+    description = (
+        "Authenticate again before retrying."
+        if error.code == "invalid_token"
+        else "Authorize the required operation scopes before retrying."
+    )
+    parts.append(f'error_description="{description}"')
     if error.required_scopes:
         parts.append(f'scope="{" ".join(sorted(error.required_scopes))}"')
+    return "Bearer " + ", ".join(parts)
+
+
+def authorization_tool_result(error: AuthorizationError, metadata_url: str) -> CallToolResult:
+    """Expose a tool-level linking signal while retaining the HTTP challenge contract."""
+    return CallToolResult(
+        content=[TextContent(type="text", text="Authentication required. Authorize and retry.")],
+        is_error=True,
+        _meta={"mcp/www_authenticate": [authorization_challenge(error, metadata_url)]},
+    )
+
+
+def _challenge_response(
+    error: AuthorizationError, metadata_url: str, tool_request: dict[str, Any] | None = None
+) -> Response:
+    """Return transport denials with a matching MCP tool result for tool invocations."""
+    status = 401 if error.code == "invalid_token" else 403
+    headers = {"WWW-Authenticate": authorization_challenge(error, metadata_url)}
+    if tool_request is not None and "id" not in tool_request:
+        return Response(status_code=status, headers=headers)
+    body = {"error": error.code}
+    if (
+        tool_request is not None
+        and isinstance(tool_request.get("id"), (str, int))
+        and not isinstance(tool_request["id"], bool)
+    ):
+        body = {
+            "jsonrpc": "2.0",
+            "id": tool_request.get("id"),
+            "result": authorization_tool_result(error, metadata_url).model_dump(
+                by_alias=True, exclude_none=True
+            ),
+        }
     return JSONResponse(
-        {"error": error.code},
-        status_code=401 if error.code == "invalid_token" else 403,
-        headers={"WWW-Authenticate": "Bearer " + ", ".join(parts)},
+        body,
+        status_code=status,
+        headers=headers,
     )
 
 
@@ -103,6 +156,7 @@ class OperationAuthorizationApp:
                         required_scopes=required,
                     ),
                     self._metadata_url,
+                    payload,
                 )(scope, receive, send)
                 return
         delivered = False
@@ -131,9 +185,13 @@ class OperationAuthorizationApp:
             if response_start is not None:
                 if state.failure is not None:
                     replaced = True
-                    await _challenge_response(state.failure, self._metadata_url)(
-                        scope, receive, send
-                    )
+                    await _challenge_response(
+                        state.failure,
+                        self._metadata_url,
+                        payload
+                        if isinstance(payload, dict) and payload.get("method") == "tools/call"
+                        else None,
+                    )(scope, receive, send)
                     return
                 await send(response_start)
                 response_start = None
