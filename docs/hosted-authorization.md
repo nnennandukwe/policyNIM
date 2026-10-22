@@ -5,38 +5,40 @@ identity provider signs callers in and issues access tokens; PolicyNIM checks
 those tokens before permitting work. NVIDIA credentials stay on the server and
 aren't used as client credentials.
 
-This foundation contributes to [issue #97](https://github.com/nnennandukwe/policyNIM/issues/97).
-It doesn't complete that issue. No operator-owned external issuer or registered
-MCP client was available during implementation. Offline tests cover HTTP and
-service behavior, including a real local TCP connection, with a deterministic
-introspection endpoint double. They don't prove an external login/token flow.
-OAuth remains disabled on existing deployments until an operator configures it.
-OAuth-only mode doesn't initialize or require a beta authentication database.
-Hosted operation quotas apply to OAuth principals and compatible beta/operator keys.
-External issuer acceptance still requires a bounded model-request budget and
-operator-owned issuer/client configuration.
+Implementation and acceptance are tracked in [issue #97](https://github.com/nnennandukwe/policyNIM/issues/97).
+The user selected Keycloak for local evaluation on October 22, 2026. The opt-in
+[issuer test](../tests/test_keycloak_oauth_live.py) crosses real Keycloak TLS and
+MCP TCP boundaries with generated fixture credentials and a deterministic search
+service. Its evidence covers local issuer interoperability with zero NVIDIA
+requests. Production issuer/client selection, deployment, and real ChatGPT
+connection acceptance remain pending.
 
-## Proposed issuer and client configuration
+OAuth stays disabled until the operator configures it. OAuth-only mode doesn't
+require a beta authentication database. Hosted operation quotas apply to OAuth
+principals and compatible beta/operator keys. Live model checks need a separately
+approved request budget.
 
-The implementation targets Keycloak's documented scope/audience mapping
-and a pre-registered native client using Authorization Code with PKCE S256.
-PolicyNIM implements RFC 7662 introspection against a configured Keycloak realm.
-The operator hasn't selected or configured an issuer for production.
-It doesn't host login, issue tokens, proxy token exchanges, or register clients.
+## Evaluated issuer and client configuration
 
-Reviewed on October 15, 2026: MCP Python SDK **2.2.0** (pinned in the lockfile),
-MCP **2026-07-28**, and Keycloak **26.7.5** documentation. Keycloak's full current
-MCP conformance remains experimental because Resource Indicators and Client ID
-Metadata Documents require experimental features. This setup uses the documented
-stable scope/audience mapping and pre-registration instead. Don't describe it as
-verified full MCP conformance. A client requiring dynamic registration or Client
-ID Metadata Documents needs separate operator configuration and acceptance proof.
-No issuer version has been tested live by this change.
+The evaluated profile uses **Keycloak 26.7.5**, **MCP Python SDK 2.2.0**,
+**MCP 2026-07-28**, and a pre-registered public client with Authorization Code
+and PKCE S256. The [realm template](../deploy/keycloak/policynim-realm.json)
+separates that client from the confidential introspection resource client. The
+[test guide](../deploy/keycloak/README.md) pins the image digest and names the
+exact local configuration and remaining production decisions.
 
-Sources: [MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization),
-[SDK resource-server setup](https://py.sdk.modelcontextprotocol.io/run/authorization/),
-[Keycloak MCP setup and limitations](https://www.keycloak.org/securing-apps/mcp-authz-server),
-[Keycloak 26.7.5 administration](https://www.keycloak.org/docs/26.7.5/server_admin/index.html).
+Resource Indicators support requires Keycloak's experimental
+`--features=resource-indicators` flag. The evaluated profile enables it so the
+issuer validates `resource` during authorization and token exchange. Accepting
+that experimental feature for production requires an operator decision. CIMD
+(Client ID Metadata Documents) and dynamic registration aren't exercised by this
+profile; production setup must explicitly select its registration method.
+
+Sources checked October 22, 2026:
+[MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization),
+[OpenAI authentication](https://developers.openai.com/plugins/build/auth),
+[Keycloak MCP requirements](https://www.keycloak.org/securing-apps/mcp-authz-server),
+and [Keycloak administration](https://www.keycloak.org/docs/26.7.5/server_admin/index.html).
 
 Before enabling OAuth, the operator must complete these steps in an existing
 issuer they own:
@@ -49,19 +51,27 @@ issuer they own:
    whose Included Custom Audience equals the exact resource URL. Include the
    audience in token introspection. Since the resource client's ID equals that
    audience, Keycloak's introspection audience check can remain enabled.
-3. Register the MCP client as a public native client with Standard Flow enabled,
+3. Register the MCP client as a public client with Standard Flow enabled,
    PKCE S256 required, and its exact approved callback URI. Disable implicit and
    password grants. Attach the two optional client scopes. Preload the registered
-   client ID in a client that supports pre-registration; the SDK's OAuth token
-   storage supports stored client information. The resource client's secret
+   client ID in a client that supports pre-registration. For ChatGPT, copy the
+   exact callback URI from its MCP management page; don't guess a stable callback
+   or allow wildcard redirects. Its registration and token-auth method must match
+   the selected issuer configuration. The resource client's secret
    must never be installed in the public MCP client.
-4. Confirm the realm's OpenID Connect discovery document reports the exact issuer
+4. Preserve the `basic` default client scope with the Subject (`sub`) mapper
+   enabled for access tokens and introspection. The local test initially rejected
+   tokens when this mapper was missing. Confirm discovery advertises PKCE S256,
+   and verify any advertised OIDC scopes are enabled for the registered client.
+   Confirm the realm's OpenID Connect discovery document reports the exact issuer
    and its authorization/token endpoints. Configure short-lived access tokens,
    consent, user access, refresh policy, and revocation in the issuer. The
    introspection response must include `active`, `iss`, `sub`, `client_id`, `aud`,
    integer `exp`, string `scope`, and `token_type=Bearer`. An optional `nbf` must
    already have passed. ID tokens aren't accepted as API credentials.
-5. Set the PolicyNIM environment settings below and perform the live acceptance
+5. Configure the exact resource client's `resource_url` attribute, its Audience
+   mapper, and Resource Indicators as shown in the evaluated template. Set the
+   PolicyNIM environment settings below and perform the live acceptance
    checks before directing users to OAuth.
 
 ```bash
@@ -109,7 +119,10 @@ uses the issuer's own discovery/login/token endpoints to obtain its access token
 | --- | --- |
 | MCP discovery, initialization, ping | Any currently valid access token |
 | `policy_search` | `policies:read` |
-| `policy_preflight` | `policies:read policies:evaluate` |
+| `policy_compile`, `policy_preflight`, `policy_preflight_evidence` | `policies:read policies:evaluate` |
+| `eval_submit`, `eval_inspect`, `eval_cancel`, `eval_result` | `policies:read policies:evaluate`, plus job ownership |
+| Policy catalog/document/chunk resources and review prompt | `policies:read` |
+| Evaluation report resources | `policies:read policies:evaluate`, plus job ownership |
 | `/healthz` | Public, sanitized readiness only |
 
 Missing, expired, inactive, malformed, foreign-issuer or foreign-audience tokens
@@ -132,10 +145,18 @@ It contains no access token. Local CLI and stdio MCP operations remain trusted
 local calls, even with hosted auth configured. OAuth authentication and scope
 denials retain sanitized `mcp.auth` events without credentials or request bodies.
 
+Each OAuth `tools/list` response declares the operation's scopes in both
+`securitySchemes` and `_meta.securitySchemes`. SDK 2.2 sieves unknown core tool
+fields, so public SDK middleware adds the extension after that sieve. Legacy-key
+and local stdio servers retain their existing declarations. Scope/dispatch-expiry
+denials for tool requests retain HTTP 403/401 and return a JSON-RPC tool error
+result with `_meta["mcp/www_authenticate"]` matching the header, including a
+sanitized `error_description`. Clients that act on transport status can use the
+header; real ChatGPT linking and step-up UI still need acceptance evidence.
+
 The shared public corpus doesn't grant access to another user's evaluation jobs.
-This foundation doesn't introduce hosted evaluation-job routes. The service
-permission function denies unknown protected operations. Future job implementation
-must enforce ownership separately from corpus read scope.
+All four job tools and report resources enforce owner identity separately from
+scope checks. The service permission function denies unknown protected operations.
 
 ## Existing-key migration and recovery
 
@@ -187,6 +208,17 @@ the client store. Introspection observes issuer revocation once the issuer repor
 `active=false`; its semantics must be verified live. Already admitted synchronous
 provider work drains under the existing cancellation/cleanup contract. Revocation
 affects subsequent requests and doesn't recall work already admitted.
+
+## Credential roles
+
+| Credential or identity | Owner and purpose |
+| --- | --- |
+| Portal GitHub OAuth client/session | Signs users into `/beta` and issues legacy beta keys |
+| Beta/operator bearer key | Explicit compatibility credential; issued without MCP OAuth |
+| MCP access/refresh token | Issuer-issued user authority, held by the MCP client |
+| Introspection resource client | PolicyNIM's confidential verifier identity; secret stays server-side |
+| ChatGPT's registered client | Starts user login and exchanges codes with PKCE; separate from the resource client |
+| NVIDIA credential | Server-owned model access; never an MCP client token |
 
 ## Acceptance evidence still required
 

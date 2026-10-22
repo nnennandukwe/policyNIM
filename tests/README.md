@@ -69,6 +69,11 @@ Current automated coverage includes:
 - Hosted beta portal routes, signed-session flow, SQLite auth storage, and
   quota-blocking behavior
 - Hosted MCP structured logs for auth rejects, tool name, latency, and upstream failure class
+- Per-tool OAuth declarations and scope/expiry challenges across all eight hosted tools
+- Opt-in local Keycloak PKCE, resource binding, refresh, revocation, logout and recovery;
+  see [the evaluated profile](../deploy/keycloak/README.md). Run with
+  `POLICYNIM_RUN_KEYCLOAK_TESTS=1 uv run --no-sync pytest -q tests/test_keycloak_oauth_live.py`.
+  It uses a pinned disposable issuer and makes zero NVIDIA requests.
 - Hosted docs parity for the canonical Codex and Claude hosted MCP commands plus recovery guidance
 - A separate offline Docker CI job builds both images from the verified generation
   bundle and probes health/MCP discovery with container networking disabled.
