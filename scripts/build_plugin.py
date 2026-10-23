@@ -145,11 +145,19 @@ def safe_text(value: object) -> None:
             r"(?i)(?:bearer\s+\S+|sk-[a-z0-9]{12,}|nvapi-[a-z0-9_-]+|"
             r"gh[pousr]_[a-z0-9]+|github_pat_[a-z0-9_]+|"
             r"eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|"
-            r"(?:api[_-]?key|client_secret|access_token)\s*[=:]\s*\S+|"
             r"-----BEGIN .*PRIVATE KEY)",
             value,
         ):
             raise PackageValidationError("Package contains credential-shaped text.")
+
+        for assignment in re.finditer(r"\b([a-z_][a-z0-9_-]*)[\"']?\s*[=:]", value, flags=re.I):
+            if re.search(
+                r"token|pass(?:word|wd)|secret|credential|authorization|"
+                r"(?:api|private|signing)[_-]?key",
+                assignment.group(1),
+                re.I,
+            ):
+                raise PackageValidationError("Package contains credential-shaped text.")
 
         def remove_public_url(match: re.Match[str]) -> str:
             """Exclude validated public URLs from filesystem-path inspection only."""
@@ -159,8 +167,13 @@ def safe_text(value: object) -> None:
                 return match.group()
             return ""
 
-        path_text = re.sub(r"https://[^\s<>\"']+", remove_public_url, value, flags=re.I)
-        if re.search(r"/Users/|/home/|/private/|/tmp/|/var/|file://|[A-Z]:\\", path_text, re.I):
+        path_text = re.sub(r"https://[^\s<>\"]+", remove_public_url, value, flags=re.I)
+        if re.search(
+            r"(?:^|[\s:=('\"\[])/(?!/)[^\s<>\"']+|"
+            r"file://|\b[A-Z]:[\\/]|\\\\[^\s]",
+            path_text,
+            re.I,
+        ):
             raise PackageValidationError("Package contains a local filesystem path.")
 
 

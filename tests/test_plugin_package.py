@@ -466,7 +466,7 @@ def test_output_alias_loop_has_a_controlled_cli_failure(tmp_path: Path) -> None:
         "demo_recording_url",
     ],
 )
-@pytest.mark.parametrize("path", ["/home/", "/legal/private/privacy"])
+@pytest.mark.parametrize("path", ["/home/", "/legal/private/privacy", "/owner's/home/"])
 def test_public_url_paths_arent_local_filesystem_paths(
     tmp_path: Path, release_inputs: dict, field: str, path: str
 ) -> None:
@@ -495,3 +495,57 @@ def test_url_path_exemption_doesnt_hide_credential_shapes(
     release_inputs["websiteURL"] = "https://review.policynim.org/home/ghp_" + "a" * 36
     with pytest.raises(ValueError, match="credential-shaped"):
         builder.build(tmp_path / "rejected.zip", release_inputs)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/etc/passwd",
+        "/root/.ssh/id_rsa",
+        "/srv/private/notes",
+        "/mnt/customer/data",
+        r"\\review-host\share\private.txt",
+        r"C:\local\task.txt",
+        "C:/local/task.txt",
+    ],
+)
+def test_rooted_filesystem_paths_are_rejected(
+    tmp_path: Path, package_source: Path, path: str
+) -> None:
+    """Public package metadata can't carry POSIX, Windows-drive or UNC filesystem paths."""
+    edit_manifest(package_source, "longDescription", "Read " + path + " before proceeding.")
+    with pytest.raises(ValueError, match="local filesystem path"):
+        builder.build(tmp_path / "rejected.zip", source=package_source)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "clientSecret",
+        "client_secret",
+        "client-secret",
+        "accessToken",
+        "refreshToken",
+        "refresh_token",
+        "apiKey",
+        "oauth_token",
+        "AUTH_TOKEN",
+        "servicePassword",
+        "privateKey",
+        "signing_key",
+    ],
+)
+@pytest.mark.parametrize("style", ["assignment", "quoted_json"])
+def test_credential_assignments_cant_enter_listing_text(
+    tmp_path: Path, package_source: Path, name: str, style: str
+) -> None:
+    """Build synthetic rejection inputs at runtime instead of committing credential literals."""
+    value = "fixture-sensitive-value"
+    text = name + "=" + value if style == "assignment" else json.dumps({name: value})
+    edit_manifest(package_source, "longDescription", text)
+    with pytest.raises(ValueError, match="credential-shaped"):
+        builder.build(tmp_path / "rejected.zip", source=package_source)
