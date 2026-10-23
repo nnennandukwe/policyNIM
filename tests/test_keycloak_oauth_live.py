@@ -270,30 +270,9 @@ def exchange(client: httpx.Client, issuer: LocalIssuer, code: str, verifier: str
     )
 
 
-def test_keycloak_accepts_chatgpt_refresh_scope(local_issuer: LocalIssuer) -> None:
-    """Accept ChatGPT's actual read-only login request, including offline access."""
-    with httpx.Client(verify=local_issuer.tls, trust_env=False, timeout=10) as auth:
-        code, verifier = login_code(auth, local_issuer, scope="openid offline_access policies:read")
-        response = exchange(auth, local_issuer, code, verifier)
-        assert response.status_code == 200, response.json().get("error_description")
-        tokens = response.json()
-        assert "offline_access" in tokens["scope"].split()
-        assert "policies:read" in tokens["scope"].split()
-        assert "policies:evaluate" not in tokens["scope"].split()
-        refreshed = auth.post(
-            local_issuer.token_endpoint(),
-            data={
-                "grant_type": "refresh_token",
-                "client_id": CLIENT_ID,
-                "refresh_token": tokens["refresh_token"],
-                "resource": RESOURCE,
-            },
-        )
-        assert refreshed.status_code == 200
-
-
+@pytest.mark.parametrize("scope", ["openid policies:read", "openid offline_access policies:read"])
 def test_keycloak_pkce_resource_refresh_revocation_and_recovery(
-    local_issuer: LocalIssuer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    local_issuer: LocalIssuer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: str
 ) -> None:
     """Cross real issuer TLS and MCP TCP boundaries without any NVIDIA allocation."""
     issuer = local_issuer
@@ -385,10 +364,12 @@ def test_keycloak_pkce_resource_refresh_revocation_and_recovery(
 
             assert call(None).status_code == 401
             assert call("invalid-fixture-token").status_code == 401
-            code, verifier = login_code(auth, issuer, scope="openid policies:read")
+            code, verifier = login_code(auth, issuer, scope=scope)
             tokens_response = exchange(auth, issuer, code, verifier)
             assert tokens_response.status_code == 200
             tokens = tokens_response.json()
+            assert set(scope.split()) <= set(tokens["scope"].split())
+            assert "policies:evaluate" not in tokens["scope"].split()
             id_token_rejected = call(tokens["id_token"])
             assert id_token_rejected.status_code == 401
             introspected = auth.post(
@@ -442,6 +423,9 @@ def test_keycloak_pkce_resource_refresh_revocation_and_recovery(
             assert principals[-1] == principals[0] or (
                 principals[-1] is not None and principals[-1].subject == principals[0].subject
             )
+            assert principals[-1] is not None
+            assert "policies:read" in principals[-1].scopes
+            assert "policies:evaluate" not in principals[-1].scopes
             # Revoke the refresh token/session. RFC 7009 access-token revocation alone
             # doesn't promise an immediate session logout in every issuer.
             revoked = auth.post(
