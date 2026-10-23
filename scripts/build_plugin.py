@@ -150,6 +150,9 @@ def safe_text(value: object) -> None:
         ):
             raise PackageValidationError("Package contains credential-shaped text.")
 
+        if re.search(r"\b(?:api|private|signing)\s+key[\"']?\s*[=:]", value, re.I):
+            raise PackageValidationError("Package contains credential-shaped text.")
+
         for assignment in re.finditer(r"\b([a-z_][a-z0-9_-]*)[\"']?\s*[=:]", value, flags=re.I):
             if re.search(
                 r"token|pass(?:word|wd)|secret|credential|authorization|"
@@ -169,7 +172,7 @@ def safe_text(value: object) -> None:
 
         path_text = re.sub(r"https://[^\s<>\"]+", remove_public_url, value, flags=re.I)
         if re.search(
-            r"(?:^|[\s:=('\"\[])/(?!/)[^\s<>\"']+|"
+            r"(?:^|[\s:=('\"`\[])/(?!/)[^\s<>\"']+|"
             r"file://|\b[A-Z]:[\\/]|\\\\[^\s]",
             path_text,
             re.I,

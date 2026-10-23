@@ -51,8 +51,9 @@ output must stay outside package source.
 
 The staged ZIP file stays readable by its owner only. Its internal member modes
 are fixed at 0644. Upload it from the account that built it, or let the owner choose
-permissions when copying it for another local user. The builder keeps credentials
-and local paths out of package text while allowing validated public URL paths.
+permissions when copying it for another local user. The builder rejects recognized
+credential forms and rooted path references while allowing validated public URL paths.
+Human review of the five allowlisted files remains required before distribution.
 Public listing and review text must omit rooted POSIX paths, Windows-drive paths,
 UNC paths and credential assignments. Use public URLs or plugin-relative asset
 references where a published resource needs a path.

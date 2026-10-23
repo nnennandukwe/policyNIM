@@ -509,10 +509,15 @@ def test_url_path_exemption_doesnt_hide_credential_shapes(
         "C:/local/task.txt",
     ],
 )
+@pytest.mark.parametrize("wrapper", ["plain", "backtick", "quote"])
 def test_rooted_filesystem_paths_are_rejected(
-    tmp_path: Path, package_source: Path, path: str
+    tmp_path: Path, package_source: Path, path: str, wrapper: str
 ) -> None:
     """Public package metadata can't carry POSIX, Windows-drive or UNC filesystem paths."""
+    if wrapper == "backtick":
+        path = "`" + path + "`"
+    elif wrapper == "quote":
+        path = '"' + path + '"'
     edit_manifest(package_source, "longDescription", "Read " + path + " before proceeding.")
     with pytest.raises(ValueError, match="local filesystem path"):
         builder.build(tmp_path / "rejected.zip", source=package_source)
@@ -537,6 +542,9 @@ def test_rooted_filesystem_paths_are_rejected(
         "servicePassword",
         "privateKey",
         "signing_key",
+        "api key",
+        "private key",
+        "signing key",
     ],
 )
 @pytest.mark.parametrize("style", ["assignment", "quoted_json"])
