@@ -83,8 +83,7 @@ class RuntimeHealthService:
 
     def _check_external(self, settings: Settings) -> HealthCheckResult:
         """Bound public probes to one in-flight read and a one-second generation-aware cache."""
-        if not self._external_lock.acquire(blocking=False):
-            return self._not_ready("External readiness check is in progress. Retry shortly.")
+        self._external_lock.acquire()
         try:
             root = resolve_runtime_path(settings.generations_dir)
             pointer = (

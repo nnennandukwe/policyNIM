@@ -366,11 +366,13 @@ def test_external_health_is_single_flight_cached_and_generation_aware(
         try:
             assert entered.wait(1)
             probes = [executor.submit(service.check) for _ in range(10)]
-            assert all(not probe.result(timeout=0.5).ready for probe in probes)
+            with pytest.raises(TimeoutError):
+                probes[0].result(timeout=0.1)
             assert calls == [first_generation.generation_id]
         finally:
             release.set()
         assert first.result(timeout=1).ready
+        assert all(probe.result(timeout=1).ready for probe in probes)
     assert service.check().ready and len(calls) == 1
     assert settings.corpus_dir is not None
     source = settings.corpus_dir / "A.md"
