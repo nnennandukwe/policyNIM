@@ -17,7 +17,7 @@ function updateActions() {
     button.disabled = busy || (action === "probe" && !reviewDigest)
       || (action === "build" && (!reviewDigest || !connected || !consent))
       || (action === "verify" && (!built || !consent))
-      || (action === "save" && !verified);
+      || (action === "save" && (!verified || !consent));
   }
 }
 
@@ -162,6 +162,12 @@ document.querySelectorAll("[data-action]").forEach((button) => {
   button.addEventListener("click", () => request(button.dataset.action));
 });
 byId("setup-form").addEventListener("submit", (event) => event.preventDefault());
+byId("task").addEventListener("input", () => {
+  verified = false;
+  for (const id of ["policy-result", "saved"]) byId(id).hidden = true;
+  byId("status").textContent = "Task changed. Verify policy evidence before saving.";
+  updateActions();
+});
 byId("setup-form").addEventListener("change", (event) => {
   updateFields();
   if (!["task", "consent"].includes(event.target.id)) {

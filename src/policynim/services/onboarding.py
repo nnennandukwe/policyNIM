@@ -139,7 +139,7 @@ class OnboardingService:
         self._reviewed: str | None = None
         self._built: str | None = None
         self._generation: str | None = None
-        self._verified: str | None = None
+        self._verified: tuple[str, str] | None = None
         self._saved = False
         self._pending_profile_identity: tuple[int, int] | None = None
 
@@ -257,7 +257,7 @@ class OnboardingService:
                         "review_digest": digest,
                         "catalog": catalog.model_dump(mode="json"),
                         "generation_id": self._generation if self._built == digest else None,
-                        "verified": self._verified == digest,
+                        "verified": self._verified == (digest, request.task),
                         "privacy": "Effective policy text and task context can reach NVIDIA. "
                         "External storage receives vector identifiers, domains, and embeddings.",
                     }
@@ -274,7 +274,7 @@ class OnboardingService:
                 self._require_current(settings, digest)
                 if action == "verify":
                     return self._verify(settings, request.task, digest)
-                if action != "save" or self._verified != digest:
+                if action != "save" or self._verified != (digest, request.task):
                     raise ConfigurationError("Verify a policy-backed result before saving setup.")
                 return self._save(settings, profile_text)
         finally:
@@ -315,7 +315,7 @@ class OnboardingService:
             )
         if answer.generation_id != self._generation:
             raise ConfigurationError("Result generation changed. Verify again.")
-        self._verified = digest
+        self._verified = (digest, task)
         return {"status": "verified", "result": answer.model_dump(mode="json")}
 
     def _save(self, settings: Settings, profile_text: str | None) -> dict[str, Any]:

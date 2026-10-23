@@ -405,3 +405,18 @@ def test_remote_selection_uses_only_explicit_matching_credentials(
         assert settings.vector_password is not None
         assert settings.vector_password.get_secret_value() == "explicit-password"
         assert settings.vector_api_key is None
+
+
+def test_changed_task_requires_new_verification_without_rebuilding(workspace) -> None:
+    """A task edit invalidates its result while preserving the reviewed source generation."""
+    client, payload, destination, _, _ = workspace
+    payload = verified(client, payload)
+    changed = {**payload, "task": "Review API authentication and rejection paths."}
+    assert client.post("/api/save", json=changed).status_code == 409
+    assert not destination.exists()
+    preview = client.post("/api/preview", json=changed)
+    assert preview.status_code == 200
+    assert not preview.json()["verified"]
+    assert preview.json()["generation_id"] is not None
+    assert client.post("/api/verify", json=changed).status_code == 200
+    assert client.post("/api/save", json=changed).status_code == 200
