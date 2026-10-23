@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 from starlette.testclient import TestClient
 from test_extractive_guidance import ExactCompiler, PreserveRanking, SourceGenerator
 from test_ingest_service import MockEmbedder
@@ -341,3 +342,66 @@ def test_saved_provider_limits_match_the_verified_configuration(workspace) -> No
     options: dict[str, Any] = {"_env_file": destination}
     restored = Settings(**options)
     assert {name: getattr(restored, name) for name in limits} == limits
+
+
+def test_switching_to_sqlite_drops_unused_remote_credentials(workspace) -> None:
+    """Hidden remote inputs and inherited secrets can't leak into a new SQLite config."""
+    client, payload, destination, _, service = workspace
+    service._base = service._base.model_copy(
+        update={
+            "vector_api_key": SecretStr("inherited-key"),
+            "vector_password": SecretStr("inherited-password"),
+        }
+    )
+    payload.update(vector_api_key="unused-remote-key", vector_password="unused-remote-password")
+    payload = verified(client, payload)
+    assert client.post("/api/save", json=payload).status_code == 200
+    contents = destination.read_text()
+    assert "POLICYNIM_VECTOR_API_KEY" not in contents
+    assert "POLICYNIM_VECTOR_PASSWORD" not in contents
+
+
+@pytest.mark.parametrize("backend", ["qdrant", "pgvector"])
+def test_remote_selection_uses_only_explicit_matching_credentials(
+    workspace, backend: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Selecting a new endpoint can't send an inherited or unrelated backend secret."""
+    from policynim.services import onboarding
+
+    client, payload, _, _, service = workspace
+    service._base = service._base.model_copy(
+        update={
+            "vector_api_key": SecretStr("inherited-key"),
+            "vector_password": SecretStr("inherited-password"),
+        }
+    )
+    observed: list[Settings] = []
+
+    def probe(settings: Settings) -> dict[str, str]:
+        """Capture the exact settings delivered to the external connection boundary."""
+        observed.append(settings)
+        return {"status": "connected"}
+
+    monkeypatch.setattr(onboarding, "probe_vector_backend", probe)
+    payload.update(
+        vector_backend=backend,
+        vector_url=(
+            "http://127.0.0.1:6333" if backend == "qdrant" else "postgresql://user@localhost/db"
+        ),
+    )
+    payload = reviewed(client, payload)
+    assert client.post("/api/probe", json=payload).status_code == 200
+    assert observed[-1].vector_api_key is None
+    assert observed[-1].vector_password is None
+    payload.update(vector_api_key="explicit-key", vector_password="explicit-password")
+    payload = reviewed(client, payload)
+    assert client.post("/api/probe", json=payload).status_code == 200
+    settings = observed[-1]
+    if backend == "qdrant":
+        assert settings.vector_api_key is not None
+        assert settings.vector_api_key.get_secret_value() == "explicit-key"
+        assert settings.vector_password is None
+    else:
+        assert settings.vector_password is not None
+        assert settings.vector_password.get_secret_value() == "explicit-password"
+        assert settings.vector_api_key is None

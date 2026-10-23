@@ -32,8 +32,8 @@ function choices() {
     vector_backend: byId("vector-backend").value,
     vector_url: byId("vector-backend").value === "sqlite" ? "" : byId("vector-url").value,
     vector_namespace: byId("vector-namespace").value,
-    vector_api_key: byId("vector-api-key").value,
-    vector_password: byId("vector-password").value,
+    vector_api_key: byId("vector-backend").value === "qdrant" ? byId("vector-api-key").value : "",
+    vector_password: byId("vector-backend").value === "pgvector" ? byId("vector-password").value : "",
     nvidia_api_key: byId("nvidia-api-key").value,
     task: byId("task").value,
     review_digest: reviewDigest,
@@ -55,6 +55,8 @@ function updateFields() {
   byId("qdrant-key-field").hidden = backend !== "qdrant";
   byId("pg-password-field").hidden = backend !== "pgvector";
   byId("pg-extra").hidden = backend !== "pgvector";
+  if (backend !== "qdrant") byId("vector-api-key").value = "";
+  if (backend !== "pgvector") byId("vector-password").value = "";
   byId("url-hint").textContent = backend === "pgvector"
     ? "Use postgresql://user@host/database?sslmode=verify-full. Loopback can use sslmode=disable."
     : "Use HTTPS, or HTTP on loopback. Keep credentials out of the URL.";

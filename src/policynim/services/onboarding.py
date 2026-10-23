@@ -181,10 +181,18 @@ class OnboardingService:
                 ),
             }
         )
-        for field in ("nvidia_api_key", "vector_api_key", "vector_password"):
-            supplied = getattr(request, field).get_secret_value()
-            if supplied:
-                values[field] = supplied
+        if request.nvidia_api_key.get_secret_value():
+            values["nvidia_api_key"] = request.nvidia_api_key.get_secret_value()
+        values["vector_api_key"] = (
+            request.vector_api_key.get_secret_value() or None
+            if request.vector_backend == "qdrant"
+            else None
+        )
+        values["vector_password"] = (
+            request.vector_password.get_secret_value() or None
+            if request.vector_backend == "pgvector"
+            else None
+        )
         profile_text = None
         with TemporaryDirectory(prefix="policynim-setup-") as temporary:
             if request.source_mode in {"profile", "directory"}:

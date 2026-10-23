@@ -64,3 +64,5 @@ See [backend settings and recovery](vector-storage.md) and
 [the policy lifecycle](policy-lifecycle.md).
 
 Setup preserves the effective provider timeouts, retry limits, embedding batch size, and default retrieval count in its new config. Reloading that config keeps the request limits used during verification.
+
+Enter remote database credentials for the selected backend. Setup drops hidden or inherited database credentials when you change storage; only the configured NVIDIA key can be reused by leaving its field blank.
