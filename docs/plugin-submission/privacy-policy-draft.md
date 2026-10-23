@@ -50,6 +50,13 @@ for embeddings, reranking and generated guidance or evaluation, depending on the
 operation. The hosted service uses its own provider credentials. PolicyNIM MCP
 credentials aren't forwarded as model-provider credentials.
 
+The default vector index stores embeddings locally with SQLite. Operators can
+configure Qdrant or PostgreSQL with pgvector to store policy embeddings and their
+retrieval identifiers outside that local database. The owner must identify the
+deployed backend, hosting location, access controls and retention process before
+approving this policy. Optional backend support doesn't establish that the hosted
+service uses an external vector store.
+
 The MCP client receives the tool results and handles conversation data under its
 own terms and privacy policy. The OAuth issuer handles sign-in and token lifecycle.
 GitHub handles beta portal sign-in where enabled. The hosting operator stores the
@@ -96,7 +103,7 @@ before this draft can become effective.
 | --- | --- |
 | Operator identity and effective date | Owner/legal approval of public identity and applicable disclosures. |
 | Private privacy contact | Tested route with a person responsible for handling requests. |
-| Hosting, issuer and NVIDIA transfers | Actual deployment/provider configuration and applicable contracts, regions and notices. |
+| Hosting, issuer, NVIDIA and vector storage | Actual deployment/provider configuration and applicable contracts, regions and notices. |
 | Retention and erasure | Deployed settings, worker/prune behavior, summary/accounting handling, backups and operator procedure. |
 | Additional collection or uses | Review analytics, telemetry, subprocessors, training uses and required legal disclosures before making claims. |
 
@@ -106,5 +113,6 @@ Source evidence: [job contracts](../../src/policynim/job_types.py),
 [hosted authorization](../hosted-authorization.md),
 [beta auth](../../src/policynim/services/beta_auth.py),
 [MCP logging](../../src/policynim/interfaces/mcp.py),
+[vector storage](../vector-storage.md),
 [NVIDIA adapters](../../src/policynim/providers/nvidia.py) and
 [source grounding](../public-source-grounding.md).

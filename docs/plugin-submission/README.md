@@ -6,8 +6,10 @@ policy sources and produces grounded guidance before an AI coding agent changes
 code. Authenticated evaluation tools add bounded, durable jobs and retained reports.
 The Model Context Protocol (MCP) lets AI clients discover and call those tools.
 
-The implementation base is main `0956cca74a7d83091839a03b0d4d1838d54b825f`, runtime
-version 0.2.1. The independent plugin package starts at 0.1.0. This handoff prepares
+Implementation started from main `0956cca74a7d83091839a03b0d4d1838d54b825f` and
+incorporates main `5ca255ba082a4d88539e3dfe54461f30e509862f`, including OAuth refresh
+support and policy onboarding/vector storage. Runtime version is 0.2.1. The
+independent plugin package starts at 0.1.0. This handoff prepares
 submission materials for owner review. The submission maintainer owns upload,
 attestations and publication. Production OAuth provisioning remains tracked in
 [issue #97](https://github.com/nnennandukwe/policyNIM/issues/97). Nothing in these
