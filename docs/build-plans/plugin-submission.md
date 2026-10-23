@@ -5,8 +5,8 @@
 Build a reproducible, credential-free OpenAI plugin source package and submission
 handoff for PolicyNIM. The authorized implementation starts from pushed main
 `0956cca74a7d83091839a03b0d4d1838d54b825f` and fits one PR. Production OAuth
-provisioning and directory submission remain owned by the existing OAuth and
-originating chats. A source archive and a submission candidate have separate gates.
+provisioning and directory submission remain owned by the maintainers handling
+those workflows. A source archive and a submission candidate have separate gates.
 
 ## Skills To Use
 

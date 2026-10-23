@@ -4,13 +4,14 @@ Start with the [package source](../../packaging/openai-plugin/README.md). It bui
 a reproducible source archive for PolicyNIM, a service that retrieves engineering
 policy sources and produces grounded guidance before an AI coding agent changes
 code. Authenticated evaluation tools add bounded, durable jobs and retained reports.
+The Model Context Protocol (MCP) lets AI clients discover and call those tools.
 
 The implementation base is main `0956cca74a7d83091839a03b0d4d1838d54b825f`, runtime
 version 0.2.1. The independent plugin package starts at 0.1.0. This handoff prepares
-submission materials for owner review. Upload, attestations and publication remain
-with the originating chat. Production OAuth provisioning remains with
-[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97) and the existing
-OAuth chat. Nothing in these files records a live directory test or submission.
+submission materials for owner review. The submission maintainer owns upload,
+attestations and publication. Production OAuth provisioning remains tracked in
+[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97). Nothing in these
+files records a live directory test or submission.
 
 ## Remaining release values
 
@@ -31,8 +32,9 @@ after recording and access verification.
 OAuth client ID, issuer URL, authorization/token endpoints, requested scopes,
 registered callback URI and client-authentication method must also be finalized in
 the issuer/dashboard integration. They aren't ZIP secrets or invented manifest
-fields. Configure the dashboard's supported OAuth setup using the OAuth chat's
-verified values. Never place a client secret or access token in `mcp.json`.
+fields. Configure the dashboard's supported OAuth setup using the verified values
+from the implementation tracked in #97. Never place a client secret or access token
+in `mcp.json`.
 
 ## Owner and integration gates
 
@@ -40,7 +42,7 @@ verified values. Never place a client secret or access token in `mcp.json`.
    hosting/issuer/provider details, retention/deletion process and brand rights.
    The existing mark contains an NVIDIA logo. Confirm permission or provide an
    approved replacement before directory submission.
-2. Complete production OAuth and native ChatGPT linking through the owning chat.
+2. Complete production OAuth and native ChatGPT linking through the work in #97.
    Verify the deployed revision, public protected-resource metadata and all eight
    discovered tools, including cancellation's updated annotation. Record actual
    client ID/callback/scope evidence privately and omit secrets from public artifacts.
@@ -50,8 +52,8 @@ verified values. Never place a client secret or access token in `mcp.json`.
 4. Build the candidate with the finalized release-input JSON. Open every public URL
    as an unauthenticated visitor, verify the same publisher, and test the recording
    from a reviewer-accessible session. Check ZIP contents and keep its checksum.
-5. Hand the candidate, verified results and private access details to the originating
-   chat. That chat owns Comet dashboard upload, imported-field readback, automated
+5. Hand the candidate, verified results and private access details to the submission
+   maintainer. That maintainer owns Comet dashboard upload, imported-field readback, automated
    scans, directory submission, legal attestations and later publication.
 
 The current package has no country-availability declaration. Before the first
