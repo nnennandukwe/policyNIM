@@ -1,0 +1,100 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "policynim",
+  "version": "0.1.0",
+  "description": "Policy sources and grounded guidance for AI coding tasks.",
+  "author": {
+    "name": "Nnenna Ndukwe",
+    "url": "https://github.com/nnennandukwe"
+  },
+  "homepage": "https://github.com/nnennandukwe/policyNIM",
+  "repository": "https://github.com/nnennandukwe/policyNIM",
+  "license": "MIT",
+  "keywords": [
+    "engineering",
+    "policy",
+    "preflight",
+    "evaluation"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "PolicyNIM",
+        "shortDescription": "Policy-aware coding guidance",
+        "longDescription": "PolicyNIM helps developers and AI coding agents find engineering policies before changing code. Search policy sources, compile complete selected sources, request grounded preflight guidance, and inspect source-linked evidence. Authenticated users can submit bounded evaluations, inspect progress, cancel their jobs, and retrieve retained reports. Results depend on the configured policy corpus, generation and NVIDIA model services. Review source applicability and attribution before treating guidance as a requirement. Evaluation jobs consume provider allowance and retain submitted sample inputs and reports according to the operator's published policy.",
+        "developerName": "Nnenna Ndukwe",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Policy search",
+          "Grounded preflight",
+          "Evaluation jobs"
+        ],
+        "defaultPrompt": [
+          "Find the policies for adding a public API endpoint.",
+          "Show the policy evidence behind a preflight for an API change."
+        ],
+        "composerIcon": "./assets/icon.svg",
+        "logo": "./assets/icon.svg"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "P1: Retrieve engineering policy sources for an API change.",
+              "prompt": "Find the policies that apply when I add a public API endpoint. Show source titles, policy IDs and cited lines.",
+              "tools_triggered": "policy_search",
+              "expected_behavior": "Returns relevant source chunks and citations from the active policy generation. The response preserves attribution and identifies any missing coverage."
+            },
+            {
+              "description": "P2: Compile sources and obtain grounded implementation guidance.",
+              "prompt": "Compile the policies for adding a public API endpoint, then run a preflight for that task. Explain the applicable requirements and cite the source text.",
+              "tools_triggered": "policy_compile, policy_preflight",
+              "expected_behavior": "Returns a compiled packet with complete selected sources and a preflight result with citations. Guidance stays within the retrieved evidence and reports insufficient context when needed."
+            },
+            {
+              "description": "P3: Inspect the evidence behind a preflight result.",
+              "prompt": "Run one preflight with evidence for adding a public API endpoint. Show how the guidance maps to selected policies and chunks.",
+              "tools_triggered": "policy_preflight_evidence",
+              "expected_behavior": "Returns the result and evidence_trace from the same run, with matching policy/chunk references and a compiled packet ID. Citations can be checked against policy resources."
+            },
+            {
+              "description": "P4: Submit and inspect a bounded evaluation, reconnect and retrieve its report. Requires the operator-prepared one-case sample suite pinned to the review catalog.",
+              "prompt": "Run the prepared one-case sample evaluation with a new idempotency key, a 120-second deadline and at most 8 provider calls. Inspect its progress. After reconnecting, retrieve the final report for the same job.",
+              "tools_triggered": "eval_submit, eval_inspect, eval_result",
+              "expected_behavior": "Returns a durable job_id and accepted generation. Inspection after reconnect uses the same job. A completed job yields a report manifest with input hashes, usage and resource links. Pending, failed, expired or interrupted states remain explicit. A repeated submission with identical inputs and key returns the original job."
+            },
+            {
+              "description": "P5: Cancel only the explicitly identified sample evaluation owned by this reviewer. Requires a queued or running sample job.",
+              "prompt": "Start the prepared sample evaluation with a new idempotency key, a 120-second deadline and at most 8 provider calls. Cancel only the job you just created, then inspect its final state.",
+              "tools_triggered": "eval_submit, eval_cancel, eval_inspect",
+              "expected_behavior": "Requests cancellation for the returned job_id after the host confirmation when required. A queued job can become cancelled immediately; running provider work drains before terminal state. If it already finished, report that state without inventing a cancellation. Use the operator procedure to repeat the cancellation observation on a queued or running sample job."
+            }
+          ],
+          "negative": [
+            {
+              "description": "N1: An unrelated request has no policy-search or evaluation intent.",
+              "prompt": "Write a friendly birthday greeting for my cousin.",
+              "tools_triggered": "",
+              "expected_behavior": "Responds without calling PolicyNIM or starting a job."
+            },
+            {
+              "description": "N2: Cross-owner job access must fail without revealing another principal's data. The operator supplies a sample job from the second isolated account privately.",
+              "prompt": "Inspect and retrieve the report for the other sample account's job ID supplied in the private review instructions.",
+              "tools_triggered": "eval_inspect, eval_result",
+              "expected_behavior": "Denies access or returns the existing non-disclosing job error. No task content, report, job ownership or provider work from the other account is exposed."
+            },
+            {
+              "description": "N3: An intentionally absent policy domain must produce an evidence-bounded fallback.",
+              "prompt": "Run a policy preflight for configuring a moon greenhouse in the absent review-absent-domain. Give only requirements that the returned sources support.",
+              "tools_triggered": "policy_preflight",
+              "expected_behavior": "Reports insufficient_context with no fabricated citations or requirements. If this domain becomes populated, the operator must prepare an absent domain before running this case."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "release_notes": "Initial portable PolicyNIM package with policy retrieval, grounded preflight, source-linked evidence and authenticated evaluation-job workflows. The remote service exposes eight tools."
+      }
+    }
+  }
+}
