@@ -189,7 +189,11 @@ class Settings(BaseSettings):
                 from urllib.parse import parse_qs
 
                 query = parse_qs(parts.query, strict_parsing=True, keep_blank_values=True)
-                if parts.scheme not in {"postgresql", "postgres"} or not parts.path.strip("/"):
+                if (
+                    parts.scheme not in {"postgresql", "postgres"}
+                    or parts.path.count("/") != 1
+                    or not parts.path.strip("/")
+                ):
                     raise ValueError
                 if set(query) - {"sslmode"} or any(len(values) != 1 for values in query.values()):
                     raise ValueError
@@ -199,7 +203,8 @@ class Settings(BaseSettings):
         except ValueError:
             raise ValueError(
                 "Use a credential-free vector URL. Qdrant requires HTTPS except on loopback; "
-                "Postgres requires a database name and sslmode=verify-full "
+                "Postgres requires one database-name path segment without a trailing slash, "
+                "and sslmode=verify-full "
                 "(sslmode=disable is allowed on loopback). Supply secrets separately."
             ) from None
         return self

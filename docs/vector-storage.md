@@ -78,7 +78,8 @@ POLICYNIM_VECTOR_URL=postgresql://policy_app@db.example.com/policies?sslmode=ver
 POLICYNIM_VECTOR_NAMESPACE=team_backend
 ```
 
-Set `POLICYNIM_VECTOR_PASSWORD` separately. A database name is required. Only the
+Set `POLICYNIM_VECTOR_PASSWORD` separately. Use one database-name path segment without a trailing slash. Percent-encode
+special characters in database names. Only the
 `sslmode` query option is accepted; it defaults to `verify-full`.
 `sslmode=disable` is available only for loopback test databases. Standard libpq
 certificate configuration applies. A new table is created, populated, and

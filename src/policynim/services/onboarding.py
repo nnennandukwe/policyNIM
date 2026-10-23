@@ -356,6 +356,11 @@ class OnboardingService:
             "POLICYNIM_EMBED_BATCH_SIZE": str(settings.embed_batch_size),
             "POLICYNIM_DEFAULT_TOP_K": str(settings.default_top_k),
             "POLICYNIM_GENERATIONS_DIR": str(resolve_runtime_path(settings.generations_dir)),
+            "POLICYNIM_RUNTIME_EVIDENCE_DB_PATH": str(
+                resolve_runtime_path(settings.runtime_evidence_db_path)
+            ),
+            "POLICYNIM_RUNTIME_SHELL_TIMEOUT_SECONDS": str(settings.runtime_shell_timeout_seconds),
+            "POLICYNIM_EVAL_WORKSPACE_DIR": str(resolve_runtime_path(settings.eval_workspace_dir)),
             "POLICYNIM_VECTOR_BACKEND": settings.vector_backend,
             "POLICYNIM_VECTOR_NAMESPACE": settings.vector_namespace,
             "POLICYNIM_VECTOR_TIMEOUT_SECONDS": str(settings.vector_timeout_seconds),

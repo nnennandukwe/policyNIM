@@ -466,3 +466,39 @@ def test_bundled_profile_references_reject_unknown_or_escaping_names(reference: 
             digest="sha256:" + "a" * 64,
             policies={"A": "sha256:" + "b" * 64},
         )
+
+
+def test_saved_setup_keeps_existing_runtime_evidence(
+    workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh report consumer still sees prior receipts after saving a new setup config."""
+    from contextlib import closing
+
+    from test_runtime_evidence_report_service import make_record
+
+    from policynim.services.runtime_evidence_report import create_runtime_evidence_report_service
+    from policynim.storage import RuntimeEvidenceStore
+
+    client, payload, destination, _, service = workspace
+    monkeypatch.chdir(tmp_path)
+    evidence = tmp_path / "existing-state" / "evidence.sqlite3"
+    with closing(RuntimeEvidenceStore(path=evidence)) as store:
+        store.append_event(
+            make_record(event_id="preserved-event", execution_id="preserved-execution")
+        )
+    service._base = service._base.model_copy(
+        update={
+            "runtime_evidence_db_path": evidence,
+            "runtime_shell_timeout_seconds": 12.0,
+            "eval_workspace_dir": tmp_path / "existing-evals",
+        }
+    )
+    payload = verified(client, payload)
+    assert client.post("/api/save", json=payload).status_code == 200
+    options: dict[str, Any] = {"_env_file": destination}
+    restored = Settings(**options)
+    assert restored.runtime_shell_timeout_seconds == 12.0
+    assert restored.eval_workspace_dir == tmp_path / "existing-evals"
+    with create_runtime_evidence_report_service(restored) as report:
+        summary = report.report_session("session-1")
+    assert summary.executions[0].execution_id == "preserved-execution"

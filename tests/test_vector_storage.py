@@ -413,3 +413,12 @@ def test_explicit_vector_inspection_still_compares_all_vectors(
     result = CliRunner().invoke(app, ["vector", "inspect", "--format", "json"])
     assert result.exit_code == 1
     assert json.loads(result.stdout)["status"] == "error"
+
+
+@pytest.mark.parametrize("path", ["/policy/", "/policy/other", "//policy"])
+def test_postgres_rejects_ambiguous_database_path_segments(path: str) -> None:
+    """Invalid database URLs fail before attempting an unintended database connection."""
+    with pytest.raises(ValidationError):
+        Settings(
+            **NO_ENV, vector_backend="pgvector", vector_url="postgresql://user@localhost" + path
+        )
