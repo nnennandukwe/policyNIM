@@ -118,8 +118,8 @@ public domain. Railway volume backup schedules require a Pro workspace; check
 the account plan before relying on them. Configure an approved backup method
 and verify a restore to an isolated database before production cutover. Set limits
 before starting either service: Keycloak 1 GB/0.5 vCPU and PostgreSQL
-0.5 GB/0.25 vCPU. The approved additional budget target is $40/month; these
-limits don't cap storage or egress charges. Don't change the workspace-wide
+0.5 GB/0.25 vCPU. Track compute, storage, egress and the workspace plan against the approved
+operating budget. These limits don't cap storage or egress charges. Don't change the workspace-wide
 compute hard limit because it affects unrelated projects.
 
 Import the realm through the authenticated administration API with the template
