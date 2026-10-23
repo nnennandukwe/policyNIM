@@ -118,6 +118,7 @@ def realm_profile(secret: str, password: str) -> dict[str, object]:
                     "firstName": "Evaluation",
                     "lastName": "Fixture",
                     "email": "evaluation@example.invalid",
+                    "realmRoles": ["offline_access"],
                     "credentials": [{"type": "password", "value": password, "temporary": False}],
                 }
             ],
@@ -267,6 +268,28 @@ def exchange(client: httpx.Client, issuer: LocalIssuer, code: str, verifier: str
             "resource": RESOURCE,
         },
     )
+
+
+def test_keycloak_accepts_chatgpt_refresh_scope(local_issuer: LocalIssuer) -> None:
+    """Accept ChatGPT's actual read-only login request, including offline access."""
+    with httpx.Client(verify=local_issuer.tls, trust_env=False, timeout=10) as auth:
+        code, verifier = login_code(auth, local_issuer, scope="openid offline_access policies:read")
+        response = exchange(auth, local_issuer, code, verifier)
+        assert response.status_code == 200, response.json().get("error_description")
+        tokens = response.json()
+        assert "offline_access" in tokens["scope"].split()
+        assert "policies:read" in tokens["scope"].split()
+        assert "policies:evaluate" not in tokens["scope"].split()
+        refreshed = auth.post(
+            local_issuer.token_endpoint(),
+            data={
+                "grant_type": "refresh_token",
+                "client_id": CLIENT_ID,
+                "refresh_token": tokens["refresh_token"],
+                "resource": RESOURCE,
+            },
+        )
+        assert refreshed.status_code == 200
 
 
 def test_keycloak_pkce_resource_refresh_revocation_and_recovery(

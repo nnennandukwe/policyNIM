@@ -60,6 +60,18 @@ default `basic` scope includes the subject mapper in token introspection. The
 template has no user accounts. Registration and account/consent policy remain
 operator decisions.
 
+ChatGPT's connection flow requests `openid offline_access policies:read`. The
+public client includes Keycloak's built-in `offline_access` scope as optional so
+that request can reach login and obtain a refresh session. Use `policies:read`
+as ChatGPT's default policy scope and `openid` as its base scope. Offline access
+allows refresh after the browser session ends; apply the operator's offline
+session limits and revocation policy in Keycloak. For an existing realm, assign
+the built-in scope to this client's optional scopes through the administration
+API; restarting the issuer won't update the client. The template maps that scope
+to the realm's `offline_access` role. Verify that the intended user has this
+role, including an explicit role mapping when importing user accounts. See
+[Keycloak offline access](https://www.keycloak.org/docs/latest/server_admin/#_offline-access).
+
 Run Keycloak with `--features=resource-indicators` to enforce `resource` in both
 authorization and token requests. This feature remains experimental in the
 evaluated version. The test uses `start-dev` on loopback; production needs its
@@ -125,7 +137,8 @@ compute hard limit because it affects unrelated projects.
 Import the realm through the authenticated administration API with the template
 inputs supplied at runtime. If ChatGPT's callback hasn't been copied yet,
 omit its public client during initial import; add it only after the exact
-callback is available. Never use a wildcard or guessed redirect URI. Startup
+callback is available. Copy it after OAuth discovery finishes, because discovery
+can change the callback shown by ChatGPT. Never use a wildcard or guessed redirect URI. Startup
 import skips existing realms, so apply later changes through the administration
 API rather than expecting a restart to update them. Keep operator registration
 disabled until account policy has been selected.

@@ -6,7 +6,17 @@
   "accessTokenLifespan": 300,
   "revokeRefreshToken": true,
   "refreshTokenMaxReuse": 0,
+  "scopeMappings": [
+    {"clientScope": "offline_access", "roles": ["offline_access"]}
+  ],
   "clientScopes": [
+    {
+      "name": "offline_access",
+      "protocol": "openid-connect",
+      "attributes": {
+        "display.on.consent.screen": "true"
+      }
+    },
     {
       "name": "basic",
       "protocol": "openid-connect",
@@ -78,7 +88,7 @@
       "redirectUris": ["${POLICYNIM_CHATGPT_REDIRECT_URI}"],
       "attributes": {"pkce.code.challenge.method": "S256"},
       "defaultClientScopes": ["basic"],
-      "optionalClientScopes": ["policies:read", "policies:evaluate"]
+      "optionalClientScopes": ["policies:read", "policies:evaluate", "offline_access"]
     }
   ]
 }
