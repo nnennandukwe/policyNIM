@@ -163,16 +163,22 @@ def test_release_requires_the_canonical_mcp_route(
     assert output.read_bytes() == b"retained archive"
 
 
-def test_release_preserves_a_public_base_prefix(tmp_path: Path, release_inputs: dict) -> None:
-    """A reverse proxy can publish the MCP route under its configured public base."""
+def test_release_rejects_a_public_base_prefix(tmp_path: Path, release_inputs: dict) -> None:
+    """Match the runtime settings contract that forbids a path in the public origin."""
     release_inputs["mcp_endpoint"] = "https://review.policynim.org/policy/mcp"
-    output = tmp_path / "prefixed.zip"
-    builder.build(output, release_inputs)
-    with zipfile.ZipFile(output) as archive:
-        assert (
-            json.loads(archive.read("mcp.json"))["mcpServers"]["policynim"]["url"]
-            == (release_inputs["mcp_endpoint"])
-        )
+    with pytest.raises(ValueError, match="canonical public route"):
+        builder.build(tmp_path / "rejected.zip", release_inputs)
+
+
+@pytest.mark.parametrize("field", sorted(release_key_names()))
+@pytest.mark.parametrize("path", ["/sk%2D" + "a" * 16, "/sk%252D" + "a" * 16])
+def test_escaped_release_urls_are_rejected(
+    tmp_path: Path, release_inputs: dict, field: str, path: str
+) -> None:
+    """Encoded credential shapes can't bypass scanning in any public URL field."""
+    release_inputs[field] = "https://review.policynim.org" + path
+    with pytest.raises(ValueError, match="public HTTPS URL"):
+        builder.build(tmp_path / "rejected.zip", release_inputs)
 
 
 @pytest.mark.parametrize(

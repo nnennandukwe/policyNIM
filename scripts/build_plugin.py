@@ -92,7 +92,7 @@ def public_url(value: object, field: str) -> str:
             or "}" in decoded
             or "<" in decoded
             or ">" in decoded
-            or "%" in host
+            or "%" in value
             or host.endswith(".")
         ):
             raise ValueError
@@ -235,8 +235,10 @@ def render(source: Path, release: dict | None) -> tuple[dict[str, bytes], list[s
                 "Release inputs must contain exactly: " + ", ".join(sorted(RELEASE_KEYS))
             )
         urls = {field: public_url(value, field) for field, value in release.items()}
-        if not urlsplit(urls["mcp_endpoint"]).path.endswith("/mcp"):
-            raise ValueError("mcp_endpoint: use the canonical public route ending in /mcp.")
+        if urlsplit(urls["mcp_endpoint"]).path != "/mcp":
+            raise ValueError(
+                "mcp_endpoint: use the canonical public route /mcp at the service origin."
+            )
         for field in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
             interface[field] = urls[field]
         extension["review"]["demo_recording_url"] = urls["demo_recording_url"]

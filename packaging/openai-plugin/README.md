@@ -22,7 +22,7 @@ stay outside that archive.
 For a candidate build, supply a local JSON object with exactly these six string
 keys: `mcp_endpoint`, `websiteURL`, `supportURL`, `privacyPolicyURL`,
 `termsOfServiceURL`, `demo_recording_url`. Use actual public HTTPS URLs without
-embedded credentials, query strings or fragments. Keep account access details in
+embedded credentials, query strings, fragments or percent escapes. Keep account access details in
 the dashboard's private review form. Then run:
 
 ```bash
@@ -39,9 +39,10 @@ Identical source and release inputs produce identical ZIP bytes on supported
 Python versions: stored compression, sorted fixed allowlist, 1980 timestamps and
 regular-file permissions avoid host-dependent archive metadata.
 
-`mcp_endpoint` must end in `/mcp`, matching the configured public resource URL.
-A public-base prefix is supported. A website root, admin page or trailing-slash
-variant isn't accepted as the canonical endpoint input.
+`mcp_endpoint` must use exactly `/mcp` at the service origin, matching the runtime's
+public resource URL. A path prefix, website root, admin page or trailing-slash
+variant isn't accepted. Plain, unescaped release URLs keep encoded credential
+text out of the package; use a stable direct URL when a sharing link needs escapes.
 
 ## Schema and asset provenance
 
