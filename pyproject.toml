@@ -47,6 +47,9 @@ Issues = "https://github.com/nnennandukwe/policyNIM/issues"
 Repository = "https://github.com/nnennandukwe/policyNIM"
 
 [project.optional-dependencies]
+vector-postgres = [
+  "psycopg[binary]==3.3.6",
+]
 nvidia-guardrails = [
   "nemoguardrails[nvidia]==0.21.0",
 ]

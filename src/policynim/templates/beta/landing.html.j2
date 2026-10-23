@@ -13,8 +13,8 @@
       {% endwith %}
       <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
       <p class="beta-subtitle">
-        PolicyNIM is a policy-aware engineering preflight layer for AI coding agents, exposed
-        here as a hosted MCP endpoint.
+        Give your coding agent complete, versioned engineering policies for the task it's
+        working on. Selected sources keep their conditions, exceptions, and references.
       </p>
       <p class="beta-body-copy">
         Sign in with GitHub, issue a hosted MCP API key, and connect your coding client without
@@ -23,6 +23,11 @@
       <p class="beta-body-copy">
         The portal keeps the hosted workflow self-serve: authenticate once, generate a key, and
         paste the ready-to-run setup commands into Codex or Claude Code.
+      </p>
+      <p class="beta-body-copy">
+        For your own policy packs and vector database, run <code>policynim setup</code>
+        on your computer or self-hosted server. The local UI supports SQLite, Qdrant, and
+        PostgreSQL with pgvector; this shared endpoint uses its maintained public profile.
       </p>
       {% if notices %}
       <div class="beta-notice-stack">

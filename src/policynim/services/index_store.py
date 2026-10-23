@@ -54,6 +54,18 @@ def create_index_store(settings: Settings, *, legacy: bool = False) -> SQLiteVec
         root=resolve_runtime_path(settings.generations_dir), embedding=identity
     ).pin(settings.generation_id)
     try:
+        if settings.vector_backend != "sqlite":
+            from policynim.services.vector_storage import create_vector_backend
+            from policynim.storage.external_vectors import ExternalVectorIndexStore
+            from policynim.storage.vectors import vector_namespace
+
+            return ExternalVectorIndexStore(
+                path=snapshot.index_path,
+                embedding_identity=identity,
+                generation_snapshot=snapshot,
+                backend=create_vector_backend(settings),
+                namespace=vector_namespace(settings.vector_namespace, snapshot.generation_id),
+            )
         return SQLiteVecIndexStore(
             path=snapshot.index_path, embedding_identity=identity, generation_snapshot=snapshot
         )

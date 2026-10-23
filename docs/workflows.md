@@ -1,5 +1,10 @@
 # PolicyNIM Workflow Handbook
 
+For guided policy selection and database setup, run `policynim setup` and follow
+[local onboarding](local-onboarding.md). [Vector storage](vector-storage.md)
+documents explicit `ingest --sync-vectors`, `vector probe`, `vector sync`, and
+`vector inspect` behavior. The default SQLite workflow below stays unchanged.
+
 Use this page for the detailed CLI, MCP, runtime, eval, and troubleshooting
 reference that used to live in the root README.
 

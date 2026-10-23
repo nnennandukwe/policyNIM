@@ -50,6 +50,7 @@ from policynim.services.ingest import _attach_embeddings, _compile_runtime_rules
 from policynim.settings import Settings
 from policynim.storage.file_lock import exclusive_file_lock, try_exclusive_file_lock
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+from policynim.storage.vectors import VectorStorageError
 from policynim.types import (
     EmbeddingIdentity,
     GenerationID,
@@ -1160,7 +1161,11 @@ class GenerationStore:
                 result.warnings.append("Activation pointer staging cleanup needs inspection.")
         return result
 
-    def _publish_stage(self, prepare: Callable[[Path], GenerationSnapshot]) -> PublicationResult:
+    def _publish_stage(
+        self,
+        prepare: Callable[[Path], GenerationSnapshot],
+        before_activate: Callable[[GenerationSnapshot], None] | None = None,
+    ) -> PublicationResult:
         """Own preparation, the commit point, and cleanup without false postcommit aborts."""
         stage: Path | None = None
         stage_identity: tuple[int, int] | None = None
@@ -1172,11 +1177,16 @@ class GenerationStore:
             stage_identity = (observed.st_dev, observed.st_ino)
             self._write(stage / ".owner", _STAGE_OWNER, "stage_owner")
             prepared = prepare(stage)
+            if before_activate is not None:
+                self._step("external_vectors_prepare")
+                before_activate(prepared)
             self._step("stage_directory_fsync")
             _sync_directory(stage)
             result = self._activate(prepared)
             return result
         except GenerationError:
+            raise
+        except VectorStorageError:
             raise
         except ProviderError as exc:
             raise ProviderError(
@@ -1212,6 +1222,7 @@ class GenerationStore:
         snapshot: SourceSnapshot,
         prepare_index: Callable[[Path], None],
         rules_bytes: bytes | None = None,
+        before_activate: Callable[[GenerationSnapshot], None] | None = None,
     ) -> PublicationResult:
         """Prepare source, catalog, rules and SQLite through the common publication transaction."""
 
@@ -1236,7 +1247,7 @@ class GenerationStore:
                 self._step("index_close_sync")
             return self._seal(stage, snapshot)
 
-        return self._publish_stage(prepare)
+        return self._publish_stage(prepare, before_activate)
 
     def migrate(
         self, settings: Settings, *, index_path: Path, rules_path: Path
@@ -1280,15 +1291,26 @@ class GenerationStore:
         embedder: Embedder | None = None,
         *,
         embedder_factory: Callable[[], Embedder] | None = None,
+        sync_vectors: bool = False,
+        expected_catalog_digest: str | None = None,
     ) -> PublicationResult:
         """Validate sources before using a borrowed embedder or command-owned lazy factory."""
         if (embedder is None) == (embedder_factory is None):
             raise GenerationError(
                 "prepare", "Provide exactly one embedder or owned embedder factory."
             )
+        if settings.vector_backend != "sqlite" and not sync_vectors:
+            raise ConfigurationError(
+                "External vector publication needs explicit approval. "
+                "Run `policynim ingest --sync-vectors`; existing state wasn't changed."
+            )
         snapshot, roots = capture_sources(settings)
         self._guard_outputs(roots, settings)
-        documents, _ = snapshot.resolve()
+        documents, catalog = snapshot.resolve()
+        if expected_catalog_digest is not None and catalog.digest != expected_catalog_digest:
+            raise ConfigurationError(
+                "Policy sources changed after preview. Preview again before building."
+            )
         _validated_runtime_rules(documents)
         chunks = chunk_policy_documents(documents)
 
@@ -1311,7 +1333,23 @@ class GenerationStore:
             pointer = self._pointer()
             if pointer is not None:
                 self._inspect(self.root / "objects" / pointer.active, expected_id=pointer.active)
-            return self._publish(snapshot, prepare_index)
+            from policynim.services.vector_storage import (
+                prepare_vector_generation,
+                probe_vector_backend,
+            )
+
+            if settings.vector_backend != "sqlite":
+                probe_vector_backend(settings)
+
+            return self._publish(
+                snapshot,
+                prepare_index,
+                before_activate=(
+                    (lambda candidate: prepare_vector_generation(settings, candidate))
+                    if settings.vector_backend != "sqlite"
+                    else None
+                ),
+            )
 
         result = self._execute(publish)
         result.source_roots = [root.as_posix() for root in roots]

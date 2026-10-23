@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import stat
+import struct
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
@@ -22,6 +23,7 @@ from pydantic import ValidationError
 from policynim.contracts import GenerationLease, IndexStore
 from policynim.errors import IndexCompatibilityError, IndexReadLimitError, MissingIndexError
 from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
+from policynim.storage.vectors import VectorRecord, float32_vector
 from policynim.types import (
     EmbeddedChunk,
     EmbeddingIdentity,
@@ -438,6 +440,27 @@ class SQLiteVecIndexStore(IndexStore):
         """Read only logical identifiers when building a bounded resource-key lookup cache."""
         with self._reader_lock, closing(self._require_connection()) as conn:
             return [row[0] for row in conn.execute(f"SELECT chunk_id FROM {_CHUNKS_TABLE}")]
+
+    def vector_records(self) -> list[VectorRecord]:
+        """Read generation-bound float32 vectors for publishing a derived external index."""
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            identity = self._validate_identity(conn)
+            rows = conn.execute(
+                f"SELECT c.chunk_id, c.domain, v.embedding "
+                f"FROM {_CHUNKS_TABLE} c JOIN {_VECTORS_TABLE} v ON v.rowid = c.rowid "
+                "ORDER BY c.chunk_id"
+            ).fetchall()
+            return [
+                VectorRecord(
+                    key=row[0],
+                    domain=row[1],
+                    vector=float32_vector(
+                        struct.unpack(f"<{identity.dimension}f", row[2]), identity.dimension
+                    ),
+                )
+                for row in rows
+            ]
 
     def get_chunk(self, chunk_id: str) -> PolicyChunk | None:
         """Use the unique chunk-ID index and materialize only the requested evidence row."""

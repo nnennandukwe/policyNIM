@@ -12,10 +12,22 @@ from policynim.errors import IndexCompatibilityError
 from policynim.types import IndexIdentity, StrictModel
 
 IndexReadinessState = Literal[
-    "ready", "missing", "directory", "empty", "invalid", "unreadable", "incompatible", "incomplete"
+    "ready",
+    "missing",
+    "directory",
+    "empty",
+    "invalid",
+    "unreadable",
+    "incompatible",
+    "incomplete",
+    "external_unavailable",
 ]
 
 _STATE_REASONS: dict[IndexReadinessState, str] = {
+    "external_unavailable": (
+        "External vector storage isn't verified for this generation. Check connectivity and "
+        "run `policynim vector sync` before retrying."
+    ),
     "ready": "A complete local SQLite index matches the configured embedding model.",
     "missing": "No local index path exists yet.",
     "directory": "Configured local SQLite index path points to a directory, not a SQLite file.",

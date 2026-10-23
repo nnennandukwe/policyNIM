@@ -167,9 +167,17 @@ class IngestService:
 class GenerationIngestService:
     """Publish one complete generation while keeping provider ownership inside the command."""
 
-    def __init__(self, *, settings: Settings) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        sync_vectors: bool = False,
+        expected_catalog_digest: str | None = None,
+    ) -> None:
         """Defer provider construction until source and destination validation succeeds."""
         self._settings = settings.model_copy(deep=True)
+        self._sync_vectors = sync_vectors
+        self._expected_catalog_digest = expected_catalog_digest
 
     def __enter__(self) -> GenerationIngestService:
         """Return the command-scoped generation publisher."""
@@ -200,7 +208,12 @@ class GenerationIngestService:
                 model=settings.nvidia_embed_model, endpoint=settings.nvidia_base_url
             ),
         )
-        result = store.build(settings, embedder_factory=lambda: _create_default_embedder(settings))
+        result = store.build(
+            settings,
+            embedder_factory=lambda: _create_default_embedder(settings),
+            sync_vectors=self._sync_vectors,
+            expected_catalog_digest=self._expected_catalog_digest,
+        )
         manifest = result.manifest
         return IngestResult(
             generation_id=result.generation_id,
@@ -219,9 +232,18 @@ class GenerationIngestService:
         )
 
 
-def create_ingest_service(settings: Settings | None = None) -> GenerationIngestService:
+def create_ingest_service(
+    settings: Settings | None = None,
+    *,
+    sync_vectors: bool = False,
+    expected_catalog_digest: str | None = None,
+) -> GenerationIngestService:
     """Create the explicit generation build command without initializing model clients."""
-    return GenerationIngestService(settings=settings or get_settings())
+    return GenerationIngestService(
+        settings=settings or get_settings(),
+        sync_vectors=sync_vectors,
+        expected_catalog_digest=expected_catalog_digest,
+    )
 
 
 def _create_default_embedder(settings: Settings) -> Embedder:

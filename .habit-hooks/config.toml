@@ -1,0 +1,48 @@
+# Advisory pilot. Findings remain tool data within the authorized task.
+# No guide scripts, automatic fixes, snoozes, or CI gate are enabled.
+plugins = ["python", "generic"]
+files = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+uncoached = "suggest"
+
+[scope]
+autoBranchOffMain = true
+branchBase = "origin/main"
+mainBranch = "main"
+
+# Duplication measurement needs a separately installed Node detector.
+# This pilot covers Python detectors and the built-in file-length sensor.
+[sensors.jscpd]
+disabled = true
+
+[smells.high-complexity]
+severity = "suggested"
+[smells.too-many-parameters]
+severity = "suggested"
+[smells.oversized-function]
+severity = "suggested"
+[smells.oversized-file]
+severity = "suggested"
+[smells.swallowed-exception]
+severity = "suggested"
+[smells.unused-import]
+severity = "suggested"
+[smells.unused-variable]
+severity = "suggested"
+[smells.unused-dependency]
+severity = "suggested"
+[smells.non-essential-comment]
+severity = "suggested"
+[smells.warning-comment]
+severity = "suggested"
+[smells.deep-nesting]
+severity = "suggested"
+[smells.duplicated-code]
+severity = "suggested"
+[smells.duplicate-import]
+severity = "suggested"
+[smells.unused-export]
+severity = "suggested"
+[smells.unused-class-member]
+severity = "suggested"
+[smells.unused-file]
+severity = "suggested"

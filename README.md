@@ -16,16 +16,56 @@
 
 [![Built with NVIDIA NIM](https://img.shields.io/badge/Built%20with-NVIDIA%20NIM-76B900?logo=nvidia&logoColor=white)](https://docs.nvidia.com/nim/)
 
-PolicyNIM is a policy-aware engineering preflight layer for AI coding agents.
+PolicyNIM brings a team's reviewed engineering policies into coding-agent workflows.
+Choose policy packs, add project rules, review replacements, and publish a version
+that keeps sources, citations, vectors, and runtime rules together.
 
-It helps an agent retrieve policy evidence and review complete selected policy
-bodies with citations. It fails closed when complete source ownership or exact
-source references are unavailable.
+Agents receive complete selected policy bodies with their conditions and exceptions.
+PolicyNIM refuses output when source ownership or exact references can't be validated.
+Its local runtime wrapper can allow, require confirmation for, or block supported
+actions according to explicitly declared rules, then retain execution evidence.
 
-PolicyNIM currently ships with two main user-facing surfaces:
+PolicyNIM ships with three user-facing surfaces:
 
 - a JSON-first CLI for local developer workflows
 - an MCP server for integrations such as Codex and Claude Code
+- a private local setup UI for policy selection, vector storage, and a verified first result
+
+## What The Policy Logic Controls
+
+- **Which rules are effective:** pinned packs and reviewed additions, exclusions,
+  replacements, and declared conflicts define the selected policy set.
+- **Which source supports a result:** whole selected policies retain their original
+  conditions, exceptions, owner metadata, and source coordinates.
+- **Which version was used:** a complete generation binds policy text, its index,
+  and runtime rules; readers retain that version during updates and rollback.
+- **What a declared runtime rule does:** command, path, and HTTP-host matchers
+  produce allow, confirm, or block decisions for actions submitted through the wrapper.
+- **What actually happened:** execution evidence records the decision, confirmation,
+  outcome, and generation. Review applicability and source trust before acting.
+
+See the [policy lifecycle and worked migration example](docs/policy-lifecycle.md).
+
+## Choose Your Policies And Storage
+
+Use a source checkout or a wheel built from this revision for the new setup and
+storage commands. Check release notes before relying on a published package.
+
+```bash
+policynim setup
+```
+
+The loopback-only UI previews policy packs, checks database connectivity, builds a
+complete generation after consent, verifies a policy-backed task, and saves a new
+private config file. Existing config files are preserved.
+
+SQLite is the default. Bring your own Qdrant server or PostgreSQL database with
+pgvector. PostgreSQL needs the optional `vector-postgres` extra. External databases
+hold a derived vector replica; the sealed local generation remains the source
+authority and retains vectors for validation and recovery. Open-source database
+software, infrastructure costs, and NVIDIA service usage have separate boundaries.
+
+[Setup and privacy](docs/local-onboarding.md) · [Vector backend configuration](docs/vector-storage.md)
 
 ## What Works Today
 
@@ -33,6 +73,7 @@ PolicyNIM currently ships with two main user-facing surfaces:
 - Ingest-time compilation of `runtime_rules` frontmatter into the persisted runtime rules artifact.
 - NVIDIA-hosted embeddings and reranking for retrieval.
 - Local sqlite-vec storage for the retrievable policy index.
+- Opt-in Qdrant and pgvector retrieval with generation-bound replicas and explicit synchronization.
 - Task-aware policy routing with citation-preserving selected-policy packets.
 - Source-extractive policy compilation and preflight: models select compact IDs,
   then services quote whole pinned policy bodies with canonical citations.
