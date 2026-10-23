@@ -19,6 +19,8 @@ operations into separate pages so the root README can stay short.
   operation scopes, key migration, and remaining OAuth acceptance checks
 - [release.md](release.md): package, GitHub release, PyPI, and standalone
   installer release checklist
+- [Plugin submission handoff](plugin-submission/README.md): reproducible source
+  package, reviewer materials and remaining owner/OAuth acceptance gates
 
 - [Grounded MCP guidance](grounded-mcp.md): compiled constraints, evidence traces,
   immutable policy resources and the review prompt.

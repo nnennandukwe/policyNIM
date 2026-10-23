@@ -1,0 +1,401 @@
+"""Build an allowlisted portable plugin archive without reading runtime secrets."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import io
+import ipaddress
+import json
+import os
+import re
+import struct
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+from jsonschema import Draft202012Validator
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "packaging" / "openai-plugin"
+MEMBERS = ("LICENSE", "NOTICE", "assets/icon.svg", "mcp.json", "plugin.json")
+SCHEMA_HASHES = {
+    "plugin": "0a4aad95ce337878ad38802ebf0daa3fde76abe3f65400c86bcbb1ec0b3ab883",
+    "mcp": "6539175bfcdf43085855183e86da40ea94b166547a72b47ae9a0a390516d3acb",
+}
+RELEASE_KEYS = frozenset(
+    {
+        "mcp_endpoint",
+        "websiteURL",
+        "supportURL",
+        "privacyPolicyURL",
+        "termsOfServiceURL",
+        "demo_recording_url",
+    }
+)
+TOOLS = frozenset(
+    {
+        "policy_search",
+        "policy_compile",
+        "policy_preflight",
+        "policy_preflight_evidence",
+        "eval_submit",
+        "eval_inspect",
+        "eval_cancel",
+        "eval_result",
+    }
+)
+ICON_SOURCE_HASH = "c719b04a70e7399cd36d9587487cd7475aa6b25574c9e1a79e7922524bd9fc65"
+
+
+def read_json(path: Path) -> dict:
+    """Read an object while rejecting duplicate keys rather than silently replacing them."""
+
+    def unique_pairs(pairs: list[tuple[str, object]]) -> dict:
+        """Reject ambiguous objects at every nesting level."""
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate JSON key.")
+            result[key] = value
+        return result
+
+    result = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_pairs)
+    if not isinstance(result, dict):
+        raise ValueError("JSON input must be an object.")
+    return result
+
+
+def public_url(value: object, field: str) -> str:
+    """Require public HTTPS without credentials, queries, fragments or sample hosts."""
+    if not isinstance(value, str) or not value or len(value) > 1024:
+        raise ValueError(f"{field}: supply a public HTTPS URL of at most 1024 characters.")
+    decoded = unquote(value)
+    if any(character.isspace() or ord(character) < 33 for character in decoded):
+        raise ValueError(f"{field}: URL contains whitespace or control characters.")
+    try:
+        parts = urlsplit(value)
+        host = (parts.hostname or "").lower()
+        if (
+            parts.scheme != "https"
+            or not host
+            or parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+            or parts.port not in (None, 443)
+            or "\\" in decoded
+            or "{" in decoded
+            or "}" in decoded
+            or "<" in decoded
+            or ">" in decoded
+            or "%" in host
+            or host.endswith(".")
+        ):
+            raise ValueError
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            if (
+                "." not in host
+                or not re.fullmatch(r"[a-z0-9.-]+", host)
+                or any(
+                    not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                    for label in host.split(".")
+                )
+                or host.rsplit(".", 1)[-1].isdigit()
+                or host.endswith((".localhost", ".local", ".internal", ".test", ".invalid"))
+                or host in {"example.com", "example.org", "example.net"}
+                or ".example." in host
+                or host.endswith(".example")
+                or any(part in {"placeholder", "changeme", "tbd"} for part in host.split("."))
+            ):
+                raise ValueError
+        else:
+            if not address.is_global:
+                raise ValueError
+    except ValueError:
+        raise ValueError(
+            f"{field}: use a public HTTPS URL without private or sample values."
+        ) from None
+    return value
+
+
+def safe_text(value: object) -> None:
+    """Reject credential-shaped or local operational content in package strings."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if re.search(r"credential|password|secret|authorization|api[_-]?key|token", key, re.I):
+                raise ValueError("Package contains a forbidden credential field.")
+            safe_text(item)
+    elif isinstance(value, list):
+        for item in value:
+            safe_text(item)
+    elif isinstance(value, str):
+        if re.search(
+            r"(?i)(?:bearer\s+\S+|sk-[a-z0-9]{12,}|nvapi-[a-z0-9_-]+|"
+            r"gh[pousr]_[a-z0-9]+|github_pat_[a-z0-9_]+|"
+            r"eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|"
+            r"(?:api[_-]?key|client_secret|access_token)\s*[=:]\s*\S+|"
+            r"-----BEGIN .*PRIVATE KEY|/Users/|/home/|/private/|/tmp/|/var/|file://|[A-Z]:\\)",
+            value,
+        ):
+            raise ValueError("Package contains credential-shaped text or a local path.")
+
+
+def validate_schema(manifest: dict, name: str, source: Path) -> None:
+    """Validate with pinned vendored schemas without fetching remote references."""
+    schema_path = source / "schemas" / f"{name}.schema.json"
+    if schema_path.is_symlink():
+        raise ValueError("Schema must be a regular file.")
+    schema_bytes = schema_path.read_bytes()
+    if hashlib.sha256(schema_bytes).hexdigest() != SCHEMA_HASHES[name]:
+        raise ValueError(f"{name}: vendored schema hash mismatch.")
+    validator = Draft202012Validator(json.loads(schema_bytes))
+    if not validator.is_valid(manifest):
+        raise ValueError(f"{name}: manifest doesn't match Agent Plugins 1.0.0.")
+
+
+def validate_icon(payload: bytes) -> None:
+    """Accept only the square, self-contained wrapper around the known brand asset."""
+    if len(payload) > 5 * 1024 * 1024:
+        raise ValueError("Icon exceeds 5 MiB.")
+    if b"<!" in payload or b"<?" in payload:
+        raise ValueError(
+            "Icon mustn't contain XML declarations, comments or processing instructions."
+        )
+    svg = ET.fromstring(payload)
+    namespace = "{http://www.w3.org/2000/svg}"
+    if (
+        svg.tag != namespace + "svg"
+        or svg.get("width") != "512"
+        or svg.get("height") != "512"
+        or svg.get("viewBox") != "240 100 430 430"
+        or len(svg) != 1
+        or svg[0].tag != namespace + "image"
+        or set(svg.attrib) != {"width", "height", "viewBox", "role", "aria-label"}
+        or svg.get("aria-label") != "PolicyNIM shield and chip mark"
+        or svg.get("role") != "img"
+        or set(svg[0].attrib) != {"width", "height", "href"}
+        or svg[0].get("width") != "2048"
+        or svg[0].get("height") != "640"
+        or len(svg[0]) != 0
+        or any(
+            (element.text or "").strip() or (element.tail or "").strip() for element in svg.iter()
+        )
+    ):
+        raise ValueError("Icon must retain the reviewed square SVG structure.")
+    href = svg[0].get("href", "")
+    prefix = "data:image/png;base64,"
+    if not href.startswith(prefix):
+        raise ValueError("Icon must embed its image without external references.")
+    bitmap = base64.b64decode(href[len(prefix) :], validate=True)
+    if hashlib.sha256(bitmap).hexdigest() != ICON_SOURCE_HASH or struct.unpack(
+        ">II", bitmap[16:24]
+    ) != (2048, 640):
+        raise ValueError("Icon bitmap differs from its recorded source.")
+
+
+def render(source: Path, release: dict | None) -> tuple[dict[str, bytes], list[str]]:
+    """Render and validate the entire allowlist before opening an output file."""
+    payloads = {}
+    for member in MEMBERS:
+        path = source / member
+        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+            raise ValueError("Package sources mustn't use symlinks.")
+        if not path.is_file() or path.stat().st_size > 5 * 1024 * 1024:
+            raise ValueError(f"{member}: missing, oversized or non-regular source.")
+        payloads[member] = path.read_bytes()
+    manifest = read_json(source / "plugin.json")
+    mcp = read_json(source / "mcp.json")
+    extension = manifest["extensions"]["com.openai"]
+    if set(extension) != {"interface", "review", "publication"}:
+        raise ValueError("Unsupported OpenAI extension fields.")
+    interface = extension["interface"]
+    expected_interface = {
+        "displayName",
+        "shortDescription",
+        "longDescription",
+        "developerName",
+        "category",
+        "capabilities",
+        "defaultPrompt",
+        "composerIcon",
+        "logo",
+    }
+    if set(interface) != expected_interface or mcp["mcpServers"] != {}:
+        raise ValueError("Keep deployment URLs outside the canonical source manifests.")
+    missing = sorted(RELEASE_KEYS)
+    if release is not None:
+        if set(release) != RELEASE_KEYS:
+            raise ValueError(
+                "Release inputs must contain exactly: " + ", ".join(sorted(RELEASE_KEYS))
+            )
+        urls = {field: public_url(value, field) for field, value in release.items()}
+        for field in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
+            interface[field] = urls[field]
+        extension["review"]["demo_recording_url"] = urls["demo_recording_url"]
+        mcp["mcpServers"] = {"policynim": {"type": "streamable-http", "url": urls["mcp_endpoint"]}}
+        missing = []
+    validate_schema(manifest, "plugin", source)
+    validate_schema(mcp, "mcp", source)
+    if manifest["name"] != "policynim" or not re.fullmatch(
+        r"\d+\.\d+\.\d+", manifest.get("version", "")
+    ):
+        raise ValueError("Supply the stable plugin name and a semantic version.")
+    for field, maximum in {
+        "displayName": 30,
+        "shortDescription": 30,
+        "longDescription": 4000,
+        "developerName": 80,
+    }.items():
+        value = interface[field]
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+            raise ValueError(f"{field}: required text exceeds its submission limit.")
+    if interface["category"] != "Developer Tools":
+        raise ValueError("Use the reviewed Developer Tools category.")
+    capabilities = interface["capabilities"]
+    if (
+        not isinstance(capabilities, list)
+        or len(capabilities) > 20
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 120 or "\n" in item
+            for item in capabilities
+        )
+    ):
+        raise ValueError("Invalid capability labels.")
+    prompts = interface["defaultPrompt"]
+    if (
+        not isinstance(prompts, list)
+        or not 1 <= len(prompts) <= 3
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 128 or "@" in item
+            for item in prompts
+        )
+        or len(set(prompts)) != len(prompts)
+    ):
+        raise ValueError("Invalid starter prompts.")
+    for field in ("composerIcon", "logo"):
+        if interface[field] != "./assets/icon.svg":
+            raise ValueError(f"{field}: reference the bundled reviewed icon.")
+    validate_icon(payloads["assets/icon.svg"])
+    review = extension["review"]
+    if set(review) != (
+        {"test_cases", "demo_recording_url"} if release is not None else {"test_cases"}
+    ):
+        raise ValueError("Unsupported review fields; access instructions stay private.")
+    cases = review["test_cases"]
+    if set(cases) != {"positive", "negative"}:
+        raise ValueError("Expected positive and negative case lists.")
+    covered = set()
+    for kind, count in (("positive", 5), ("negative", 3)):
+        if not isinstance(cases[kind], list) or len(cases[kind]) != count:
+            raise ValueError(f"Expected exactly {count} {kind} review cases.")
+        for case in cases[kind]:
+            if not isinstance(case, dict) or set(case) != {
+                "description",
+                "prompt",
+                "tools_triggered",
+                "expected_behavior",
+            }:
+                raise ValueError("Unsupported review case fields.")
+            for field, value in case.items():
+                if (
+                    not isinstance(value, str)
+                    or len(value) > 4000
+                    or (not value.strip() and (kind == "positive" or field != "tools_triggered"))
+                ):
+                    raise ValueError("Invalid review case text.")
+            names = {name.strip() for name in case["tools_triggered"].split(",") if name.strip()}
+            if not names <= TOOLS:
+                raise ValueError("Review case names an unexposed tool.")
+            covered.update(names)
+    if covered != TOOLS:
+        raise ValueError("Review cases must cover all eight exposed tools.")
+    if (
+        set(extension["publication"]) != {"release_notes"}
+        or not isinstance(extension["publication"]["release_notes"], str)
+        or not extension["publication"]["release_notes"].strip()
+    ):
+        raise ValueError("Supply release notes without unreviewed publication settings.")
+    for field in ("homepage", "repository"):
+        public_url(manifest[field], field)
+    public_url(manifest["author"]["url"], "author.url")
+    safe_text(manifest)
+    safe_text(mcp)
+    for member in ("LICENSE", "NOTICE"):
+        safe_text(payloads[member].decode("utf-8"))
+    for member, document in (("plugin.json", manifest), ("mcp.json", mcp)):
+        payloads[member] = (json.dumps(document, indent=2, ensure_ascii=True) + "\n").encode()
+    return payloads, missing
+
+
+def build(output: Path, release: dict | None = None, *, source: Path = SOURCE) -> dict:
+    """Validate, construct, read back and atomically replace one deterministic ZIP."""
+    payloads, missing = render(source, release)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        for member in MEMBERS:
+            info = zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, payloads[member])
+    contents = buffer.getvalue()
+    with zipfile.ZipFile(io.BytesIO(contents)) as archive:
+        if tuple(archive.namelist()) != MEMBERS or archive.testzip() is not None:
+            raise ValueError("ZIP readback failed.")
+        if any(archive.read(member) != payloads[member] for member in MEMBERS):
+            raise ValueError("ZIP member readback failed.")
+    if len(contents) > 100 * 1024 * 1024:
+        raise ValueError("ZIP exceeds 100 MiB.")
+    if output.is_symlink() or any(parent.is_symlink() for parent in output.parents):
+        raise ValueError("Output mustn't use symlinks.")
+    if output.resolve().is_relative_to(source.resolve()):
+        raise ValueError("Output must stay outside package source.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(contents)
+        os.replace(temporary, output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return {
+        "status": "source_only" if missing else "candidate_requires_live_acceptance",
+        "sha256": hashlib.sha256(contents).hexdigest(),
+        "members": list(MEMBERS),
+        "missing_release_inputs": missing,
+        "external_gates": [
+            "approved_policies_and_brand_rights",
+            "public_url_readback",
+            "production_oauth_and_eight_tool_discovery",
+            "reviewer_access",
+            "executed_review_cases_and_recording",
+            "owner_submission",
+        ],
+    }
+
+
+def main() -> int:
+    """Expose the package workflow without reading environment configuration."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--release-inputs", type=Path)
+    arguments = parser.parse_args()
+    try:
+        release = read_json(arguments.release_inputs) if arguments.release_inputs else None
+        result = build(arguments.output, release)
+    except (ValueError, KeyError, TypeError, OSError, ET.ParseError, struct.error):
+        # Don't echo malformed input or filesystem exceptions containing private paths.
+        parser.exit(1, "Plugin build failed validation. Check source fields and release inputs.\n")
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
