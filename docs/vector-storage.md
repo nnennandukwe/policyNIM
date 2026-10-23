@@ -59,7 +59,7 @@ generation/domain filters. A request's JSON response is limited to 16 MiB.
 
 Install the optional pinned driver in a Python-managed PolicyNIM installation.
 Vector storage support requires PolicyNIM 0.3.0 or later. For a tool installation,
-run `uv tool install --python 3.11 --upgrade 'policynim[vector-postgres]'`.
+run `uv tool install --python 3.11 --upgrade 'policynim[vector-postgres]>=0.3.0'`.
 From a source checkout:
 
 ```bash
