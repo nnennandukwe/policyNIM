@@ -47,7 +47,9 @@ text out of the package; use a stable direct URL when a sharing link needs escap
 Validation errors identify the rejected field or package rule without echoing the
 supplied value. Directory aliases such as macOS `/tmp` resolve to their physical
 destination. A final output file that's a symlink is rejected, and the resolved
-output must stay outside package source.
+output must stay outside package source. Use source and output directories you
+control, and keep them stable while the command runs. The builder rechecks for
+directory redirects after creation and before replacing the archive.
 
 The staged ZIP file stays readable by its owner only. Its internal member modes
 are fixed at 0644. Upload it from the account that built it, or let the owner choose

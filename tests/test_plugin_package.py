@@ -657,7 +657,7 @@ def test_prose_link_punctuation_isnt_part_of_its_hostname(
     assert builder.build(tmp_path / "source.zip", source=package_source)["status"] == "source_only"
 
 
-@pytest.mark.parametrize("prefix", ["sk-proj-", "sk-svcacct-"])
+@pytest.mark.parametrize("prefix", ["sk-proj-", "sk-svcacct-", "sk-ant-api03-"])
 @pytest.mark.parametrize("location", ["listing", "review", "notice"])
 def test_hyphenated_api_key_prefixes_cant_enter_allowed_files(
     tmp_path: Path, package_source: Path, prefix: str, location: str
@@ -720,3 +720,24 @@ def test_ordinary_release_slugs_arent_project_credentials(
     assert builder.build(tmp_path / "candidate.zip", release_inputs)["status"] == (
         "candidate_requires_live_acceptance"
     )
+
+
+def test_output_directory_redirect_during_creation_preserves_source(
+    tmp_path: Path, package_source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recheck the physical directory after creation before opening an output file."""
+    output = tmp_path / "redirected-parent" / "plugin.json"
+    original = (package_source / "plugin.json").read_bytes()
+    original_mkdir = Path.mkdir
+
+    def redirect_directory(path: Path, *args, **kwargs) -> None:
+        """Simulate another process replacing an absent output parent with a link."""
+        if path == output.parent:
+            path.symlink_to(package_source, target_is_directory=True)
+        else:
+            original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", redirect_directory)
+    with pytest.raises(ValueError, match="Output directory changed"):
+        builder.build(output, source=package_source)
+    assert (package_source / "plugin.json").read_bytes() == original

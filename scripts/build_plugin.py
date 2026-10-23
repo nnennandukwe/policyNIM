@@ -144,7 +144,8 @@ def safe_text(value: object) -> None:
     elif isinstance(value, str):
         if re.search(
             r"(?i)\b(?:bearer\s+(?!tokens?\b)\S+|"
-            r"sk-(?:(?:proj|svcacct)-[a-z0-9_-]{12,}|[a-z0-9]{12,})|nvapi-[a-z0-9_-]+|"
+            r"sk-(?:(?:proj|svcacct|ant-api[0-9]{2})-[a-z0-9_-]{12,}|[a-z0-9]{12,})|"
+            r"nvapi-[a-z0-9_-]+|"
             r"gh[pousr]_[a-z0-9]+|github_pat_[a-z0-9_]+|"
             r"eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+)|"
             r"-----BEGIN .*PRIVATE KEY",
@@ -406,12 +407,20 @@ def build(output: Path, release: dict | None = None, *, source: Path = SOURCE) -
     output = output_directory / output.name
     if output.resolve().is_relative_to(source.resolve()):
         raise PackageValidationError("Output must stay outside package source.")
+
+    def check_output_directory() -> None:
+        """Refuse redirects observed during directory creation or archive staging."""
+        if output_directory.resolve() != output_directory or output.is_symlink():
+            raise PackageValidationError("Output directory changed during the build.")
+
     output.parent.mkdir(parents=True, exist_ok=True)
+    check_output_directory()
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as handle:
             temporary = Path(handle.name)
             handle.write(contents)
+        check_output_directory()
         os.replace(temporary, output)
     finally:
         if temporary is not None:
