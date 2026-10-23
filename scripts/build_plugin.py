@@ -235,6 +235,8 @@ def render(source: Path, release: dict | None) -> tuple[dict[str, bytes], list[s
                 "Release inputs must contain exactly: " + ", ".join(sorted(RELEASE_KEYS))
             )
         urls = {field: public_url(value, field) for field, value in release.items()}
+        if not urlsplit(urls["mcp_endpoint"]).path.endswith("/mcp"):
+            raise ValueError("mcp_endpoint: use the canonical public route ending in /mcp.")
         for field in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
             interface[field] = urls[field]
         extension["review"]["demo_recording_url"] = urls["demo_recording_url"]

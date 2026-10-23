@@ -150,6 +150,31 @@ def test_incomplete_release_preserves_existing_output(
     assert output.read_bytes() == b"retained archive"
 
 
+@pytest.mark.parametrize("path", ["", "/", "/admin", "/mcp/", "/mcp/other"])
+def test_release_requires_the_canonical_mcp_route(
+    tmp_path: Path, release_inputs: dict, path: str
+) -> None:
+    """A public HTTPS website or admin route isn't a usable PolicyNIM MCP endpoint."""
+    release_inputs["mcp_endpoint"] = "https://review.policynim.org" + path
+    output = tmp_path / "retained.zip"
+    output.write_bytes(b"retained archive")
+    with pytest.raises(ValueError, match="canonical public route"):
+        builder.build(output, release_inputs)
+    assert output.read_bytes() == b"retained archive"
+
+
+def test_release_preserves_a_public_base_prefix(tmp_path: Path, release_inputs: dict) -> None:
+    """A reverse proxy can publish the MCP route under its configured public base."""
+    release_inputs["mcp_endpoint"] = "https://review.policynim.org/policy/mcp"
+    output = tmp_path / "prefixed.zip"
+    builder.build(output, release_inputs)
+    with zipfile.ZipFile(output) as archive:
+        assert (
+            json.loads(archive.read("mcp.json"))["mcpServers"]["policynim"]["url"]
+            == (release_inputs["mcp_endpoint"])
+        )
+
+
 @pytest.mark.parametrize(
     "url",
     [

@@ -39,6 +39,10 @@ Identical source and release inputs produce identical ZIP bytes on supported
 Python versions: stored compression, sorted fixed allowlist, 1980 timestamps and
 regular-file permissions avoid host-dependent archive metadata.
 
+`mcp_endpoint` must end in `/mcp`, matching the configured public resource URL.
+A public-base prefix is supported. A website root, admin page or trailing-slash
+variant isn't accepted as the canonical endpoint input.
+
 ## Schema and asset provenance
 
 Agent Plugins 1.0.0 schemas were retrieved on October 23, 2026. Their original
