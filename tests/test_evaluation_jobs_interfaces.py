@@ -146,13 +146,30 @@ def test_authenticated_http_job_survives_disconnect_and_retains_owner_reports(
                     async with Client(
                         streamable_http_client(origin + "/mcp", http_client=http)
                     ) as client:
-                        names = {tool.name for tool in (await client.list_tools()).tools}
+                        listing = await client.list_tools()
+                        names = {tool.name for tool in listing.tools}
                         assert {
+                            "policy_search",
+                            "policy_compile",
+                            "policy_preflight",
+                            "policy_preflight_evidence",
                             "eval_submit",
                             "eval_inspect",
                             "eval_result",
                             "eval_cancel",
-                        } <= names
+                        } == names
+                        serialized = listing.model_dump(mode="json", by_alias=True)
+                        annotations = {
+                            tool["name"]: tool["annotations"] for tool in serialized["tools"]
+                        }
+                        assert annotations["eval_cancel"]["readOnlyHint"] is False
+                        assert annotations["eval_cancel"]["destructiveHint"] is True
+                        assert annotations["eval_cancel"]["idempotentHint"] is True
+                        assert annotations["eval_cancel"]["openWorldHint"] is True
+                        assert annotations["eval_submit"]["destructiveHint"] is False
+                        for metadata in annotations.values():
+                            for hint in ("readOnlyHint", "destructiveHint", "openWorldHint"):
+                                assert isinstance(metadata[hint], bool)
                         assert (
                             "io.modelcontextprotocol/tasks"
                             not in client.server_capabilities.model_dump_json()
