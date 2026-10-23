@@ -132,9 +132,33 @@ class QdrantVectors:
         except (KeyError, TypeError, ValueError, IndexError):
             raise VectorStorageError("Qdrant record validation failed.") from None
 
+    def check(self, name: str, generation: str, dimension: int, count: int) -> None:
+        """Inspect dimensions and exact scoped counts without downloading stored embeddings."""
+        try:
+            info = self._request("GET", f"/collections/{name}")
+            config = info["config"]["params"]["vectors"]
+            total = self._request("POST", f"/collections/{name}/points/count", {"exact": True})
+            scoped = self._request(
+                "POST",
+                f"/collections/{name}/points/count",
+                {
+                    "exact": True,
+                    "filter": {"must": [{"key": "generation", "match": {"value": generation}}]},
+                },
+            )
+            if (
+                config["distance"] != "Euclid"
+                or config["size"] != dimension
+                or total["count"] != count
+                or scoped["count"] != count
+            ):
+                raise VectorStorageError("Qdrant schema or generation counts don't match.")
+        except (KeyError, TypeError, ValueError):
+            raise VectorStorageError("Qdrant readiness couldn't be checked.") from None
+
     def search(
         self, name: str, generation: str, vector: Sequence[float], top_k: int, domain: str | None
-    ) -> list[str]:
+    ) -> list[VectorRecord]:
         """Scope every query to the generation and optional policy domain."""
         conditions = [{"key": "generation", "match": {"value": generation}}]
         if domain is not None:
@@ -148,18 +172,25 @@ class QdrantVectors:
                 "limit": top_k,
                 "params": {"exact": True},
                 "with_payload": True,
+                "with_vector": True,
             },
         )
         try:
-            keys = []
+            records = []
             for point in result["points"]:
                 payload = point["payload"]
                 if payload["generation"] != generation or (
                     domain is not None and payload["domain"] != domain
                 ):
                     raise VectorStorageError("Qdrant returned an out-of-scope record.")
-                keys.append(str(payload["key"]))
-            return keys
+                if point["id"] != str(uuid5(NAMESPACE_URL, payload["key"])):
+                    raise VectorStorageError("Qdrant point ownership doesn't match.")
+                records.append(
+                    VectorRecord(
+                        key=payload["key"], domain=payload["domain"], vector=point["vector"]
+                    )
+                )
+            return records
         except (KeyError, TypeError, ValueError):
             raise VectorStorageError("Qdrant query response couldn't be validated.") from None
 

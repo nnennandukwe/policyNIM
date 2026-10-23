@@ -40,7 +40,9 @@ token protect requests, and external scripts/assets aren't loaded.
 Saving creates a private config file without overwriting an existing file. If the
 usual config path already exists, the default destination adds `.setup`; choose
 `--config NEW-PATH` when needed. Topic composition also creates a new pinned profile
-beside that config. Other files and manual edits stay unchanged. On POSIX, new
+beside that config. Bundled selections use restricted `builtin:` references that
+resolve package resources again after restart; team packs retain explicit local
+paths and reviewed content pins. Other files and manual edits stay unchanged. On POSIX, new
 configuration/profile files have owner-only permissions. Postcommit directory-sync
 or cleanup failures are returned as warnings.
 

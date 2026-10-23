@@ -7,7 +7,12 @@ from collections.abc import Sequence
 
 from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
-from policynim.storage.vectors import VectorBackend, VectorStorageError, float32_vector
+from policynim.storage.vectors import (
+    VectorBackend,
+    VectorStorageError,
+    float32_vector,
+    validate_records,
+)
 from policynim.types import ScoredChunk
 
 
@@ -21,18 +26,27 @@ class ExternalVectorIndexStore(SQLiteVecIndexStore):
         self._namespace = namespace
 
     def validate_identity(self) -> None:
-        """Require both canonical identity and exact external replica contents."""
+        """Require canonical identity and compact remote schema/count/generation checks."""
         super().validate_identity()
         if self.generation_id is None:
             raise VectorStorageError("External retrieval requires a complete generation.")
-        self._backend.validate(self._namespace, self.generation_id, self.vector_records())
+        self._backend.check(
+            self._namespace, self.generation_id, self.inspect_identity().dimension, self.count()
+        )
 
     def inspect_readiness(self) -> IndexReadinessReport:
         """Keep source readiness separate from external availability and compatibility."""
         report = super().inspect_readiness()
         if report.state == "ready":
             try:
-                self.validate_identity()
+                if self.generation_id is None or report.identity is None:
+                    raise VectorStorageError("External retrieval requires a complete generation.")
+                self._backend.check(
+                    self._namespace,
+                    self.generation_id,
+                    report.identity.dimension,
+                    report.chunk_count or 0,
+                )
             except VectorStorageError:
                 return report.model_copy(
                     update={"state": "external_unavailable", "compatible": False}
@@ -44,15 +58,18 @@ class ExternalVectorIndexStore(SQLiteVecIndexStore):
     ) -> list[ScoredChunk]:
         """Resolve remote keys locally and calculate scores from canonical vectors."""
         self.validate_identity()
-        records = self.vector_records()
-        vector = float32_vector(query_embedding, len(records[0].vector))
+        vector = float32_vector(query_embedding, self.inspect_identity().dimension)
         if top_k <= 0:
             return []
         assert self.generation_id is not None
-        keys = self._backend.search(self._namespace, self.generation_id, vector, top_k, domain)
-        canonical = {record.key: record for record in records}
+        matches = self._backend.search(self._namespace, self.generation_id, vector, top_k, domain)
+        keys = [record.key for record in matches]
         if len(keys) > top_k or len(set(keys)) != len(keys):
             raise VectorStorageError("External retrieval returned invalid identifiers.")
+        canonical = {record.key: record for record in self.vector_records(keys)}
+        if any(key not in canonical for key in keys):
+            raise VectorStorageError("External retrieval returned an out-of-scope identifier.")
+        validate_records(matches, list(canonical.values()))
         results = []
         for key in keys:
             record = canonical.get(key)

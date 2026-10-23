@@ -122,9 +122,32 @@ class PGVectorVectors:
                 "Postgres vector index isn't readable or compatible."
             ) from None
 
+    def check(self, name: str, generation: str, dimension: int, count: int) -> None:
+        """Read table metadata and scoped counts without transferring embedding columns."""
+        driver = self._driver()
+        sql = driver.sql
+        try:
+            with driver.connect(**self._options) as connection:
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                vector_type = connection.execute(
+                    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                    "WHERE attrelid = %s::regclass AND attname = 'embedding' AND NOT attisdropped",
+                    ("public." + name,),
+                ).fetchone()
+                counts = connection.execute(
+                    sql.SQL(
+                        "SELECT count(*), count(*) FILTER (WHERE generation = %s) FROM {}"
+                    ).format(sql.Identifier("public", name)),
+                    (generation,),
+                ).fetchone()
+                if vector_type != (f"vector({dimension})",) or counts != (count, count):
+                    raise VectorStorageError("Postgres schema or generation counts don't match.")
+        except driver.Error:
+            raise VectorStorageError("Postgres readiness couldn't be checked.") from None
+
     def search(
         self, name: str, generation: str, vector: Sequence[float], top_k: int, domain: str | None
-    ) -> list[str]:
+    ) -> list[VectorRecord]:
         """Use parameterized exact L2 search, with stable ties and database-side filters."""
         driver = self._driver()
         sql = driver.sql
@@ -133,15 +156,20 @@ class PGVectorVectors:
                 connection.execute("SET TRANSACTION READ ONLY")
                 rows = connection.execute(
                     sql.SQL(
-                        "SELECT key FROM {} WHERE generation = %s "
+                        "SELECT key, domain, embedding::text FROM {} WHERE generation = %s "
                         "AND (%s::text IS NULL OR domain = %s) "
                         "ORDER BY embedding <-> %s::vector, key LIMIT %s"
                     ).format(sql.Identifier("public", name)),
                     (generation, domain, domain, json.dumps(list(vector)), top_k),
                 ).fetchall()
-                return [row[0] for row in rows]
+                return [
+                    VectorRecord(key=key, domain=scope, vector=json.loads(vector))
+                    for key, scope, vector in rows
+                ]
         except driver.Error:
             raise VectorStorageError("Postgres vector retrieval failed.") from None
+        except (TypeError, ValueError):
+            raise VectorStorageError("Postgres query response couldn't be validated.") from None
 
     def close(self) -> None:
         """Connections are scoped to each operation and already closed by their contexts."""

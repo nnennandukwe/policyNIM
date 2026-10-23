@@ -441,15 +441,22 @@ class SQLiteVecIndexStore(IndexStore):
         with self._reader_lock, closing(self._require_connection()) as conn:
             return [row[0] for row in conn.execute(f"SELECT chunk_id FROM {_CHUNKS_TABLE}")]
 
-    def vector_records(self) -> list[VectorRecord]:
-        """Read generation-bound float32 vectors for publishing a derived external index."""
+    def vector_records(self, keys: Sequence[str] | None = None) -> list[VectorRecord]:
+        """Read complete publication vectors or only the canonical matches a query returned."""
+        if keys is not None and not keys:
+            return []
         with self._reader_lock, closing(self._require_connection()) as conn:
             conn.execute("BEGIN")
             identity = self._validate_identity(conn)
+            restriction = (
+                "" if keys is None else " WHERE c.chunk_id IN (" + ",".join("?" for _ in keys) + ")"
+            )
             rows = conn.execute(
                 f"SELECT c.chunk_id, c.domain, v.embedding "
                 f"FROM {_CHUNKS_TABLE} c JOIN {_VECTORS_TABLE} v ON v.rowid = c.rowid "
-                "ORDER BY c.chunk_id"
+                + restriction
+                + " ORDER BY c.chunk_id",
+                () if keys is None else tuple(keys),
             ).fetchall()
             return [
                 VectorRecord(

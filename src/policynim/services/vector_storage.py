@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import closing
 from typing import TYPE_CHECKING
 
+from policynim.services.index_store import create_index_store
 from policynim.settings import Settings
 from policynim.storage.pgvector_vectors import PGVectorVectors
 from policynim.storage.qdrant_vectors import QdrantVectors
@@ -60,3 +61,24 @@ def probe_vector_backend(settings: Settings) -> dict[str, object]:
         with closing(create_vector_backend(settings)) as backend:
             backend.probe()
     return {"status": "connected", "backend": settings.vector_backend, "generation_verified": False}
+
+
+def inspect_vector_generation(settings: Settings) -> dict[str, object]:
+    """Explicitly compare the complete replica while holding the canonical generation lease."""
+    local = settings.model_copy(update={"vector_backend": "sqlite", "vector_url": None})
+    with closing(create_index_store(local)) as store:
+        store.validate_identity()
+        if settings.vector_backend != "sqlite":
+            assert store.generation_id is not None
+            with closing(create_vector_backend(settings)) as backend:
+                backend.validate(
+                    vector_namespace(settings.vector_namespace, store.generation_id),
+                    store.generation_id,
+                    store.vector_records(),
+                )
+        return {
+            "status": "ready",
+            "backend": settings.vector_backend,
+            "generation_id": store.generation_id,
+            "chunk_count": store.count(),
+        }

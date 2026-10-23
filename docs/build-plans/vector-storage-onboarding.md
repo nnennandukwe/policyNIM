@@ -59,3 +59,9 @@ Visual thesis: the existing PolicyNIM palette and typography, with one calm setu
 ## Verification and review
 
 Run focused settings, storage, generation, CLI, and UI tests, then Ruff, Pyright, the offline suite, and lockfile checks. Exercise real Qdrant and pgvector containers with synthetic vectors and no model calls. Inspect the UI in a browser. Run Habit Hooks as an advisory check in an isolated environment and record supported findings separately from code correctness. Use final local Qodo review and a ready-for-review PR with exact-head Qodo/CI evidence before merge. Review failures remain visible.
+
+## Retrieval and public-probe cost
+
+Full comparison stays at publication and explicit vector inspection. Routine readiness checks schema, generation counts, and dimensions without transferring the corpus; retrieval verifies only returned vectors against a bounded canonical read before source hydration. Public health allows one external check in flight and caches success or failure for one second, invalidated by an active-pointer replacement. Tests cover concurrent probes, expiry, activation, matching-vector corruption, and full inspection of otherwise unreturned corruption.
+
+Generated topic profiles use restricted bundled-resource references instead of extraction directories. Reloading resolves the installed resource again and enforces the same reviewed pack digest; arbitrary bundled paths and traversal are rejected.

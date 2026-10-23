@@ -6,6 +6,8 @@ import logging
 import traceback
 from contextlib import closing
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError, GenerationError, IndexCompatibilityError
@@ -39,14 +41,17 @@ class RuntimeHealthService:
         self._index_store = index_store
         self._table_name = table_name
         self._mcp_url = mcp_url
+        self._external_lock = Lock()
+        self._external_cache: tuple[tuple[int, int, int, int], float, HealthCheckResult] | None = (
+            None
+        )
 
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
         try:
             if self._settings is not None:
                 if self._settings.vector_backend != "sqlite":
-                    with closing(create_index_store(self._settings)) as external:
-                        return self._check_store(external)
+                    return self._check_external(self._settings)
                 generations = GenerationStore(
                     root=resolve_runtime_path(self._settings.generations_dir),
                     embedding=EmbeddingIdentity(
@@ -75,6 +80,33 @@ class RuntimeHealthService:
         except Exception as exc:
             log_health_failure("Runtime health check failed.", exc)
             return self._not_ready(format_health_failure_reason(exc))
+
+    def _check_external(self, settings: Settings) -> HealthCheckResult:
+        """Bound public probes to one in-flight read and a one-second generation-aware cache."""
+        if not self._external_lock.acquire(blocking=False):
+            return self._not_ready("External readiness check is in progress. Retry shortly.")
+        try:
+            root = resolve_runtime_path(settings.generations_dir)
+            pointer = (
+                root / "active.json"
+                if settings.generation_id is None
+                else root / "objects" / settings.generation_id / "manifest.json"
+            )
+            observed = pointer.stat()
+            identity = (observed.st_dev, observed.st_ino, observed.st_mtime_ns, observed.st_size)
+            cached = self._external_cache
+            if cached is not None and cached[0] == identity and monotonic() < cached[1]:
+                return cached[2]
+            try:
+                with closing(create_index_store(settings)) as external:
+                    result = self._check_store(external)
+            except Exception as error:
+                log_health_failure("External readiness check failed.", error)
+                result = self._not_ready(format_health_failure_reason(error))
+            self._external_cache = (identity, monotonic() + 1.0, result)
+            return result
+        finally:
+            self._external_lock.release()
 
     def _check_store(self, store: IndexStore) -> HealthCheckResult:
         """Use the configured retrieval consumer for external or explicitly injected stores."""

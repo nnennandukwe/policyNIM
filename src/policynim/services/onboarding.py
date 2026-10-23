@@ -24,12 +24,12 @@ from policynim.services.catalog import PolicyCatalog, build_policy_catalog
 from policynim.services.index_store import create_index_store
 from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import create_preflight_service
-from policynim.services.profiles import initialize_profile, serialize_profile
+from policynim.services.profiles import BUNDLED_TOPICS, initialize_profile, serialize_profile
 from policynim.services.vector_storage import probe_vector_backend
 from policynim.settings import Settings
 from policynim.types import PreflightRequest, StrictModel
 
-TOPICS = ("security", "api", "data", "observability", "reliability", "supply-chain", "testing")
+TOPICS = BUNDLED_TOPICS
 
 
 class OnboardingRequest(StrictModel):
@@ -210,16 +210,19 @@ class OnboardingService:
                     if set(request.topics) - set(TOPICS):
                         raise ConfigurationError("Select a supported policy topic.")
                     roots = [resolve_corpus_root() / topic for topic in request.topics]
+                    references = ["builtin:" + topic for topic in request.topics]
                 else:
                     roots = [resolve_corpus_root()]
+                    references = ["builtin:baseline"]
                 roots.extend(
                     Path(path).expanduser().absolute() for path in request.additional_packs
                 )
+                references.extend(str(root.resolve()) for root in roots[len(references) :])
                 profile_path = Path(temporary) / "profile.toml"
                 profile = initialize_profile(profile_path, roots, profile_id="onboarding")
                 absolute_pins = [
-                    pin.model_copy(update={"path": str(root.resolve())})
-                    for pin, root in zip(profile.packs, roots, strict=True)
+                    pin.model_copy(update={"path": reference})
+                    for pin, reference in zip(profile.packs, references, strict=True)
                 ]
                 profile_text = serialize_profile(
                     profile.model_copy(update={"packs": absolute_pins})

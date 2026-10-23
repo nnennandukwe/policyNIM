@@ -83,10 +83,14 @@ class VectorBackend(Protocol):
         """Refuse incomplete, incompatible, or unowned data."""
         ...
 
+    def check(self, name: str, generation: str, dimension: int, count: int) -> None:
+        """Check schema, generation binding, and counts without transferring stored vectors."""
+        ...
+
     def search(
         self, name: str, generation: str, vector: Sequence[float], top_k: int, domain: str | None
-    ) -> list[str]:
-        """Return ranked logical keys scoped to one generation and optional domain."""
+    ) -> list[VectorRecord]:
+        """Return bounded ranked records for canonical comparison and source hydration."""
         ...
 
     def close(self) -> None:

@@ -420,3 +420,49 @@ def test_changed_task_requires_new_verification_without_rebuilding(workspace) ->
     assert preview.json()["generation_id"] is not None
     assert client.post("/api/verify", json=changed).status_code == 200
     assert client.post("/api/save", json=changed).status_code == 200
+
+
+def test_saved_topics_survive_packaged_resource_extraction_cleanup(
+    workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saved profile resolves bundled topics again after its first extraction disappears."""
+    import shutil
+
+    from policynim.runtime_paths import resolve_corpus_root
+    from policynim.services import onboarding
+    from policynim.services.catalog import build_policy_catalog
+
+    client, payload, destination, _, _ = workspace
+    extracted = tmp_path / "temporary-package-corpus"
+    shutil.copytree(resolve_corpus_root(), extracted)
+    monkeypatch.setattr(onboarding, "resolve_corpus_root", lambda: extracted)
+    payload.update(source_mode="topics", source_path="", topics=["data"])
+    payload = verified(client, payload)
+    preview = client.post("/api/preview", json=payload).json()
+    assert client.post("/api/save", json=payload).status_code == 200
+    shutil.rmtree(extracted)
+    options: dict[str, Any] = {"_env_file": destination}
+    restarted = build_policy_catalog(settings=Settings(**options), source_only=True)
+    assert restarted.digest == preview["catalog"]["digest"]
+    assert (
+        str(extracted) not in destination.with_name(destination.name + ".profile.toml").read_text()
+    )
+
+
+@pytest.mark.parametrize(
+    "reference", ["builtin:", "builtin:../data", "builtin:data/..", "builtin:https://host"]
+)
+def test_bundled_profile_references_reject_unknown_or_escaping_names(reference: str) -> None:
+    """Bundled references select known package members without accepting paths or URLs."""
+    from pydantic import ValidationError
+
+    from policynim.services.profiles import PackPin
+
+    with pytest.raises(ValidationError):
+        PackPin(
+            path=reference,
+            pack_id="fixture",
+            version="1.0.0",
+            digest="sha256:" + "a" * 64,
+            policies={"A": "sha256:" + "b" * 64},
+        )

@@ -11,7 +11,11 @@ import typer
 
 from policynim.errors import PolicyNIMError
 from policynim.services.index_store import create_index_store, pinned_generation
-from policynim.services.vector_storage import prepare_vector_generation, probe_vector_backend
+from policynim.services.vector_storage import (
+    inspect_vector_generation,
+    prepare_vector_generation,
+    probe_vector_backend,
+)
 from policynim.settings import Settings, get_settings
 from policynim.storage.vectors import vector_namespace
 
@@ -74,16 +78,4 @@ def sync(output_format: OutputFormat = "text") -> None:
 @vector_app.command("inspect")
 def inspect(output_format: OutputFormat = "text") -> None:
     """Verify the selected source generation and configured vector replica together."""
-
-    def verify(settings: Settings) -> dict[str, object]:
-        """Exercise the same store and identity validator used by retrieval services."""
-        with closing(create_index_store(settings)) as store:
-            store.validate_identity()
-            return {
-                "status": "ready",
-                "backend": settings.vector_backend,
-                "generation_id": store.generation_id,
-                "chunk_count": store.count(),
-            }
-
-    _run(verify, output_format)
+    _run(inspect_vector_generation, output_format)

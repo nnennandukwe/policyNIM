@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Literal
 
@@ -57,10 +58,12 @@ class RecordingVectors:
 
     def search(
         self, name: str, generation: str, vector: Sequence[float], top_k: int, domain: str | None
-    ) -> list[str]:
+    ) -> list[VectorRecord]:
         """Rank canonical test vectors and support an out-of-scope transport response."""
         if self.bad_keys:
-            return ["unowned-key"]
+            return [
+                VectorRecord(key="unowned-key", domain=domain or "backend", vector=list(vector))
+            ]
         records = self.indexes[name][1]
         selected = [record for record in records if domain is None or record.domain == domain]
         selected.sort(
@@ -68,7 +71,19 @@ class RecordingVectors:
                 (left - right) ** 2 for left, right in zip(vector, record.vector, strict=True)
             )
         )
-        return [record.key for record in selected[:top_k]]
+        return selected[:top_k]
+
+    def check(self, name: str, generation: str, dimension: int, count: int) -> None:
+        """Model compact schema/count inspection independently from complete comparison."""
+        if name not in self.indexes:
+            raise VectorStorageError()
+        owner, records = self.indexes[name]
+        if (
+            owner != generation
+            or len(records) != count
+            or any(len(record.vector) != dimension for record in records)
+        ):
+            raise VectorStorageError()
 
     def close(self) -> None:
         """The in-memory fixture owns no transport resources."""
@@ -247,6 +262,7 @@ def test_health_refuses_missing_external_replica(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The settings-backed production health path must agree with the retrieval consumer."""
+    from policynim.services import health as health_module
     from policynim.services import vector_storage
     from policynim.services.health import create_runtime_health_service
 
@@ -255,8 +271,11 @@ def test_health_refuses_missing_external_replica(
     settings, generations = configured(tmp_path)
     generations.build(settings, MockEmbedder(), sync_vectors=True)
     health = create_runtime_health_service(settings)
+    clock = [100.0]
+    monkeypatch.setattr(health_module, "monotonic", lambda: clock[0])
     assert health.check().ready
     backend.indexes.clear()
+    clock[0] += 2
     result = health.check()
     assert not result.ready
     assert result.reason is not None and "vector sync" in result.reason
@@ -283,3 +302,114 @@ def test_malformed_vector_read_becomes_a_controlled_index_error(
     monkeypatch.setattr(struct, "unpack", truncated_blob)
     with pytest.raises(IndexCompatibilityError):
         SQLiteVecIndexStore(path=index, embedding_identity=identity).vector_records()
+
+
+def test_runtime_queries_dont_materialize_complete_replicas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual readiness/search reads bounded metadata and only matched canonical vectors."""
+    from policynim.services import vector_storage
+    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+
+    backend = RecordingVectors()
+    monkeypatch.setattr(vector_storage, "create_vector_backend", lambda settings: backend)
+    settings, generations = configured(tmp_path)
+    generations.build(settings, MockEmbedder(), sync_vectors=True)
+    original = SQLiteVecIndexStore.vector_records
+
+    def bounded_records(self, keys=None):
+        """Reject the complete-vector read that made every query scale with replica size."""
+        assert keys is not None, "runtime requested every canonical vector"
+        return original(self, keys)
+
+    def no_full_comparison(*args):
+        """Explicit full inspection belongs outside the routine query path."""
+        pytest.fail("runtime downloaded the full external replica")
+
+    monkeypatch.setattr(SQLiteVecIndexStore, "vector_records", bounded_records)
+    monkeypatch.setattr(backend, "validate", no_full_comparison)
+    with closing(create_index_store(settings)) as store:
+        assert store.inspect_readiness().state == "ready"
+        assert store.search([1, 5], top_k=1)
+
+
+def test_external_health_is_single_flight_cached_and_generation_aware(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent public probes share one check; activation and expiry force a fresh result."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from policynim.services import health, vector_storage
+
+    backend = RecordingVectors()
+    monkeypatch.setattr(vector_storage, "create_vector_backend", lambda settings: backend)
+    settings, generations = configured(tmp_path)
+    first_generation = generations.build(settings, MockEmbedder(), sync_vectors=True)
+    clock = [100.0]
+    monkeypatch.setattr(health, "monotonic", lambda: clock[0], raising=False)
+    entered, release = Event(), Event()
+    calls: list[str] = []
+    original = backend.check
+
+    def wait_for_database(name, generation, dimension, count):
+        """Hold one real external-check seam while simultaneous callers arrive."""
+        calls.append(generation)
+        entered.set()
+        assert release.wait(5)
+        return original(name, generation, dimension, count)
+
+    monkeypatch.setattr(backend, "check", wait_for_database)
+    service = health.create_runtime_health_service(settings)
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        first = executor.submit(service.check)
+        try:
+            assert entered.wait(1)
+            probes = [executor.submit(service.check) for _ in range(10)]
+            assert all(not probe.result(timeout=0.5).ready for probe in probes)
+            assert calls == [first_generation.generation_id]
+        finally:
+            release.set()
+        assert first.result(timeout=1).ready
+    assert service.check().ready and len(calls) == 1
+    assert settings.corpus_dir is not None
+    source = settings.corpus_dir / "A.md"
+    source.write_text(source.read_text() + "\nReviewed activation.\n")
+    second_generation = generations.build(settings, MockEmbedder(), sync_vectors=True)
+    assert service.check().generation_id == second_generation.generation_id
+    assert len(calls) == 2
+    backend.indexes.clear()
+    clock[0] += 2
+    assert not service.check().ready
+    assert len(calls) == 3
+
+
+def test_explicit_vector_inspection_still_compares_all_vectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real CLI rejects same-count replica corruption that metadata checks can't prove."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from policynim.interfaces import vector_cli
+    from policynim.interfaces.cli import app
+    from policynim.services import vector_storage
+
+    backend = RecordingVectors()
+    monkeypatch.setattr(vector_storage, "create_vector_backend", lambda settings: backend)
+    settings, generations = configured(tmp_path)
+    generations.build(settings, MockEmbedder(), sync_vectors=True)
+    name = next(iter(backend.indexes))
+    owner, records = backend.indexes[name]
+    records[0] = records[0].model_copy(update={"vector": [999.0] * len(records[0].vector)})
+    backend.indexes[name] = (owner, records)
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "search", lambda *args: [records[0]])
+        with closing(create_index_store(settings)) as store:
+            with pytest.raises(VectorStorageError):
+                store.search([1, 5], top_k=1)
+    monkeypatch.setattr(vector_cli, "get_settings", lambda: settings)
+    result = CliRunner().invoke(app, ["vector", "inspect", "--format", "json"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["status"] == "error"

@@ -94,7 +94,7 @@ Python-managed installation for pgvector.
    publication. Without the flag, an external-backend build is refused before
    provider work. SQLite keeps ordinary `policynim ingest` behavior.
 3. Run `policynim vector inspect --format json` to validate the selected source
-   generation and external replica using the retrieval consumer.
+   generation and compare every external vector with its canonical source snapshot.
 4. To use an already complete local/imported generation with another backend,
    configure that backend and run `policynim vector sync`. This publishes a fresh
    derived namespace without embedding or changing the active generation.
@@ -125,7 +125,16 @@ reads while replacing vector search. Another adapter must satisfy the same refus
 source-ownership, lifecycle, and real-backend tests before its configuration value
 appears in setup.
 
-The first adapters verify the full replica before retrieval and use exact search.
-Verification costs grow with index size. Large-corpus tuning, approximate search,
-distributed source storage, and hosted per-tenant private indexes need separate
-design and measurement.
+Publication and explicit `vector inspect` compare every external record with the
+sealed snapshot. Routine readiness reads schema, generation binding, and counts;
+queries read only their returned vectors and compare those matches with canonical
+vectors before hydrating source text. Unreturned vector contents are checked by
+full inspection. Treat published namespaces as immutable, and rerun inspection
+after operator changes or restore.
+
+Public health probes share one in-flight external check and cache its result for
+one second. Changing the active pointer invalidates that cache immediately.
+Health is a short-lived readiness signal; explicit inspection provides the full
+replica comparison. Exact search and database-side counts still cost more as the
+index grows. Large-corpus tuning, approximate search, distributed source storage,
+and hosted per-tenant private indexes need separate design and measurement.
