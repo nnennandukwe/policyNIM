@@ -654,3 +654,27 @@ def test_prose_link_punctuation_isnt_part_of_its_hostname(
     """Sentence and wrapper punctuation don't invalidate an otherwise public link."""
     edit_manifest(package_source, "longDescription", "Read " + link + " for help.")
     assert builder.build(tmp_path / "source.zip", source=package_source)["status"] == "source_only"
+
+
+@pytest.mark.parametrize("prefix", ["sk-proj-", "sk-svcacct-"])
+@pytest.mark.parametrize("location", ["listing", "review", "notice"])
+def test_hyphenated_api_key_prefixes_cant_enter_allowed_files(
+    tmp_path: Path, package_source: Path, prefix: str, location: str
+) -> None:
+    """Construct synthetic key shapes at runtime and reject them before output replacement."""
+    text = prefix + "fixture_" * 8
+    if location == "listing":
+        edit_manifest(package_source, "longDescription", text)
+    elif location == "review":
+        path = package_source / "plugin.json"
+        manifest = json.loads(path.read_text())
+        case = manifest["extensions"]["com.openai"]["review"]["test_cases"]["positive"][0]
+        case["prompt"] = text
+        path.write_text(json.dumps(manifest))
+    else:
+        (package_source / "NOTICE").write_text(text)
+    output = tmp_path / "retained.zip"
+    output.write_bytes(b"retained archive")
+    with pytest.raises(ValueError, match="credential-shaped"):
+        builder.build(output, source=package_source)
+    assert output.read_bytes() == b"retained archive"

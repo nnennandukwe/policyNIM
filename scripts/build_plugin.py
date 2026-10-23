@@ -143,7 +143,7 @@ def safe_text(value: object) -> None:
             safe_text(item)
     elif isinstance(value, str):
         if re.search(
-            r"(?i)\b(?:bearer\s+(?!tokens?\b)\S+|sk-[a-z0-9]{12,}|nvapi-[a-z0-9_-]+|"
+            r"(?i)\b(?:bearer\s+(?!tokens?\b)\S+|sk-[a-z0-9_-]{12,}|nvapi-[a-z0-9_-]+|"
             r"gh[pousr]_[a-z0-9]+|github_pat_[a-z0-9_]+|"
             r"eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+)|"
             r"-----BEGIN .*PRIVATE KEY",
