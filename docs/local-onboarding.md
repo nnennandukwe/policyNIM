@@ -1,6 +1,7 @@
 # Set up your policies and storage in a browser
 
-Use a current PolicyNIM source checkout or a wheel that includes local setup.
+Local setup requires PolicyNIM 0.3.0 or later. Install or upgrade with
+`uv tool install --python 3.11 --upgrade policynim`, then run `policynim setup`.
 From a source checkout, run:
 
 ```bash

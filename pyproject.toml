@@ -1,6 +1,6 @@
 [project]
 name = "policynim"
-version = "0.2.1"
+version = "0.3.0"
 description = "A policy-aware NVIDIA NIM engineering preflight layer for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"

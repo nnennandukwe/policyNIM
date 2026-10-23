@@ -48,8 +48,8 @@ See the [policy lifecycle and worked migration example](docs/policy-lifecycle.md
 
 ## Choose Your Policies And Storage
 
-Use a source checkout or a wheel built from this revision for the new setup and
-storage commands. Check release notes before relying on a published package.
+PolicyNIM 0.3.0 adds browser setup and configurable vector storage. Install or
+upgrade the Python package with `uv tool install --python 3.11 --upgrade policynim`.
 
 ```bash
 policynim setup
@@ -117,8 +117,7 @@ don't establish the hosted service's indexed generation.
 
 ## Inspect Policies Without An API Key
 
-These new commands are available from this source checkout or a wheel built from
-it. The existing `v0.1.0` release predates them.
+Policy inventory commands work without a provider API key. From a source checkout:
 
 ```bash
 uv run policynim policies list --source
