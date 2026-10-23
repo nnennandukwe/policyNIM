@@ -166,7 +166,7 @@ remote or mismatched existing tag blocks publication. The gate never moves tags.
 
 Before creating an immutable tag for a native-runtime change, run the `Release`
 workflow manually at the reviewed branch with `build_only=true` and version
-`0.2.1`. This mode runs the source, wheel and native archive jobs and retains their
+`0.3.0`. This mode runs the source, wheel and native archive jobs and retains their
 existing verification reports and archives. Both publisher jobs are disabled:
 it doesn't sign assets, create a draft, create a tag or upload to PyPI. The hold
 also applies if `publish_pypi=true` was selected. Wait for both macOS archive checks
@@ -178,8 +178,8 @@ publication gates.
 Create and push a version tag from the commit you want to release:
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The `Release` workflow builds the wheel, source distribution, and standalone
