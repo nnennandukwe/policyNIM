@@ -277,7 +277,7 @@ def test_secret_shaped_content_in_allowed_file_is_rejected(
 ) -> None:
     """The allowlist doesn't bypass text inspection of intended package files."""
     edit_manifest(package_source, "longDescription", secret)
-    with pytest.raises(ValueError, match="credential-shaped"):
+    with pytest.raises(ValueError, match="credential-shaped|local filesystem path"):
         builder.build(tmp_path / "rejected.zip", source=package_source)
 
 
@@ -454,3 +454,44 @@ def test_output_alias_loop_has_a_controlled_cli_failure(tmp_path: Path) -> None:
     assert completed.returncode == 1
     assert "Output directory" in completed.stderr
     assert "Traceback" not in completed.stderr and str(loop) not in completed.stderr
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "websiteURL",
+        "supportURL",
+        "privacyPolicyURL",
+        "termsOfServiceURL",
+        "demo_recording_url",
+    ],
+)
+@pytest.mark.parametrize("path", ["/home/", "/legal/private/privacy"])
+def test_public_url_paths_arent_local_filesystem_paths(
+    tmp_path: Path, release_inputs: dict, field: str, path: str
+) -> None:
+    """Public HTTPS paths can share directory names with local filesystem paths."""
+    release_inputs[field] = "https://review.policynim.org" + path
+    output = tmp_path / "candidate.zip"
+    assert builder.build(output, release_inputs)["status"] == "candidate_requires_live_acceptance"
+
+
+def test_prose_can_link_a_public_url_without_hiding_a_local_path(
+    tmp_path: Path, package_source: Path
+) -> None:
+    """Only validated URL spans are excluded; surrounding text still receives path inspection."""
+    description = "Read https://policynim.org/home/ for product information."
+    edit_manifest(package_source, "longDescription", description)
+    assert builder.build(tmp_path / "source.zip", source=package_source)["status"] == "source_only"
+    edit_manifest(package_source, "longDescription", description + " Read /Users/private/task.txt.")
+    with pytest.raises(ValueError, match="local filesystem path"):
+        builder.build(tmp_path / "rejected.zip", source=package_source)
+
+
+def test_url_path_exemption_doesnt_hide_credential_shapes(
+    tmp_path: Path, release_inputs: dict
+) -> None:
+    """Credential scanning covers the full URL before any filesystem-path exemption."""
+    release_inputs["websiteURL"] = "https://review.policynim.org/home/ghp_" + "a" * 36
+    with pytest.raises(ValueError, match="credential-shaped"):
+        builder.build(tmp_path / "rejected.zip", release_inputs)

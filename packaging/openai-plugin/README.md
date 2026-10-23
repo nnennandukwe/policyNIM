@@ -49,6 +49,11 @@ supplied value. Directory aliases such as macOS `/tmp` resolve to their physical
 destination. A final output file that's a symlink is rejected, and the resolved
 output must stay outside package source.
 
+The staged ZIP file stays readable by its owner only. Its internal member modes
+are fixed at 0644. Upload it from the account that built it, or let the owner choose
+permissions when copying it for another local user. The builder keeps credentials
+and local paths out of package text while allowing validated public URL paths.
+
 ## Schema and asset provenance
 
 Agent Plugins 1.0.0 schemas were retrieved on October 23, 2026. Their original
