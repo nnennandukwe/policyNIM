@@ -62,3 +62,5 @@ be reviewed and verified again.
 
 See [backend settings and recovery](vector-storage.md) and
 [the policy lifecycle](policy-lifecycle.md).
+
+Setup preserves the effective provider timeouts, retry limits, embedding batch size, and default retrieval count in its new config. Reloading that config keeps the request limits used during verification.

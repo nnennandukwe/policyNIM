@@ -320,3 +320,24 @@ def test_failed_save_preserves_a_concurrently_changed_profile(
     assert response.status_code == 409
     assert profile.read_text() == "manual profile changes\n"
     assert not destination.exists()
+
+
+def test_saved_provider_limits_match_the_verified_configuration(workspace) -> None:
+    """Reload through Settings after the HTTP workflow using non-default provider limits."""
+    client, payload, destination, _, service = workspace
+    limits = {
+        "nvidia_timeout_seconds": 45.0,
+        "nvidia_max_retries": 4,
+        "operation_timeout_seconds": 240.0,
+        "nvidia_retry_initial_seconds": 1.0,
+        "nvidia_retry_max_seconds": 12.0,
+        "embed_batch_size": 16,
+        "default_top_k": 7,
+    }
+    service._base = service._base.model_copy(update=limits)
+    payload = verified(client, payload)
+    saved = client.post("/api/save", json=payload)
+    assert saved.status_code == 200, saved.text
+    options: dict[str, Any] = {"_env_file": destination}
+    restored = Settings(**options)
+    assert {name: getattr(restored, name) for name in limits} == limits
