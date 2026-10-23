@@ -600,7 +600,11 @@ def test_negative_cases_cant_replace_positive_tool_coverage(
         builder.build(tmp_path / "rejected.zip", source=package_source)
 
 
-@pytest.mark.parametrize("version", ["01.2.3", "1.02.3", "1.2.003", "١.٢.٣"])
+# Non-English input is required to test the ASCII-only version contract.
+@pytest.mark.parametrize(
+    "version",
+    ["01.2.3", "1.02.3", "1.2.003", ".".join(chr(0x0660 + digit) for digit in (1, 2, 3))],
+)
 def test_nonsemantic_versions_are_rejected(
     tmp_path: Path, package_source: Path, version: str
 ) -> None:
@@ -621,4 +625,32 @@ def test_ordinary_listing_prose_doesnt_match_token_prefixes(
 ) -> None:
     """Credential prefix checks don't reject common words inside ordinary listing prose."""
     edit_manifest(package_source, "longDescription", text)
+    assert builder.build(tmp_path / "source.zip", source=package_source)["status"] == "source_only"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000/private",
+        "https://localhost/internal",
+        "https://10.0.0.1/private",
+        "http://policynim.org/help",
+        "https://policynim.org/%41",
+    ],
+)
+def test_invalid_prose_links_are_rejected(tmp_path: Path, package_source: Path, url: str) -> None:
+    """All prose links must meet the same public HTTPS contract as release URLs."""
+    edit_manifest(package_source, "longDescription", "Read " + url + " for help.")
+    with pytest.raises(ValueError, match="public HTTPS URL"):
+        builder.build(tmp_path / "rejected.zip", source=package_source)
+
+
+@pytest.mark.parametrize(
+    "link", ["(https://policynim.org)", "https://policynim.org.", "[https://policynim.org]"]
+)
+def test_prose_link_punctuation_isnt_part_of_its_hostname(
+    tmp_path: Path, package_source: Path, link: str
+) -> None:
+    """Sentence and wrapper punctuation don't invalidate an otherwise public link."""
+    edit_manifest(package_source, "longDescription", "Read " + link + " for help.")
     assert builder.build(tmp_path / "source.zip", source=package_source)["status"] == "source_only"

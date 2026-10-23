@@ -168,10 +168,7 @@ def safe_text(value: object) -> None:
             authority = re.split(r"[/#?]", match.group().split("://", 1)[1], maxsplit=1)[0]
             if "@" in authority:
                 raise PackageValidationError("Package URL contains credential userinfo.")
-            try:
-                public_url(match.group(), "Package URL")
-            except PackageValidationError:
-                return match.group()
+            public_url(match.group().rstrip(".,;!)]}"), "Package URL")
             return ""
 
         path_text = re.sub(r"https?://[^\s<>\"]+", remove_public_url, value, flags=re.I)
