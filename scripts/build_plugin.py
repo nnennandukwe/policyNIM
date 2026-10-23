@@ -88,8 +88,8 @@ def public_url(value: object, field: str) -> str:
         if (
             parts.scheme != "https"
             or not host
-            or parts.username
-            or parts.password
+            or parts.username is not None
+            or parts.password is not None
             or parts.query
             or parts.fragment
             or parts.port not in (None, 443)
@@ -106,7 +106,8 @@ def public_url(value: object, field: str) -> str:
             address = ipaddress.ip_address(host)
         except ValueError:
             if (
-                "." not in host
+                len(host) > 253
+                or "." not in host
                 or not re.fullmatch(r"[a-z0-9.-]+", host)
                 or any(
                     not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
@@ -121,7 +122,7 @@ def public_url(value: object, field: str) -> str:
             ):
                 raise ValueError
         else:
-            if not address.is_global:
+            if not address.is_global or address.is_multicast:
                 raise ValueError
     except ValueError:
         raise PackageValidationError(
@@ -142,10 +143,10 @@ def safe_text(value: object) -> None:
             safe_text(item)
     elif isinstance(value, str):
         if re.search(
-            r"(?i)(?:bearer\s+\S+|sk-[a-z0-9]{12,}|nvapi-[a-z0-9_-]+|"
+            r"(?i)\b(?:bearer\s+(?!tokens?\b)\S+|sk-[a-z0-9]{12,}|nvapi-[a-z0-9_-]+|"
             r"gh[pousr]_[a-z0-9]+|github_pat_[a-z0-9_]+|"
-            r"eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|"
-            r"-----BEGIN .*PRIVATE KEY)",
+            r"eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+)|"
+            r"-----BEGIN .*PRIVATE KEY",
             value,
         ):
             raise PackageValidationError("Package contains credential-shaped text.")
@@ -164,13 +165,16 @@ def safe_text(value: object) -> None:
 
         def remove_public_url(match: re.Match[str]) -> str:
             """Exclude validated public URLs from filesystem-path inspection only."""
+            authority = re.split(r"[/#?]", match.group().split("://", 1)[1], maxsplit=1)[0]
+            if "@" in authority:
+                raise PackageValidationError("Package URL contains credential userinfo.")
             try:
                 public_url(match.group(), "Package URL")
             except PackageValidationError:
                 return match.group()
             return ""
 
-        path_text = re.sub(r"https://[^\s<>\"]+", remove_public_url, value, flags=re.I)
+        path_text = re.sub(r"https?://[^\s<>\"]+", remove_public_url, value, flags=re.I)
         if re.search(
             r"(?:^|[\s:=('\"`\[])/(?!/)[^\s<>\"']+|"
             r"file://|\b[A-Z]:[\\/]|\\\\[^\s]",
@@ -281,7 +285,8 @@ def render(source: Path, release: dict | None) -> tuple[dict[str, bytes], list[s
     validate_schema(manifest, "plugin", source)
     validate_schema(mcp, "mcp", source)
     if manifest["name"] != "policynim" or not re.fullmatch(
-        r"\d+\.\d+\.\d+", manifest.get("version", "")
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+        manifest.get("version", ""),
     ):
         raise PackageValidationError("Supply the stable plugin name and a semantic version.")
     for field, maximum in {
@@ -350,9 +355,10 @@ def render(source: Path, release: dict | None) -> tuple[dict[str, bytes], list[s
             names = {name.strip() for name in case["tools_triggered"].split(",") if name.strip()}
             if not names <= TOOLS:
                 raise PackageValidationError("Review case names an unexposed tool.")
-            covered.update(names)
+            if kind == "positive":
+                covered.update(names)
     if covered != TOOLS:
-        raise PackageValidationError("Review cases must cover all eight exposed tools.")
+        raise PackageValidationError("Positive review cases must cover all eight exposed tools.")
     if (
         set(extension["publication"]) != {"release_notes"}
         or not isinstance(extension["publication"]["release_notes"], str)

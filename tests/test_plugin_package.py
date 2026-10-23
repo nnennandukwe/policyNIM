@@ -557,3 +557,68 @@ def test_credential_assignments_cant_enter_listing_text(
     edit_manifest(package_source, "longDescription", text)
     with pytest.raises(ValueError, match="credential-shaped"):
         builder.build(tmp_path / "rejected.zip", source=package_source)
+
+
+@pytest.mark.parametrize("scheme", ["https", "http"])
+@pytest.mark.parametrize("userinfo", ["fixture-user:fixture-pass", "fixture-user", ":", ""])
+def test_prose_urls_cant_embed_userinfo(
+    tmp_path: Path, package_source: Path, scheme: str, userinfo: str
+) -> None:
+    """Reject URL authority credentials in allowlisted prose before replacing an archive."""
+    url = scheme + "://" + userinfo + "@policynim.org/docs"
+    edit_manifest(package_source, "longDescription", "Read " + url + " for help.")
+    output = tmp_path / "retained.zip"
+    output.write_bytes(b"retained archive")
+    with pytest.raises(ValueError, match="credential"):
+        builder.build(output, source=package_source)
+    assert output.read_bytes() == b"retained archive"
+
+
+@pytest.mark.parametrize(
+    "host", ["224.0.0.1", "239.255.255.255", "[ff0e::1]", ".".join(["a" * 63] * 5)]
+)
+def test_nonservice_release_hosts_are_rejected(
+    tmp_path: Path, release_inputs: dict, host: str
+) -> None:
+    """Candidate endpoints need unicast IPs or hostnames within the DNS length limit."""
+    release_inputs["mcp_endpoint"] = "https://" + host + "/mcp"
+    with pytest.raises(ValueError, match="public HTTPS URL"):
+        builder.build(tmp_path / "rejected.zip", release_inputs)
+
+
+def test_negative_cases_cant_replace_positive_tool_coverage(
+    tmp_path: Path, package_source: Path
+) -> None:
+    """Each exposed tool must appear in a positive workflow even if negatives name it."""
+    path = package_source / "plugin.json"
+    manifest = json.loads(path.read_text())
+    cases = manifest["extensions"]["com.openai"]["review"]["test_cases"]
+    cases["positive"][4]["tools_triggered"] = "eval_submit, eval_inspect"
+    cases["negative"][0]["tools_triggered"] = "eval_cancel"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Positive review cases"):
+        builder.build(tmp_path / "rejected.zip", source=package_source)
+
+
+@pytest.mark.parametrize("version", ["01.2.3", "1.02.3", "1.2.003", "١.٢.٣"])
+def test_nonsemantic_versions_are_rejected(
+    tmp_path: Path, package_source: Path, version: str
+) -> None:
+    """Stable version components use ASCII digits without leading zeros."""
+    path = package_source / "plugin.json"
+    manifest = json.loads(path.read_text())
+    manifest["version"] = version
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="semantic version"):
+        builder.build(tmp_path / "rejected.zip", source=package_source)
+
+
+@pytest.mark.parametrize(
+    "text", ["Run each task-independently.", "Access requires a bearer token."]
+)
+def test_ordinary_listing_prose_doesnt_match_token_prefixes(
+    tmp_path: Path, package_source: Path, text: str
+) -> None:
+    """Credential prefix checks don't reject common words inside ordinary listing prose."""
+    edit_manifest(package_source, "longDescription", text)
+    assert builder.build(tmp_path / "source.zip", source=package_source)["status"] == "source_only"
