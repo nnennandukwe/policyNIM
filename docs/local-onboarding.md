@@ -2,12 +2,17 @@
 
 Local setup requires PolicyNIM 0.3.0 or later. Install or upgrade with
 `uv tool install --python 3.11 --upgrade 'policynim>=0.3.0'`, then run `policynim setup`.
+For PostgreSQL, install its optional driver before setup with
+`uv tool install --python 3.11 --upgrade 'policynim[vector-postgres]>=0.3.0'`.
 From a source checkout, run:
 
 ```bash
 uv sync --locked
 uv run policynim setup
 ```
+
+For PostgreSQL in a source checkout, run `uv sync --locked --extra vector-postgres`
+before `uv run policynim setup`.
 
 Run setup on the machine running your local or self-hosted PolicyNIM process. It opens a private loopback URL. Keep that launch URL private
 and stop the server with Ctrl+C after saving configuration.

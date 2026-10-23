@@ -50,6 +50,8 @@ See the [policy lifecycle and worked migration example](docs/policy-lifecycle.md
 
 PolicyNIM 0.3.0 adds browser setup and configurable vector storage. Install or
 upgrade the Python package with `uv tool install --python 3.11 --upgrade 'policynim>=0.3.0'`.
+For PostgreSQL, install its optional driver before opening setup:
+`uv tool install --python 3.11 --upgrade 'policynim[vector-postgres]>=0.3.0'`.
 
 ```bash
 policynim setup
