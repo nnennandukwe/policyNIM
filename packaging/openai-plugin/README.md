@@ -44,6 +44,11 @@ public resource URL. A path prefix, website root, admin page or trailing-slash
 variant isn't accepted. Plain, unescaped release URLs keep encoded credential
 text out of the package; use a stable direct URL when a sharing link needs escapes.
 
+Validation errors identify the rejected field or package rule without echoing the
+supplied value. Directory aliases such as macOS `/tmp` resolve to their physical
+destination. A final output file that's a symlink is rejected, and the resolved
+output must stay outside package source.
+
 ## Schema and asset provenance
 
 Agent Plugins 1.0.0 schemas were retrieved on October 23, 2026. Their original

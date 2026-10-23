@@ -367,3 +367,90 @@ def test_malformed_utf8_notice_has_controlled_cli_failure(
     assert "failed validation" in stderr and "Traceback" not in stderr
     assert str(package_source) not in stderr
     assert output.read_bytes() == b"retained archive"
+
+
+def test_cli_identifies_the_rejected_field_without_echoing_input(
+    tmp_path: Path, release_inputs: dict
+) -> None:
+    """Operators see the failed URL field and its recovery rule without the supplied value."""
+    release_inputs["mcp_endpoint"] = "https://review.policynim.org/private-admin"
+    inputs = tmp_path / "inputs.json"
+    inputs.write_text(json.dumps(release_inputs))
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--output",
+            str(tmp_path / "rejected.zip"),
+            "--release-inputs",
+            str(inputs),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    assert "mcp_endpoint" in completed.stderr and "/mcp" in completed.stderr
+    assert "private-admin" not in completed.stderr and str(inputs) not in completed.stderr
+
+
+def test_listing_diagnostic_omits_private_text(
+    tmp_path: Path, package_source: Path, monkeypatch, capsys
+) -> None:
+    """A rejected metadata value is never included in its field-level diagnostic."""
+    edit_manifest(package_source, "longDescription", "private-sensitive-" * 300)
+    monkeypatch.setattr(builder, "build", partial(builder.build, source=package_source))
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--output", str(tmp_path / "rejected.zip")])
+    with pytest.raises(SystemExit) as stopped:
+        builder.main()
+    assert stopped.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "longDescription" in stderr
+    assert "private-sensitive" not in stderr and str(package_source) not in stderr
+
+
+def test_output_parent_alias_is_supported(tmp_path: Path) -> None:
+    """Resolve a directory alias without treating the final output file as a symlink."""
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    summary = builder.build(alias / "package.zip")
+    assert summary["status"] == "source_only"
+    with zipfile.ZipFile(physical / "package.zip") as archive:
+        assert "plugin.json" in archive.namelist()
+
+
+def test_output_file_symlink_preserves_its_target(tmp_path: Path) -> None:
+    """An explicit file symlink can't replace an unrelated existing file."""
+    target = tmp_path / "manual.txt"
+    target.write_bytes(b"manual content")
+    output = tmp_path / "package.zip"
+    output.symlink_to(target)
+    with pytest.raises(ValueError, match="Output file"):
+        builder.build(output)
+    assert target.read_bytes() == b"manual content"
+
+
+def test_output_parent_alias_cant_overwrite_source(tmp_path: Path, package_source: Path) -> None:
+    """The source-containment guard uses the resolved destination, including directory aliases."""
+    alias = tmp_path / "alias"
+    alias.symlink_to(package_source, target_is_directory=True)
+    manifest = package_source / "plugin.json"
+    original = manifest.read_bytes()
+    with pytest.raises(ValueError, match="outside package source"):
+        builder.build(alias / "plugin.json", source=package_source)
+    assert manifest.read_bytes() == original
+
+
+def test_output_alias_loop_has_a_controlled_cli_failure(tmp_path: Path) -> None:
+    """A directory loop returns a safe recovery reason without a traceback or local path."""
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop, target_is_directory=True)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--output", str(loop / "package.zip")],
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    assert "Output directory" in completed.stderr
+    assert "Traceback" not in completed.stderr and str(loop) not in completed.stderr
