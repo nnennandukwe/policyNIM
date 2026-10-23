@@ -55,7 +55,7 @@ reference that used to live in the root README.
 
 ### Hosted HTTP
 
-- `GET /healthz` reports local index readiness when using `streamable-http`
+- `GET /healthz` reports generation and selected vector-storage readiness when using `streamable-http`
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
 - `/beta` stays as the self-serve signup and key-management surface
 - hosted `streamable-http` startup fails fast when

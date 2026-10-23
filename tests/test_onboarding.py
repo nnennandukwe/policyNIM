@@ -258,3 +258,65 @@ def test_postcommit_config_sync_failure_reports_saved_with_warning(
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "saved" and response.json()["warnings"]
     assert destination.is_file()
+
+
+def test_saved_credentials_preserve_literal_dollar_braces_and_quotes(workspace) -> None:
+    """The actual saved configuration consumer mustn't expand a credential as an env template."""
+    client, payload, destination, _, _ = workspace
+    secret = "synthetic-${HOME}-'quoted'-\\value"
+    payload["nvidia_api_key"] = secret
+    payload = verified(client, payload)
+    response = client.post("/api/save", json=payload)
+    assert response.status_code == 200, response.text
+    assert secret not in response.text
+    options: dict[str, Any] = {"_env_file": destination}
+    assert Settings(**options).nvidia_api_key == secret
+
+
+def test_existing_env_files_still_expand_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Literal setup files don't change the existing configuration expansion contract."""
+    monkeypatch.setenv("POLICYNIM_FIXTURE_SECRET", "expanded-fixture-value")
+    path = tmp_path / "existing.env"
+    path.write_text("NVIDIA_API_KEY='${POLICYNIM_FIXTURE_SECRET}'\n")
+    options: dict[str, Any] = {"_env_file": path}
+    assert Settings(**options).nvidia_api_key == "expanded-fixture-value"
+
+
+def test_failed_topic_config_save_removes_only_its_new_profile(workspace) -> None:
+    """A config collision doesn't leave a generated profile with no saved configuration."""
+    client, payload, destination, _, _ = workspace
+    payload.update({"source_mode": "topics", "source_path": "", "topics": ["data"]})
+    payload = verified(client, payload)
+    destination.write_text("manual config\n")
+    response = client.post("/api/save", json=payload)
+    assert response.status_code == 409
+    assert destination.read_text() == "manual config\n"
+    assert not destination.with_name(destination.name + ".profile.toml").exists()
+
+
+def test_failed_save_preserves_a_concurrently_changed_profile(
+    workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rollback can't remove a profile that changed after setup created it."""
+    from policynim.services import onboarding
+
+    client, payload, destination, _, _ = workspace
+    payload.update({"source_mode": "topics", "source_path": "", "topics": ["data"]})
+    payload = verified(client, payload)
+    profile = destination.with_name(destination.name + ".profile.toml")
+    original = onboarding._write_new_private
+
+    def collision_after_manual_edit(path: Path, text: str):
+        """Inject an external edit after profile commit and before failed config publication."""
+        if path == destination:
+            profile.write_text("manual profile changes\n")
+            raise FileExistsError("Synthetic config collision")
+        return original(path, text)
+
+    monkeypatch.setattr(onboarding, "_write_new_private", collision_after_manual_edit)
+    response = client.post("/api/save", json=payload)
+    assert response.status_code == 409
+    assert profile.read_text() == "manual profile changes\n"
+    assert not destination.exists()

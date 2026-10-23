@@ -28,9 +28,9 @@ constraints, not setup mistakes.
   horizontally scaled multi-writer design.
 - The auth wrapper protects only `/mcp`; `/healthz` stays public for readiness
   probing.
-- `/healthz` reports local index readiness only; it does not prove upstream NVIDIA
-  availability.
-- Hosted startup now validates the configured local index before serving traffic
+- `/healthz` checks the local generation and the selected external vector replica.
+  It doesn't prove upstream NVIDIA availability.
+- Hosted startup now validates the configured generation and vector storage before serving traffic
   and requires a complete verified generation. Startup never ingests or calls
   NVIDIA. Existing standalone outputs require explicit migration or bundle import;
   invalid artifacts remain preserved for diagnosis.

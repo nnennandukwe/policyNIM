@@ -44,6 +44,16 @@ No supported operation overwrites or deletes an existing external namespace. A p
 
 The setup server binds loopback only and uses a per-launch secret, exact Host/Origin checks, bounded JSON requests, and no third-party assets. The handler validates transport input and delegates to an onboarding service. The service previews policy selection, probes storage without writing, builds on explicit submission, verifies a task, and writes a new private configuration file without overwriting existing files. The shared hosted beta links to this flow; it doesn't accept private packs or per-user database credentials.
 
+Saving a composed profile has two preparation states: a newly linked profile, then
+the new config's exclusive link as the setup commit point. A config-link failure
+removes only a profile created by that save attempt whose inode, change stamps,
+size, and bytes still match its creation receipt. Observed edits, replacement,
+permission failures, and unknown ownership preserve the profile and require
+inspection. An already committed config remains saved-with-warning on later sync
+or staging-cleanup failure. Tests inject config collision, manual profile mutation,
+and postcommit directory-sync failure. Paths and editors remain operator-trusted;
+this doesn't isolate against a hostile process with the same OS permissions.
+
 Visual thesis: the existing PolicyNIM palette and typography, with one calm setup workspace and an ordered progress rail. Content: deployment and privacy, policy sources, storage, build/validation, first result and saved configuration. Interaction: focused step transitions and a busy/status state; reduced-motion preferences are honored.
 
 ## Verification and review

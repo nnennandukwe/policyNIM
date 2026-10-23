@@ -455,9 +455,7 @@ class SQLiteVecIndexStore(IndexStore):
                 VectorRecord(
                     key=row[0],
                     domain=row[1],
-                    vector=float32_vector(
-                        struct.unpack(f"<{identity.dimension}f", row[2]), identity.dimension
-                    ),
+                    vector=_decode_vector_blob(row[2], identity.dimension),
                 )
                 for row in rows
             ]
@@ -567,6 +565,17 @@ class SQLiteVecIndexStore(IndexStore):
             conn.close()
             raise
         return conn
+
+
+def _decode_vector_blob(blob: bytes, dimension: int) -> list[float]:
+    """Translate damaged stored bytes into an index error before external publication."""
+    try:
+        return float32_vector(struct.unpack(f"<{dimension}f", blob), dimension)
+    except (struct.error, TypeError):
+        raise IndexCompatibilityError(
+            "Stored vector bytes don't match the recorded dimension. "
+            "Preserve the generation and inspect its integrity before retrying."
+        ) from None
 
 
 def _validate_replacement(

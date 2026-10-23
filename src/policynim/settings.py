@@ -6,11 +6,13 @@ import ipaddress
 import os
 import re
 import socket
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlsplit
 
+from dotenv import dotenv_values
 from pydantic import (
     AliasChoices,
     AnyHttpUrl,
@@ -29,6 +31,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
+from pydantic_settings.sources.utils import parse_env_vars
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
@@ -59,6 +62,16 @@ class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
 
 class ProcessEnvOnlyConfigDotEnvSettingsSource(DotEnvSettingsSource):
     """Drop config-file overrides from dotenv sources so only process env can set them."""
+
+    def _read_env_file(self, file_path: Path) -> Mapping[str, str | None]:
+        """Preserve literal setup values while retaining interpolation in existing env files."""
+        with file_path.open(encoding=self.env_file_encoding or "utf8") as handle:
+            literal = handle.readline(128).strip() == config_discovery.LITERAL_CONFIG_HEADER
+            handle.seek(0)
+            values = dotenv_values(stream=handle, interpolate=not literal)
+        return parse_env_vars(
+            values, self.case_sensitive, self.env_ignore_empty, self.env_parse_none_str
+        )
 
     def __call__(self) -> dict[str, Any]:
         data = super().__call__()

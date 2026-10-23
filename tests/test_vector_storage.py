@@ -241,3 +241,45 @@ def test_external_ingest_requires_explicit_publication_flag(tmp_path: Path) -> N
     with pytest.raises(ConfigurationError, match="ingest --sync-vectors"):
         generations.build(settings, MockEmbedder())
     assert not generations.root.exists()
+
+
+def test_health_refuses_missing_external_replica(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The settings-backed production health path must agree with the retrieval consumer."""
+    from policynim.services import vector_storage
+    from policynim.services.health import create_runtime_health_service
+
+    backend = RecordingVectors()
+    monkeypatch.setattr(vector_storage, "create_vector_backend", lambda settings: backend)
+    settings, generations = configured(tmp_path)
+    generations.build(settings, MockEmbedder(), sync_vectors=True)
+    health = create_runtime_health_service(settings)
+    assert health.check().ready
+    backend.indexes.clear()
+    result = health.check()
+    assert not result.ready
+    assert result.reason is not None and "vector sync" in result.reason
+
+
+def test_malformed_vector_read_becomes_a_controlled_index_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inject a truncated blob at the real SQLite read/decode boundary, then inspect its error."""
+    import struct
+
+    from test_policy_generations import seed_legacy
+
+    from policynim.errors import IndexCompatibilityError
+    from policynim.storage.sqlite_vec import SQLiteVecIndexStore
+
+    _, identity, index, _ = seed_legacy(tmp_path)
+    original = struct.unpack
+
+    def truncated_blob(format_string, blob):
+        """Model a malformed vector read without changing the retained policy sources."""
+        return original(format_string, blob[:-1])
+
+    monkeypatch.setattr(struct, "unpack", truncated_blob)
+    with pytest.raises(IndexCompatibilityError):
+        SQLiteVecIndexStore(path=index, embedding_identity=identity).vector_records()

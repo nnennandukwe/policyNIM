@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pydantic import Field, SecretStr, field_validator
 
+from policynim.config_discovery import LITERAL_CONFIG_HEADER
 from policynim.errors import ConfigurationError
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.services.catalog import PolicyCatalog, build_policy_catalog
@@ -95,6 +96,35 @@ def _env_line(key: str, value: str) -> str:
     """Quote dotenv values without shell expansion or accidental multiline assignments."""
     escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
     return f"{key}='{escaped}'"
+
+
+def _profile_identity(path: Path) -> tuple[int, int, int, int, int]:
+    """Bind rollback to the observed inode, timestamps, and size of a newly created profile."""
+    observed = path.lstat()
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+        observed.st_size,
+    )
+
+
+def _remove_created_profile(
+    path: Path, identity: tuple[int, int, int, int, int], text: str
+) -> bool:
+    """Remove only an unchanged profile owned by this failed save attempt."""
+    try:
+        if _profile_identity(path) != identity or path.is_symlink():
+            return False
+        if path.read_text(encoding="utf-8") != text or _profile_identity(path) != identity:
+            return False
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return True
+    except (OSError, UnicodeError):
+        return False
 
 
 class OnboardingService:
@@ -283,6 +313,7 @@ class OnboardingService:
     def _save(self, settings: Settings, profile_text: str | None) -> dict[str, Any]:
         """Publish only new profile/config files and preserve manual or concurrent edits."""
         warnings: list[str] = []
+        created_profile: tuple[Path, tuple[int, int, int, int, int], str] | None = None
         profile_path = settings.profile
         if profile_text is not None:
             profile_path = self.destination.with_name(self.destination.name + ".profile.toml")
@@ -298,6 +329,7 @@ class OnboardingService:
                 warnings.extend(_write_new_private(profile_path, profile_text))
                 observed = profile_path.lstat()
                 self._pending_profile_identity = (observed.st_dev, observed.st_ino)
+                created_profile = (profile_path, _profile_identity(profile_path), profile_text)
         fields: dict[str, str] = {
             "NVIDIA_API_KEY": settings.nvidia_api_key or "",
             "POLICYNIM_NVIDIA_EMBED_MODEL": settings.nvidia_embed_model,
@@ -320,10 +352,29 @@ class OnboardingService:
             secret = getattr(settings, name)
             if secret:
                 fields["POLICYNIM_" + name.upper()] = secret.get_secret_value()
-        contents = "\n".join(_env_line(key, value) for key, value in fields.items()) + "\n"
+        contents = (
+            LITERAL_CONFIG_HEADER
+            + "\n"
+            + "\n".join(_env_line(key, value) for key, value in fields.items())
+            + "\n"
+        )
         try:
             warnings.extend(_write_new_private(self.destination, contents))
-        except FileExistsError:
+        except OSError as error:
+            if created_profile is not None:
+                if _remove_created_profile(*created_profile):
+                    self._pending_profile_identity = None
+                else:
+                    raise ConfigurationError(
+                        "Config wasn't saved. The generated profile changed or couldn't be "
+                        "removed and was preserved. Inspect the profile beside the config "
+                        "before retrying with a new --config path."
+                    ) from None
+            if not isinstance(error, FileExistsError):
+                raise ConfigurationError(
+                    "Config couldn't be saved. Check output permissions and retry; "
+                    "existing files were preserved."
+                ) from None
             raise ConfigurationError(
                 "Config already exists and wasn't overwritten. "
                 "Restart setup with --config NEW-PATH."

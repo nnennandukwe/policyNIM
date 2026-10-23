@@ -44,6 +44,10 @@ beside that config. Other files and manual edits stay unchanged. On POSIX, new
 configuration/profile files have owner-only permissions. Postcommit directory-sync
 or cleanup failures are returned as warnings.
 
+Setup config files start with `# policynim-literal-values-v1`. Keep that header:
+PolicyNIM reads those values literally, including `${...}` in passwords and paths.
+Existing unmarked env files retain their normal variable expansion behavior.
+
 Use the printed `POLICYNIM_CONFIG_FILE` command for later CLI/MCP processes.
 Process environment variables still override env-file settings. The config follows
 the generation root's active pointer, so reviewed future ingestion can publish an

@@ -13,6 +13,7 @@ from platformdirs import user_config_path, user_data_path
 
 APP_NAME = "policynim"
 APP_AUTHOR = "PolicyNIM"
+LITERAL_CONFIG_HEADER = "# policynim-literal-values-v1"
 
 
 @dataclass(frozen=True)
