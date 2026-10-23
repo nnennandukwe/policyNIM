@@ -1,7 +1,14 @@
 # Set up your policies and storage in a browser
 
-Run `policynim setup` on the machine running your local or self-hosted
-PolicyNIM process. It opens a private loopback URL. Keep that launch URL private
+Use a current PolicyNIM source checkout or a wheel that includes local setup.
+From a source checkout, run:
+
+```bash
+uv sync --locked
+uv run policynim setup
+```
+
+Run setup on the machine running your local or self-hosted PolicyNIM process. It opens a private loopback URL. Keep that launch URL private
 and stop the server with Ctrl+C after saving configuration.
 
 ```bash
