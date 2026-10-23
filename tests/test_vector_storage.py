@@ -424,3 +424,33 @@ def test_postgres_rejects_ambiguous_database_path_segments(path: str) -> None:
         Settings(
             **NO_ENV, vector_backend="pgvector", vector_url="postgresql://user@localhost" + path
         )
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt"])
+def test_external_health_preserves_generation_recovery_without_error_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: str
+) -> None:
+    """Actual absent/corrupt generations retain their safe repair action on external health."""
+    import logging
+
+    from policynim.services import vector_storage
+    from policynim.services.health import create_runtime_health_service
+
+    backend = RecordingVectors()
+    monkeypatch.setattr(vector_storage, "create_vector_backend", lambda settings: backend)
+    settings, generations = configured(tmp_path)
+    if failure == "corrupt":
+        receipt = generations.build(settings, MockEmbedder(), sync_vectors=True)
+        (generations.root / "objects" / receipt.generation_id / "manifest.json").write_bytes(
+            b"damaged"
+        )
+    caplog.clear()
+    service = create_runtime_health_service(settings)
+    result = service.check()
+    assert not result.ready and result.reason is not None
+    recovery = "policynim ingest" if failure == "missing" else "generation inspect"
+    assert recovery in result.reason
+    assert not [entry for entry in caplog.records if entry.levelno >= logging.ERROR]
+    if failure == "missing":
+        generations.build(settings, MockEmbedder(), sync_vectors=True)
+        assert service.check().ready

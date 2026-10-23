@@ -42,9 +42,9 @@ class RuntimeHealthService:
         self._table_name = table_name
         self._mcp_url = mcp_url
         self._external_lock = Lock()
-        self._external_cache: tuple[tuple[int, int, int, int], float, HealthCheckResult] | None = (
-            None
-        )
+        self._external_cache: (
+            tuple[tuple[int, int, int, int] | None, float, HealthCheckResult] | None
+        ) = None
 
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
@@ -91,14 +91,28 @@ class RuntimeHealthService:
                 if settings.generation_id is None
                 else root / "objects" / settings.generation_id / "manifest.json"
             )
-            observed = pointer.stat()
-            identity = (observed.st_dev, observed.st_ino, observed.st_mtime_ns, observed.st_size)
+            try:
+                observed = pointer.stat()
+                identity = (
+                    observed.st_dev,
+                    observed.st_ino,
+                    observed.st_mtime_ns,
+                    observed.st_size,
+                )
+            except FileNotFoundError:
+                identity = None
             cached = self._external_cache
             if cached is not None and cached[0] == identity and monotonic() < cached[1]:
                 return cached[2]
             try:
                 with closing(create_index_store(settings)) as external:
                     result = self._check_store(external)
+            except GenerationError as error:
+                result = self._not_ready(str(error))
+            except IndexCompatibilityError:
+                result = self._not_ready(
+                    "Local index embedding identity is incompatible or ingestion is incomplete."
+                )
             except Exception as error:
                 log_health_failure("External readiness check failed.", error)
                 result = self._not_ready(format_health_failure_reason(error))
