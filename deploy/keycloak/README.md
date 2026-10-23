@@ -76,9 +76,13 @@ docker build -f deploy/keycloak/Dockerfile -t policynim-keycloak:26.7.5 .
 
 Create a separate empty Railway service named `oauth-keycloak`; keep its source
 independent of the PolicyNIM application service. Set its Dockerfile path to
-`Dockerfile`, health-check path to `/realms/master`, health-check timeout to
-240 seconds, and replica count to one. After staging its variables and resource
-limits, deploy only this directory from the repository root:
+`Dockerfile`, health-check path to
+`/realms/master/.well-known/openid-configuration`, health-check timeout to 240
+seconds, and replica count to one. The `deploy/keycloak/railway.toml` file
+contains these Keycloak-specific deployment settings; `--path-as-root` makes it
+the Railway configuration for this service rather than the application's root
+`railway.toml`. After staging its variables and resource limits, deploy only
+this directory from the repository root:
 
 ```bash
 npx --yes --package=@railway/cli@5.71.0 railway up deploy/keycloak \
@@ -107,7 +111,7 @@ Railway terminates TLS and forwards requests to port 8080. The image trusts
 `X-Forwarded-*` headers, so don't attach another public listener that bypasses
 Railway's proxy. Keep the full HTTPS hostname fixed and verify discovery with
 forged host/forwarded headers before cutover. Management port 9000 must stay
-private. Use `/realms/master` on port 8080 for
+private. Use `/realms/master/.well-known/openid-configuration` on port 8080 for
 Railway's deployment health check, then separately verify the application realm.
 The single-replica image uses a local cache; PostgreSQL owns persistent realm,
 user and session state. Don't scale replicas without reviewing cache topology.

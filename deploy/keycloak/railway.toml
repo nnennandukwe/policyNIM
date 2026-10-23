@@ -1,0 +1,4 @@
+[deploy]
+healthcheckPath = "/realms/master/.well-known/openid-configuration"
+healthcheckTimeout = 240
+numReplicas = 1
