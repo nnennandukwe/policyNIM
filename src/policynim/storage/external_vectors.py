@@ -7,7 +7,12 @@ from collections.abc import Sequence
 
 from policynim.storage.index_readiness import IndexReadinessReport
 from policynim.storage.sqlite_vec import SQLiteVecIndexStore
-from policynim.storage.vectors import VectorBackend, VectorStorageError, float32_vector
+from policynim.storage.vectors import (
+    VectorBackend,
+    VectorRecord,
+    VectorStorageError,
+    float32_vector,
+)
 from policynim.types import ScoredChunk
 
 
@@ -19,16 +24,42 @@ class ExternalVectorIndexStore(SQLiteVecIndexStore):
         super().__init__(**kwargs)
         self._backend = backend
         self._namespace = namespace
+        self._validated_generation: str | None = None
+        self._canonical_records: list[VectorRecord] = []
 
     def validate_identity(self) -> None:
         """Require both canonical identity and exact external replica contents."""
         super().validate_identity()
-        if self.generation_id is None:
+        generation_id = self.generation_id
+        if generation_id is None:
             raise VectorStorageError("External retrieval requires a complete generation.")
-        self._backend.validate(self._namespace, self.generation_id, self.vector_records())
+        if self._validated_generation == generation_id:
+            return
+        records = self.vector_records()
+        self._backend.validate(self._namespace, generation_id, records)
+        self._canonical_records = records
+        self._validated_generation = generation_id
+
+    def probe_readiness(self) -> IndexReadinessReport:
+        """Check external availability with one bounded query, not a full replica download."""
+        report = super().inspect_readiness()
+        if report.state != "ready":
+            return report
+        try:
+            identity = self.inspect_identity()
+            generation_id = self.generation_id
+            if generation_id is None:
+                raise VectorStorageError("External retrieval requires a complete generation.")
+            self._backend.probe()
+            self._backend.search(
+                self._namespace, generation_id, [0.0] * identity.dimension, 1, None
+            )
+        except Exception:
+            return report.model_copy(update={"state": "external_unavailable", "compatible": False})
+        return report
 
     def inspect_readiness(self) -> IndexReadinessReport:
-        """Keep source readiness separate from external availability and compatibility."""
+        """Keep explicit readiness inspection as the complete compatibility check."""
         report = super().inspect_readiness()
         if report.state == "ready":
             try:
@@ -44,7 +75,7 @@ class ExternalVectorIndexStore(SQLiteVecIndexStore):
     ) -> list[ScoredChunk]:
         """Resolve remote keys locally and calculate scores from canonical vectors."""
         self.validate_identity()
-        records = self.vector_records()
+        records = self._canonical_records
         vector = float32_vector(query_embedding, len(records[0].vector))
         if top_k <= 0:
             return []

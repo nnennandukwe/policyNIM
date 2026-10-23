@@ -78,7 +78,10 @@ class RuntimeHealthService:
 
     def _check_store(self, store: IndexStore) -> HealthCheckResult:
         """Use the configured retrieval consumer for external or explicitly injected stores."""
-        readiness = inspect_index_readiness(store)
+        probe_readiness = getattr(store, "probe_readiness", None)
+        readiness = (
+            probe_readiness() if callable(probe_readiness) else inspect_index_readiness(store)
+        )
         if readiness.state == "missing":
             return self._not_ready(f"Local index table {self._table_name!r} doesn't exist.")
         if readiness.state == "empty":
