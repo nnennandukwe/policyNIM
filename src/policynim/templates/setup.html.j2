@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PolicyNIM setup</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/setup.css">
+  <script src="/assets/setup.js" defer></script>
+</head>
+<body>
+  <aside class="rail">
+    <a class="brand" href="#deployment">PolicyNIM<span>LOCAL SETUP</span></a>
+    <nav aria-label="Setup steps">
+      <a href="#deployment"><span>01</span> Deployment</a>
+      <a href="#policies"><span>02</span> Your policies</a>
+      <a href="#storage"><span>03</span> Vector storage</a>
+      <a href="#build"><span>04</span> Build and validate</a>
+      <a href="#result"><span>05</span> First result</a>
+    </nav>
+    <p class="rail-note">Your sources.<br>Your storage.<br>Versioned evidence.</p>
+  </aside>
+  <main>
+    <header><p class="eyebrow">A WORKSPACE FOR YOUR ENGINEERING POLICIES</p>
+      <h1>Set up your policy workflow.</h1>
+      <p>Choose the rules your team works from, decide where vectors live, and verify the first result.</p>
+      <p id="launch-error" role="alert" hidden>Open the private launch URL printed by <code>policynim setup</code>.</p>
+    </header>
+    <form id="setup-form">
+      <section id="deployment">
+        <div class="section-title"><span>01</span><h2>Where will PolicyNIM run?</h2></div>
+        <div class="choices">
+          <label><input type="radio" name="deployment" value="local" checked><strong>On this computer</strong><small>Keep sources and runtime state here.</small></label>
+          <label><input type="radio" name="deployment" value="self_hosted"><strong>Your server</strong><small>Use this loopback UI through an SSH tunnel.</small></label>
+          <label><input type="radio" name="deployment" value="shared_hosted"><strong>Shared public service</strong><small>Use the maintained public policy profile.</small></label>
+        </div>
+        <p id="shared-note" hidden>The shared service uses its public profile. Connect with <code>policynim quickstart --target hosted-mcp</code>. Choose a local or self-hosted installation for custom policies and storage.</p>
+      </section>
+      <div id="custom-setup">
+      <section id="policies">
+        <div class="section-title"><span>02</span><h2>Choose your policy sources.</h2></div>
+        <label class="field">Source selection<select id="source-mode">
+          <option value="baseline">Maintained public baseline</option>
+          <option value="topics">Select topic packs</option>
+          <option value="profile">Existing pinned profile</option>
+          <option value="directory">Custom policy directory</option>
+        </select></label>
+        <fieldset id="topic-options" hidden><legend>Include these topics</legend>
+          {% for topic in ['security','api','data','observability','reliability','supply-chain','testing'] %}
+          <label><input type="checkbox" name="topic" value="{{ topic }}">{{ topic }}</label>
+          {% endfor %}
+        </fieldset>
+        <label id="source-path-field" class="field" hidden>Local source path<input id="source-path" type="text" autocomplete="off" spellcheck="false"></label>
+        <label id="extra-packs-field" class="field">Additional team pack directories <small>Optional. One absolute directory per line; each needs a pack.toml manifest.</small><textarea id="extra-packs" rows="2" spellcheck="false"></textarea></label>
+        <p class="hint">Preview shows effective policies, source revisions, and reviewed replacements. Conflicts stop the build.</p>
+        <button type="button" data-action="preview">Preview selected policies</button>
+        <div id="catalog" class="output" hidden></div>
+      </section>
+      <section id="storage">
+        <div class="section-title"><span>03</span><h2>Choose where vectors live.</h2></div>
+        <label class="field">Vector database<select id="vector-backend">
+          <option value="sqlite">Local SQLite - recommended for your first run</option>
+          <option value="qdrant">Bring your own Qdrant server</option>
+          <option value="pgvector">Bring your own Postgres + pgvector</option>
+        </select></label>
+        <div id="remote-fields" hidden>
+          <label class="field">Database URL <small id="url-hint">Use HTTPS, or HTTP on loopback. Keep credentials out of the URL.</small><input id="vector-url" type="text" autocomplete="off" spellcheck="false"></label>
+          <label class="field">Namespace prefix <small>A dedicated prefix for this installation. Existing indexes won't be overwritten.</small><input id="vector-namespace" value="policynim" pattern="[a-z][a-z0-9_]{0,15}" maxlength="16" spellcheck="false"></label>
+          <label id="qdrant-key-field" class="field">Qdrant API key<input id="vector-api-key" type="password" autocomplete="new-password"></label>
+          <label id="pg-password-field" class="field" hidden>Postgres password<input id="vector-password" type="password" autocomplete="new-password"></label>
+          <p id="pg-extra" class="hint" hidden>Install PolicyNIM's vector-postgres extra. Ask your database owner to install the vector extension and grant access to a dedicated database. Exact search preserves dimensions without an approximate-index limit.</p>
+        </div>
+        <p class="hint">Policy sources, runtime evidence, and generation snapshots stay local. Database software can be free; your infrastructure and NVIDIA service usage have their own costs.</p>
+        <p class="hint">The sealed local SQLite snapshot also retains vectors for integrity checks and offline recovery.</p>
+        <button type="button" data-action="probe">Check read-only connectivity</button>
+        <p id="connection" role="status"></p>
+      </section>
+      <section id="build">
+        <div class="section-title"><span>04</span><h2>Build a complete generation.</h2></div>
+        <label class="field">NVIDIA API key <small id="key-hint">Used for embeddings and policy selection. Leave blank to use the configured key.</small><input id="nvidia-api-key" type="password" autocomplete="new-password"></label>
+        <details><summary>Local state location</summary><label class="field">Generation directory<input id="generations-dir" type="text" autocomplete="off" spellcheck="false"></label></details>
+        <label class="consent"><input id="consent" type="checkbox"><span>I approve sending effective policy text and task context to the configured NVIDIA services, creating the selected vector index, and activating the validated generation.</span></label>
+        <p class="hint">After changing sources or storage, preview your selection again. Failed preparation preserves the prior active generation.</p>
+        <button type="button" data-action="build">Build and activate</button>
+        <div id="generation" class="output" hidden></div>
+      </section>
+      <section id="result">
+        <div class="section-title"><span>05</span><h2>Verify your first result.</h2></div>
+        <label class="field">An engineering task<textarea id="task" rows="3" maxlength="2000">Review a data migration for interruption and recovery.</textarea></label>
+        <button type="button" data-action="verify">Verify policy evidence</button>
+        <div id="policy-result" class="output" hidden></div>
+        <div class="save-row"><p>Save a new private configuration after verification. Existing files are preserved.</p><button type="button" data-action="save">Save configuration</button></div>
+        <div id="saved" class="output" hidden></div>
+      </section>
+      </div>
+    </form>
+    <div class="status-bar" aria-live="polite"><span id="status">Ready to choose your policies.</span></div>
+  </main>
+</body>
+</html>

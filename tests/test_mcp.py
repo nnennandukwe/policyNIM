@@ -2193,3 +2193,51 @@ def test_preflight_context_refusal_preserves_actionable_safe_tool_error(
     assert service.closed
     if not identity_mismatch:
         assert "top_k" in str(refused.value)
+
+
+def test_concurrent_health_requests_share_one_offload_after_client_cancellation(
+    monkeypatch,
+) -> None:
+    """Public probes share an in-flight worker even when its first caller disconnects."""
+    result = HealthCheckResult(
+        status="ok", ready=True, table_name="policy_chunks", row_count=1, mcp_url=None
+    )
+    monkeypatch.setattr(
+        mcp_module, "create_runtime_health_service", lambda settings: StaticHealthService(result)
+    )
+    app = mcp_module._build_streamable_http_app(Settings())
+
+    async def exercise() -> None:
+        """Drive actual ASGI requests and hold the worker seam without a timing delay."""
+        entered, release = asyncio.Event(), asyncio.Event()
+        offloads = 0
+
+        async def held_worker(function, /, *args, **kwargs):
+            """Model one slow database health check while HTTP tasks remain schedulable."""
+            nonlocal offloads
+            offloads += 1
+            entered.set()
+            await release.wait()
+            return function(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_module.asyncio, "to_thread", held_worker)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client:
+            first = asyncio.create_task(client.get("/healthz"))
+            await entered.wait()
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            waiting = [asyncio.create_task(client.get("/healthz")) for _ in range(20)]
+            for _ in range(20):
+                await asyncio.sleep(0)
+            try:
+                assert offloads == 1
+            finally:
+                release.set()
+            responses = await asyncio.gather(*waiting)
+            assert all(response.status_code == 200 for response in responses)
+            assert offloads == 1
+
+    asyncio.run(exercise())

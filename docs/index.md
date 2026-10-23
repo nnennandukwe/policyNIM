@@ -5,6 +5,10 @@ operations into separate pages so the root README can stay short.
 
 ## Start Here
 
+- [Local setup UI](local-onboarding.md): choose policy sources and vector storage, verify a result, and save a private config
+- [Vector storage](vector-storage.md): SQLite, Qdrant, pgvector, settings, and recovery
+- [Policy lifecycle](policy-lifecycle.md): composition, reviewed changes, source authority, runtime decisions, and evidence
+
 - [../README.md](../README.md): concise project overview, current capabilities,
   quickstart, local diagnostics, and links outward
 - [contributor-guide.md](contributor-guide.md): local setup, standalone init,

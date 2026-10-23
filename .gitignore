@@ -10,6 +10,8 @@
 !.env.production.example
 .mypy_cache/
 .pytest_cache/
+.playwright-cli/
+output/playwright/
 .ruff_cache/
 .venv/
 .vscode/

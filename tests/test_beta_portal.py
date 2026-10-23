@@ -116,7 +116,7 @@ def test_beta_portal_renders_signed_out_landing(monkeypatch) -> None:
     assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in response.text
     assert "Continue with GitHub" in response.text
     assert "Connect in three moves" in response.text
-    assert "policy-aware engineering preflight layer" in response.text
+    assert "complete, versioned engineering policies" in response.text
     assert "codex mcp add policynim" not in response.text
 
 

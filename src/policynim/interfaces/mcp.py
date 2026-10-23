@@ -1198,9 +1198,9 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
         health_service = None
         fallback_reason = format_health_failure_reason(exc)
 
-    def _fallback_result(reason: str = fallback_reason) -> JSONResponse:
-        """Return the public not-ready response for fallback health failures."""
-        result = HealthCheckResult(
+    def _fallback_payload(reason: str = fallback_reason) -> HealthCheckResult:
+        """Build the shared safe readiness result for construction or probe failures."""
+        return HealthCheckResult(
             status="error",
             ready=False,
             table_name=table_name,
@@ -1208,19 +1208,31 @@ def _register_health_route(server: MCPServer, settings: Settings) -> None:
             mcp_url=_derive_mcp_url(settings),
             reason=reason,
         )
-        return JSONResponse(result.model_dump(mode="json"), status_code=503)
+
+    def _fallback_result() -> JSONResponse:
+        """Return the public response when no health module could be constructed."""
+        return JSONResponse(_fallback_payload().model_dump(mode="json"), status_code=503)
+
+    probe_task: asyncio.Task[HealthCheckResult] | None = None
+
+    async def _probe_health() -> HealthCheckResult:
+        """Offload once and observe errors even when every waiting client disconnects."""
+        assert health_service is not None
+        try:
+            return await asyncio.to_thread(health_service.check)
+        except Exception as exc:
+            log_health_failure("Runtime health probe failed.", exc)
+            return _fallback_payload(format_health_failure_reason(exc))
 
     @server.custom_route(_HEALTH_PATH, methods=["GET"], include_in_schema=False)
     async def healthz(_: Request) -> Response:
+        """Share an in-flight worker and preserve it across individual client cancellation."""
+        nonlocal probe_task
         if health_service is None:
             return _fallback_result()
-
-        try:
-            result = await asyncio.to_thread(health_service.check)
-        except Exception as exc:
-            log_health_failure("Runtime health probe failed.", exc)
-            return _fallback_result(format_health_failure_reason(exc))
-
+        if probe_task is None or probe_task.done():
+            probe_task = asyncio.create_task(_probe_health())
+        result = await asyncio.shield(probe_task)
         status_code = 200 if result.ready else 503
         return JSONResponse(result.model_dump(mode="json"), status_code=status_code)
 
