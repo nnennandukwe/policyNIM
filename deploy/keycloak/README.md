@@ -1,8 +1,8 @@
-# Keycloak evaluation profile
+# Keycloak issuer profile
 
 Use this profile to reproduce PolicyNIM's local OAuth issuer checks for
-[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97). Production issuer
-selection and real ChatGPT connection acceptance are pending.
+[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97). The operator has selected Keycloak for Railway deployment. Real ChatGPT connection
+acceptance still needs separate evidence.
 
 ## Reproduce the local checks
 
@@ -65,6 +65,103 @@ authorization and token requests. This feature remains experimental in the
 evaluated version. The test uses `start-dev` on loopback; production needs its
 own hardened HTTPS, persistent storage, backups, and issuer lifecycle setup.
 See [Keycloak's MCP guide](https://www.keycloak.org/securing-apps/mcp-authz-server).
+
+## Railway production deployment
+
+Build the optimized image from the repository root:
+
+```bash
+docker build -f deploy/keycloak/Dockerfile -t policynim-keycloak:26.7.5 .
+```
+
+Create a separate empty Railway service named `oauth-keycloak`; keep its source
+independent of the PolicyNIM application service. Set its Dockerfile path to
+`Dockerfile`, health-check path to `/realms/master`, health-check timeout to
+240 seconds, and replica count to one. After staging its variables and resource
+limits, deploy only this directory from the repository root:
+
+```bash
+npx --yes --package=@railway/cli@5.71.0 railway up deploy/keycloak \
+  --path-as-root --service oauth-keycloak --environment production --detach
+```
+
+`--path-as-root` excludes the application root's `railway.toml` and
+`Dockerfile.railway`. A local `docker build` alone doesn't deploy an image to
+Railway. Don't connect this service to the repository root with the application's
+build settings. Read back the service's effective Dockerfile and health check,
+then wait for its deployment to become healthy; `--detach` only starts deployment.
+
+The image runs `start --optimized` with PostgreSQL and experimental Resource
+Indicators enabled. It doesn't import realms or embed credentials. Configure
+these runtime variables in Railway's secret store before deploying:
+
+| Variable | Value |
+| --- | --- |
+| `KC_HOSTNAME` | Full fixed public HTTPS origin of the issuer service |
+| `KC_DB_URL` | JDBC PostgreSQL URL using the database's private Railway hostname |
+| `KC_DB_USERNAME`, `KC_DB_PASSWORD` | Dedicated issuer database credentials |
+| `KC_BOOTSTRAP_ADMIN_USERNAME`, `KC_BOOTSTRAP_ADMIN_PASSWORD` | Initial administrator; remove after creating a permanent operator account |
+| `JAVA_OPTS_KC_HEAP` | `-Xms128m -Xmx512m` for the 1 GB service limit |
+
+Railway terminates TLS and forwards requests to port 8080. The image trusts
+`X-Forwarded-*` headers, so don't attach another public listener that bypasses
+Railway's proxy. Keep the full HTTPS hostname fixed and verify discovery with
+forged host/forwarded headers before cutover. Management port 9000 must stay
+private. Use `/realms/master` on port 8080 for
+Railway's deployment health check, then separately verify the application realm.
+The single-replica image uses a local cache; PostgreSQL owns persistent realm,
+user and session state. Don't scale replicas without reviewing cache topology.
+
+Use one private PostgreSQL 17 service with a persistent volume mounted at
+`/var/lib/postgresql/data`. Pin its image digest, don't create a TCP proxy or
+public domain. Railway volume backup schedules require a Pro workspace; check
+the account plan before relying on them. Configure an approved backup method
+and verify a restore to an isolated database before production cutover. Set limits
+before starting either service: Keycloak 1 GB/0.5 vCPU and PostgreSQL
+0.5 GB/0.25 vCPU. Track compute, storage, egress and the workspace plan against the approved
+operating budget. These limits don't cap storage or egress charges. Don't change the workspace-wide
+compute hard limit because it affects unrelated projects.
+
+Import the realm through the authenticated administration API with the template
+inputs supplied at runtime. If ChatGPT's callback hasn't been copied yet,
+omit its public client during initial import; add it only after the exact
+callback is available. Never use a wildcard or guessed redirect URI. Startup
+import skips existing realms, so apply later changes through the administration
+API rather than expecting a restart to update them. Keep operator registration
+disabled until account policy has been selected.
+
+Before changing PolicyNIM, verify HTTPS discovery, PKCE and resource binding,
+invalid-token rejection, refresh/revocation, and persistence across an issuer
+restart. Use a disposable client/user for automated issuer checks; remove them
+afterward. These checks don't require NVIDIA calls.
+
+Stage the complete application configuration as one update:
+
+```text
+POLICYNIM_MCP_REQUIRE_AUTH=true
+POLICYNIM_MCP_PUBLIC_BASE_URL=https://policynim-production.up.railway.app
+POLICYNIM_MCP_OAUTH_ISSUER_URL=<public issuer origin>/realms/policynim
+POLICYNIM_MCP_OAUTH_CLIENT_ID=https://policynim-production.up.railway.app/mcp
+POLICYNIM_MCP_OAUTH_CLIENT_SECRET=<matching resource-client secret>
+POLICYNIM_MCP_OAUTH_ALLOW_LEGACY_KEYS=true
+```
+
+The existing beta portal requires explicit legacy-key compatibility during this
+migration. After deployment, check readiness, protected-resource discovery,
+missing/invalid bearer challenges, and an existing beta key without invoking a
+provider-backed tool. OAuth success doesn't prove beta-key compatibility;
+record both results independently.
+
+For rollback, restore the prior values of all four `POLICYNIM_MCP_OAUTH_*`
+variables together and redeploy the prior verified application revision. If
+OAuth was previously unset, remove issuer/client ID/client secret and restore
+`ALLOW_LEGACY_KEYS=false` together. Keep `REQUIRE_AUTH=true`, beta portal settings,
+existing keys and the authorization database. A failed issuer check must block
+cutover; it mustn't weaken application authentication.
+
+See [Keycloak containers](https://www.keycloak.org/server/containers),
+[hostname configuration](https://www.keycloak.org/server/hostname), and
+[Railway cost control](https://docs.railway.com/pricing/cost-control).
 
 ## Evidence boundaries
 
