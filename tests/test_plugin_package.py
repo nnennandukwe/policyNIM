@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -677,4 +678,31 @@ def test_hyphenated_api_key_prefixes_cant_enter_allowed_files(
     output.write_bytes(b"retained archive")
     with pytest.raises(ValueError, match="credential-shaped"):
         builder.build(output, source=package_source)
+    assert output.read_bytes() == b"retained archive"
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes require a POSIX filesystem.")
+@pytest.mark.parametrize("name", ["plugin", "mcp"])
+def test_schema_named_pipes_are_rejected_without_waiting(
+    tmp_path: Path, package_source: Path, name: str
+) -> None:
+    """A nonregular schema must fail promptly without waiting for a FIFO writer."""
+    path = package_source / "schemas" / (name + ".schema.json")
+    path.unlink()
+    os.mkfifo(path)
+    output = tmp_path / "retained.zip"
+    output.write_bytes(b"retained archive")
+    program = (
+        "import runpy,sys;from pathlib import Path;"
+        "builder=runpy.run_path(sys.argv[1]);"
+        "builder['build'](Path(sys.argv[3]),source=Path(sys.argv[2]))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(SCRIPT), str(package_source), str(output)],
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    assert result.returncode == 1
+    assert "Schema must be a regular file" in result.stderr
     assert output.read_bytes() == b"retained archive"

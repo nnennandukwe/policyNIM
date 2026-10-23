@@ -184,7 +184,7 @@ def safe_text(value: object) -> None:
 def validate_schema(manifest: dict, name: str, source: Path) -> None:
     """Validate with pinned vendored schemas without fetching remote references."""
     schema_path = source / "schemas" / f"{name}.schema.json"
-    if schema_path.is_symlink():
+    if schema_path.is_symlink() or not schema_path.is_file():
         raise PackageValidationError("Schema must be a regular file.")
     schema_bytes = schema_path.read_bytes()
     if hashlib.sha256(schema_bytes).hexdigest() != SCHEMA_HASHES[name]:
