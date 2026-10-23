@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import logging
 import traceback
+from contextlib import closing
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 
 from policynim.contracts import IndexStore
 from policynim.errors import ConfigurationError, GenerationError, IndexCompatibilityError
 from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.generations import GenerationStore
-from policynim.services.index_store import pinned_generation
+from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.settings import Settings, get_settings
 from policynim.storage.index_readiness import inspect_index_readiness
 from policynim.storage.sqlite_vec import POLICY_CHUNKS_TABLE
@@ -21,7 +24,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class RuntimeHealthService:
-    """Inspect local runtime readiness without calling NVIDIA."""
+    """Inspect generation and selected vector storage without calling NVIDIA."""
 
     def __init__(
         self,
@@ -38,11 +41,17 @@ class RuntimeHealthService:
         self._index_store = index_store
         self._table_name = table_name
         self._mcp_url = mcp_url
+        self._external_lock = Lock()
+        self._external_cache: (
+            tuple[tuple[int, int, int, int] | None, float, HealthCheckResult] | None
+        ) = None
 
     def check(self) -> HealthCheckResult:
         """Return a readiness payload for the hosted HTTP runtime."""
         try:
             if self._settings is not None:
+                if self._settings.vector_backend != "sqlite":
+                    return self._check_external(self._settings)
                 generations = GenerationStore(
                     root=resolve_runtime_path(self._settings.generations_dir),
                     embedding=EmbeddingIdentity(
@@ -61,23 +70,7 @@ class RuntimeHealthService:
                 )
             store = self._index_store
             assert store is not None
-            readiness = inspect_index_readiness(store)
-            if readiness.state == "missing":
-                return self._not_ready(f"Local index table {self._table_name!r} doesn't exist.")
-            if readiness.state == "empty":
-                return self._not_ready(f"Local index table {self._table_name!r} contains no rows.")
-            if readiness.state != "ready":
-                return self._not_ready(readiness.reason)
-            snapshot = pinned_generation(store)
-            return HealthCheckResult(
-                status="ok",
-                ready=True,
-                table_name=self._table_name,
-                row_count=readiness.chunk_count or 0,
-                mcp_url=self._mcp_url,
-                reason=None,
-                generation_id=snapshot.generation_id if snapshot else None,
-            )
+            return self._check_store(store)
         except GenerationError as exc:
             return self._not_ready(str(exc))
         except IndexCompatibilityError:
@@ -87,6 +80,66 @@ class RuntimeHealthService:
         except Exception as exc:
             log_health_failure("Runtime health check failed.", exc)
             return self._not_ready(format_health_failure_reason(exc))
+
+    def _check_external(self, settings: Settings) -> HealthCheckResult:
+        """Bound public probes to one in-flight read and a one-second generation-aware cache."""
+        self._external_lock.acquire()
+        try:
+            root = resolve_runtime_path(settings.generations_dir)
+            pointer = (
+                root / "active.json"
+                if settings.generation_id is None
+                else root / "objects" / settings.generation_id / "manifest.json"
+            )
+            try:
+                observed = pointer.stat()
+                identity = (
+                    observed.st_dev,
+                    observed.st_ino,
+                    observed.st_mtime_ns,
+                    observed.st_size,
+                )
+            except FileNotFoundError:
+                identity = None
+            cached = self._external_cache
+            if cached is not None and cached[0] == identity and monotonic() < cached[1]:
+                return cached[2]
+            try:
+                with closing(create_index_store(settings)) as external:
+                    result = self._check_store(external)
+            except GenerationError as error:
+                result = self._not_ready(str(error))
+            except IndexCompatibilityError:
+                result = self._not_ready(
+                    "Local index embedding identity is incompatible or ingestion is incomplete."
+                )
+            except Exception as error:
+                log_health_failure("External readiness check failed.", error)
+                result = self._not_ready(format_health_failure_reason(error))
+            self._external_cache = (identity, monotonic() + 1.0, result)
+            return result
+        finally:
+            self._external_lock.release()
+
+    def _check_store(self, store: IndexStore) -> HealthCheckResult:
+        """Use the configured retrieval consumer for external or explicitly injected stores."""
+        readiness = inspect_index_readiness(store)
+        if readiness.state == "missing":
+            return self._not_ready(f"Local index table {self._table_name!r} doesn't exist.")
+        if readiness.state == "empty":
+            return self._not_ready(f"Local index table {self._table_name!r} contains no rows.")
+        if readiness.state != "ready":
+            return self._not_ready(readiness.reason)
+        snapshot = pinned_generation(store)
+        return HealthCheckResult(
+            status="ok",
+            ready=True,
+            table_name=self._table_name,
+            row_count=readiness.chunk_count or 0,
+            mcp_url=self._mcp_url,
+            reason=None,
+            generation_id=snapshot.generation_id if snapshot else None,
+        )
 
     def _not_ready(self, reason: str) -> HealthCheckResult:
         return HealthCheckResult(

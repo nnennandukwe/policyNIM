@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import stat
+import struct
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
@@ -22,6 +23,7 @@ from pydantic import ValidationError
 from policynim.contracts import GenerationLease, IndexStore
 from policynim.errors import IndexCompatibilityError, IndexReadLimitError, MissingIndexError
 from policynim.storage.index_readiness import IndexReadinessReport, is_sqlite_access_error
+from policynim.storage.vectors import VectorRecord, float32_vector
 from policynim.types import (
     EmbeddedChunk,
     EmbeddingIdentity,
@@ -439,6 +441,32 @@ class SQLiteVecIndexStore(IndexStore):
         with self._reader_lock, closing(self._require_connection()) as conn:
             return [row[0] for row in conn.execute(f"SELECT chunk_id FROM {_CHUNKS_TABLE}")]
 
+    def vector_records(self, keys: Sequence[str] | None = None) -> list[VectorRecord]:
+        """Read complete publication vectors or only the canonical matches a query returned."""
+        if keys is not None and not keys:
+            return []
+        with self._reader_lock, closing(self._require_connection()) as conn:
+            conn.execute("BEGIN")
+            identity = self._validate_identity(conn)
+            restriction = (
+                "" if keys is None else " WHERE c.chunk_id IN (" + ",".join("?" for _ in keys) + ")"
+            )
+            rows = conn.execute(
+                f"SELECT c.chunk_id, c.domain, v.embedding "
+                f"FROM {_CHUNKS_TABLE} c JOIN {_VECTORS_TABLE} v ON v.rowid = c.rowid "
+                + restriction
+                + " ORDER BY c.chunk_id",
+                () if keys is None else tuple(keys),
+            ).fetchall()
+            return [
+                VectorRecord(
+                    key=row[0],
+                    domain=row[1],
+                    vector=_decode_vector_blob(row[2], identity.dimension),
+                )
+                for row in rows
+            ]
+
     def get_chunk(self, chunk_id: str) -> PolicyChunk | None:
         """Use the unique chunk-ID index and materialize only the requested evidence row."""
         with self._reader_lock, closing(self._require_connection()) as conn:
@@ -544,6 +572,17 @@ class SQLiteVecIndexStore(IndexStore):
             conn.close()
             raise
         return conn
+
+
+def _decode_vector_blob(blob: bytes, dimension: int) -> list[float]:
+    """Translate damaged stored bytes into an index error before external publication."""
+    try:
+        return float32_vector(struct.unpack(f"<{dimension}f", blob), dimension)
+    except (struct.error, TypeError):
+        raise IndexCompatibilityError(
+            "Stored vector bytes don't match the recorded dimension. "
+            "Preserve the generation and inspect its integrity before retrying."
+        ) from None
 
 
 def _validate_replacement(

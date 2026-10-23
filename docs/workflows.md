@@ -1,5 +1,10 @@
 # PolicyNIM Workflow Handbook
 
+For guided policy selection and database setup, run `policynim setup` and follow
+[local onboarding](local-onboarding.md). [Vector storage](vector-storage.md)
+documents explicit `ingest --sync-vectors`, `vector probe`, `vector sync`, and
+`vector inspect` behavior. The default SQLite workflow below stays unchanged.
+
 Use this page for the detailed CLI, MCP, runtime, eval, and troubleshooting
 reference that used to live in the root README.
 
@@ -50,7 +55,7 @@ reference that used to live in the root README.
 
 ### Hosted HTTP
 
-- `GET /healthz` reports local index readiness when using `streamable-http`
+- `GET /healthz` reports generation and selected vector-storage readiness when using `streamable-http`
 - `POLICYNIM_MCP_REQUIRE_AUTH` protects only the HTTP `/mcp` route
 - `/beta` stays as the self-serve signup and key-management surface
 - hosted `streamable-http` startup fails fast when

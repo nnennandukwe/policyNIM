@@ -6,11 +6,13 @@ import ipaddress
 import os
 import re
 import socket
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlsplit
 
+from dotenv import dotenv_values
 from pydantic import (
     AliasChoices,
     AnyHttpUrl,
@@ -29,6 +31,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 from pydantic_settings.sources.types import DotenvType, EnvPrefixTarget
+from pydantic_settings.sources.utils import parse_env_vars
 
 import policynim.config_discovery as config_discovery
 from policynim.errors import ConfigurationError
@@ -60,6 +63,16 @@ class StandaloneDefaultPathsSource(PydanticBaseSettingsSource):
 class ProcessEnvOnlyConfigDotEnvSettingsSource(DotEnvSettingsSource):
     """Drop config-file overrides from dotenv sources so only process env can set them."""
 
+    def _read_env_file(self, file_path: Path) -> Mapping[str, str | None]:
+        """Preserve literal setup values while retaining interpolation in existing env files."""
+        with file_path.open(encoding=self.env_file_encoding or "utf8") as handle:
+            literal = handle.readline(128).strip() == config_discovery.LITERAL_CONFIG_HEADER
+            handle.seek(0)
+            values = dotenv_values(stream=handle, interpolate=not literal)
+        return parse_env_vars(
+            values, self.case_sensitive, self.env_ignore_empty, self.env_parse_none_str
+        )
+
     def __call__(self) -> dict[str, Any]:
         data = super().__call__()
         data.pop("config_file", None)
@@ -81,6 +94,12 @@ class Settings(BaseSettings):
         default=Path("data/index.sqlite3"),
         validation_alias=AliasChoices("POLICYNIM_INDEX_DB_PATH", "POLICYNIM_LANCEDB_URI"),
     )
+    vector_backend: Literal["sqlite", "qdrant", "pgvector"] = "sqlite"
+    vector_url: str | None = None
+    vector_namespace: str = Field(default="policynim", pattern=r"^[a-z][a-z0-9_]{0,15}$")
+    vector_api_key: SecretStr | None = None
+    vector_password: SecretStr | None = None
+    vector_timeout_seconds: Annotated[float, Field(gt=0, le=120, allow_inf_nan=False)] = 10.0
     runtime_rules_artifact_path: Path = Path("data/runtime/runtime_rules.json")
     runtime_evidence_db_path: Path = Path("data/runtime/runtime_evidence.sqlite3")
     runtime_shell_timeout_seconds: Annotated[float, Field(gt=0)] = 300.0
@@ -138,6 +157,57 @@ class Settings(BaseSettings):
         populate_by_name=True,
         hide_input_in_errors=True,
     )
+
+    @model_validator(mode="after")
+    def validate_vector_connection(self) -> Settings:
+        """Keep remote endpoints credential-free and cleartext connections loopback-only."""
+        if self.vector_backend == "sqlite":
+            if self.vector_url is not None:
+                raise ValueError("POLICYNIM_VECTOR_URL requires an external vector backend.")
+            return self
+        if not self.vector_url:
+            raise ValueError("Set POLICYNIM_VECTOR_URL for the selected vector backend.")
+        try:
+            parts = urlsplit(self.vector_url)
+            port = parts.port
+            if not parts.hostname or parts.password is not None or parts.fragment:
+                raise ValueError
+            if port is not None and not 1 <= port <= 65535:
+                raise ValueError
+            if any(character.isspace() for character in self.vector_url):
+                raise ValueError
+            try:
+                loopback = ipaddress.ip_address(parts.hostname).is_loopback
+            except ValueError:
+                loopback = parts.hostname == "localhost"
+            if self.vector_backend == "qdrant":
+                if parts.username is not None or parts.query or parts.path not in {"", "/"}:
+                    raise ValueError
+                if parts.scheme != "https" and not (parts.scheme == "http" and loopback):
+                    raise ValueError
+            else:
+                from urllib.parse import parse_qs
+
+                query = parse_qs(parts.query, strict_parsing=True, keep_blank_values=True)
+                if (
+                    parts.scheme not in {"postgresql", "postgres"}
+                    or parts.path.count("/") != 1
+                    or not parts.path.strip("/")
+                ):
+                    raise ValueError
+                if set(query) - {"sslmode"} or any(len(values) != 1 for values in query.values()):
+                    raise ValueError
+                mode = query.get("sslmode", ["verify-full"])[0]
+                if mode not in {"verify-full", "disable"} or (mode == "disable" and not loopback):
+                    raise ValueError
+        except ValueError:
+            raise ValueError(
+                "Use a credential-free vector URL. Qdrant requires HTTPS except on loopback; "
+                "Postgres requires one database-name path segment without a trailing slash, "
+                "and sslmode=verify-full "
+                "(sslmode=disable is allowed on loopback). Supply secrets separately."
+            ) from None
+        return self
 
     @classmethod
     def settings_customise_sources(

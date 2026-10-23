@@ -1,5 +1,31 @@
 # Test Plan
 
+## Vector storage and local onboarding
+
+`test_vector_storage.py` and `test_onboarding.py` cover real source generations,
+external-replica refusal, pre-activation failure, preview/consent/verification gates,
+Host/Origin/token checks, private config preservation, and restart. Model calls use
+provider doubles in the offline suite.
+
+`test_vector_backends_live.py` requires dedicated disposable Qdrant and pgvector
+servers. It writes synthetic vectors without NVIDIA requests. Explicit opt-in:
+
+```bash
+export POLICYNIM_RUN_VECTOR_LIVE=1
+export POLICYNIM_VECTOR_TEST_QDRANT_URL=http://127.0.0.1:6333
+export POLICYNIM_VECTOR_TEST_PGVECTOR_URL='postgresql://postgres@127.0.0.1:5432/policynim?sslmode=disable'
+export POLICYNIM_VECTOR_TEST_PASSWORD=policynim-fixture
+uv sync --locked --group test --group dev --extra vector-postgres
+uv run --no-sync pytest -q tests/test_vector_backends_live.py
+```
+
+The password above is a disposable fixture value. Install the `vector` extension
+in the dedicated test database before running. Initial verification used
+Qdrant `v1.19.0` and pgvector `0.8.2-pg17`; backend-specific cases skip for the other
+backend. Default CI continues to exclude `docker_live` tests.
+
+## Existing coverage
+
 Current automated coverage includes:
 
 - Markdown policy parsing, metadata normalization, and deterministic chunking

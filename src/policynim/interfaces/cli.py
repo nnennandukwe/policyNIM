@@ -37,6 +37,7 @@ from policynim.interfaces.evaluation_jobs_cli import job_app
 from policynim.interfaces.generation_cli import app as generation_app
 from policynim.interfaces.mcp import run_server
 from policynim.interfaces.profile_cli import app as profile_app
+from policynim.interfaces.vector_cli import vector_app
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services import (
     create_beta_auth_service,
@@ -122,9 +123,39 @@ app.add_typer(policies_app, name="policies")
 
 app.add_typer(profile_app, name="profile")
 app.add_typer(generation_app, name="generation")
+app.add_typer(vector_app, name="vector")
 
 
 app.add_typer(job_app, name="eval-jobs")
+
+
+@app.command("setup")
+def setup_ui(
+    port: Annotated[
+        int, typer.Option(min=0, max=65535, help="Loopback port; 0 chooses a free port.")
+    ] = 0,
+    config: Annotated[
+        Path | None, typer.Option(help="New private config file; never overwritten.")
+    ] = None,
+    browser: Annotated[
+        bool, typer.Option("--open/--no-open", help="Open the local setup page.")
+    ] = True,
+) -> None:
+    """Choose policy packs and vector storage in a private local browser workflow."""
+    from policynim.interfaces.onboarding import serve_onboarding
+    from policynim.services.onboarding import OnboardingService
+
+    try:
+        destination = config or config_discovery.resolve_init_config_file()
+        if config is None and (destination.exists() or destination.is_symlink()):
+            destination = destination.with_name(destination.name + ".setup")
+        service = OnboardingService(settings=get_settings(), destination=destination)
+        serve_onboarding(service, port=port, browser=browser)
+    except (PolicyNIMError, OSError, ValueError):
+        _exit_with_error(
+            "Setup couldn't start. Check configuration and loopback port availability; "
+            "choose an unused --config path."
+        )
 
 
 @policies_app.command("list")
@@ -470,12 +501,20 @@ def _inventory_count(count: int | None) -> str:
 
 
 @app.command()
-def ingest() -> None:
+def ingest(
+    sync_vectors: Annotated[
+        bool, typer.Option("--sync-vectors", help="Publish the configured external vector index.")
+    ] = False,
+) -> None:
     """Build and activate a complete policy generation with explicit embedding requests."""
     service = None
     try:
         settings = _load_setup_dependent_settings()
-        service = create_ingest_service(settings)
+        service = (
+            create_ingest_service(settings, sync_vectors=True)
+            if sync_vectors
+            else create_ingest_service(settings)
+        )
         result = service.run()
     except PolicyNIMError as exc:
         _exit_with_error(_cli_error_message(exc))

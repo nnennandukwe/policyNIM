@@ -21,6 +21,7 @@ from tomlkit.items import AoT, Array, InlineTable, String, Table
 from policynim.errors import InvalidPolicyDocumentError
 from policynim.ingest.catalog import load_pack_manifest
 from policynim.ingest.loader import load_policy_documents
+from policynim.runtime_paths import resolve_corpus_root
 from policynim.services.catalog import (
     CatalogPack,
     CatalogPolicy,
@@ -33,6 +34,15 @@ from policynim.types import ParsedDocument, StrictModel
 Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Name = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,127}$")]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+BUNDLED_TOPICS = (
+    "security",
+    "api",
+    "data",
+    "observability",
+    "reliability",
+    "supply-chain",
+    "testing",
+)
 
 
 class PackPin(StrictModel):
@@ -56,6 +66,10 @@ class PackPin(StrictModel):
 
 def _normalize_pack_path(value: str, *, windows: bool) -> str:
     """Reject network/device prefixes before any path resolution can access a share."""
+    if value.startswith("builtin:"):
+        if value.removeprefix("builtin:") not in {"baseline", *BUNDLED_TOPICS}:
+            raise InvalidPolicyDocumentError("Select a supported bundled policy reference.")
+        return value
     normalized = value.replace("\\", "/")
     invalid = normalized.startswith("//") or any(
         ord(char) < 32 or ord(char) == 127 for char in value
@@ -210,7 +224,14 @@ def _current_inputs(
     roots: list[Path] = []
     for expected in profile.packs:
         try:
-            root = (path.parent.resolve() / expected.path).resolve()
+            if expected.path.startswith("builtin:"):
+                selected = expected.path.removeprefix("builtin:")
+                root = resolve_corpus_root()
+                if selected != "baseline":
+                    root = root / selected
+                root = root.resolve()
+            else:
+                root = (path.parent.resolve() / expected.path).resolve()
         except (OSError, RuntimeError, ValueError) as exc:
             raise InvalidPolicyDocumentError(
                 "Selected pack path couldn't be resolved. "

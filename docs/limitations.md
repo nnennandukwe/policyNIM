@@ -10,8 +10,9 @@ constraints, not setup mistakes.
 - PolicyNIM is designed around a local index stored on disk.
 - The current repo assumes one developer or one local environment owns the runtime
   state under `data/`.
-- There is no built-in shared index service, remote storage layer, or multi-user
-  coordination model.
+- Qdrant and pgvector can hold generation-bound vector replicas. Sealed source
+  generations and other runtime state remain local; there's no multi-user
+  source-state coordination model. See [vector storage](vector-storage.md).
 - Runtime decisions and execution evidence also stay local under `data/runtime/`;
   there is no shared runtime-audit service or remote evidence store yet.
 - The hosted beta still uses a baked local index inside the container image; it
@@ -27,9 +28,9 @@ constraints, not setup mistakes.
   horizontally scaled multi-writer design.
 - The auth wrapper protects only `/mcp`; `/healthz` stays public for readiness
   probing.
-- `/healthz` reports local index readiness only; it does not prove upstream NVIDIA
-  availability.
-- Hosted startup now validates the configured local index before serving traffic
+- `/healthz` checks the local generation and the selected external vector replica.
+  It doesn't prove upstream NVIDIA availability.
+- Hosted startup now validates the configured generation and vector storage before serving traffic
   and requires a complete verified generation. Startup never ingests or calls
   NVIDIA. Existing standalone outputs require explicit migration or bundle import;
   invalid artifacts remain preserved for diagnosis.
@@ -71,6 +72,9 @@ constraints, not setup mistakes.
 - There is no hybrid lexical-plus-vector search layer.
 - There is no document freshness scoring, tenant isolation, or large-corpus tuning
   strategy in this repo yet.
+- External vector adapters validate complete replicas and use exact search.
+  Their verification cost grows with index size; workload-specific scaling needs
+  measurement and a separate design.
 
 ### Corpus Breadth Is Intentionally Small
 
