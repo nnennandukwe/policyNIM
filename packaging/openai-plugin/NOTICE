@@ -1,0 +1,16 @@
+PolicyNIM plugin package
+
+Package source: https://github.com/nnennandukwe/policyNIM
+The MIT license is included in LICENSE.
+
+The square SVG uses an unchanged embedded bitmap from the repository
+asset src/policynim/assets/beta/policynim_lightmode.png. Its viewport
+frames the existing shield/chip mark. Asset SHA256:
+c719b04a70e7399cd36d9587487cd7475aa6b25574c9e1a79e7922524bd9fc65
+
+The asset includes an NVIDIA mark. NVIDIA names and marks belong to their
+respective owner. The maintainer must confirm redistribution rights before
+directory submission. No endorsement is claimed.
+
+Policy documents and evaluation datasets are served remotely and retain
+their own source attribution and licenses. They aren't bundled in this ZIP.

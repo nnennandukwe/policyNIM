@@ -74,6 +74,9 @@ def register_evaluation_jobs(
     changes_job = ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=True
     )
+    cancels_job = ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
+    )
 
     def principal(operation: str) -> AuthenticatedPrincipal:
         """Require a verified principal even if a direct dispatcher bypasses HTTP authentication."""
@@ -133,7 +136,7 @@ def register_evaluation_jobs(
         )
         return EvaluationJobInfo.model_validate(result)
 
-    @server.tool(name="eval_cancel", annotations=changes_job)
+    @server.tool(name="eval_cancel", annotations=cancels_job)
     async def cancel(job_id: str, *, ctx: Context) -> EvaluationJobInfo:
         """Request cancellation; active provider cleanup drains before terminal state."""
         caller = principal("eval_cancel")
