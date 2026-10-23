@@ -706,3 +706,17 @@ def test_schema_named_pipes_are_rejected_without_waiting(
     assert result.returncode == 1
     assert "Schema must be a regular file" in result.stderr
     assert output.read_bytes() == b"retained archive"
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://review.policynim.org/sk-service-status", "https://sk-service-status.policynim.org/"],
+)
+def test_ordinary_release_slugs_arent_project_credentials(
+    tmp_path: Path, release_inputs: dict, url: str
+) -> None:
+    """Known project-key prefixes don't ban unrelated hyphenated URL words."""
+    release_inputs["websiteURL"] = url
+    assert builder.build(tmp_path / "candidate.zip", release_inputs)["status"] == (
+        "candidate_requires_live_acceptance"
+    )
