@@ -89,7 +89,7 @@ test = [
 ]
 dev = [
   "pre-commit==4.3.0",
-  "pyright==1.1.409",
+  "pyright==1.1.414",
   "ruff==0.17.1",
 ]
 release = [
