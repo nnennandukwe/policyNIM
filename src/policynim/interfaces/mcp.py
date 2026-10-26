@@ -12,6 +12,7 @@ import socket
 import sqlite3
 import sys
 import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -321,10 +322,17 @@ class _InMemoryRateLimiter:
     def __init__(self, *, max_attempts: int, window_seconds: int) -> None:
         self._max_attempts = max_attempts
         self._window_seconds = window_seconds
-        self._attempts: dict[str, list[float]] = {}
+        self._attempts: OrderedDict[str, list[float]] = OrderedDict()
 
     def allow(self, key: str, *, now: float | None = None) -> bool:
+        """Expire inactive clients before admission using nondecreasing monotonic time."""
         timestamp = time.monotonic() if now is None else now
+        # Order clients by their last accepted attempt so cleanup stops at the first live one.
+        while self._attempts:
+            oldest_attempts = next(iter(self._attempts.values()))
+            if timestamp - oldest_attempts[-1] < self._window_seconds:
+                break
+            self._attempts.popitem(last=False)
         attempts = [
             attempt
             for attempt in self._attempts.get(key, [])
@@ -335,6 +343,7 @@ class _InMemoryRateLimiter:
             return False
         attempts.append(timestamp)
         self._attempts[key] = attempts
+        self._attempts.move_to_end(key)
         return True
 
     def reset(self) -> None:

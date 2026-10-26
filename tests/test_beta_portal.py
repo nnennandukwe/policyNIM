@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
 from starlette.datastructures import Headers
 from starlette.testclient import TestClient
 
@@ -368,6 +369,53 @@ def test_beta_portal_rate_limit_uses_forwarded_client_ip(monkeypatch) -> None:
 
     assert first.status_code == 302
     assert second.status_code == 302
+
+
+@pytest.mark.parametrize(
+    ("path", "allowed_status"),
+    [("/auth/github/start", 302), ("/auth/github/callback?error=access_denied", 400)],
+)
+def test_beta_auth_routes_reclaim_expired_clients_and_preserve_limits(
+    monkeypatch, path: str, allowed_status: int
+) -> None:
+    """Exercise client churn, rejection, and exact-window recovery through HTTP."""
+    now = 0.0
+    limiter = mcp_module._InMemoryRateLimiter(max_attempts=1, window_seconds=60)
+    original_allow = limiter.allow
+    monkeypatch.setattr(limiter, "allow", lambda key: original_allow(key, now=now))
+    monkeypatch.setattr(mcp_module, "_InMemoryRateLimiter", lambda **kwargs: limiter)
+    stub = StubBetaAuthService()
+    monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
+    app = mcp_module._build_streamable_http_app(_signup_settings(rate_limit_max_attempts=1))
+
+    with TestClient(app, base_url="https://testserver") as client:
+        for address in range(1000):
+            response = client.get(
+                path,
+                headers={"x-forwarded-for": f"198.18.{address // 256}.{address % 256}"},
+                follow_redirects=False,
+            )
+            assert response.status_code == allowed_status
+        assert len(limiter._attempts) == 1000
+        headers = {"x-forwarded-for": "198.18.0.0"}
+        calls_before_block = len(stub.oauth_states)
+        now = 59.0
+        blocked = client.get(path, headers=headers, follow_redirects=False)
+        assert blocked.status_code == 429
+        assert "Retry after the rate-limit window" in blocked.text
+        assert "set-cookie" not in blocked.headers
+        assert len(stub.oauth_states) == calls_before_block
+
+        now = 60.0
+        recovered = client.get(
+            path, headers={"x-forwarded-for": "203.0.113.1"}, follow_redirects=False
+        )
+        assert recovered.status_code == allowed_status
+        assert len(limiter._attempts) == 1
+        assert (
+            client.get(path, headers=headers, follow_redirects=False).status_code == allowed_status
+        )
+        assert client.get(path, headers=headers, follow_redirects=False).status_code == 429
 
 
 def test_forwarded_client_address_parses_forwarded_header() -> None:
