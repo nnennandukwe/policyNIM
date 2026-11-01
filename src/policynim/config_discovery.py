@@ -151,7 +151,7 @@ def build_init_config_contents(
         raise ValueError("NVIDIA_API_KEY is required.")
 
     standalone = standalone_paths()
-    lines = [_env_assignment("NVIDIA_API_KEY", normalized_api_key)]
+    lines = [LITERAL_CONFIG_HEADER, _env_assignment("NVIDIA_API_KEY", normalized_api_key)]
 
     normalized_corpus_dir = normalize_init_corpus_dir(corpus_dir)
     if normalized_corpus_dir is not None:
