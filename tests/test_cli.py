@@ -2260,6 +2260,7 @@ def test_init_command_writes_config_and_prints_next_step(
     assert str(custom_corpus) in result.stdout
     assert "policynim ingest" in result.stdout
     assert config_path.read_text(encoding="utf-8") == (
+        "# policynim-literal-values-v1\n"
         "NVIDIA_API_KEY='nvapi-test-key'\n"
         f"POLICYNIM_CORPUS_DIR='{custom_corpus.as_posix()}'\n"
         f"POLICYNIM_GENERATIONS_DIR='{(data_root / 'generations').as_posix()}'\n"
@@ -2284,8 +2285,41 @@ def test_init_command_writes_checkout_dotenv_without_standalone_path_overrides(
     dotenv_path = checkout_root / ".env"
     assert result.exit_code == 0
     assert str(dotenv_path) in result.stdout
-    assert dotenv_path.read_text(encoding="utf-8") == "NVIDIA_API_KEY='nvapi-test-key'\n"
+    assert dotenv_path.read_text(encoding="utf-8") == (
+        "# policynim-literal-values-v1\nNVIDIA_API_KEY='nvapi-test-key'\n"
+    )
     assert not (config_root / "config.env").exists()
+
+
+@pytest.mark.parametrize("checkout", [False, True])
+@pytest.mark.parametrize("expanded_value", [None, "different-directory"])
+def test_init_command_preserves_literal_values_when_reopened(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    checkout: bool,
+    expanded_value: str | None,
+) -> None:
+    """Reopen CLI-generated config without interpreting user input as env templates."""
+    configure = (
+        configure_checkout_cli_environment if checkout else configure_standalone_cli_environment
+    )
+    configure(monkeypatch, tmp_path)
+    if expanded_value is None:
+        monkeypatch.delenv("AUDIT_INIT_LITERAL", raising=False)
+    else:
+        monkeypatch.setenv("AUDIT_INIT_LITERAL", expanded_value)
+    corpus = tmp_path / "${AUDIT_INIT_LITERAL}"
+    corpus.mkdir()
+    secret = "synthetic-${AUDIT_INIT_LITERAL}-'quoted'-\\value"
+
+    result = runner.invoke(app, ["init"], input=f"{secret}\n{corpus}\n")
+
+    assert result.exit_code == 0, result.output
+    settings = Settings()
+    assert settings.corpus_dir is not None
+    assert settings.corpus_dir == corpus.resolve()
+    assert settings.corpus_dir.is_dir()
+    assert settings.nvidia_api_key == secret
 
 
 def test_init_command_rejects_blank_required_api_key(
