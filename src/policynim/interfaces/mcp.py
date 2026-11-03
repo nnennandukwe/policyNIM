@@ -1231,7 +1231,7 @@ def _register_beta_routes(
 
 async def _read_beta_key_submission(request: Request) -> str | None:
     """Accept one small URL-encoded form field without buffering an unbounded body."""
-    if request.headers.get("content-type", "").split(";", 1)[0] != (
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != (
         "application/x-www-form-urlencoded"
     ):
         return None

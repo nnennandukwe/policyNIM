@@ -332,3 +332,27 @@ def test_equivalent_signature_encoding_cant_bypass_submission_replay(portal) -> 
     assert replay.status_code in (303, 400)
     assert service.authenticate_api_key(token=secret).status == "authorized"
     assert len(store.list_audit_events(event_type="api_key_rotated")) == 1
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "Application/X-WWW-Form-Urlencoded",
+        "application/x-www-form-urlencoded; charset=UTF-8",
+        "APPLICATION/X-WWW-FORM-URLENCODED ; charset=UTF-8",
+    ],
+)
+def test_form_media_type_accepts_case_and_parameter_variants(portal, content_type) -> None:
+    """Valid media-type capitalization and parameters mustn't reject an issued action."""
+    from urllib.parse import urlencode
+
+    client, service, store, account = portal
+    form = submission_from(client.get("/beta"))
+    response = client.post(
+        "/beta/api-key/regenerate",
+        content=urlencode(form),
+        headers={"content-type": content_type},
+    )
+    assert response.status_code == 200
+    assert service.authenticate_api_key(token=secret_from(response)).status == "authorized"
+    assert len(store.list_audit_events(event_type="api_key_rotated")) == 1
