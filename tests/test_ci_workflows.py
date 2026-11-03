@@ -70,8 +70,8 @@ def _assert_workflow_pins(path: Path) -> None:
     for action, ref, version in _workflow_uses(path):
         if action == "pypa/gh-action-pypi-publish":
             assert path.resolve() == RELEASE_WORKFLOW.resolve()
-            assert ref == "cef221092ed1bacb1cc03d23a2d87d1d172e277b"
-            assert version == "v1.14.0"
+            assert ref == "7245906fb61fa33a13554f9d5fb856fe61758086"
+            assert version == "v1.14.3"
             continue
         assert re.fullmatch(r"[0-9a-f]{40}", ref), (path, action, ref)
         assert version is not None, (path, action)
