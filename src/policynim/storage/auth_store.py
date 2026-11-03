@@ -226,12 +226,38 @@ class AuthStore:
         key_prefix: str,
         key_hash: str,
         now: datetime,
-    ) -> BetaAccount:
-        """Revoke the current active key and persist a new one atomically."""
+        submission_hash: str | None = None,
+        submission_expires_at: datetime | None = None,
+    ) -> BetaAccount | None:
+        """Commit one rotation, returning no account when its action wasn't inserted."""
         with closing(self._connect()) as conn:
             _begin_immediate(conn)
             try:
                 self._require_account(conn, account_id)
+                if submission_hash is not None:
+                    if submission_expires_at is None:
+                        raise ValueError("A submission hash requires its expiry timestamp.")
+                    conn.execute(
+                        "DELETE FROM api_key_submissions WHERE expires_at <= ?", (_iso_utc(now),)
+                    )
+                    inserted = conn.execute(
+                        """
+                        INSERT INTO api_key_submissions
+                            (submission_hash, account_id, expires_at)
+                        SELECT ?, ?, ? WHERE ? > ?
+                        ON CONFLICT(submission_hash) DO NOTHING
+                        """,
+                        (
+                            submission_hash,
+                            account_id,
+                            _iso_utc(submission_expires_at),
+                            _iso_utc(submission_expires_at),
+                            _iso_utc(now),
+                        ),
+                    )
+                    if inserted.rowcount == 0:
+                        conn.execute("COMMIT")
+                        return None
                 conn.execute(
                     (
                         "UPDATE api_keys SET revoked_at = ? "
@@ -530,6 +556,16 @@ class AuthStore:
                     PRIMARY KEY (account_id, usage_date),
                     FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS api_key_submissions (
+                    submission_hash TEXT PRIMARY KEY,
+                    account_id INTEGER NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_key_submissions_expiry
+                ON api_key_submissions(expires_at);
 
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

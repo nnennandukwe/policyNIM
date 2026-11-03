@@ -22,7 +22,7 @@ from ipaddress import IPv6Address, ip_address
 from pathlib import Path
 from threading import BoundedSemaphore, Event, Lock
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import anyio
 from anyio import to_thread
@@ -51,9 +51,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from policynim.agent_workflows import agent_workflow_cards
 from policynim.errors import (
+    ApiKeySubmissionReplayed,
     ConfigurationError,
     GenerationError,
     IndexCompatibilityError,
+    InvalidApiKeySubmission,
     InvalidPolicyDocumentError,
     MissingIndexError,
     PolicyContextError,
@@ -1070,7 +1072,12 @@ def _register_beta_routes(
         usage = await _run_sync_until_complete(
             partial(beta_auth_service.get_portal_usage, account_id)
         )
-        return _render_beta_dashboard(settings, account=account, usage=usage)
+        submission_id = await _run_sync_until_complete(
+            partial(beta_auth_service.create_api_key_submission, account_id=account_id)
+        )
+        return _render_beta_dashboard(
+            settings, account=account, usage=usage, submission_id=submission_id
+        )
 
     @server.custom_route(_AUTH_GITHUB_START_PATH, methods=["GET"], include_in_schema=False)
     async def github_start(request: Request) -> Response:
@@ -1145,6 +1152,13 @@ def _register_beta_routes(
         account_id = _require_beta_session_account_id(request)
         if account_id is None:
             return RedirectResponse(_BETA_PATH, status_code=302)
+        submission_id = await _read_beta_key_submission(request)
+        if submission_id is None:
+            return _render_beta_landing(
+                settings,
+                message="This key-generation form is invalid. Open /beta and try again.",
+                status_code=400,
+            )
         if account_id in regenerating_accounts:
             return _render_beta_landing(
                 settings,
@@ -1162,9 +1176,26 @@ def _register_beta_routes(
             if account is None:
                 request.session.clear()
                 return RedirectResponse(_BETA_PATH, status_code=302)
+            next_submission_id = await _run_sync_until_complete(
+                partial(beta_auth_service.create_api_key_submission, account_id=account_id)
+            )
             try:
                 issued_key = await _run_sync_until_complete(
-                    partial(beta_auth_service.issue_api_key, account_id=account_id)
+                    partial(
+                        beta_auth_service.issue_api_key,
+                        account_id=account_id,
+                        submission_id=submission_id,
+                    )
+                )
+            except ApiKeySubmissionReplayed:
+                return RedirectResponse(
+                    _BETA_PATH, status_code=303, headers={"Cache-Control": "no-store"}
+                )
+            except InvalidApiKeySubmission:
+                return _render_beta_landing(
+                    settings,
+                    message="This key-generation form expired or is invalid. Open /beta and retry.",
+                    status_code=400,
                 )
             except PolicyNIMError as exc:
                 usage = await _run_sync_until_complete(
@@ -1176,6 +1207,7 @@ def _register_beta_routes(
                     usage=usage,
                     message=str(exc),
                     message_tone="error",
+                    submission_id=next_submission_id,
                 )
             return _render_beta_dashboard(
                 settings,
@@ -1186,6 +1218,7 @@ def _register_beta_routes(
                     "API key generated. Export `POLICYNIM_TOKEN` before connecting your client."
                 ),
                 message_tone="success",
+                submission_id=next_submission_id,
             )
         finally:
             regenerating_accounts.remove(account_id)
@@ -1194,6 +1227,25 @@ def _register_beta_routes(
     async def beta_logout(request: Request) -> Response:
         request.session.clear()
         return RedirectResponse(_BETA_PATH, status_code=302)
+
+
+async def _read_beta_key_submission(request: Request) -> str | None:
+    """Accept one small URL-encoded form field without buffering an unbounded body."""
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != (
+        "application/x-www-form-urlencoded"
+    ):
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 1024:
+            return None
+        body.extend(chunk)
+    try:
+        fields = parse_qs(body.decode("ascii"), strict_parsing=True, max_num_fields=1)
+    except (ValueError, UnicodeError):
+        return None
+    values = fields.get("submission_id", [])
+    return values[0] if len(values) == 1 and 1 <= len(values[0]) <= 256 else None
 
 
 def _register_health_route(server: MCPServer, settings: Settings) -> None:
@@ -1338,8 +1390,13 @@ def _render_beta_template(
     context: dict[str, object],
     status_code: int = 200,
 ) -> HTMLResponse:
+    """Render portal HTML without retaining account or credential pages in caches."""
     template = _beta_template_environment().get_template(template_name)
-    return HTMLResponse(template.render(**context), status_code=status_code)
+    return HTMLResponse(
+        template.render(**context),
+        status_code=status_code,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
 
 
 def _beta_usage_percent(usage: BetaUsageSnapshot) -> int:
@@ -1415,10 +1472,12 @@ def _render_beta_dashboard(
     *,
     account: BetaAccount,
     usage: BetaUsageSnapshot,
+    submission_id: str,
     new_api_key: str | None = None,
     message: str | None = None,
     message_tone: str = "warning",
 ) -> HTMLResponse:
+    """Render one account dashboard with a fresh key-generation form action."""
     portal_url = _derive_beta_url(settings) or _BETA_PATH
     mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
     current_key = account.api_key_prefix or "No active key"
@@ -1484,6 +1543,7 @@ def _render_beta_dashboard(
                 "usage_date": usage.usage_date.isoformat(),
             },
             "api_key_regenerate_path": _BETA_API_KEY_REGENERATE_PATH,
+            "submission_id": submission_id,
             "logout_path": _BETA_LOGOUT_PATH,
             "notices": notices,
             "new_key": new_key_context,

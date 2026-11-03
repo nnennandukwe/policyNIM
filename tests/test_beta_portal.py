@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 
 import pytest
@@ -53,7 +54,14 @@ class StubBetaAuthService:
         assert account_id == self._account.account_id
         return self._usage
 
-    def issue_api_key(self, *, account_id: int) -> BetaIssuedApiKey:
+    def create_api_key_submission(self, *, account_id: int) -> str:
+        """Provide a form action for isolated rendering tests."""
+        return "test-submission-" + "0" * 16
+
+    def issue_api_key(
+        self, *, account_id: int, submission_id: str | None = None
+    ) -> BetaIssuedApiKey:
+        """Return a fixed display fixture; real replay checks use SQLite integration."""
         assert account_id == self._account.account_id
         self._account = self._account.model_copy(update={"api_key_prefix": "pnm_rotated"})
         return BetaIssuedApiKey(
@@ -243,6 +251,7 @@ def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
 
 
 def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> None:
+    """Display the secret after submitting the rendered generation form."""
     stub = StubBetaAuthService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
 
@@ -254,7 +263,10 @@ def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> Non
             f"/auth/github/callback?state={stub.oauth_states[0]}&code=oauth-code",
             follow_redirects=False,
         )
-        response = client.post("/beta/api-key/regenerate")
+        form = client.get("/beta")
+        submission_id = re.search(r'name="submission_id" value="([^"]+)"', form.text)
+        assert submission_id is not None
+        response = client.post("/beta/api-key/regenerate", data={"submission_id": submission_id[1]})
 
     assert response.status_code == 200
     assert "pnm_new_secret" in response.text

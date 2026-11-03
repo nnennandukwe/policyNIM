@@ -57,6 +57,7 @@ def test_auth_store_upserts_github_accounts_without_duplication(tmp_path) -> Non
 
 
 def test_auth_store_rotates_keys_and_revokes_previous_secret(tmp_path) -> None:
+    """Return the new key's account and revoke the earlier credential atomically."""
     store = AuthStore(path=tmp_path / "auth.sqlite3")
     now = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
     account = store.upsert_account_from_github(
@@ -82,6 +83,7 @@ def test_auth_store_rotates_keys_and_revokes_previous_secret(tmp_path) -> None:
     assert store.authenticate_api_key(key_hash=_hash_api_key("pnm_first_secret")) is None
     authenticated = store.authenticate_api_key(key_hash=_hash_api_key("pnm_second_secret"))
     assert authenticated is not None
+    assert rotated is not None
     assert authenticated.account_id == rotated.account_id
     assert authenticated.api_key_prefix == "pnm_second"
 
@@ -245,12 +247,14 @@ def _account_with_key(store: AuthStore, now: datetime) -> BetaAccount:
     account = store.upsert_account_from_github(
         github_user_id=123, github_login="octocat", email=None, now=now
     )
-    return store.rotate_api_key(
+    rotated = store.rotate_api_key(
         account_id=account.account_id,
         key_prefix="pnm_test",
         key_hash=_hash_api_key("pnm_test_secret"),
         now=now,
     )
+    assert rotated is not None
+    return rotated
 
 
 @pytest.mark.parametrize("key_state", ["unknown", "revoked"])

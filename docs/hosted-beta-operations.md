@@ -50,6 +50,16 @@ Hosted beta notes:
   An overlapping request receives HTTP `409`; wait for the first request and
   refresh `/beta` before trying again. Later deliberate rotations still revoke
   the previous key. This guard doesn't coordinate independent server processes.
+- Each generation form carries a signed, account-bound submission ID that expires
+  after 30 minutes. Reading forms doesn't write to the database. SQLite records
+  each completed action's nonce hash atomically with key rotation and the audit
+  event. Refreshing or retrying a completed form redirects to `/beta` and
+  preserves the active key, including across server processes and restarts.
+  Expired or invalid forms require reopening `/beta`; they can't rotate a key.
+- The first successful generation response shows the full secret once. Portal
+  pages use `Cache-Control: no-store`. If that response is lost, reopen `/beta`
+  and deliberately generate a new key to recover access. Retrying the earlier
+  submission won't reveal the lost secret or replace its key.
 - replace `https://<railway-domain>/mcp` with the deployed Railway beta URL
 - self-serve users should start from `https://<railway-domain>/beta`, not from
   an operator-issued secret
