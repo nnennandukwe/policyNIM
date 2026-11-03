@@ -92,6 +92,7 @@
       </p>
       <div class="beta-button-row">
         <form method="post" action="{{ api_key_regenerate_path }}">
+          <input type="hidden" name="submission_id" value="{{ submission_id }}">
           <button type="submit" class="beta-button beta-button--primary">
             Generate or Rotate API Key
           </button>

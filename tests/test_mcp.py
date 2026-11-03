@@ -218,7 +218,13 @@ class ControlledKeyRotationService:
         """Return a stable snapshot without storage access."""
         return self.usage
 
-    def issue_api_key(self, *, account_id: int) -> BetaIssuedApiKey:
+    def create_api_key_submission(self, *, account_id: int) -> str:
+        """Keep these scheduling tests independent of the real submission store."""
+        return "fixture-submission-" + "0" * 13
+
+    def issue_api_key(
+        self, *, account_id: int, submission_id: str | None = None
+    ) -> BetaIssuedApiKey:
         """Block only the first rotation while allowing other accounts to make progress."""
         with self._lock:
             self.issue_calls.append(account_id)
@@ -1876,11 +1882,14 @@ def test_key_regeneration_rejects_account_overlap_and_keeps_other_accounts_indep
         ):
             await _login_for_key_rotation(first_client, 1)
             await _login_for_key_rotation(second_client, 2)
-            first = asyncio.create_task(first_client.post("/beta/api-key/regenerate"))
+            first = asyncio.create_task(
+                first_client.post("/beta/api-key/regenerate", data={"submission_id": "0" * 32})
+            )
             try:
                 await _wait_until_set(service.started)
                 duplicate = await asyncio.wait_for(
-                    first_client.post("/beta/api-key/regenerate"), timeout=0.5
+                    first_client.post("/beta/api-key/regenerate", data={"submission_id": "0" * 32}),
+                    timeout=0.5,
                 )
                 assert duplicate.status_code == 409
                 assert "already in progress" in duplicate.text
@@ -1889,7 +1898,10 @@ def test_key_regeneration_rejects_account_overlap_and_keeps_other_accounts_indep
                 assert service.issue_calls == [1]
                 assert service.account_reads == [1]
                 independent = await asyncio.wait_for(
-                    second_client.post("/beta/api-key/regenerate"), timeout=0.5
+                    second_client.post(
+                        "/beta/api-key/regenerate", data={"submission_id": "0" * 32}
+                    ),
+                    timeout=0.5,
                 )
                 assert independent.status_code == 200
                 assert "fixture-key-2-1" in independent.text
@@ -1929,8 +1941,10 @@ def test_key_regeneration_releases_account_guard_after_failure(monkeypatch, fail
         ) as client:
             await _login_for_key_rotation(client, 1)
             with pytest.raises(ValueError, match="fixture .* failure"):
-                await client.post("/beta/api-key/regenerate")
-            recovered = await client.post("/beta/api-key/regenerate")
+                await client.post("/beta/api-key/regenerate", data={"submission_id": "0" * 32})
+            recovered = await client.post(
+                "/beta/api-key/regenerate", data={"submission_id": "0" * 32}
+            )
             assert recovered.status_code == 200
             assert "API key generated" in recovered.text
 
@@ -1960,9 +1974,17 @@ def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
                 if cancellation_kind == "anyio":
                     with anyio.CancelScope() as scope:
                         scopes.append(scope)
-                        responses.append(await client.post("/beta/api-key/regenerate"))
+                        responses.append(
+                            await client.post(
+                                "/beta/api-key/regenerate", data={"submission_id": "0" * 32}
+                            )
+                        )
                 else:
-                    responses.append(await client.post("/beta/api-key/regenerate"))
+                    responses.append(
+                        await client.post(
+                            "/beta/api-key/regenerate", data={"submission_id": "0" * 32}
+                        )
+                    )
 
             request = asyncio.create_task(invoke())
             try:
@@ -1974,7 +1996,8 @@ def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
                 await asyncio.sleep(0)
                 assert not request.done()
                 duplicate = await asyncio.wait_for(
-                    client.post("/beta/api-key/regenerate"), timeout=0.5
+                    client.post("/beta/api-key/regenerate", data={"submission_id": "0" * 32}),
+                    timeout=0.5,
                 )
                 assert duplicate.status_code == 409
                 assert service.issue_calls == [1]
@@ -1986,7 +2009,9 @@ def test_key_regeneration_holds_guard_until_cancelled_issuance_finishes(
                 assert scopes[0].cancelled_caught
             else:
                 assert request.cancelled()
-            recovered = await client.post("/beta/api-key/regenerate")
+            recovered = await client.post(
+                "/beta/api-key/regenerate", data={"submission_id": "0" * 32}
+            )
             assert recovered.status_code == 200
             assert "fixture-key-1-2" in recovered.text
             assert service.issue_calls == [1, 1]

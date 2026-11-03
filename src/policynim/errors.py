@@ -11,6 +11,14 @@ class PolicyNIMError(Exception):
         self.failure_class = failure_class
 
 
+class ApiKeySubmissionReplayed(PolicyNIMError):
+    """Signal that a completed key-generation submission mustn't rotate again."""
+
+
+class InvalidApiKeySubmission(PolicyNIMError):
+    """Reject an unknown, expired, or account-mismatched generation submission."""
+
+
 class IndexReadLimitError(PolicyNIMError):
     """Refuse a bounded row read before materializing an oversized payload."""
 

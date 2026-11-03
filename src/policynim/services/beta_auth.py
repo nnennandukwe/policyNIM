@@ -6,12 +6,20 @@ import hashlib
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
+from itsdangerous import BadSignature, URLSafeSerializer
+from pydantic import BaseModel, ValidationError
 
-from policynim.errors import ConfigurationError, PolicyNIMError, ProviderError
+from policynim.errors import (
+    ApiKeySubmissionReplayed,
+    ConfigurationError,
+    InvalidApiKeySubmission,
+    PolicyNIMError,
+    ProviderError,
+)
 from policynim.public_urls import public_route_url
 from policynim.runtime_paths import resolve_runtime_path
 from policynim.services.authorization import legacy_identity, principal_identity
@@ -38,6 +46,14 @@ class _GitHubIdentity:
     github_user_id: int
     github_login: str
     email: str | None
+
+
+class _ApiKeySubmission(BaseModel):
+    """Bind one signed generation action to its account and expiry."""
+
+    account_id: int
+    nonce: str
+    expires_at: int
 
 
 class BetaAuthService:
@@ -134,7 +150,45 @@ class BetaAuthService:
             now=self._utc_now(),
         )
 
-    def issue_api_key(self, *, account_id: int) -> BetaIssuedApiKey:
+    def _submission_serializer(self) -> URLSafeSerializer:
+        """Separate generation form signatures from signed browser-session cookies."""
+        secret = self._settings.beta_session_secret
+        if secret is None:
+            raise ConfigurationError("A session secret is required for key-generation forms.")
+        return URLSafeSerializer(secret, salt="policynim-beta-key-submission-v1")
+
+    def create_api_key_submission(self, *, account_id: int) -> str:
+        """Issue an account-bound signed form action without writing pending rows."""
+        submission = _ApiKeySubmission(
+            account_id=account_id,
+            nonce=secrets.token_urlsafe(24),
+            expires_at=int((self._utc_now() + timedelta(minutes=30)).timestamp()),
+        )
+        return self._submission_serializer().dumps(submission.model_dump())
+
+    def _validate_api_key_submission(
+        self, submission_id: str, account_id: int
+    ) -> _ApiKeySubmission:
+        """Verify form authenticity, ownership and expiry before attempting rotation."""
+        try:
+            submission = _ApiKeySubmission.model_validate(
+                self._submission_serializer().loads(submission_id)
+            )
+            if (
+                submission.account_id != account_id
+                or len(submission.nonce) != 32
+                or submission.expires_at <= self._utc_now().timestamp()
+            ):
+                raise ValueError("Invalid submission claims")
+            return submission
+        except (BadSignature, ValidationError, ValueError, OverflowError) as exc:
+            raise InvalidApiKeySubmission(
+                "The key-generation submission is invalid or expired."
+            ) from exc
+
+    def issue_api_key(
+        self, *, account_id: int, submission_id: str | None = None
+    ) -> BetaIssuedApiKey:
         """Create a new active API key for one hosted beta account."""
         account = self._require_account(account_id)
         if account.status != "active":
@@ -142,17 +196,35 @@ class BetaAuthService:
                 f"Hosted beta account {account.github_login!r} is suspended and cannot issue keys."
             )
 
+        submission = (
+            self._validate_api_key_submission(submission_id, account_id)
+            if submission_id is not None
+            else None
+        )
+        usage = self.get_portal_usage(account_id)
         api_key = "pnm_" + secrets.token_urlsafe(24)
         account = self._store.rotate_api_key(
             account_id=account_id,
             key_prefix=api_key[:16],
             key_hash=_hash_api_key(api_key),
             now=self._utc_now(),
+            submission_hash=(
+                _hash_api_key(f"{account_id}:{submission.nonce}")
+                if submission is not None
+                else None
+            ),
+            submission_expires_at=(
+                datetime.fromtimestamp(submission.expires_at, tz=UTC)
+                if submission is not None
+                else None
+            ),
         )
+        if account is None:
+            raise ApiKeySubmissionReplayed("This submission already generated a key.")
         return BetaIssuedApiKey(
             account=account,
             api_key=api_key,
-            usage=self.get_portal_usage(account_id),
+            usage=usage,
         )
 
     def authenticate_api_key(self, *, token: str | None) -> BetaAuthDecision:
