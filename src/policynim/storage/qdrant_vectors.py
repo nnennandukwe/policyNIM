@@ -125,6 +125,8 @@ class QdrantVectors:
                     raise VectorStorageError("Qdrant contains unexpected records.")
                 if offset is None:
                     break
+                if not result["points"]:
+                    raise VectorStorageError("Qdrant returned an empty continuation page.")
                 if str(offset) in seen_offsets:
                     raise VectorStorageError("Qdrant pagination didn't advance.")
                 seen_offsets.add(str(offset))
