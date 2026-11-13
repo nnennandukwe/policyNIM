@@ -138,7 +138,11 @@ def test_settings_preserves_nvidia_alias_env_precedence(
     process_key: str | None,
     expected: str,
 ) -> None:
-    """Keep blank shell values explicit and let an unset alias use the env file."""
+    """Preserve existing shell-over-file credential precedence during upgrades.
+
+    A blank process value still overrides file credentials. Only an absent
+    process alias allows the configured file key to load.
+    """
     clear_config_precedence_env(monkeypatch)
     config = tmp_path / "compatibility.env"
     write_env_file(config, NVIDIA_API_KEY="'config-key'")
