@@ -128,6 +128,31 @@ def test_settings_reads_prefixed_env_and_nvidia_alias(monkeypatch: pytest.Monkey
     assert settings.nvidia_api_key == "test-key"
 
 
+@pytest.mark.parametrize(
+    ("process_key", "expected"),
+    [(None, "config-key"), ("", ""), ("shell-key", "shell-key")],
+)
+def test_settings_preserves_nvidia_alias_env_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    process_key: str | None,
+    expected: str,
+) -> None:
+    """Keep blank shell values explicit and let an unset alias use the env file."""
+    clear_config_precedence_env(monkeypatch)
+    config = tmp_path / "compatibility.env"
+    write_env_file(config, NVIDIA_API_KEY="'config-key'")
+    if process_key is None:
+        monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("NVIDIA_API_KEY", process_key)
+
+    settings_type = cast(Any, Settings)
+    settings: Settings = settings_type(_env_file=config)
+
+    assert settings.nvidia_api_key == expected
+
+
 def test_settings_still_allows_constructor_field_names() -> None:
     settings = Settings(default_top_k=6, mcp_port=9001)
 
