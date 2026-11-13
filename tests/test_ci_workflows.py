@@ -362,7 +362,7 @@ def test_fresh_wheel_install_uses_locked_hashed_dependencies() -> None:
 
 
 def test_package_evidence_round_trip_uses_pinned_download_after_upload() -> None:
-    """Exercise artifact downloads on every offline package matrix combination."""
+    """Bind each matrix rerun to its own receipt without accepting stale evidence."""
     jobs = yaml.safe_load(_read_text(CI_WORKFLOW))["jobs"]
     job = jobs["package-offline"]
     assert job["strategy"]["matrix"] == {
@@ -384,8 +384,10 @@ def test_package_evidence_round_trip_uses_pinned_download_after_upload() -> None
         "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
     )
     assert upload["with"]["path"] == "package-evidence.json"
+    assert "${{ github.run_attempt }}" in upload["with"]["name"]
     assert download["with"] == {
-        "name": upload["with"]["name"],
+        "artifact-ids": "${{ steps." + upload["id"] + ".outputs.artifact-id }}",
+        "merge-multiple": True,
         "path": "downloaded-package-evidence",
     }
     assert verification["shell"] == "bash"
