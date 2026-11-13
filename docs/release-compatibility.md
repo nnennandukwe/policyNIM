@@ -61,7 +61,7 @@ reviewed lockfile. Don't silently replace either pin during release verification
 
 ## Final release gate
 
-Retain the CI `package-evidence-<os>-<python>` artifacts and separate real-client,
-live-provider, hosted-state and rollback receipts. Repeat affected checks after
+Retain the CI `package-evidence-<os>-<python>-<attempt>` artifacts and separate
+real-client, live-provider, hosted-state and rollback receipts. Repeat affected checks after
 integration changes. A passing candidate matrix doesn't complete #104 while
 client acceptance, production identity or rollback evidence is missing.
