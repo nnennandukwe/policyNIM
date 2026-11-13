@@ -29,7 +29,7 @@ NODE24_ACTION_MAJOR_COMMENTS = {
     "actions/setup-python": {"v6", "v7"},
     "actions/upload-artifact": {"v6", "v7"},
     "actions/download-artifact": {"v7", "v8"},
-    "astral-sh/setup-uv": {"v8"},
+    "astral-sh/setup-uv": {"v8", "v10"},
 }
 
 
@@ -123,6 +123,40 @@ def test_setup_python_still_requires_full_commit_pins(
     """Require immutable setup-python references even for an accepted major."""
     path = tmp_path / "workflow.yml"
     path.write_text(f"uses: actions/setup-python@{reference} # {version}\n")
+    with pytest.raises(AssertionError):
+        _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize(
+    ("reference", "version"),
+    [
+        ("fac544c07dec837d0ccb6301d7b5580bf5edae39", "v8.2.0"),
+        ("68559e99cc807c1eb7e9238fd43a15bba460eec2", "v10.3.3"),
+    ],
+)
+def test_setup_uv_accepts_reviewed_node24_majors(
+    tmp_path: Path, reference: str, version: str
+) -> None:
+    """Accept setup-uv commits whose action.yml declares the Node 24 runtime."""
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: astral-sh/setup-uv@{reference} # {version}\n")
+    _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize("version", ["v7", "v9", "v11"])
+def test_setup_uv_rejects_unreviewed_majors(tmp_path: Path, version: str) -> None:
+    """Keep setup-uv majors without a runtime review outside the allowlist."""
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: astral-sh/setup-uv@{'a' * 40} # {version}.0.0\n")
+    with pytest.raises(AssertionError):
+        _assert_workflow_pins(path)
+
+
+@pytest.mark.parametrize("reference", ["main", "v10", "68559e9", "A" * 40])
+def test_setup_uv_still_requires_full_commit_pins(tmp_path: Path, reference: str) -> None:
+    """Require immutable setup-uv references after accepting the new major."""
+    path = tmp_path / "workflow.yml"
+    path.write_text(f"uses: astral-sh/setup-uv@{reference} # v10.3.3\n")
     with pytest.raises(AssertionError):
         _assert_workflow_pins(path)
 
