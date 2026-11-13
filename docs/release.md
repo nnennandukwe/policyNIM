@@ -54,9 +54,10 @@ sources, imports the checksum-pinned public generation with source matching, and
 checks the served catalog identity. It also runs the original synthetic offline
 evaluation and actual stdio/HTTP discovery for MCP protocols `2026-07-28` and
 `2025-11-25`, including rejection of unauthenticated HTTP requests.
-Each matrix job uploads its public `package-evidence.json` receipt, downloads the
-same named artifact into a separate directory, and requires byte-for-byte equality
-with the original. Downloads retain the action's default digest-mismatch error;
+Each matrix job uploads its public `package-evidence.json` receipt under a name
+that includes the run attempt. It downloads that upload's artifact ID into a
+separate directory and requires byte-for-byte equality with the original.
+Downloads retain the action's default digest-mismatch error;
 missing or changed receipts fail the job. This credential-free round trip covers
 artifact transport on both operating systems and Python versions without
 dispatching a release or making provider calls.
