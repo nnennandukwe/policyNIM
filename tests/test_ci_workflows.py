@@ -161,6 +161,18 @@ def test_setup_uv_still_requires_full_commit_pins(tmp_path: Path, reference: str
         _assert_workflow_pins(path)
 
 
+def test_setup_uv_preserves_cache_pruning() -> None:
+    """Keep v8's cache pruning after upgrading to an action with a different default."""
+    matched = 0
+    for path in WORKFLOW_FILES:
+        for job in yaml.safe_load(_read_text(path))["jobs"].values():
+            for step in job.get("steps", []):
+                if step.get("uses", "").startswith("astral-sh/setup-uv@"):
+                    matched += 1
+                    assert step.get("with", {}).get("prune-cache") is True, path
+    assert matched
+
+
 def test_ci_pytest_gate_excludes_all_live_markers() -> None:
     """Ensure normal CI cannot discover live or Docker-only tests by accident."""
     text = _read_text(CI_WORKFLOW)
