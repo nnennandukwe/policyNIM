@@ -8,7 +8,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable
-from contextlib import ExitStack, closing, nullcontext
+from contextlib import ExitStack, nullcontext
 from functools import wraps
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -34,6 +34,7 @@ from policynim.job_types import (
 )
 from policynim.operations import (
     OperationBudget,
+    ResourceStack,
     check_budget,
     emit_operation_event,
     operation_correlation,
@@ -593,30 +594,50 @@ class EvaluationJobWorker:
                 """Hold shared quota admission through every case and provider cleanup."""
                 nonlocal execution_started
                 execution_started = True
-                with operation_scope(budget):
-                    budget.remaining()
-                    _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
-                    budget.remaining()
-                    settings = self._restore(snapshot, archive)
-                    budget.remaining()
-                    clients = NVIDIAClients()
+
+                def close_owned(resource: CaseEvaluator | NVIDIAClients, kind: str) -> None:
+                    """Expose sanitized cleanup failures while retaining the original work error."""
                     try:
-                        with borrow_clients(clients):
-                            with closing(self.evaluator_factory(settings)) as evaluator:
-                                for case in snapshot.suite.cases:
-                                    budget.remaining()
-                                    self.store.begin_case(
-                                        job.job_id, self.worker_token, case.case_id
-                                    )
-                                    result = evaluator.evaluate_case(
-                                        snapshot.suite,
-                                        case.case_id,
-                                        rerank_enabled=snapshot.configuration.rerank_enabled,
-                                    )
-                                    self.store.save_case(job.job_id, self.worker_token, result)
-                                    budget.remaining()
-                    finally:
-                        clients.close()
+                        resource.close()
+                    except BaseException as exc:
+                        emit_operation_event(
+                            level=logging.ERROR,
+                            event="evaluation.job_cleanup_failure",
+                            phase="worker_cleanup",
+                            job_id=job.job_id,
+                            resource_kind=kind,
+                            **safe_exception_diagnostics(exc),
+                        )
+                        raise
+
+                try:
+                    with operation_scope(budget), ResourceStack() as resources:
+                        budget.remaining()
+                        _, archive = self.store.captured_inputs(job.job_id, self.worker_token)
+                        budget.remaining()
+                        settings = self._restore(snapshot, archive)
+                        budget.remaining()
+                        clients = NVIDIAClients()
+                        resources.callback(close_owned, clients, "provider_clients")
+                        with borrow_clients(clients), ResourceStack() as evaluator_resources:
+                            evaluator = self.evaluator_factory(settings)
+                            evaluator_resources.callback(close_owned, evaluator, "evaluator")
+                            for case in snapshot.suite.cases:
+                                budget.remaining()
+                                self.store.begin_case(job.job_id, self.worker_token, case.case_id)
+                                result = evaluator.evaluate_case(
+                                    snapshot.suite,
+                                    case.case_id,
+                                    rerank_enabled=snapshot.configuration.rerank_enabled,
+                                )
+                                self.store.save_case(job.job_id, self.worker_token, result)
+                                budget.remaining()
+                except KeyboardInterrupt as exc:
+                    self._stop.set()
+                    raise ProviderError(
+                        "Evaluation worker interrupted; inspect the retained job.",
+                        failure_class="interrupted",
+                    ) from exc
 
             admission = OperationAdmissionService(self.service.settings)
             accounting_cancelled = False
