@@ -1,7 +1,8 @@
 # Release compatibility and evidence
 
-This matrix records the candidate's tested interfaces. It doesn't declare a new
-package release or production rollout. Final release evidence must name the exact
+This matrix records tested interfaces and their dated acceptance scopes. The
+[stable-baseline evidence matrix](evidence/stable-baseline-acceptance.md) links
+published 0.2.1/0.3.0 records and later OAuth acceptance. Each record names its
 application commit, dependency-lock digest, policy generation, artifact checksums,
 client version and observed deployment identity.
 
@@ -31,17 +32,24 @@ jobs succeed in production.
 
 | Client or mode | Version or configuration | Current acceptance state |
 | --- | --- | --- |
-| Codex CLI | `0.155.1` observed locally | Real tool/resource/error/cancellation acceptance is pending under #104. |
-| Claude Code | `2.1.283` observed locally | Real tool/resource/error/cancellation acceptance is pending under #104. |
+| Codex CLI | `0.155.1` | Actual stdio/authenticated HTTP captures at `3cfb347` negotiated `2025-06-18`, read catalog/policy resources and refused invalid search input. Native cancellation/job execution wasn't tested in these captures. |
+| Claude Code | `2.1.283` | The same resource/error cases passed at `3cfb347`; stdio negotiated `2025-11-25`, authenticated HTTP `2026-07-28`. Native cancellation/job execution wasn't tested in these captures. |
 | Local stdio | Process launch, local provider credentials | SDK transport checks pass; no HTTP bearer authorization applies. |
-| Authenticated HTTP | Configured bearer or beta keys | Package checks cover successful discovery and missing-token rejection. Broader operation and legacy-key transition acceptance remains separate. |
-| OAuth HTTP | Configurable issuer/introspection foundation | #97 remains open. Production has no selected issuer or registered client flow; Keycloak remains a documented option. |
+| Authenticated HTTP | Configured bearer or beta keys | Installed SDK checks cover discovery, errors, key rotation/revocation, resources and job boundaries. Retained database/configuration and automated beta-key tests cover migration; individual existing beta-key plaintext wasn't available for live replay. |
+| OAuth HTTP | Keycloak `26.7.5`, PostgreSQL `17.11`, public PKCE client `policynim-chatgpt` | [#97 acceptance](https://github.com/nnennandukwe/policyNIM/issues/97#issuecomment-6376394443) records token acquisition, negative tokens/scopes, refresh/revocation, restore and actual ChatGPT linking/search on `b3ee280`. Experimental Resource Indicators and explicit legacy-key compatibility remain operating limits. |
 | Auth-disabled HTTP | Trusted local development | It has no authenticated principal. Production must require authentication; principal quota claims don't apply to this mode. |
 
 Record the actual coding-client version used in each acceptance run. Don't
 replace a failed or skipped client run with an SDK discovery result. OAuth
 acceptance requires a real configured issuer and registered client; it can't be
 inferred from bearer-key checks or mocked introspection.
+
+The [#104 client receipt](https://github.com/nnennandukwe/policyNIM/issues/104#issuecomment-6306582849)
+preserves the initial catalog-order oracle failure and its offline recovery from
+unchanged captures. Actual SDK transport/job/cancellation tests and coding-client
+captures provide separate coverage. The [published-install receipt](https://github.com/nnennandukwe/policyNIM/issues/104#issuecomment-6308954835)
+binds wheel/native verification to 0.2.1; later 0.3.0 package checks and OAuth
+acceptance keep their own source and deployment identities.
 
 ## Optional evaluation dependencies
 
@@ -63,5 +71,8 @@ reviewed lockfile. Don't silently replace either pin during release verification
 
 Retain the CI `package-evidence-<os>-<python>-<attempt>` artifacts and separate
 real-client, live-provider, hosted-state and rollback receipts. Repeat affected checks after
-integration changes. A passing candidate matrix doesn't complete #104 while
-client acceptance, production identity or rollback evidence is missing.
+integration changes. A passing candidate matrix can't replace actual client,
+production identity or rollback evidence. #104's retained completion records and
+the linked acceptance matrix identify those delivered checks and their limits.
+Optional native Tasks remains externally blocked under #102;
+synchronous/application jobs remain supported.

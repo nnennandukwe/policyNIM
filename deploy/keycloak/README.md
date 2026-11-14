@@ -1,8 +1,10 @@
 # Keycloak issuer profile
 
 Use this profile to reproduce PolicyNIM's local OAuth issuer checks for
-[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97). The operator has selected Keycloak for Railway deployment. Real ChatGPT connection
-acceptance still needs separate evidence.
+[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97). The operator selected Keycloak for Railway deployment.
+[Production acceptance on October 23](https://github.com/nnennandukwe/policyNIM/issues/97#issuecomment-6376394443)
+records actual ChatGPT linking and one approved search at `b3ee280`. The local
+procedure below remains separate from that dated production receipt.
 
 ## Reproduce the local checks
 
@@ -185,11 +187,12 @@ See [Keycloak containers](https://www.keycloak.org/server/containers),
 | Scope checks for all eight tools, issuer/audience/expiry failures | Offline HTTP matrix; real issuer read-only scope rejection is also exercised |
 | Refresh, expired-token refresh, refresh-token revocation, issuer logout and reconnect | Local Keycloak plus real MCP TCP listener |
 | Provider token isolation, immutable principal, legacy migration, CLI/stdio | Existing and extended offline tests |
-| Production issuer/deployment, ChatGPT registration and linking UI | Pending external acceptance |
+| Production issuer/deployment, ChatGPT registration and linking UI | [#97's October 23 receipt](https://github.com/nnennandukwe/policyNIM/issues/97#issuecomment-6376394443), application `b3ee280`, records accepted PKCE registration, ChatGPT linking/search, token lifecycle and restore checks. |
 
 The permitted local search uses a deterministic service behind PolicyNIM's real
-HTTP authorization path. Successful production search, compilation, preflight,
-and evaluation still need a separately approved model-request budget.
+HTTP authorization path. The dated production search used its approved budget:
+two NVIDIA requests, zero retries. Further search, compilation, preflight and
+evaluation checks need a separately approved model-request budget.
 
 ## Production acceptance record
 
@@ -205,5 +208,6 @@ tokens, authorization codes, passwords, cookies, or introspection payloads:
 | ChatGPT | Product/client version or observation date, connection result, linking/step-up result and tested tool outcomes |
 | Workload budget | Approved provider-request ceiling, actual request count and sanitized failure classes |
 
-Keep #97 open while any required external acceptance remains unverified. Directory
-packaging, legal pages, recordings, and submission have their own workstream.
+#97's original acceptance is complete at its recorded configuration and revisions.
+Keep new configuration checks bound to their own issuer/client/deployment evidence.
+Directory packaging, legal pages, recordings and submission have their own workstream.
