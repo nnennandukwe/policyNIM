@@ -126,7 +126,7 @@ def _worker_process(service, tmp_path, boundary, phase):
 @pytest.mark.parametrize("reason", ["cancelled", "deadline_exhausted", "interrupt"])
 @pytest.mark.parametrize("cleanup_failure", ["evaluator", "clients", "both"])
 def test_cli_worker_retains_stop_reason_through_cleanup_failure(
-    generation, tmp_path, monkeypatch, reason, cleanup_failure
+    generation, tmp_path, monkeypatch, caplog, reason, cleanup_failure
 ):
     """A close error mustn't replace a known stop reason or leave Ctrl-C work running."""
     service, suite, _ = job_setup(generation, tmp_path)
@@ -142,7 +142,7 @@ def test_cli_worker_retains_stop_reason_through_cleanup_failure(
             super().close()
             calls.append("pool-closed")
             if cleanup_failure in {"clients", "both"}:
-                raise RuntimeError("Fixture pool cleanup failure.")
+                raise RuntimeError("Bearer private-fixture /Users/private/pool-close")
 
     class Evaluator:
         """Interrupt at the evaluator boundary after durably reserving an attempt."""
@@ -150,6 +150,7 @@ def test_cli_worker_retains_stop_reason_through_cleanup_failure(
         def __init__(self, settings):
             """Borrow actual SDK and HTTP clients without sending any request."""
             settings.nvidia_api_key = "fixture"
+            self.settings = settings
             clients.extend([shared_client(settings), shared_client(settings, retrieval=True)])
 
         def evaluate_case(self, suite, case_id, *, rerank_enabled=True):
@@ -164,9 +165,10 @@ def test_cli_worker_retains_stop_reason_through_cleanup_failure(
 
         def close(self):
             """Fail only after the owned fixture resource has been released."""
+            assert shared_client(self.settings) is clients[0]
             calls.append("closed")
             if cleanup_failure in {"evaluator", "both"}:
-                raise RuntimeError("Fixture cleanup failure.")
+                raise RuntimeError("Bearer private-fixture /Users/private/evaluator-close")
 
     monkeypatch.setattr(service_module, "NVIDIAClients", Pool)
     monkeypatch.setattr(cli_module, "_service", lambda: service)
@@ -193,6 +195,20 @@ def test_cli_worker_retains_stop_reason_through_cleanup_failure(
     assert report["usage"]["provider_attempts"] == 1
     assert calls == ["case-0", "closed", "pool-closed"]
     assert clients[0].is_closed() and clients[1].is_closed
+    cleanup_events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if '"evaluation.job_cleanup_failure"' in record.message
+    ]
+    assert [event["resource_kind"] for event in cleanup_events] == (
+        ["evaluator", "provider_clients"]
+        if cleanup_failure == "both"
+        else ["evaluator"]
+        if cleanup_failure == "evaluator"
+        else ["provider_clients"]
+    )
+    assert all(event["job_id"] == accepted.job_id for event in cleanup_events)
+    assert "private-fixture" not in caplog.text and "/Users/private" not in caplog.text
     quota = OperationStore.report(service.settings.beta_auth_db_path)
     assert quota.active_operations == 0
     assert quota.outcomes == {

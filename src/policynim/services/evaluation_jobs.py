@@ -594,6 +594,22 @@ class EvaluationJobWorker:
                 """Hold shared quota admission through every case and provider cleanup."""
                 nonlocal execution_started
                 execution_started = True
+
+                def close_owned(resource: CaseEvaluator | NVIDIAClients, kind: str) -> None:
+                    """Expose sanitized cleanup failures while retaining the original work error."""
+                    try:
+                        resource.close()
+                    except BaseException as exc:
+                        emit_operation_event(
+                            level=logging.ERROR,
+                            event="evaluation.job_cleanup_failure",
+                            phase="worker_cleanup",
+                            job_id=job.job_id,
+                            resource_kind=kind,
+                            **safe_exception_diagnostics(exc),
+                        )
+                        raise
+
                 try:
                     with operation_scope(budget), ResourceStack() as resources:
                         budget.remaining()
@@ -602,10 +618,10 @@ class EvaluationJobWorker:
                         settings = self._restore(snapshot, archive)
                         budget.remaining()
                         clients = NVIDIAClients()
-                        resources.callback(clients.close)
-                        with borrow_clients(clients):
+                        resources.callback(close_owned, clients, "provider_clients")
+                        with borrow_clients(clients), ResourceStack() as evaluator_resources:
                             evaluator = self.evaluator_factory(settings)
-                            resources.callback(evaluator.close)
+                            evaluator_resources.callback(close_owned, evaluator, "evaluator")
                             for case in snapshot.suite.cases:
                                 budget.remaining()
                                 self.store.begin_case(job.job_id, self.worker_token, case.case_id)
