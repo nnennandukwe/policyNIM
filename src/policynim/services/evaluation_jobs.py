@@ -632,9 +632,12 @@ class EvaluationJobWorker:
                                 )
                                 self.store.save_case(job.job_id, self.worker_token, result)
                                 budget.remaining()
-                except KeyboardInterrupt:
+                except KeyboardInterrupt as exc:
                     self._stop.set()
-                    raise
+                    raise ProviderError(
+                        "Evaluation worker interrupted; inspect the retained job.",
+                        failure_class="interrupted",
+                    ) from exc
 
             admission = OperationAdmissionService(self.service.settings)
             accounting_cancelled = False
@@ -686,9 +689,7 @@ class EvaluationJobWorker:
                     failure_code="worker_stopped" if accounting_interrupted else "cancelled",
                 )
             return self.store.finish(job.job_id, self.worker_token, "completed")
-        except (Exception, KeyboardInterrupt) as exc:
-            if isinstance(exc, KeyboardInterrupt):
-                self._stop.set()
+        except Exception as exc:
             if isinstance(exc, OperationAdmissionError):
                 admission_failure = str(exc).partition(":")[0]
                 if admission_failure == "accounting_incomplete":

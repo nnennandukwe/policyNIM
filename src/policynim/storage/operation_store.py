@@ -415,13 +415,14 @@ class OperationStore:
         principal_id: str,
         operation: str,
         outcome: OperationOutcome,
+        release_owned: bool = False,
     ) -> str | None:
-        """Finalize an inactive acceptance by bound identity without changing terminal history."""
+        """Finalize bound work, releasing an active slot only for its explicit current owner."""
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             self._recover_interrupted(connection)
             row = connection.execute(
-                "SELECT outcome, active_slot FROM operation_usage WHERE operation_id=? "
+                "SELECT outcome, active_slot, owner_id FROM operation_usage WHERE operation_id=? "
                 "AND principal_id=? AND operation=? AND reservation_key IS NOT NULL",
                 (operation_id, principal_id, operation),
             ).fetchone()
@@ -429,10 +430,11 @@ class OperationStore:
                 return None
             if row[0] != "accepted":
                 return row[0]
-            if row[1]:
+            if row[1] and (not release_owned or row[2] != self._owner.identity):
                 return "accepted"
             connection.execute(
-                "UPDATE operation_usage SET outcome=?, finished_at=? WHERE operation_id=?",
+                "UPDATE operation_usage SET outcome=?, finished_at=?, active_slot=0 "
+                "WHERE operation_id=?",
                 (outcome, time.time(), operation_id),
             )
             return outcome

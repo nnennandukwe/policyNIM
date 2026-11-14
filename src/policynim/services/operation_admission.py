@@ -429,9 +429,27 @@ class OperationAdmissionService:
                 correlation_id=current_correlation_id(),
             )
 
-        decision = self._check_decision(self._retry_storage(activate))
-        assert decision.operation_id is not None
-        return self._execute(operation, decision.operation_id, cancelled, interrupted)
+        # Activation can commit before execution's accounting finally starts.
+        try:
+            decision = self._check_decision(self._retry_storage(activate))
+            assert decision.operation_id is not None
+            return self._execute(operation, decision.operation_id, cancelled, interrupted)
+        except KeyboardInterrupt:
+            try:
+                self._retry_storage(
+                    lambda: self.store.finish_accepted(
+                        operation_id=operation_id,
+                        principal_id=principal_identity(principal.issuer, principal.subject),
+                        operation=operation_name,
+                        outcome="interrupted",
+                        release_owned=True,
+                    ),
+                    phase="finish",
+                    operation_id=operation_id,
+                )
+            except OperationAdmissionError:
+                self._accounting_incomplete.set()
+            raise
 
     def finish_accepted(
         self,

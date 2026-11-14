@@ -58,7 +58,9 @@ def append(value):
 
 def interrupt_commit(observed):
     "Exit on the selected side of the actual SQLite COMMIT."
-    if observed == phase:
+    if observed == phase.removeprefix("interrupt_"):
+        if phase.startswith("interrupt_"):
+            raise KeyboardInterrupt
         os._exit(41)
 
 def wrap_commit(name):
@@ -70,7 +72,26 @@ def wrap_commit(name):
         return original(*args, **kwargs)
     setattr(service.store, name, wrapped)
 
-if boundary != "signal":
+if boundary == "activation_interrupt":
+    from policynim.services.operation_admission import OperationAdmissionService
+    retained_admissions = []
+    def interrupt_before_execution(self, *args, **kwargs):
+        "Interrupt after activation commits and before its execution finally starts."
+        retained_admissions.append(self)
+        append("activation_committed")
+        raise KeyboardInterrupt
+    OperationAdmissionService._execute = interrupt_before_execution
+elif boundary == "completion_interrupt":
+    from policynim.storage.operation_store import OperationStore
+    original_finish = OperationStore.finish
+    def interrupt_after_completion(self, operation_id, outcome):
+        "Interrupt after the quota outcome commits, without changing its history."
+        original_finish(self, operation_id, outcome)
+        if outcome == "completed":
+            append("completion_committed")
+            raise KeyboardInterrupt
+    OperationStore.finish = interrupt_after_completion
+elif boundary != "signal":
     wrap_commit(boundary)
 
 class Evaluator:
@@ -584,3 +605,82 @@ def test_foreground_cli_sigint_drains_and_records_interruption(generation, tmp_p
     assert report.uncertain_case_id == "case-0" and report.usage.provider_attempts == 1
     quota = OperationStore.report(service.settings.beta_auth_db_path)
     assert quota.active_operations == 0 and quota.outcomes == {"interrupted": 1}
+
+
+@pytest.mark.parametrize("boundary", ["activation_interrupt", "completion_interrupt"])
+def test_cli_interrupt_outside_owned_execution_requires_recovery_without_replay(
+    generation, tmp_path, monkeypatch, boundary
+):
+    """A foreground accounting interrupt preserves durable facts until a fresh worker recovers."""
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key=boundary, principal=principal())
+    process, evidence = _worker_process(service, tmp_path, boundary, "interrupt")
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, (stdout, stderr)
+        assert not stdout, stdout
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+    assert service.inspect(accepted.job_id, principal=principal()).state == "running"
+    completed = boundary == "completion_interrupt"
+    quota = OperationStore.report(service.settings.beta_auth_db_path)
+    assert quota.active_operations == 0
+    assert quota.outcomes == {"completed" if completed else "interrupted": 1}
+    calls = []
+    monkeypatch.setattr(cli_module, "_service", lambda: service)
+    monkeypatch.setattr(cli_module, "local_job_principal", principal)
+    monkeypatch.setattr(
+        cli_module,
+        "EvaluationJobWorker",
+        lambda value: EvaluationJobWorker(value, evaluator_factory=evaluator_factory(calls)),
+    )
+    runner = CliRunner()
+    recovered = runner.invoke(app, ["eval-jobs", "worker", "--once"])
+    assert recovered.exit_code == 0, recovered.output
+    result = runner.invoke(app, ["eval-jobs", "result", accepted.job_id])
+    report = json.loads(result.stdout)["report"]
+    assert report["state"] == "interrupted" and report["uncertain_case_id"] is None
+    assert len(report["completed_cases"]) == int(completed)
+    assert report["usage"]["provider_attempts"] == int(completed)
+    assert calls == []
+    assert evidence.read_text().splitlines().count("case-0") == int(completed)
+    quota = OperationStore.report(service.settings.beta_auth_db_path)
+    assert quota.outcomes == {"completed" if completed else "interrupted": 1}
+    assert quota.reserved_work_units == quota.retained_rows == 1
+
+
+@pytest.mark.parametrize("phase", ["interrupt_before_commit", "interrupt_after_commit"])
+def test_cli_report_commit_interrupt_preserves_confirmed_terminal_history(
+    generation, tmp_path, monkeypatch, phase
+):
+    """A report COMMIT interrupt preserves either the running summary or committed report."""
+    service, suite, _ = job_setup(generation, tmp_path)
+    accepted = service.submit(suite, idempotency_key=phase, principal=principal())
+    process, _ = _worker_process(service, tmp_path, "finish", phase)
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0 and not stdout, (stdout, stderr)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+    committed = phase == "interrupt_after_commit"
+    info = service.inspect(accepted.job_id, principal=principal())
+    assert info.state == ("completed" if committed else "running")
+    assert OperationStore.report(service.settings.beta_auth_db_path).outcomes == {"completed": 1}
+    calls = []
+    monkeypatch.setattr(cli_module, "_service", lambda: service)
+    monkeypatch.setattr(
+        cli_module,
+        "EvaluationJobWorker",
+        lambda value: EvaluationJobWorker(value, evaluator_factory=evaluator_factory(calls)),
+    )
+    worked = CliRunner().invoke(app, ["eval-jobs", "worker", "--once"])
+    assert worked.exit_code == 0, worked.output
+    stored = service.result(accepted.job_id, principal=principal())
+    assert stored.report.state == ("completed" if committed else "interrupted")
+    assert len(stored.report.completed_cases) == 1 and calls == []
+    if committed:
+        assert stored.sha256 == info.report_sha256

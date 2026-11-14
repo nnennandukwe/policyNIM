@@ -45,3 +45,18 @@ No new file replacement, deletion, synchronization or filesystem rollback protoc
 ## Verification and delivery
 
 Use locked Python 3.11 and 3.12, Ruff, Pyright, focused lifecycle/provider/admission tests and the full offline suite. Retain baseline and failure logs outside the repository. Serialize expensive runs and remove only successful task-owned fixture directories. Run final local Qodo review, then exact-head hosted Qodo and required CI before permitted merge. Report the known host PowerShell assembly failures separately if they recur. Installed-wheel checks must identify the tested revision and run outside the source tree.
+
+## Accounting interruption boundaries
+
+The first hosted review exposed an overly broad interrupt catch. The public CLI controls at `bf985b0` reproduce both windows. Stop handling must preserve the existing separate database commit model.
+
+| Interrupt boundary | Required state and recovery | Ownership rule |
+|---|---|---|
+| Accepted quota activation COMMIT, before its execution finally begins | Finish only this admission owner's slot as interrupted; leave the unconfirmed running job for fresh-worker recovery. No case starts. | The existing keyed finalizer additionally permits release of an active row only when operation ID, principal, operation name and current store owner all match. An interrupt must never finish another principal's or a competing owner's active row. |
+| Quota terminal COMMIT, before job report COMMIT | Preserve the quota's committed outcome and the job's last durable state. CLI process exit releases ownership; restart records the job as interrupted with saved cases and no replay. | Never rewrite completed accounting or infer a committed job report from it. |
+| Active evaluator execution | Drain resources, retain the worker stop decision and record interrupted job/quota outcomes. | Translate the owned interrupt inside the operation so admission's finally can finish it. |
+| Interrupted slot cleanup write fails | Retain the original interrupt, emit safe accounting diagnostics and pause that admission service. Retain the live ownership lease until storage repair or process exit. | Unknown cleanup never frees another owner or permits blind replay. |
+
+The new catch belongs around keyed activation/execution, where the operation ID is known before activation. The worker handles only interrupts from its owned execution body as immediate terminal interruption; other Ctrl-C windows keep the ordinary CLI/restart recovery path. This doesn't make quota and job commits atomic or change the documented hard-exit recovery outcome.
+
+Keyed terminal reconciliation retains its default inactive-only behavior. The interruption path explicitly requests current-owner release inside the existing `BEGIN IMMEDIATE` transaction. The principal/operation/owner read and conditional outcome update share that transaction; terminal history remains unchanged. Tests cover a retained live owner, wrong principal, wrong operation, a competing owner, and an actual SQLite trigger that rejects interruption cleanup. Removing the trigger permits owned cleanup, while the affected service stays paused until restart.
