@@ -1,17 +1,20 @@
-# Hosted authorization foundation
+# Hosted MCP authorization
 
 PolicyNIM's hosted MCP endpoint can act as a resource server: an external
 identity provider signs callers in and issues access tokens; PolicyNIM checks
 those tokens before permitting work. NVIDIA credentials stay on the server and
 aren't used as client credentials.
 
-Implementation and acceptance are tracked in [issue #97](https://github.com/nnennandukwe/policyNIM/issues/97).
-The user selected Keycloak for local evaluation on October 22, 2026. The opt-in
+Implementation and dated production acceptance are recorded in
+[issue #97](https://github.com/nnennandukwe/policyNIM/issues/97#issuecomment-6376394443).
+Keycloak was selected for local evaluation on October 22, 2026. The opt-in
 [issuer test](../tests/test_keycloak_oauth_live.py) crosses real Keycloak TLS and
 MCP TCP boundaries with generated fixture credentials and a deterministic search
 service. Its evidence covers local issuer interoperability with zero NVIDIA
-requests. Production issuer/client selection, deployment, and real ChatGPT
-connection acceptance remain pending.
+requests. On October 23, the production Keycloak/public-PKCE configuration,
+ChatGPT linking and one approved search passed at application `b3ee280`.
+The [acceptance matrix](evidence/stable-baseline-acceptance.md) keeps that
+runtime receipt separate from later source and production observations.
 
 OAuth stays disabled until the operator configures it. OAuth-only mode doesn't
 require a beta authentication database. Hosted operation quotas apply to OAuth
@@ -25,12 +28,13 @@ The evaluated profile uses **Keycloak 26.7.5**, **MCP Python SDK 2.2.0**,
 and PKCE S256. The [realm template](../deploy/keycloak/policynim-realm.json)
 separates that client from the confidential introspection resource client. The
 [test guide](../deploy/keycloak/README.md) pins the image digest and names the
-exact local configuration and remaining production decisions.
+exact local configuration and deployment procedure.
 
 Resource Indicators support requires Keycloak's experimental
 `--features=resource-indicators` flag. The evaluated profile enables it so the
 issuer validates `resource` during authorization and token exchange. Accepting
-that experimental feature for production requires an operator decision. CIMD
+that experimental feature is part of the dated #97 production acceptance. Other
+operators must decide whether it fits their deployment. CIMD
 (Client ID Metadata Documents) and dynamic registration aren't exercised by this
 profile; production setup must explicitly select its registration method.
 
@@ -152,7 +156,8 @@ and local stdio servers retain their existing declarations. Scope/dispatch-expir
 denials for tool requests retain HTTP 403/401 and return a JSON-RPC tool error
 result with `_meta["mcp/www_authenticate"]` matching the header, including a
 sanitized `error_description`. Clients that act on transport status can use the
-header; real ChatGPT linking and step-up UI still need acceptance evidence.
+header. Actual ChatGPT linking/search is recorded in #97; broader step-up UI
+behavior remains unverified.
 
 The shared public corpus doesn't grant access to another user's evaluation jobs.
 All four job tools and report resources enforce owner identity separately from
@@ -220,9 +225,9 @@ affects subsequent requests and doesn't recall work already admitted.
 | ChatGPT's registered client | Starts user login and exchanges codes with PKCE; separate from the resource client |
 | NVIDIA credential | Server-owned model access; never an MCP client token |
 
-## Acceptance evidence still required
+## Acceptance procedure and retained results
 
-Before closing #97, record the actual issuer/client versions and deployment
+For another deployment or changed configuration, record the issuer/client versions and deployment
 revision, then use a real client to discover the issuer, complete PKCE login,
 obtain a resource-bound token, and call the permitted tools. Verify wrong audience,
 issuer, expiry and scope rejection without provider work; token refresh, logout,
@@ -230,4 +235,7 @@ revocation and recovery; and sanitized public readiness. Live model checks requi
 a separately approved request budget; offline test results don't authorize
 provider traffic.
 Record source tests, issuer interoperability, deployment and live provider results
-separately. Keep #97 open while that external evidence is unavailable.
+separately. #97's completed receipt names the accepted configuration, actual
+ChatGPT flow, token-negative/refresh/revocation checks and issuer database restore.
+Its single search budget was spent; further provider-backed checks need their
+own authorization.

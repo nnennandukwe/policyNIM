@@ -35,6 +35,7 @@ Out of scope: new features, redesign, new milestones, a general audit, model-qua
 - `docs/evidence/stable-baseline-acceptance.md` (new): criterion matrix, revision identities, receipt limits and remaining optional gate.
 - `docs/roadmap.md`: maintained summary and link to the acceptance matrix.
 - `docs/release-compatibility.md`: actual dated client and OAuth results.
+- `docs/hosted-authorization.md`, `docs/evaluation-jobs.md`, `deploy/keycloak/README.md`: correct the same stale OAuth status in directly related operator guidance.
 - `docs/build-plans/stable-baseline-acceptance.md` (new): this review unit's design and verification contract.
 - `.codex/acceptance-88/` (ignored): unchanged source snapshots, fresh read-only checks, hashes and review/check receipts.
 
