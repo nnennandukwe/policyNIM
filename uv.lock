@@ -172,7 +172,7 @@ wheels = [
 
 [[package]]
 name = "arize-phoenix-evals"
-version = "3.9.5"
+version = "3.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpath-ng" },
@@ -185,9 +185,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/b4/77fdcdfba9926f46371b1bc174fc1e4ef8cef33c870547fa25e55bb5376b/arize_phoenix_evals-3.9.5.tar.gz", hash = "sha256:2f3fc99ff999683403bf1f235d4fb72c3f2cac858078ae0f77a2caf8453768ef", size = 111264, upload-time = "2026-10-28T01:24:35.355Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/68/62c8a79dec7f42a8e1cc7d5e2ac1cfea8944700fa28409c75fb0a89df2f6/arize_phoenix_evals-3.10.0.tar.gz", hash = "sha256:3a2e6601ed82c573299e2ef9b1eb7b29cd570a85c9430f1bdce8355daee0ea42", size = 129363, upload-time = "2026-11-10T03:35:45.161Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/ac/b15a39ffd5d9ddc68fee83431d9716f7ff399ec4ea0d67a9e785edebd5f0/arize_phoenix_evals-3.9.5-py3-none-any.whl", hash = "sha256:34cb1e54a017801a7d1b8b18f1d94ccb5498810a57d0db1d405cfd53a93911f4", size = 145610, upload-time = "2026-10-28T01:24:33.771Z" },
+    { url = "https://files.pythonhosted.org/packages/44/fe/5bf9c25ef0fc5c90eadaab13c1b5c3f169f2b782df553fdb910a7b39bc4c/arize_phoenix_evals-3.10.0-py3-none-any.whl", hash = "sha256:6548b2b8d258e731d0bb717a1d05aef52bf13c1a039f589f80cf4ebc3a83460c", size = 164210, upload-time = "2026-11-10T03:35:43.606Z" },
 ]
 
 [[package]]
@@ -1700,11 +1700,11 @@ wheels = [
 
 [[package]]
 name = "openinference-semantic-conventions"
-version = "0.1.28"
+version = "0.1.44"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/df/32/c79bf8bd3ea5a00e492449b31ca600bbc2a8e88a301e42c872af925a156c/openinference_semantic_conventions-0.1.28.tar.gz", hash = "sha256:6388465174e8ab3f27ebc6a9e9bb2e1b804d30caefb57234e16db874da1c6a7b", size = 12893, upload-time = "2026-03-11T04:45:46.543Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/e3/e411e3b9f3540a03b87aa48dccabc7b3fd5326590cd23c22769eda1545a2/openinference_semantic_conventions-0.1.44.tar.gz", hash = "sha256:a1f08fa6aef021f67910eef017b43118199dd7e33fff10978f803a42d5fe1fde", size = 16225, upload-time = "2026-11-11T07:33:19.16Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/40/34b570462c3ce250277254bb0cca655eb39b64c0dffe63cd7751f103f8d6/openinference_semantic_conventions-0.1.28-py3-none-any.whl", hash = "sha256:a2fed5bb167aa56c1c7448cdb7a8d775f989339ba1f8b04a7b45d4f8388cccfb", size = 10522, upload-time = "2026-03-11T04:45:45.423Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/f0/f151f0f52ea599d45ad0ca7f8c9a317a2ea6f7f52c17acee7014f2debead/openinference_semantic_conventions-0.1.44-py3-none-any.whl", hash = "sha256:58c931fb0223c6103eb38dfd6f3c709a27483f5e9e74aea2df607402156e7600", size = 12980, upload-time = "2026-11-11T07:33:17.933Z" },
 ]
 
 [[package]]
@@ -2040,7 +2040,7 @@ verification = [
 requires-dist = [
     { name = "anyio", specifier = "==4.14.2" },
     { name = "arize-phoenix-client", specifier = "==2.3.1" },
-    { name = "arize-phoenix-evals", specifier = "==3.9.5" },
+    { name = "arize-phoenix-evals", specifier = "==3.10.0" },
     { name = "httpx", specifier = "==0.27.2" },
     { name = "httpx2", specifier = "==2.12.0" },
     { name = "itsdangerous", specifier = "==2.2.0" },
