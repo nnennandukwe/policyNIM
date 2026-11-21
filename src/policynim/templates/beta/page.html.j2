@@ -1,4 +1,4 @@
-{% from "beta/partials/icons.html.j2" import artwork, icon, window_controls -%}
+{% from "beta/partials/icons.html.j2" import artwork, icon, window_controls, wordmark -%}
 {% set source_url = "https://github.com/nnennandukwe/policyNIM" -%}
 {% set docs_url = source_url ~ "/blob/main/docs/index.md" -%}
 <!doctype html>
@@ -30,7 +30,7 @@
           <span aria-hidden="true" class="menu-labels"><span>File</span><span>View</span><span>Help</span></span>
           {% include "beta/partials/theme_toggle.html.j2" %}
         </div>
-        {% for notice in notices %}
+        {% for notice in notices if not (new_key and notice.tone == "success") %}
           {% include "beta/partials/notice.html.j2" %}
         {% endfor %}
         {% block content %}{% endblock %}

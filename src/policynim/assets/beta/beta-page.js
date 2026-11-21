@@ -46,9 +46,9 @@
 
   const wizard = document.querySelector(".wizard");
   if (!wizard) return;
-  const account = document.getElementById("account");
+  const account = document.getElementById("account-view");
   const key = document.getElementById("key");
-  const connect = document.getElementById("connect");
+  const connect = document.getElementById("connect-view");
 
   // Recheck the session when history restores a signed-in document.
   window.addEventListener("pageshow", (event) => {

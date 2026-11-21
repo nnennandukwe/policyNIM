@@ -1,8 +1,8 @@
 {% extends "beta/page.html.j2" %}
-{% from "beta/partials/icons.html.j2" import icon %}
+{% from "beta/partials/icons.html.j2" import icon, wordmark %}
 {% from "beta/partials/command_card.html.j2" import copy_button %}
 
-{% block window_status %}<span id="window-status">GitHub signed in</span>{% endblock %}
+{% block window_status %}<span id="window-status">GitHub signed in</span>{% if new_key %}{% for notice in notices if notice.tone == "success" %} &middot; {{ notice.message }}{% endfor %}{% endif %}{% endblock %}
 
 {% block content %}
 <div class="wizard" data-portal-path="{{ portal_path }}">
@@ -10,7 +10,7 @@
     <div class="rail-brand" aria-hidden="true">
       <span data-rail-icon="key">{{ icon('key') }}</span>
       <span data-rail-icon="connect" hidden>{{ icon('connect') }}</span>
-      <strong>PolicyNIM</strong>
+      <strong>{{ wordmark() }}</strong>
     </div>
     <ol class="rail-steps">
       <li class="is-complete">1 GitHub</li>
@@ -21,9 +21,9 @@
   <div class="wizard-pane">
     {% if new_key %}{% include "beta/partials/new_key_panel.html.j2" %}{% endif %}
 
-    <section class="wizard-view" id="account" tabindex="-1" aria-labelledby="account-heading">
+    <section class="wizard-view" id="account-view" aria-labelledby="account">
       <p class="step-label">Step 2 of 3</p>
-      <h1 id="account-heading" tabindex="-1">Your account and API key</h1>
+      <h1 id="account" tabindex="-1">Your account and API key</h1>
       <p>Signed in as <strong>{{ account.github_login }}</strong>.</p>
       <dl class="account-facts">
         <dt>Email</dt><dd>{{ account.email }}</dd>
@@ -51,9 +51,9 @@
     </section>
 
     {% if not new_key %}
-    <section class="wizard-view" id="connect" tabindex="-1" aria-labelledby="connect-heading">
+    <section class="wizard-view" id="connect-view" aria-labelledby="connect">
       <p class="step-label">Step 3 of 3</p>
-      <h1 id="connect-heading" tabindex="-1">Connect your coding agent</h1>
+      <h1 id="connect" tabindex="-1">Connect your coding agent</h1>
       <p>{% if account.has_key %}Run your saved export command{% else %}Generate and export your API key{% endif %}, then run your client's command in the same terminal.</p>
 
       <div class="client-tabs" role="tablist" aria-label="Coding agent" hidden>

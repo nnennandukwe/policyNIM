@@ -4,12 +4,28 @@
 </svg>
 {%- endmacro %}
 
+{% macro wordmark() -%}
+<span class="brand-word"><svg viewBox="0 0 70 10" aria-hidden="true" focusable="false"><use href="#pixel-wordmark"></use></svg><span>PolicyNIM</span></span>
+{%- endmacro %}
+
 {% macro artwork() -%}
 <svg class="icon-library" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
   <defs>
+    <symbol id="pixel-wordmark" viewBox="0 0 70 10" fill="currentColor" fill-rule="evenodd">
+      <!-- Stepped letterforms for PolicyNIM's wordmark. -->
+      <path d="M0 0h6v1h1v3H6v1H3v2h1v1H0V7h1V1H0zm3 1v3h2V1z"/>
+      <path transform="translate(9)" d="M1 2h4v1h1v4H5v1H1V7H0V3h1zm1 1v4h2V3z"/>
+      <path transform="translate(17)" d="M0 0h4v7h2v1H0V7h2V1H0z"/>
+      <path transform="translate(25)" d="M2 0h2v1H2zM0 2h4v5h2v1H0V7h2V3H0z"/>
+      <path transform="translate(33)" d="M1 2h5v2H4V3H2v4h2V6h2v2H1V7H0V3h1z"/>
+      <path transform="translate(41)" d="M0 2h3v1H2v3h2V3H3V2h4v1H6v5H5v1H4v1H1V9h2V8h1V7H1V6H0z"/>
+      <path transform="translate(50)" d="M0 0h2v1h1v1h1v2h1V0h2v8H5V6H4V5H3V3H2v5H0z"/>
+      <path transform="translate(59)" d="M0 0h3v1H2v6h1v1H0V7h1V1H0z"/>
+      <path transform="translate(63)" d="M0 0h2v1h1v1h1V1h1V0h2v8H5V3H4v2H3V3H2v5H0z"/>
+    </symbol>
     <symbol id="pixel-shield" viewBox="0 0 32 32">
-      <path fill="currentColor" fill-rule="evenodd" d="M13 1h6v2h6v2h4v14h-2v4h-3v3h-3v3h-3v2h-4v-2h-3v-3H8v-3H5v-4H3V5h4V3h6zm1 3v2H8v2H6v10h2v4h3v3h3v2h4v-2h3v-3h3v-4h2V8h-3V6h-6V4z"/>
-      <path fill="currentColor" d="M9 10h3v2h3v2h2v2h-2v2h-3v2H9v-3h3v-2h1v-1h-1v-1H9zm9 9h6v2h-6z"/>
+      <path fill="currentColor" fill-rule="evenodd" d="M13 1h6v2h5v2h4v2h2v12h-2v4h-3v3h-3v3h-3v2h-6v-2h-3v-3H7v-3H4v-4H2V7h2V5h4V3h5zM14 3h4v2h5v2h4v1h1v10h-2v4h-3v3h-3v3h-3v1h-2v-1h-3v-3H9v-3H6v-4H4V8h2V7h4V5h4z"/>
+      <path fill="currentColor" d="M9 10h2v1h2v1h2v1h2v2h-2v1h-2v1h-2v1H9v-2h2v-1h2v-2h-2v-1H9zm9 8h6v2h-6z"/>
     </symbol>
     <symbol id="pixel-key" viewBox="0 0 32 32">
       <path fill="currentColor" fill-rule="evenodd" d="M21 7h6v2h3v3h2v7h-2v3h-3v2h-6v-2h-3v-3H9v4H6v-4H3v4H0V15h18v-4h3zm2 5v6h4v-6z"/>
