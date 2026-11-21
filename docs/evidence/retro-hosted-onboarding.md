@@ -26,9 +26,9 @@ Product revision `0a8dbc21fa67eb779a36c77e562e8c259c77e0c0`. Playwright CLI 0.1.
 
 ## Captures
 
-The desktop images use the mockups' 1586 by 992 dimensions. The narrow image shows the full instructions at 320px wide. We replaced the disposable key with a label for the key screenshot.
+The links point to the immutable screenshot commit. Local copies live under `output/playwright/retro-hosted-onboarding/`. The desktop images use the mockups' 1586 by 992 dimensions. The narrow image shows the full instructions at 320px wide. We replaced the disposable key with a label for the key screenshot.
 
-[Welcome](retro-hosted-onboarding/01-landing.png) / [Save your API key](retro-hosted-onboarding/02-api-key.png) / [Connect your agent](retro-hosted-onboarding/03-connect.png) / [320px instructions](retro-hosted-onboarding/04-connect-narrow.png)
+[Welcome](https://github.com/nnennandukwe/policyNIM/blob/70d9ec9d2a2dd3447b2ecc0e3285a5dfa04a26ad/docs/evidence/retro-hosted-onboarding/01-landing.png) / [Save your API key](https://github.com/nnennandukwe/policyNIM/blob/70d9ec9d2a2dd3447b2ecc0e3285a5dfa04a26ad/docs/evidence/retro-hosted-onboarding/02-api-key.png) / [Connect your agent](https://github.com/nnennandukwe/policyNIM/blob/70d9ec9d2a2dd3447b2ecc0e3285a5dfa04a26ad/docs/evidence/retro-hosted-onboarding/03-connect.png) / [320px instructions](https://github.com/nnennandukwe/policyNIM/blob/70d9ec9d2a2dd3447b2ecc0e3285a5dfa04a26ad/docs/evidence/retro-hosted-onboarding/04-connect-narrow.png)
 
 ## Package and route checks
 
@@ -62,6 +62,12 @@ heading on the POST response, including with JavaScript disabled
 on Next led to the heading-target fix. The checkpoint reported complete
 coverage for its scope and skipped its spec pass. Neither finding was
 manually closed.
+
+The full local review of evidence commit `70d9ec9` returned zero findings
+and marked coverage incomplete. Its skipped-file list contained the five PNG
+captures. We inspected all five and linked them by commit, so the final diff
+includes the report, fixture and README preview link. The screenshots remain
+available at the revision where they were first recorded.
 
 Use the delivery PR's verification section for the final local and hosted
 review revisions, the merge commit, post-merge CI and the deployment result.
