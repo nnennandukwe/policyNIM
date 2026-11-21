@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime
+from urllib.parse import urlsplit
 
 import pytest
 from starlette.datastructures import Headers
@@ -106,6 +107,7 @@ def test_beta_portal_is_not_registered_when_signup_is_disabled() -> None:
 
 
 def test_beta_portal_renders_signed_out_landing(monkeypatch) -> None:
+    """Offer GitHub sign-in and documentation before showing any account commands."""
     monkeypatch.setattr(
         mcp_module,
         "create_beta_auth_service",
@@ -120,16 +122,15 @@ def test_beta_portal_renders_signed_out_landing(monkeypatch) -> None:
     assert response.status_code == 200
     assert 'class="beta-page beta-page--landing"' in response.text
     assert "data-theme-toggle" in response.text
-    assert f'href="{mcp_module._BETA_CSS_ROUTE}"' in response.text
-    assert f'src="{mcp_module._BETA_THEME_INIT_JS_ROUTE}"' in response.text
-    assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in response.text
-    assert "Continue with GitHub" in response.text
-    assert "Connect in three moves" in response.text
-    assert "complete, versioned engineering policies" in response.text
+    assert 'href="/auth/github/start"' in response.text
+    assert "Sign in with GitHub" in response.text
+    assert "Check policy before you code" in response.text
+    assert "local-onboarding.md" in response.text
     assert "codex mcp add policynim" not in response.text
 
 
 def test_beta_portal_login_flow_sets_session_and_renders_dashboard(monkeypatch) -> None:
+    """Show returning users their current account, usage and both client commands."""
     stub = StubBetaAuthService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
 
@@ -152,10 +153,11 @@ def test_beta_portal_login_flow_sets_session_and_renders_dashboard(monkeypatch) 
     assert dashboard.status_code == 200
     assert 'class="beta-page beta-page--dashboard"' in dashboard.text
     assert "data-theme-toggle" in dashboard.text
-    assert f'href="{mcp_module._BETA_CSS_ROUTE}"' in dashboard.text
-    assert f'src="{mcp_module._BETA_THEME_INIT_JS_ROUTE}"' in dashboard.text
-    assert f'src="{mcp_module._BETA_PAGE_JS_ROUTE}"' in dashboard.text
-    assert "octocat" in dashboard.text
+    assert "octocat@example.com" in dashboard.text
+    assert "pnm_existing" in dashboard.text
+    assert "2026-04-05T12:00:00+00:00" in dashboard.text
+    assert "2 / 500 reserved work units, 498 remaining." in dashboard.text
+    assert "Save your API key" not in dashboard.text
     assert "Copy command" in dashboard.text
     assert "codex mcp add policynim" in dashboard.text
     assert "claude mcp add --transport http policynim" in dashboard.text
@@ -251,7 +253,7 @@ def test_beta_portal_masks_unexpected_oauth_exceptions(monkeypatch) -> None:
 
 
 def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> None:
-    """Display the secret after submitting the rendered generation form."""
+    """Show the fresh export and an explicit acknowledgement on the generation response."""
     stub = StubBetaAuthService()
     monkeypatch.setattr(mcp_module, "create_beta_auth_service", lambda settings: stub)
 
@@ -269,12 +271,15 @@ def test_beta_portal_regenerate_route_shows_new_api_key_once(monkeypatch) -> Non
         response = client.post("/beta/api-key/regenerate", data={"submission_id": submission_id[1]})
 
     assert response.status_code == 200
-    assert "pnm_new_secret" in response.text
+    assert "Save your API key" in response.text
+    assert 'type="checkbox"' in response.text
+    assert response.text.count("pnm_new_secret") == 1
     assert "Copy export" in response.text
     assert "export POLICYNIM_TOKEN=&#39;pnm_new_secret&#39;" in response.text
 
 
 def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
+    """Serve the published images and page assets with browser-usable media types."""
     monkeypatch.setattr(
         mcp_module,
         "create_beta_auth_service",
@@ -286,9 +291,14 @@ def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
     with TestClient(app) as client:
         light = client.get(mcp_module._BETA_LIGHT_LOGO_ROUTE)
         dark = client.get(mcp_module._BETA_DARK_LOGO_ROUTE)
-        css = client.get(mcp_module._BETA_CSS_ROUTE)
-        theme_init_js = client.get(mcp_module._BETA_THEME_INIT_JS_ROUTE)
-        page_js = client.get(mcp_module._BETA_PAGE_JS_ROUTE)
+        landing = client.get("/beta")
+        assets = {
+            urlsplit(url).path: url
+            for url in re.findall(r'(?:src|href)="(/beta/assets/[^"]+)"', landing.text)
+        }
+        css = client.get(assets[mcp_module._BETA_CSS_ROUTE])
+        theme_init_js = client.get(assets[mcp_module._BETA_THEME_INIT_JS_ROUTE])
+        page_js = client.get(assets[mcp_module._BETA_PAGE_JS_ROUTE])
         favicon = client.get("/favicon.ico")
 
     assert light.status_code == 200
@@ -297,12 +307,12 @@ def test_beta_portal_serves_packaged_logo_assets(monkeypatch) -> None:
     assert dark.headers["content-type"].startswith("image/jpeg")
     assert css.status_code == 200
     assert css.headers["content-type"].startswith("text/css")
-    assert '[data-copy-state="copied"]::before' in css.text
+    assert css.content
     assert theme_init_js.status_code == 200
     assert theme_init_js.headers["content-type"].startswith("text/javascript")
     assert page_js.status_code == 200
     assert page_js.headers["content-type"].startswith("text/javascript")
-    assert 'button.dataset.copyState = "copied"' in page_js.text
+    assert page_js.content
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/png")
 

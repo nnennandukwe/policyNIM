@@ -1,24 +1,20 @@
-<section class="beta-section">
-  <article class="beta-card beta-card--secret">
-    <div class="beta-card__header">
-      <div>
-        <p class="beta-eyebrow">New API key</p>
-        <h2 class="beta-card-title">Copy it now</h2>
-      </div>
-      <div class="beta-command-actions">
-        <button
-          type="button"
-          class="beta-copy-button"
-          data-copy="{{ new_key.export_command }}"
-        >
-          {{ new_key.button_label }}
-        </button>
-      </div>
+<section class="wizard-view" id="key" aria-labelledby="key-heading">
+  <p class="step-label">Step 2 of 3</p>
+  <h1 id="key-heading" tabindex="-1" autofocus>Save your API key</h1>
+  <p>Copy this export command and save it somewhere private. You'll only see it once.</p>
+
+  <div class="key-terminal">
+    <div class="terminal-title">POLICYNIM_TOKEN</div>
+    <pre class="command-text" id="key-export">{{ new_key }}</pre>
+  </div>
+  {{ copy_button("key-export", "Copy export command") }}
+
+  <p class="key-warning">{{ icon('key') }} A new key replaces your previous key.</p>
+  <form class="wizard-actions" method="get" action="{{ portal_path }}#connect">
+    <label class="saved-key"><input type="checkbox" id="key-saved" required> I've saved my key</label>
+    <div class="wizard-actions__buttons">
+      <a class="beta-button" href="{{ portal_path }}#account">Back</a>
+      <button class="beta-button" type="submit" id="key-next">Next</button>
     </div>
-    <p class="beta-command-description">
-      This secret is shown only once. Set <code>POLICYNIM_TOKEN</code> before connecting your
-      client.
-    </p>
-    <pre class="beta-command-block">{{ new_key.export_command }}</pre>
-  </article>
+  </form>
 </section>

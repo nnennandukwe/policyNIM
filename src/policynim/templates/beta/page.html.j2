@@ -1,3 +1,6 @@
+{% from "beta/partials/icons.html.j2" import artwork, icon, window_controls -%}
+{% set source_url = "https://github.com/nnennandukwe/policyNIM" -%}
+{% set docs_url = source_url ~ "/blob/main/docs/index.md" -%}
 <!doctype html>
 <html lang="en">
   <head>
@@ -10,8 +13,35 @@
     <link rel="stylesheet" href="{{ beta_css_url }}">
   </head>
   <body class="beta-page {{ page_class }}">
-    <div class="beta-page__backdrop" aria-hidden="true"></div>
-    {% block content %}{% endblock %}
+    {{ artwork() }}
+    <a class="skip-link" href="#setup-window">Skip to setup</a>
+    <div class="desktop">
+      <nav class="shortcuts" aria-label="Desktop shortcuts">
+        <a href="{{ portal_url }}">{{ icon("setup") }}Setup</a>
+        <a href="{{ docs_url }}">{{ icon("docs") }}Docs</a>
+        <a href="{{ source_url }}">{{ icon("source") }}Source</a>
+      </nav>
+      <main class="setup-window" id="setup-window" tabindex="-1">
+        <div class="titlebar">
+          {{ icon("shield") }} <span>PolicyNIM Setup</span>
+          {{ window_controls() }}
+        </div>
+        <div class="menu-strip">
+          <span aria-hidden="true" class="menu-labels"><span>File</span><span>View</span><span>Help</span></span>
+          {% include "beta/partials/theme_toggle.html.j2" %}
+        </div>
+        {% for notice in notices %}
+          {% include "beta/partials/notice.html.j2" %}
+        {% endfor %}
+        {% block content %}{% endblock %}
+        <div class="window-status">{% block window_status %}GitHub sign-in required{% endblock %}</div>
+      </main>
+    </div>
+    <div class="taskbar" aria-hidden="true">
+      <span class="start-label">{{ icon("start") }}Start</span>
+      <span class="task-label">{{ icon("shield") }}PolicyNIM</span>
+      <span class="taskbar-status">Hosted beta</span>
+    </div>
     <script src="{{ beta_page_js_url }}"></script>
   </body>
 </html>

@@ -1,145 +1,98 @@
 {% extends "beta/page.html.j2" %}
+{% from "beta/partials/icons.html.j2" import icon %}
+{% from "beta/partials/command_card.html.j2" import copy_button %}
+
+{% block window_status %}<span id="window-status">GitHub signed in</span>{% endblock %}
 
 {% block content %}
-<main class="beta-shell beta-shell--dashboard">
-  <div class="beta-shell__utility">
-    {% include "beta/partials/theme_toggle.html.j2" %}
-  </div>
-  <header class="beta-topbar">
-    <div class="beta-brand">
-      {% with alt="PolicyNIM", compact=true %}
-        {% include "beta/partials/logo.html.j2" %}
-      {% endwith %}
-      <div class="beta-brand__copy">
-        <p class="beta-kicker">Hosted MCP beta</p>
-        <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
-      </div>
+<div class="wizard" data-portal-path="{{ portal_path }}">
+  <aside class="wizard-rail" aria-label="Setup progress">
+    <div class="rail-brand" aria-hidden="true">
+      <span data-rail-icon="key">{{ icon('key') }}</span>
+      <span data-rail-icon="connect" hidden>{{ icon('connect') }}</span>
+      <strong>PolicyNIM</strong>
     </div>
-    <div class="beta-command-actions">
-      <span class="{{ status_class }}">{{ status_title }}</span>
-      <p class="beta-inline-hint">
-        Portal URL:
-        <a href="{{ portal_url }}">{{ portal_url }}</a>
-      </p>
-    </div>
-  </header>
+    <ol class="rail-steps">
+      <li class="is-complete">1 GitHub</li>
+      <li id="key-step"{% if new_key %} aria-current="step"{% endif %}{% if account.has_key %} data-has-key{% endif %}>2 API key</li>
+      <li id="connect-step">3 Connect</li>
+    </ol>
+  </aside>
+  <div class="wizard-pane">
+    {% if new_key %}{% include "beta/partials/new_key_panel.html.j2" %}{% endif %}
 
-  {% if notices %}
-  <div class="beta-notice-stack">
-    {% for notice in notices %}
-      {% with title=notice.title, message=notice.message, tone=notice.tone %}
-        {% include "beta/partials/notice.html.j2" %}
-      {% endwith %}
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <section class="beta-card-grid beta-card-grid--dashboard">
-    <article class="beta-card beta-card--emphasis">
-      <div class="beta-card__header">
-        <div>
-          <p class="beta-eyebrow">Account</p>
-          <h2 class="beta-card-title">Signed in as {{ account.github_login }}</h2>
-        </div>
-        <span class="{{ status_class }}">{{ status_title }}</span>
-      </div>
-      <dl class="beta-facts">
-        <div class="beta-facts__row">
-          <dt>GitHub</dt>
-          <dd>{{ account.github_login }}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Email</dt>
-          <dd>{{ account.email }}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Status</dt>
-          <dd>{{ account.status }}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Active key prefix</dt>
-          <dd>{{ account.current_key }}</dd>
-        </div>
-        <div class="beta-facts__row">
-          <dt>Key created at</dt>
-          <dd>{{ account.current_key_created }}</dd>
-        </div>
+    <section class="wizard-view" id="account" tabindex="-1" aria-labelledby="account-heading">
+      <p class="step-label">Step 2 of 3</p>
+      <h1 id="account-heading" tabindex="-1">Your account and API key</h1>
+      <p>Signed in as <strong>{{ account.github_login }}</strong>.</p>
+      <dl class="account-facts">
+        <dt>Email</dt><dd>{{ account.email }}</dd>
+        <dt>Account status</dt><dd>{{ account.status }}</dd>
+        <dt>Active key prefix</dt><dd>{{ account.current_key }}</dd>
+        <dt>Key created at</dt><dd>{{ account.current_key_created }}</dd>
+        <dt>UTC-day usage</dt><dd>{{ usage.text }} <small>({{ usage.usage_date }} UTC)</small>
+          <progress class="usage-meter" value="{{ usage.percent }}" max="100" aria-label="Daily work units reserved"></progress>
+        </dd>
+        <dt>Hosted MCP endpoint</dt><dd><code>{{ mcp_url }}</code></dd>
+        <dt>Portal URL</dt><dd><a href="{{ portal_url }}">{{ portal_url }}</a></dd>
       </dl>
-      <div class="beta-usage">
-        <div class="beta-usage__row">
-          <span class="beta-meta-label">UTC-day usage</span>
-          <strong>{{ usage.text }}</strong>
-        </div>
-        <div class="beta-usage__bar" aria-hidden="true">
-          <span style="width:{{ usage.percent }}%"></span>
-        </div>
-        <p class="beta-fineprint">
-          Usage snapshot date: {{ usage.usage_date }} UTC.
-        </p>
-      </div>
-    </article>
 
-    <article class="beta-card">
-      <div class="beta-card__header">
-        <div>
-          <p class="beta-eyebrow">API key</p>
-          <h2 class="beta-card-title">Generate, rotate, and recover access</h2>
-        </div>
-      </div>
-      <p class="beta-command-description">
-        Generate a fresh API key whenever you reconnect a client. A new key replaces the previous
-        secret immediately, so copy the export command before closing the page.
-      </p>
-      <div class="beta-button-row">
+      <p class="key-warning">{{ icon('key') }} {% if account.has_key %}If you've lost your key, generate a new one. It replaces your previous key immediately.{% else %}Generate a key to use PolicyNIM with your coding agent.{% endif %}</p>
+      <div class="account-actions">
         <form method="post" action="{{ api_key_regenerate_path }}">
           <input type="hidden" name="submission_id" value="{{ submission_id }}">
-          <button type="submit" class="beta-button beta-button--primary">
-            Generate or Rotate API Key
-          </button>
+          <button type="submit" class="beta-button">{% if account.has_key %}Rotate API key{% else %}Generate API key{% endif %}</button>
         </form>
+        <a class="beta-button" href="{{ portal_path if new_key else '' }}#connect">Connect your coding agent</a>
         <form method="post" action="{{ logout_path }}">
-          <button type="submit" class="beta-button beta-button--secondary">Sign Out</button>
+          <button type="submit" class="beta-button">Sign out</button>
         </form>
       </div>
-      <div class="beta-meta-list">
-        <div class="beta-meta-row">
-          <span class="beta-meta-label">Hosted MCP endpoint</span>
-          <div class="beta-inline-code">{{ mcp_url }}</div>
+    </section>
+
+    {% if not new_key %}
+    <section class="wizard-view" id="connect" tabindex="-1" aria-labelledby="connect-heading">
+      <p class="step-label">Step 3 of 3</p>
+      <h1 id="connect-heading" tabindex="-1">Connect your coding agent</h1>
+      <p>{% if account.has_key %}Run your saved export command{% else %}Generate and export your API key{% endif %}, then run your client's command in the same terminal.</p>
+
+      <div class="client-tabs" role="tablist" aria-label="Coding agent" hidden>
+        {% for client in commands %}
+        <button type="button" role="tab" id="tab-{{ loop.index }}" aria-controls="client-{{ loop.index }}">{{ client.title }}</button>
+        {% endfor %}
+      </div>
+      {% for client in commands %}
+      <div class="command-panel" id="client-{{ loop.index }}" data-client-panel>
+        <h2 data-client-title>{{ client.title }}</h2>
+        <pre class="command-text" id="command-{{ loop.index }}">{{ client.command }}</pre>
+        {{ copy_button("command-" ~ loop.index, "Copy command") }}
+      </div>
+      {% endfor %}
+
+      <section class="first-check" aria-labelledby="first-check-heading">
+        <h2 id="first-check-heading">Run your first policy check</h2>
+        <p>Give your agent this prompt after adding PolicyNIM.</p>
+        <pre class="command-text prompt-text" id="first-prompt" aria-label="{{ workflow_cards[0].title }}">{{ workflow_cards[0].prompt }}</pre>
+        {{ copy_button("first-prompt", "Copy prompt") }}
+        <details class="more-prompts">
+          <summary>Agent workflows</summary>
+          {% for workflow in workflow_cards[1:] %}
+          <h3>{{ workflow.title }}</h3>
+          <p>{{ workflow.description }}</p>
+          <pre class="command-text prompt-text" id="workflow-{{ loop.index }}">{{ workflow.prompt }}</pre>
+          {{ copy_button("workflow-" ~ loop.index, "Copy prompt") }}
+          {% endfor %}
+        </details>
+      </section>
+
+      <div class="wizard-actions">
+        <div class="wizard-actions__buttons">
+          <a class="beta-button" href="#account">Back</a>
+          <a class="beta-button" href="#account">Finish</a>
         </div>
       </div>
-    </article>
-  </section>
-
-  {% if new_key %}
-    {% include "beta/partials/new_key_panel.html.j2" %}
-  {% endif %}
-
-  <section class="beta-section">
-    <div class="beta-section__header">
-      <p class="beta-kicker">Client setup</p>
-      <h2 class="beta-section-title">Copy the exact commands for your client</h2>
-    </div>
-    <div class="beta-card-grid beta-card-grid--commands">
-      {% for command_card in commands %}
-        {% with command=command_card %}
-          {% include "beta/partials/command_card.html.j2" %}
-        {% endwith %}
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="beta-section">
-    <div class="beta-section__header">
-      <p class="beta-kicker">Agent workflows</p>
-      <h2 class="beta-section-title">Use PolicyNIM where policy context changes the code</h2>
-    </div>
-    <div class="beta-card-grid beta-card-grid--commands">
-      {% for command_card in workflow_cards %}
-        {% with command=command_card %}
-          {% include "beta/partials/command_card.html.j2" %}
-        {% endwith %}
-      {% endfor %}
-    </div>
-  </section>
-</main>
+    </section>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}

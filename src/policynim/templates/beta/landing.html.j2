@@ -1,91 +1,46 @@
 {% extends "beta/page.html.j2" %}
 
 {% block content %}
-<main class="beta-shell beta-shell--landing">
-  <div class="beta-shell__utility">
-    {% include "beta/partials/theme_toggle.html.j2" %}
-  </div>
-  <section class="beta-hero">
-    <div class="beta-hero__content">
-      <p class="beta-kicker">Hosted MCP beta</p>
-      {% with alt="PolicyNIM", compact=false %}
-        {% include "beta/partials/logo.html.j2" %}
-      {% endwith %}
-      <h1 class="beta-title">PolicyNIM Hosted Beta</h1>
-      <p class="beta-subtitle">
-        Give your coding agent complete, versioned engineering policies for the task it's
-        working on. Selected sources keep their conditions, exceptions, and references.
-      </p>
-      <p class="beta-body-copy">
-        Sign in with GitHub, issue a hosted MCP API key, and connect your coding client without
-        waiting on an operator handoff.
-      </p>
-      <p class="beta-body-copy">
-        The portal keeps the hosted workflow self-serve: authenticate once, generate a key, and
-        paste the ready-to-run setup commands into Codex or Claude Code.
-      </p>
-      <p class="beta-body-copy">
-        For your own policy packs and vector database, follow the
-        <a href="https://github.com/nnennandukwe/policyNIM/blob/main/docs/local-onboarding.md">local setup instructions</a>
-        and run <code>policynim setup</code> with PolicyNIM 0.3.0 or later on your computer or self-hosted server. The local UI supports SQLite, Qdrant, and
-        PostgreSQL with pgvector; this shared endpoint uses its maintained public profile.
-      </p>
-      {% if notices %}
-      <div class="beta-notice-stack">
-        {% for notice in notices %}
-          {% with title=notice.title, message=notice.message, tone=notice.tone %}
-            {% include "beta/partials/notice.html.j2" %}
-          {% endwith %}
-        {% endfor %}
-      </div>
-      {% endif %}
-      <div class="beta-action-row">
-        <a class="beta-button beta-button--primary" href="{{ github_start_path }}">
-          Continue with GitHub
-        </a>
-        <p class="beta-inline-hint">
-          After sign-in, the portal will generate ready-to-run Codex and Claude setup commands.
-        </p>
-      </div>
-    </div>
-    <aside class="beta-callout">
-      <p class="beta-eyebrow">Hosted endpoint</p>
-      <h2 class="beta-card-title">Provision a bearer token for the shared MCP route.</h2>
-      <p class="beta-body-copy">
-        The hosted beta issues one active API key per account. Rotate the key whenever you need
-        to reconnect a client or invalidate an older secret.
-      </p>
-      <div class="beta-inline-code">{{ mcp_url }}</div>
-      <div class="beta-meta-list">
-        <div class="beta-meta-row">
-          <span class="beta-meta-label">Portal URL</span>
-          <a href="{{ portal_url }}">{{ portal_url }}</a>
+<div class="welcome">
+  <section class="welcome-intro">
+    <p class="eyebrow">Hosted beta</p>
+    <h1 class="wordmark">PolicyNIM</h1>
+    <h2>Check policy before you code.</h2>
+    <p class="welcome-description">Give Codex and Claude Code policy guidance with source citations.</p>
+    <a class="beta-button sign-in" href="{{ github_start_path }}">
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.07.55-.18.55-.4v-1.53c-2.23.49-2.7-.96-2.7-.96-.36-.94-.9-1.19-.9-1.19-.73-.5.06-.49.06-.49.81.06 1.23.83 1.23.83.72 1.25 1.88.89 2.34.68.07-.53.28-.89.51-1.09-1.78-.2-3.64-.9-3.64-4.02 0-.89.31-1.61.82-2.18-.08-.21-.36-1.03.08-2.15 0 0 .67-.22 2.2.83a7.52 7.52 0 0 1 4 0c1.53-1.05 2.2-.83 2.2-.83.44 1.12.16 1.94.08 2.15.51.57.82 1.29.82 2.18 0 3.13-1.87 3.82-3.65 4.02.29.25.54.75.54 1.51v2.24c0 .22.15.48.55.4A8.11 8.11 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/>
+      </svg>
+      Sign in with GitHub
+    </a>
+    <div class="welcome-links">
+      <a href="{{ docs_url }}">Read the docs</a>
+      <details>
+        <summary>Setup details</summary>
+        <div class="setup-details">
+          <p>The hosted service uses a maintained public policy profile. For your own policies and storage, <a href="{{ source_url }}/blob/main/docs/local-onboarding.md">set up PolicyNIM locally</a> with <code>policynim setup</code>.</p>
+          <dl>
+            <dt>Hosted MCP endpoint</dt><dd><code>{{ mcp_url }}</code></dd>
+            <dt>Portal URL</dt><dd><a href="{{ portal_url }}">{{ portal_url }}</a></dd>
+          </dl>
         </div>
-        <div class="beta-meta-row">
-          <span class="beta-meta-label">Flow</span>
-          <strong>Sign in -&gt; generate key -&gt; connect client</strong>
-        </div>
-      </div>
-    </aside>
-  </section>
-
-  <section class="beta-section">
-    <div class="beta-section__header">
-      <p class="beta-kicker">Quickstart</p>
-      <h2 class="beta-section-title">Connect in three moves</h2>
+      </details>
     </div>
-    <div class="beta-card-grid beta-card-grid--steps">
-      {% for step in steps %}
-      <article class="{{ step.card_class }}">
-        <span class="beta-step-index">{{ step.index }}</span>
-        <h3 class="beta-card-title">{{ step.title }}</h3>
-        <p class="beta-command-description">{{ step.description }}</p>
-      </article>
-      {% endfor %}
-    </div>
-    <p class="beta-grid-note beta-fineprint">
-      Portal URL: <a href="{{ portal_url }}">{{ portal_url }}</a>
-    </p>
   </section>
-</main>
+  <section class="welcome-terminal" aria-labelledby="setup-heading">
+    <div class="titlebar terminal-title" aria-hidden="true">welcome.txt {{ window_controls() }}</div>
+    <div class="terminal-screen">
+      {{ icon("shield") }}
+      <h2 id="setup-heading">Your setup</h2>
+      <ol>
+        <li>Sign in with GitHub</li>
+        <li>Create an API key</li>
+        <li>Connect your agent</li>
+      </ol>
+      <span class="terminal-cursor" aria-hidden="true"></span>
+    </div>
+  </section>
+</div>
 {% endblock %}
+
+{% block window_status %}{% if notices %}See the portal notice above{% else %}GitHub sign-in required{% endif %}{% endblock %}

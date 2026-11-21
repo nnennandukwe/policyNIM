@@ -1354,33 +1354,15 @@ def _beta_notice_context(*, title: str, message: str, tone: str) -> dict[str, st
     }
 
 
-def _beta_command_card_context(
-    *,
-    title: str,
-    description: str,
-    command: str,
-    button_label: str = "Copy command",
-    eyebrow: str = "Client setup",
-) -> dict[str, str]:
-    return {
-        "eyebrow": eyebrow,
-        "title": title,
-        "description": description,
-        "command": command,
-        "button_label": button_label,
-    }
-
-
 def _beta_page_context(*, page_class: str) -> dict[str, object]:
+    """Supply the shared document title, icon, and packaged portal assets."""
     return {
         "document_title": "PolicyNIM Hosted Beta",
         "page_class": page_class,
         "favicon_url": _BETA_LIGHT_LOGO_ROUTE,
-        "beta_css_url": _BETA_CSS_ROUTE,
+        "beta_css_url": f"{_BETA_CSS_ROUTE}?v=retro-1",
         "beta_theme_init_js_url": _BETA_THEME_INIT_JS_ROUTE,
-        "beta_page_js_url": _BETA_PAGE_JS_ROUTE,
-        "light_logo_url": _BETA_LIGHT_LOGO_ROUTE,
-        "dark_logo_url": _BETA_DARK_LOGO_ROUTE,
+        "beta_page_js_url": f"{_BETA_PAGE_JS_ROUTE}?v=retro-1",
     }
 
 
@@ -1409,6 +1391,7 @@ def _render_beta_landing(
     message: str | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
+    """Render the welcome window and any sign-in or recovery notice."""
     portal_url = _derive_beta_url(settings) or _BETA_PATH
     mcp_url = _derive_mcp_url(settings) or _STREAMABLE_HTTP_PATH
     notices: list[dict[str, str]] = []
@@ -1427,37 +1410,6 @@ def _render_beta_landing(
             "mcp_url": mcp_url,
             "github_start_path": _AUTH_GITHUB_START_PATH,
             "notices": notices,
-            "steps": [
-                {
-                    "index": 1,
-                    "card_class": "beta-card beta-card--emphasis",
-                    "title": "Authenticate with GitHub",
-                    "description": (
-                        "Start the hosted beta session from the GitHub OAuth flow. PolicyNIM "
-                        "stores the portal session and keeps the MCP endpoint locked behind "
-                        "bearer auth."
-                    ),
-                },
-                {
-                    "index": 2,
-                    "card_class": "beta-card",
-                    "title": "Issue or rotate your API key",
-                    "description": (
-                        "The dashboard reveals the full secret once, along with the current key "
-                        "prefix and the latest issuance timestamp for quick recovery."
-                    ),
-                },
-                {
-                    "index": 3,
-                    "card_class": "beta-card",
-                    "title": "Paste the generated client commands",
-                    "description": (
-                        "Once signed in, the portal shows ready-to-run commands for both Codex "
-                        "and Claude Code so the hosted MCP route is connected without any manual "
-                        "command assembly."
-                    ),
-                },
-            ],
         }
     )
     return _render_beta_template(
@@ -1488,7 +1440,6 @@ def _render_beta_dashboard(
         f"{usage.request_count} / {usage.quota} reserved work units, {usage.remaining} remaining."
     )
     usage_percent = _beta_usage_percent(usage)
-    status_class = f"beta-status-pill beta-status-pill--{account.status}"
     codex_command = (
         f"codex mcp add policynim --url {mcp_url} --bearer-token-env-var POLICYNIM_TOKEN"
     )
@@ -1515,25 +1466,17 @@ def _render_beta_dashboard(
                 tone=message_tone,
             )
         )
-    new_key_context: dict[str, str] | None = None
-    if new_api_key is not None:
-        export_command = f"export POLICYNIM_TOKEN='{new_api_key}'"
-        new_key_context = {
-            "button_label": "Copy export",
-            "export_command": export_command,
-        }
-
     context: dict[str, object] = _beta_page_context(page_class="beta-page--dashboard")
     context.update(
         {
             "portal_url": portal_url,
             "mcp_url": mcp_url,
-            "status_class": status_class,
-            "status_title": account.status.title(),
+            "portal_path": _BETA_PATH,
             "account": {
                 "github_login": account.github_login,
                 "email": account.email or "Not available",
                 "status": account.status,
+                "has_key": bool(account.api_key_prefix),
                 "current_key": current_key,
                 "current_key_created": current_key_created,
             },
@@ -1546,35 +1489,12 @@ def _render_beta_dashboard(
             "submission_id": submission_id,
             "logout_path": _BETA_LOGOUT_PATH,
             "notices": notices,
-            "new_key": new_key_context,
+            "new_key": f"export POLICYNIM_TOKEN='{new_api_key}'" if new_api_key else None,
             "commands": [
-                _beta_command_card_context(
-                    title="Connect Codex",
-                    description=(
-                        "Add the hosted PolicyNIM MCP endpoint to Codex using the generated "
-                        "bearer token environment variable."
-                    ),
-                    command=codex_command,
-                ),
-                _beta_command_card_context(
-                    title="Connect Claude Code",
-                    description=(
-                        "Register the same hosted MCP endpoint in Claude Code and pass the "
-                        "bearer token through the Authorization header."
-                    ),
-                    command=claude_command,
-                ),
+                {"title": "Codex", "command": codex_command},
+                {"title": "Claude Code", "command": claude_command},
             ],
-            "workflow_cards": [
-                _beta_command_card_context(
-                    eyebrow="Agent workflow",
-                    title=workflow["title"],
-                    description=workflow["description"],
-                    command=workflow["prompt"],
-                    button_label="Copy prompt",
-                )
-                for workflow in agent_workflow_cards()
-            ],
+            "workflow_cards": agent_workflow_cards(),
         }
     )
     return _render_beta_template(template_name="beta/dashboard.html.j2", context=context)

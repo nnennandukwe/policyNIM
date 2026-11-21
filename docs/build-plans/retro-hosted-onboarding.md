@@ -146,7 +146,7 @@ uv lock --check
 git diff --check
 ```
 
-Run the full offline pytest suite without file arguments on Python 3.11 and 3.12, matching CI. Use established CI for any required matrix that can't run locally and record that limit. Follow test_package_release.py's existing installed-package checks for template/static asset availability.
+Run the full offline pytest suite without file arguments on Python 3.11 and 3.12, matching CI. Use established CI for any required matrix that can't run locally and record that limit. The package metadata checks live in tests/test_package_release.py. CI installs the built wheel and runs scripts/verify_installed_package.py. Build the wheel and sdist, inspect their portal resources and render the installed templates outside the source checkout.
 
 Browser acceptance will use an isolated loopback app with disposable SQLite/account/index fixtures and a mocked GitHub exchange, while retaining actual route/session/form/storage behavior. Document the reproducible fixture/server invocation. Exercise welcome, callback, dashboard, fresh key, refresh/replay, deliberate rotation, logout, both client tabs, no-JS path, copy failure, keyboard, reduced motion, zoom and long values. Capture all three reference views plus a narrow viewport. Mark mocked provider boundaries explicitly; browser setup alone isn't a live client connection receipt.
 

@@ -102,6 +102,18 @@ def test_fresh_submission_rotates_but_older_retries_preserve_the_latest_key(port
     assert len(store.list_audit_events(event_type="api_key_rotated")) == 2
 
 
+def test_signed_in_account_keeps_its_suspension_notice_and_usage(portal) -> None:
+    """Show the account warning and work-unit budget beside the setup instructions."""
+    client, service, _, account = portal
+    service.suspend_account(github_login=account.github_login)
+    dashboard = client.get("/beta")
+    assert dashboard.status_code == 200
+    assert "Account suspended" in dashboard.text
+    assert "Existing API keys will be rejected" in dashboard.text
+    assert "reserved work units" in dashboard.text
+    assert "Save your API key" not in dashboard.text
+
+
 def test_lost_success_response_retry_doesnt_rotate_again(portal, monkeypatch) -> None:
     """A render failure after commit must leave a retryable, consumed action."""
     client, service, store, account = portal
@@ -172,6 +184,8 @@ def test_submission_is_bound_to_its_account_and_expiry(portal, monkeypatch) -> N
     now += timedelta(minutes=30)
     expired = client.post("/beta/api-key/regenerate", data=form)
     assert expired.status_code == 400
+    assert "Open /beta and retry" in expired.text
+    assert 'href="https://testserver/beta"' in expired.text
     assert store.list_audit_events(event_type="api_key_rotated") == []
     fresh = submission_from(client.get("/beta"))
     assert client.post("/beta/api-key/regenerate", data=fresh).status_code == 200

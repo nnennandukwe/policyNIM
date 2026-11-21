@@ -1,0 +1,54 @@
+{% macro icon(name) -%}
+<svg class="pixel-icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32">
+  <use href="#pixel-{{ name }}"></use>
+</svg>
+{%- endmacro %}
+
+{% macro artwork() -%}
+<svg class="icon-library" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <symbol id="pixel-shield" viewBox="0 0 32 32">
+      <path fill="currentColor" fill-rule="evenodd" d="M13 1h6v2h6v2h4v14h-2v4h-3v3h-3v3h-3v2h-4v-2h-3v-3H8v-3H5v-4H3V5h4V3h6zm1 3v2H8v2H6v10h2v4h3v3h3v2h4v-2h3v-3h3v-4h2V8h-3V6h-6V4z"/>
+      <path fill="currentColor" d="M9 10h3v2h3v2h2v2h-2v2h-3v2H9v-3h3v-2h1v-1h-1v-1H9zm9 9h6v2h-6z"/>
+    </symbol>
+    <symbol id="pixel-key" viewBox="0 0 32 32">
+      <path fill="currentColor" fill-rule="evenodd" d="M21 7h6v2h3v3h2v7h-2v3h-3v2h-6v-2h-3v-3H9v4H6v-4H3v4H0V15h18v-4h3zm2 5v6h4v-6z"/>
+    </symbol>
+    <symbol id="pixel-connect" viewBox="0 0 32 32">
+      <use href="#pixel-shield" width="23" height="28"/>
+      <path fill="currentColor" d="M24 12h2v4h2v-4h2v4h2v4h-2v3h-2v3h-2v2h-6v-2h-3v-2h4v2h4v-2h1v-2h-2v-2h-2v-4h2z"/>
+    </symbol>
+    <symbol id="pixel-setup" viewBox="0 0 32 32">
+      <path fill="#131a18" d="M5 1h21v1h2v20h2v2h1v5h-2v2H1v-9h2V3h2z"/>
+      <path fill="#c4c4ba" d="M5 3h21v18H5zM3 23h25v5H3z"/>
+      <path fill="#f5f4e9" d="M5 3h20v1H6v16H5zm-2 20h24v1H3z"/>
+      <path fill="#777b71" d="M25 4h1v17H5v-1h20zm3 20h1v5H3v-1h25z"/>
+      <path fill="#0a1410" d="M7 5h16v13H7zM18 25h6v1h-6zM5 25h2v2H5z"/>
+      <path fill="#a8f66b" d="M9 8h2v1h2v1h1v1h-1v1h-2v1H9v-2h2v-1H9zm6 5h5v1h-5z"/>
+    </symbol>
+    <symbol id="pixel-docs" viewBox="0 0 32 32">
+      <path fill="#131a18" d="M5 1h16v2h2v2h2v2h2v2h2v22H5z"/>
+      <path fill="#eeeae1" d="M7 3h12v9h8v17H7z"/>
+      <path fill="#b1b4b5" d="M21 5h2v2h2v2h-4zM25 12h2v17H7v-2h18z"/>
+      <path fill="#262e2a" d="M10 10h7v1h-7zm0 5h13v1H10zm0 4h13v1H10zm0 4h9v1h-9z"/>
+    </symbol>
+    <symbol id="pixel-source" viewBox="0 0 32 32">
+      <path fill="#25291b" d="M1 6h2V4h10v2h3v1h13v2h2v19H1z"/>
+      <path fill="#f1bc41" d="M3 7h2V6h7v2h3v1h13v15H3z"/>
+      <path fill="#fff1b5" d="M3 12h25v2H3zM4 7h8v1H4z"/>
+      <path fill="#edce58" d="M3 14h25v11H3z"/>
+      <path fill="#ab842a" d="M28 12h1v14H3v-1h25z"/>
+    </symbol>
+    <symbol id="pixel-start" viewBox="0 0 32 32">
+      <path fill="#ec5c42" d="M3 5h11v10H3z"/><path fill="#6caa37" d="M17 3h12v11H17z"/>
+      <path fill="#538fc0" d="M3 18h11v10H3z"/><path fill="#edc648" d="M17 17h12v10H17z"/>
+    </symbol>
+  </defs>
+</svg>
+{%- endmacro %}
+
+{% macro window_controls() -%}
+<span class="window-controls" aria-hidden="true">
+  <span class="window-minimize"></span><span class="window-maximize"></span><span class="window-close"></span>
+</span>
+{%- endmacro %}
