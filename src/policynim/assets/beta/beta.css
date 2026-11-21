@@ -381,16 +381,22 @@ body:not([data-js="ready"]) .theme-toggle { display: none; }
 .command-panel { min-width: 0; margin-top: .6rem; }
 .client-tabs:not([hidden]) + .command-panel, .command-panel[hidden] + .command-panel { margin-top: 0; }
 .command-panel h2 { margin: .3em 0; }
-.first-check { margin-block: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--edge-dark); }
-.first-check > p { margin-block: .4em; }
+.first-check { margin-block: .85rem .35rem; padding-top: .8rem; border-top: 1px solid var(--edge-dark); }
+.first-check > p { margin-block: .3em; }
 .prompt-text { padding: .65em; font-size: clamp(.92rem, 1.17vw, 1.1rem); background: var(--field); color: var(--ink); }
-.more-prompts { margin-block: .65rem; }
+.more-prompts { margin-top: .5rem; }
 .more-prompts h3 { margin-block: .85em .3em; }
 .more-prompts p { margin-bottom: .4em; }
 
 @media (prefers-reduced-motion: no-preference) {
   .setup-window { animation: window-enter 125ms ease-out; }
   @keyframes window-enter { from { transform: translateY(4px); } to { transform: translateY(0); } }
+}
+
+@media (min-width: 54rem) {
+  .beta-page--dashboard .desktop { padding-block: clamp(1rem, 3vh, 2rem); }
+  .wizard-pane:has(.wizard-view:not([hidden]) .client-tabs) { padding-block: 1.5rem; }
+  .client-tabs { margin-top: 1rem; }
 }
 
 @media (max-width: 54rem) {

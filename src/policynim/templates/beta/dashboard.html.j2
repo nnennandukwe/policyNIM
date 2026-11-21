@@ -54,7 +54,7 @@
     <section class="wizard-view" id="connect-view" aria-labelledby="connect">
       <p class="step-label">Step 3 of 3</p>
       <h1 id="connect" tabindex="-1">Connect your coding agent</h1>
-      <p>{% if account.has_key %}Run your saved export command{% else %}Generate and export your API key{% endif %}, then run your client's command in the same terminal.</p>
+      <p>{% if account.has_key %}Run your saved export, then run this command in the same terminal.{% else %}Generate and export your API key, then run this command in the same terminal.{% endif %}</p>
 
       <div class="client-tabs" role="tablist" aria-label="Coding agent" hidden>
         {% for client in commands %}
@@ -71,7 +71,7 @@
 
       <section class="first-check" aria-labelledby="first-check-heading">
         <h2 id="first-check-heading">Run your first policy check</h2>
-        <p>Give your agent this prompt after adding PolicyNIM.</p>
+        <p>Paste this prompt into your coding agent.</p>
         <pre class="command-text prompt-text" id="first-prompt" aria-label="{{ workflow_cards[0].title }}">{{ workflow_cards[0].prompt }}</pre>
         {{ copy_button("first-prompt", "Copy prompt") }}
         <details class="more-prompts">
