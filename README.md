@@ -196,7 +196,7 @@ policynim quickstart --target local-mcp
 
 <p align="center">
   <img
-    src="docs/assets/readme/policynim-beta-dark-landing-preview.png"
+    src="https://raw.githubusercontent.com/nnennandukwe/policyNIM/70d9ec9d2a2dd3447b2ecc0e3285a5dfa04a26ad/docs/assets/readme/policynim-beta-dark-landing-preview.png"
     alt="PolicyNIM hosted beta landing page in dark mode"
     width="1100"
   >

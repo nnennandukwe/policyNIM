@@ -10,13 +10,14 @@ external issuer foundation, migration, and remaining interoperability gate, see
 [hosted authorization](hosted-authorization.md). GitHub portal sign-in doesn't
 obtain an MCP OAuth token.
 
-The hosted beta is the fastest path for a new user:
+To connect a coding agent to the hosted beta, follow these steps.
 
-1. Open `https://<railway-domain>/beta`.
-2. Sign in with GitHub.
-3. Mint or rotate an API key.
-4. Export the generated bearer token in your client shell.
-5. Add the hosted MCP server to Codex or Claude Code.
+1. Open `https://<railway-domain>/beta` and sign in with GitHub.
+2. Choose **Generate API key**. Copy the export command and save it privately. Check **I've saved my key** and choose **Next**.
+3. Run the export command in your terminal. Choose **Codex** or **Claude Code** and run that client's command in the same terminal.
+4. Ask your coding agent to run the first policy check. **Finish** takes you back to your account.
+
+If you already have a key, choose **Connect your coding agent** from your account to see the commands again. Choose **Rotate API key** when you need to replace the current key.
 
 ```bash
 export POLICYNIM_TOKEN=<generated-beta-token>

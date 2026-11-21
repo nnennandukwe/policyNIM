@@ -1,4 +1,5 @@
-<section class="beta-notice beta-notice--{{ tone }}" role="status">
-  <p class="beta-notice__title">{{ title }}</p>
-  <p class="beta-notice__body">{{ message }}</p>
+<section class="beta-notice beta-notice--{{ notice.tone }}" role="status">
+  <strong>{{ notice.title }}</strong>
+  <p>{{ notice.message }}</p>
+  {% if page_class == "beta-page--landing" %}<a href="{{ portal_url }}">Return to portal</a>{% endif %}
 </section>
