@@ -69,6 +69,15 @@ captures. We inspected all five and linked them by commit, so the final diff
 includes the report, fixture and README preview link. The screenshots remain
 available at the revision where they were first recorded.
 
+Qodo's next local review, `ad046639-4471-42aa-8c69-2d4579eca3f8`, covered
+the complete diff at `ff4f493`. Finding `041af71e-e59e-4f2f-b82b-18c6c5f3086a`
+identified a startup timing issue in the fixture. Three ordinary first
+requests succeeded. Holding Uvicorn at startup exposed a timeout between
+printing the URL and accepting connections. The fixture now calls
+`listen(config.backlog)` before it prints the URL. With the same hold in
+place, the first connection queued and received HTTP 200 when Uvicorn
+started. Three ordinary first requests also returned the welcome page.
+
 Use the delivery PR's verification section for the final local and hosted
 review revisions, the merge commit, post-merge CI and the deployment result.
 [Find the delivery PR](https://github.com/nnennandukwe/policyNIM/pulls?q=is%3Apr+head%3Acodex%2Fretro-hosted-onboarding)

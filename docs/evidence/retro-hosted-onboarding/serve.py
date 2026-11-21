@@ -97,8 +97,9 @@ def serve() -> None:
         finally:
             index.close()
         app = _build_streamable_http_app(settings)
-        print(f"{origin}/beta", flush=True)
         config = uvicorn.Config(app, access_log=False, log_level="error")
+        listener.listen(config.backlog)
+        print(f"{origin}/beta", flush=True)
         uvicorn.Server(config).run(sockets=[listener])
 
 
