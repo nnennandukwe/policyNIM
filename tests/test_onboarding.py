@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -120,6 +122,141 @@ def test_full_setup_saves_restartable_private_configuration(workspace) -> None:
     with closing(create_index_store(restored)) as store:
         store.validate_identity()
         assert store.generation_id == result["generation_id"]
+
+
+def test_receipt_matches_the_active_generation_before_and_after_saving(
+    workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, payload, destination, _, _ = workspace
+    payload = verified(client, payload)
+
+    def unexpected_provider_work(*args, **kwargs):
+        pytest.fail("Downloading a receipt started provider work.")
+
+    monkeypatch.setattr(
+        "policynim.services.onboarding.create_ingest_service", unexpected_provider_work
+    )
+    monkeypatch.setattr(
+        "policynim.services.onboarding.create_preflight_service", unexpected_provider_work
+    )
+    root = destination.parent / "generations"
+    active = root / "active.json"
+    pointer = active.read_bytes()
+    generation_id = json.loads(pointer)["active"]
+    generation = root / "objects" / generation_id
+    manifest = (generation / "manifest.json").read_bytes()
+    assert hashlib.sha256(manifest).hexdigest() == generation_id
+    expected = {
+        "schema_version": 1,
+        "generation_id": generation_id,
+        "catalog_digest": json.loads((generation / "catalog.json").read_bytes())["digest"],
+        "backend": "sqlite",
+        "verified": True,
+    }
+    artifacts = {
+        file.name: hashlib.sha256(file.read_bytes()).digest() for file in generation.iterdir()
+    }
+
+    download = client.post("/api/receipt", json=payload)
+    assert download.status_code == 200, download.text
+    assert download.headers["content-disposition"] == (
+        'attachment; filename="policynim-setup-receipt.json"'
+    )
+    assert download.headers["content-type"] == "application/json"
+    assert download.headers["cache-control"] == "no-store"
+    assert download.json() == expected
+    assert not destination.exists()
+
+    assert client.post("/api/save", json=payload).status_code == 200
+    saved = destination.read_bytes()
+    repeated = client.post("/api/receipt", json=payload)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.content == download.content
+    assert destination.read_bytes() == saved
+    assert active.read_bytes() == pointer
+    assert {
+        file.name: hashlib.sha256(file.read_bytes()).digest() for file in generation.iterdir()
+    } == (artifacts)
+
+
+def test_receipt_requires_a_verified_result_after_build(workspace) -> None:
+    client, payload, destination, _, _ = workspace
+    payload = reviewed(client, payload)
+    assert client.post("/api/build", json=payload).status_code == 200
+
+    response = client.post("/api/receipt", json=payload)
+
+    assert response.status_code == 409
+    assert "Verify" in response.json()["message"]
+    assert "content-disposition" not in response.headers
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize(
+    ("changes", "guidance"),
+    [
+        ({"task": "A different task."}, "Verify"),
+        ({"consent": False}, "Approve"),
+        ({"vector_namespace": "changed"}, "Preview again"),
+    ],
+)
+def test_receipt_refuses_changed_verified_inputs(workspace, changes: dict, guidance: str) -> None:
+    client, payload, destination, _, _ = workspace
+    payload = verified(client, payload)
+
+    response = client.post("/api/receipt", json={**payload, **changes})
+
+    assert response.status_code == 409
+    assert guidance in response.json()["message"]
+    assert "content-disposition" not in response.headers
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"X-Setup-Token": ""},
+        {"X-Setup-Token": "wrong"},
+        {"Origin": "https://other.test"},
+        {"Host": "other.test:8765"},
+    ],
+)
+def test_receipt_requires_setup_origin_host_and_token(workspace, headers: dict[str, str]) -> None:
+    client, payload, _, _, _ = workspace
+    payload = verified(client, payload)
+
+    response = client.post("/api/receipt", json=payload, headers=headers)
+
+    assert response.status_code == 403
+    assert "content-disposition" not in response.headers
+
+
+def test_receipt_refuses_a_new_active_generation_from_outside_the_session(workspace) -> None:
+    from policynim.services.ingest import create_ingest_service
+
+    client, payload, destination, _, _ = workspace
+    payload = verified(client, payload)
+    expected = client.post("/api/receipt", json=payload).json()["generation_id"]
+    source = write_pack(destination.parent / "second-pack", "test.second", ["C", "D"])
+    root = destination.parent / "generations"
+    second_settings = Settings(
+        **NO_ENV,
+        nvidia_api_key="synthetic-provider-key",
+        nvidia_embed_model="test-embed",
+        nvidia_base_url="https://example.invalid/v1",
+        corpus_dir=source,
+        generations_dir=root,
+    )
+    with create_ingest_service(second_settings) as ingest:
+        active = ingest.run().generation_id
+    assert active != expected
+
+    response = client.post("/api/receipt", json=payload)
+
+    assert response.status_code == 409
+    assert "Build and verify again" in response.json()["message"]
+    assert "content-disposition" not in response.headers
+    assert json.loads((root / "active.json").read_bytes())["active"] == active
 
 
 @pytest.mark.parametrize("action", ["build", "verify", "save"])

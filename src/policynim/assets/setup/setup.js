@@ -17,6 +17,7 @@ function updateActions() {
     button.disabled = busy || (action === "probe" && !reviewDigest)
       || (action === "build" && (!reviewDigest || !connected || !consent))
       || (action === "verify" && (!built || !consent))
+      || (action === "receipt" && (!verified || !consent || byId("vector-backend").value !== "sqlite"))
       || (action === "save" && (!verified || !consent));
   }
 }
@@ -124,6 +125,17 @@ async function request(action) {
       method: "POST", headers: { "Content-Type": "application/json", "X-Setup-Token": token },
       body: JSON.stringify(choices()),
     });
+    if (action === "receipt" && response.ok) {
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "policynim-setup-receipt.json";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      byId("status").textContent = "Setup receipt downloaded.";
+      return;
+    }
+    if (action === "receipt" && response.status === 409) verified = false;
     const result = await response.json();
     if (!response.ok) throw new Error(result.message || "Setup didn't finish.");
     if (action === "preview") {
