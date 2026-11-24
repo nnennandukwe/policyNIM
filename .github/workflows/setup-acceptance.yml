@@ -1,0 +1,75 @@
+name: Setup acceptance
+
+on:
+  pull_request:
+    branches: [integration/setup-accessibility]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: setup-acceptance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: Verification Engine acceptance
+    if: >-
+      ${{ !github.event.pull_request.draft &&
+          github.event.pull_request.head.repo.id == github.event.repository.id &&
+          github.event.pull_request.user.login == github.repository_owner }}
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Select the linked issue's approved check
+        id: profile
+        shell: python3 {0}
+        run: |
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          profiles = {"208": "storage.py", "209": "keyboard.py"}
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          links = re.findall(r"(?im)^Issue:[ \t]*#(\d+)[ \t]*\r?$", event["pull_request"]["body"] or "")
+          if len(links) != 1 or links[0] not in profiles:
+              raise SystemExit("Link one enrolled setup issue in the PR description using Issue: #number.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print("bootstrap=" + profiles[links[0]], file=output)
+
+      - name: Load the approved verifier runtime
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nnennandukwe/policynim-verifier-runtime
+          ref: 16c13dfaa870c3c8c1d312d1183ca28feddcb771
+          ssh-key: ${{ secrets.POLICY_ACCEPTANCE_RUNTIME_READ_KEY }}
+          persist-credentials: false
+          path: runtime
+
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+
+      - name: Run the acceptance check against the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP: ${{ steps.profile.outputs.bootstrap }}
+        run: |
+          python3 -I -B runtime/run_check.py --trusted runtime --candidate candidate \
+            --bootstrap "$BOOTSTRAP" --artifacts "$RUNNER_TEMP/acceptance-evidence"
+
+      - name: Save the acceptance report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acceptance-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acceptance-evidence/
+          if-no-files-found: ignore
