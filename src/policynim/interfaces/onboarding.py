@@ -51,8 +51,14 @@ def create_onboarding_app(service: OnboardingService, *, token: str, port: int) 
                 )
         try:
             choices = OnboardingRequest.model_validate_json(body)
-            result = await run_in_threadpool(service.run, request.path_params["action"], choices)
-            return JSONResponse(result)
+            action = request.path_params["action"]
+            result = await run_in_threadpool(service.run, action, choices)
+            headers = (
+                {"Content-Disposition": 'attachment; filename="policynim-setup-receipt.json"'}
+                if action == "receipt"
+                else None
+            )
+            return JSONResponse(result, headers=headers)
         except ValidationError:
             return JSONResponse(
                 {"status": "error", "message": "Check the setup fields and retry."}, 422

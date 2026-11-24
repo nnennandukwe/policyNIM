@@ -21,7 +21,7 @@ from policynim.config_discovery import LITERAL_CONFIG_HEADER
 from policynim.errors import ConfigurationError
 from policynim.runtime_paths import resolve_corpus_root, resolve_runtime_path
 from policynim.services.catalog import PolicyCatalog, build_policy_catalog
-from policynim.services.index_store import create_index_store
+from policynim.services.index_store import create_index_store, pinned_generation
 from policynim.services.ingest import create_ingest_service
 from policynim.services.preflight import create_preflight_service
 from policynim.services.profiles import BUNDLED_TOPICS, initialize_profile, serialize_profile
@@ -274,6 +274,21 @@ class OnboardingService:
                     )
                 if action == "build":
                     return self._build(settings, digest, catalog.digest)
+                if action == "receipt":
+                    if settings.vector_backend != "sqlite":
+                        raise ConfigurationError("Setup receipts require SQLite storage.")
+                    if self._verified != (digest, request.task):
+                        raise ConfigurationError(
+                            "Verify a policy-backed result before downloading."
+                        )
+                    generation_id, catalog_digest = self._require_current(settings, digest)
+                    return {
+                        "schema_version": 1,
+                        "generation_id": generation_id,
+                        "catalog_digest": catalog_digest,
+                        "backend": "sqlite",
+                        "verified": True,
+                    }
                 self._require_current(settings, digest)
                 if action == "verify":
                     return self._verify(settings, request.task, digest)
@@ -295,14 +310,16 @@ class OnboardingService:
         self._built, self._generation = digest, result.generation_id
         return {"status": "active", **result.model_dump(mode="json")}
 
-    def _require_current(self, settings: Settings, digest: str) -> None:
-        """Reject skipped builds or an active generation changed by another operator."""
+    def _require_current(self, settings: Settings, digest: str) -> tuple[str, str]:
+        """Read the sealed identity of the active generation this session built."""
         if self._built != digest or self._generation is None:
             raise ConfigurationError("Build and validate this selection before continuing.")
         with closing(create_index_store(settings)) as store:
             store.validate_identity()
-            if store.generation_id != self._generation:
+            snapshot = pinned_generation(store)
+            if snapshot is None or snapshot.generation_id != self._generation:
                 raise ConfigurationError("Active generation changed. Build and verify again.")
+            return snapshot.generation_id, snapshot.manifest.catalog_digest
 
     def _verify(self, settings: Settings, task: str, digest: str) -> dict[str, Any]:
         """Advance only after a source-backed result from the generation this session built."""
