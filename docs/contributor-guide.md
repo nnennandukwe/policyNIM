@@ -4,8 +4,7 @@ The [Habit Hooks advisory trial](research/2026-10-23-habit-hooks-pilot.md) recor
 the optional detector/coaching setup and observed findings. It's separate from
 required Ruff, Pyright, tests, and review gates; tool output doesn't grant authority.
 
-Use this guide when you are running PolicyNIM from a local checkout instead of
-the hosted beta.
+Use this guide to set up and test PolicyNIM locally.
 
 ## Local Setup
 
