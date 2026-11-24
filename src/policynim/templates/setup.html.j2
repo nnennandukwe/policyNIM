@@ -64,8 +64,16 @@
           <option value="pgvector">Bring your own Postgres + pgvector</option>
         </select></label>
         <div id="remote-fields" hidden>
-          <label class="field">Database URL <small id="url-hint">Use HTTPS, or HTTP on loopback. Keep credentials out of the URL.</small><input id="vector-url" type="text" autocomplete="off" spellcheck="false"></label>
-          <label class="field">Namespace prefix <small>A dedicated prefix for this installation. Existing indexes won't be overwritten.</small><input id="vector-namespace" value="policynim" pattern="[a-z][a-z0-9_]{0,15}" maxlength="16" spellcheck="false"></label>
+          <div class="field">
+            <label for="vector-url">Database URL</label>
+            <small id="url-hint">Use HTTPS, or HTTP on loopback. Keep credentials out of the URL.</small>
+            <input id="vector-url" aria-describedby="url-hint" type="text" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="vector-namespace">Namespace prefix</label>
+            <small id="namespace-hint">A dedicated prefix for this installation. Existing indexes won't be overwritten.</small>
+            <input id="vector-namespace" aria-describedby="namespace-help" value="policynim" pattern="[a-z][a-z0-9_]{0,15}" maxlength="16" spellcheck="false">
+          </div>
           <label id="qdrant-key-field" class="field">Qdrant API key<input id="vector-api-key" type="password" autocomplete="new-password"></label>
           <label id="pg-password-field" class="field" hidden>Postgres password<input id="vector-password" type="password" autocomplete="new-password"></label>
           <p id="pg-extra" class="hint" hidden>Install PolicyNIM's vector-postgres extra. Ask your database owner to install the vector extension and grant access to a dedicated database. Exact search preserves dimensions without an approximate-index limit.</p>
