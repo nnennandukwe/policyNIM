@@ -2697,6 +2697,84 @@ def test_quickstart_prints_local_mcp_path_with_source_checkout_hint(
     assert "policynim support-bundle" in " ".join(payload["safety"])
 
 
+def test_quickstart_rejects_missing_repo_root_for_local_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Do not print local MCP setup commands for a checkout path that does not exist."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    missing_checkout = tmp_path / "missing-checkout"
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "local-mcp",
+            "--repo-root",
+            str(missing_checkout),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--repo-root must point to a PolicyNIM source checkout." in result.stderr
+    assert str(missing_checkout) not in result.stdout
+
+
+def test_quickstart_rejects_repo_root_that_is_not_a_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject an existing directory that is not a PolicyNIM source checkout."""
+    configure_standalone_cli_environment(monkeypatch, tmp_path)
+    not_a_checkout = tmp_path / "not-a-checkout"
+    not_a_checkout.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "local-mcp",
+            "--repo-root",
+            str(not_a_checkout),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--repo-root must point to a PolicyNIM source checkout." in result.stderr
+
+
+def test_quickstart_accepts_valid_repo_root_for_local_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep usable local MCP setup commands for a real PolicyNIM checkout."""
+    checkout_root, _, _ = configure_checkout_cli_environment(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "quickstart",
+            "--target",
+            "local-mcp",
+            "--repo-root",
+            str(checkout_root),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["local_launch_mode"] == "source-checkout"
+    assert f"--repo-root {shlex.quote(str(checkout_root))}" in " ".join(payload["commands"])
+
+
 def test_quickstart_prints_installed_local_mcp_path_without_checkout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

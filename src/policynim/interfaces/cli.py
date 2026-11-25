@@ -1901,12 +1901,13 @@ def _quickstart_local_mcp_config(
         client,
     ]
     if repo_root is not None:
+        resolved_repo_root = _resolve_mcp_config_repo_root(repo_root)
         return {
             "mode": "source-checkout",
             "command": [
                 *command,
                 "--repo-root",
-                str(repo_root.expanduser().resolve(strict=False)),
+                str(resolved_repo_root),
             ],
         }
     discovered = config_discovery.find_source_checkout_root()
