@@ -21,12 +21,18 @@ function updateActions() {
   }
 }
 
+function packsHidden(source) {
+  return source === "profile" || source === "directory";
+}
+
 function choices() {
+  const source = byId("source-mode").value;
   return {
     deployment: document.querySelector("input[name=deployment]:checked").value,
-    source_mode: byId("source-mode").value,
+    source_mode: source,
     topics: Array.from(document.querySelectorAll("input[name=topic]:checked"), (item) => item.value),
-    additional_packs: byId("extra-packs").value.split("\n").map((item) => item.trim()).filter(Boolean),
+    additional_packs: packsHidden(source) ? []
+      : byId("extra-packs").value.split("\n").map((item) => item.trim()).filter(Boolean),
     source_path: byId("source-path").value,
     generations_dir: byId("generations-dir").value,
     vector_backend: byId("vector-backend").value,
@@ -49,8 +55,7 @@ function updateFields() {
   byId("shared-note").hidden = !shared;
   byId("topic-options").hidden = source !== "topics";
   byId("source-path-field").hidden = source !== "profile" && source !== "directory";
-  byId("extra-packs-field").hidden = source === "profile" || source === "directory";
-  if (byId("extra-packs-field").hidden) byId("extra-packs").value = "";
+  byId("extra-packs-field").hidden = packsHidden(source);
   byId("remote-fields").hidden = backend === "sqlite";
   byId("qdrant-key-field").hidden = backend !== "qdrant";
   byId("pg-password-field").hidden = backend !== "pgvector";
